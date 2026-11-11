@@ -14,7 +14,7 @@
  * Results snap to steps (1 mm or more as you zoom out, 5°) unless `snap` is off
  * (Shift, or the touch bar's "No snapping").
  */
-import { add, cross, dot, frameAxis, length, scale, sub, unit, type Triad, type TransformValues, type Vec3 } from "../model/transformMath";
+import { add, compose, cross, dot, frameAxis, length, rotation, scale, sub, turnOf, turnsOf, unit, type Triad, type TransformValues, type Vec3 } from "../model/transformMath";
 
 export interface Ray {
   origin: Vec3;
@@ -39,6 +39,26 @@ export const TRIAD_LAYOUT = {
   ball: 0.1,
 };
 
+/**
+ * How side-on an arrow must be seen to be dragged (1 − cos² of its angle to the view) and how face-on a square
+ * (|cos|): nearer edge-on, a tiny move of the pointer would throw the part far away (at |cos| 0.05, 1 mm → 20 mm).
+ * Such handles are faded and can't be grabbed.
+ */
+export const MIN_ARROW_SIDE = 0.1;
+export const MIN_SQUARE_FACING = 0.2;
+
+/** Can this handle be dragged with the view looking along `view`? (The ball and rings always can.) */
+export function handleUsable(triad: Triad, handle: TriadHandle, view: Vec3 | undefined): boolean {
+  const v = view ? unit(view) : null;
+  if (!v) return true;
+  if (handle.kind === "arrow") {
+    const c = dot(v, frameAxis(triad.frame, handle.axis));
+    return 1 - c * c >= MIN_ARROW_SIDE;
+  }
+  if (handle.kind === "plane") return Math.abs(dot(v, frameAxis(triad.frame, handle.axis))) >= MIN_SQUARE_FACING;
+  return true;
+}
+
 /** Steps a turn snaps to (degrees). */
 export const ANGLE_STEP = 5;
 
@@ -56,7 +76,7 @@ export function axisParam(ray: Ray, origin: Vec3, dir: Vec3): number | null {
   const b = dot(d, r);
   const denom = 1 - b * b;
   // (Seen almost end-on, a tiny move of the pointer would throw the part far away.)
-  if (denom < 0.02) return null;
+  if (denom < MIN_ARROW_SIDE) return null;
   return (b * dot(r, w) - dot(d, w)) / denom;
 }
 
@@ -138,7 +158,7 @@ export function planeCorners(triad: Triad, axis: number, size: number): Vec3[] {
  * The handle under the pointer at (x, y), or null. `size`: the triad's size in
  * world units; `reach` widens it for fingers (see gestures.ts `reachFor`).
  */
-export function handleAt(triad: Triad, size: number, project: Projector, x: number, y: number, reach = 1): TriadHandle | null {
+export function handleAt(triad: Triad, size: number, project: Projector, x: number, y: number, reach = 1, view?: Vec3): TriadHandle | null {
   const p: Screen = [x, y];
   const o = project(triad.frame.origin);
   if (!o) return null;
@@ -150,7 +170,7 @@ export function handleAt(triad: Triad, size: number, project: Projector, x: numb
   }
   let best: { handle: TriadHandle; d: number } | null = null;
   const consider = (handle: TriadHandle, d: number, within: number) => {
-    if (d <= within * reach && (!best || d < best.d)) best = { handle, d };
+    if (d <= within * reach && (!best || d < best.d) && handleUsable(triad, handle, view)) best = { handle, d };
   };
   for (const axis of triad.arrows) {
     const dir = frameAxis(triad.frame, axis);
@@ -236,14 +256,14 @@ export function startTriadDrag(handle: TriadHandle, triad: Triad, size: number, 
   }
   if (handle.kind === "plane") {
     const n = frameAxis(f, handle.axis);
-    const p0 = planeHit(ray0, o, n);
+    const p0 = planeHit(ray0, o, n, MIN_SQUARE_FACING);
     const axes = planeAxes(handle.axis);
     if (!p0 || axes.every((i) => !keys.move[i])) return null;
     let last: Vec3 = [0, 0, 0];
     return {
       handle,
       move(ray, opts) {
-        const p = planeHit(ray, o, n);
+        const p = planeHit(ray, o, n, MIN_SQUARE_FACING);
         if (p) last = sub(p, p0);
         return lengths(last, axes, opts);
       },
@@ -275,7 +295,17 @@ export function startTriadDrag(handle: TriadHandle, triad: Triad, size: number, 
     return sub(w, scale(n, dot(w, n)));
   };
   let total = 0;
+  // Free (turn and move): the turn so far, then the ring's turn about its drawn axis on top — written back as the
+  // X-then-Y-then-Z turns of the three boxes (so a ring always turns about the axis it's drawn round).
+  const before = mode === "free" ? turnOf(startOf("rx"), startOf("ry"), startOf("rz")) : null;
   const finish = (opts: DragOptions) => {
+    if (before) {
+      const delta = opts.snap ? snapTo(total, opts.angleStep ?? ANGLE_STEP) : total;
+      const axis: Vec3 = [handle.axis === 0 ? 1 : 0, handle.axis === 1 ? 1 : 0, handle.axis === 2 ? 1 : 0];
+      const turns = turnsOf(compose(rotation(axis, delta), { r: before, t: [0, 0, 0] }).r);
+      const tidy = (n: number) => Math.round(n * 1000) / 1000 + 0;
+      return { rx: tidy(turns.rx), ry: tidy(turns.ry), rz: tidy(turns.rz) };
+    }
     const v = startOf(k) + total;
     return { [k]: opts.snap ? snapTo(v, opts.angleStep ?? ANGLE_STEP) : Math.round(v * 100) / 100 } as Partial<Record<keyof TransformValues, number>>;
   };

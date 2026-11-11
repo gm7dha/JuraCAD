@@ -56,7 +56,7 @@ function boxText(key: string, value: number): string {
   return lengthKeys.has(key) ? startingLength(value) : String(Math.round(value * 1000) / 1000);
 }
 
-let drag: { session: TriadDrag; draft: TransformDraft; base: Rigid; centre: Vec3; step: number; live: Record<string, string> | null } | null = null;
+let drag: { session: TriadDrag; draft: TransformDraft; base: Rigid; centre: Vec3; step: number; live: Record<string, string> | null; manager: SceneManager } | null = null;
 /** After a drag is let go: the parts on show then (the moved look is kept until the rebuilt part arrives). */
 let waitingFor: unknown = null;
 
@@ -69,16 +69,24 @@ export function triadStart(manager: SceneManager | null, handle: TriadHandle, ra
   if (!d || !centre || !triad || !manager) return false;
   const session = startTriadDrag(handle, triad, size, ray, valuesOf(d, null), transformMode(d.transform));
   if (!session) {
-    s.showToast(`The ${handleName(handle)} points almost straight at you: turn the view a little to drag it.`);
+    s.showToast(handle.kind === "plane" ? `The ${handleName(handle)} is seen edge-on: turn the view a little to drag it.` : `The ${handleName(handle)} points almost straight at you: turn the view a little to drag it.`);
     return false;
   }
-  drag = { session, draft: d, base: shownMotion(d), centre, step: lengthStep(manager.mmPerPixel(), lengthUnit()), live: null };
+  // A box in the dialog lets go of the keyboard, so Ctrl+Z then undoes the drag (not the box's typing).
+  const focused = typeof document !== "undefined" ? document.activeElement : null;
+  if (focused instanceof HTMLElement && focused.closest(".feature-dialog")) focused.blur();
+  drag = { session, draft: d, base: shownMotion(d), centre, step: lengthStep(manager.mmPerPixel(), lengthUnit()), live: null, manager };
   return true;
 }
 
 /** The pointer moved during a triad drag: the boxes show the new values and the part is shown moved. */
 export function triadMove(manager: SceneManager | null, ray: ScreenRay, shift: boolean): void {
   if (!drag) return;
+  // The dialog closed (or another opened) mid-drag: the drag is over, nothing changes.
+  if (transformDraft()?.id !== drag.draft.id) {
+    escapeTriadDrag();
+    return;
+  }
   const values = drag.session.move(ray, { snap: !shift, step: drag.step });
   const live = Object.fromEntries(Object.entries(values).map(([k, v]) => [k, boxText(k, v as number)]));
   drag.live = live;
@@ -108,6 +116,16 @@ export function triadCancel(manager: SceneManager | null): void {
   drag = null;
   useStore.getState().setTransformLive(null);
   manager?.clearPreviewMoves();
+}
+
+/** Esc while the triad is being dragged: only the drag is taken back (the dialog stays open). True if there was one. */
+export function escapeTriadDrag(): boolean {
+  const d = drag;
+  if (!d) return false;
+  // The view lets go of the pointer and calls triadCancel.
+  d.manager.cancelTriadDrag();
+  if (drag) triadCancel(d.manager);
+  return true;
 }
 
 /** New parts arrived: stop showing the dragged part ahead of its rebuild. */

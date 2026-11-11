@@ -29,7 +29,7 @@ import { SIMPLIFY_LABELS, SIMPLIFY_LEVELS } from "../model/simplify";
 import { chooseImportFile } from "./fileActions";
 import { TRANSFORM_MODES, transformMode } from "../model/transformMath";
 import type { TransformMode } from "../model/types";
-import { placeTriad } from "../viewport/transformTriad";
+import { escapeTriadDrag, placeTriad } from "../viewport/transformTriad";
 
 const OPERATIONS: Operation[] = ["new", "add", "remove", "intersect"];
 
@@ -1083,7 +1083,7 @@ function TransformOptions() {
             </>
           )}
           <p className="dialog-hint field-hint">
-            Drag the triad on the part: an arrow moves along it, a square moves in its plane{mode === "free" ? ", a ring turns about it" : ""} and the ball moves anywhere. It snaps to whole steps; hold Shift (or turn on No snapping) to drag freely.
+            Drag the triad on the part: an arrow moves along it, a square moves in its plane{mode === "free" ? ", a ring turns about it" : ""} and the ball moves anywhere. It snaps to whole steps; hold Shift (or turn on No snapping) to drag freely. Dragging puts plain numbers in the boxes (in place of any sums or variables typed there).
             {mode === "free" ? " Turns happen about X, then Y, then Z." : ""}
           </p>
         </>
@@ -1098,8 +1098,18 @@ function TransformOptions() {
           onClear={() => changeDraftStep({ transform: { ...t, along: undefined, picking: undefined } })}
         >
           <QuickChoices label={mode === "distance" ? "Move along" : "Turn about"} options={AXIS_CHOICES} value={alongAxis} onChoose={(axis) => changeDraftStep({ transform: { ...t, along: { axis }, picking: undefined } })} />
-          {!(t.along && "dir" in t.along) && <p className="dialog-hint field-hint">{mode === "distance" ? "Along the triad's X, Y or Z" : "Through the part's centre (or the triad)"}.</p>}
+          {!(t.along && "dir" in t.along) && (
+            <p className="dialog-hint field-hint">
+              {mode === "distance" ? "Along the triad's X, Y or Z" : t.triad ? "Through the triad" : t.about === "origin" ? "Through the origin" : "Through the part's centre"}.
+            </p>
+          )}
         </ReferenceBox>
+      )}
+      {mode === "rotate" && !(t.along && "dir" in t.along) && !t.triad && (
+        <select className="full-select" aria-label="Turn about which point" value={t.about} onChange={(e) => changeDraftStep({ transform: { ...t, about: e.target.value as "origin" | "centre" } })}>
+          <option value="centre">through the part's centre</option>
+          <option value="origin">through the origin</option>
+        </select>
       )}
       {mode === "distance" && flip("The other way")}
       {mode === "rotate" && flip("Turn the other way")}
@@ -2102,6 +2112,8 @@ export function FeatureDialog() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
+        // Dragging Move / copy's triad: Esc takes back just the drag.
+        if (escapeTriadDrag()) return;
         cancelDraft();
       }
     };

@@ -298,19 +298,29 @@ export function valuesInFrame(t: TransformDef, values: TransformValues, centre: 
   const col = (j: number) => applyVec(motion, b[j]);
   const r = (i: number, j: number) => dot(b[i], col(j));
   const tidy = (n: number) => Math.round(n * 1e6) / 1e6 + 0;
-  let rx = 0;
-  let ry = 0;
-  let rz = 0;
-  if (transformMode(t) !== "xyz") {
-    // R = Rz(γ)·Ry(β)·Rx(α): r20 = −sin β, r21 = cos β sin α, r22 = cos β cos α, r10 = cos β sin γ, r00 = cos β cos γ.
-    const beta = Math.asin(Math.max(-1, Math.min(1, -r(2, 0))));
-    if (Math.cos(beta) > 1e-6) {
-      rx = Math.atan2(r(2, 1), r(2, 2));
-      rz = Math.atan2(r(1, 0), r(0, 0));
-    } else rx = Math.atan2(-r(1, 2), r(1, 1));
-    ry = beta;
-  }
+  const turns = transformMode(t) === "xyz" ? { rx: 0, ry: 0, rz: 0 } : turnsOf([0, 1, 2].flatMap((i) => [0, 1, 2].map((j) => r(i, j))));
   const shift = sub(applyPoint(motion, frame.origin), frame.origin);
-  const deg = (a: number) => tidy((a * 180) / Math.PI);
-  return { dx: tidy(dot(shift, frame.x)), dy: tidy(dot(shift, frame.y)), dz: tidy(dot(shift, frame.z)), rx: deg(rx), ry: deg(ry), rz: deg(rz) };
+  return { dx: tidy(dot(shift, frame.x)), dy: tidy(dot(shift, frame.y)), dz: tidy(dot(shift, frame.z)), rx: tidy(turns.rx), ry: tidy(turns.ry), rz: tidy(turns.rz) };
+}
+
+/** The turn made by turning `rx` about X, then `ry` about Y, then `rz` about Z (degrees; a 3 × 3 matrix, row by row). */
+export function turnOf(rx: number, ry: number, rz: number): number[] {
+  let m = rotation([1, 0, 0], rx);
+  m = compose(rotation([0, 1, 0], ry), m);
+  m = compose(rotation([0, 0, 1], rz), m);
+  return m.r;
+}
+
+/** The X-then-Y-then-Z turns (degrees) that make the turn `r` (3 × 3, row by row). */
+export function turnsOf(r: number[]): { rx: number; ry: number; rz: number } {
+  // R = Rz(γ)·Ry(β)·Rx(α): r20 = −sin β, r21 = cos β sin α, r22 = cos β cos α, r10 = cos β sin γ, r00 = cos β cos γ.
+  const beta = Math.asin(Math.max(-1, Math.min(1, -r[6])));
+  let alpha: number;
+  let gamma = 0;
+  if (Math.cos(beta) > 1e-6) {
+    alpha = Math.atan2(r[7], r[8]);
+    gamma = Math.atan2(r[3], r[0]);
+  } else alpha = Math.atan2(-r[5], r[4]);
+  const deg = (a: number) => (a * 180) / Math.PI;
+  return { rx: deg(alpha), ry: deg(beta), rz: deg(gamma) };
 }

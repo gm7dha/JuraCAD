@@ -1245,6 +1245,63 @@ try {
     await page.waitForFunction(() => !window.juracadStore.getState().editing && !window.juracadViewport.current.triadShown(), null, { timeout: 5_000 });
   }
 
+  step = "turning with the Move triad's X ring after a turn about Z";
+  {
+    await page.getByRole("button", { name: "Move", exact: true }).click();
+    await page.waitForSelector(".feature-dialog >> text=How to move it");
+    // Reopened after Cancel: nothing from the last time to undo.
+    if ((await page.getByRole("button", { name: "Undo last change here" }).count()) > 0) throw new Error("Move opened again after Cancel still offers to undo the last dialog's drag");
+    await page.locator("#param-rz").fill("40");
+    await page.locator("#param-rz").blur();
+    await page.waitForFunction(() => !!window.juracadViewport.current.triadShown() && !window.juracadStore.getState().rebuildBusy, null, { timeout: 30_000 });
+    const ring = await page.evaluate(() => {
+      const v = window.juracadViewport.current;
+      const vp = document.querySelector(".viewport").getBoundingClientRect();
+      let t = v.triadShown();
+      const o = v.worldToScreen(t.frame.origin);
+      v.panBy(vp.width * 0.6 - o.x, vp.height * 0.55 - o.y);
+      t = v.triadShown();
+      const r = 0.78 * v.triadSize();
+      const at = (deg) => {
+        const a = (deg * Math.PI) / 180;
+        return v.worldToScreen(t.frame.origin.map((c, i) => c + r * (Math.cos(a) * t.frame.y[i] + Math.sin(a) * t.frame.z[i])));
+      };
+      // A place on the X ring where it is the handle under the pointer, then points on round it.
+      for (const start of [45, 135, 225, 315, 90, 270, 0, 180]) {
+        const p = at(start);
+        const h = v.triadHandleAt(p.x, p.y);
+        if (h?.kind === "ring" && h.axis === 0) return { path: [0, 10, 20, 30, 40, 50, 60].map((d) => at(start + d)) };
+      }
+      return null;
+    });
+    if (!ring) throw new Error("couldn't find the X ring on screen");
+    const vp = await page.locator(".viewport canvas").first().boundingBox();
+    await page.mouse.move(vp.x + ring.path[0].x, vp.y + ring.path[0].y);
+    await page.mouse.down();
+    for (const p of ring.path.slice(1)) await page.mouse.move(vp.x + p.x, vp.y + p.y);
+    await page.mouse.up();
+    const turns = await page.evaluate(() => {
+      const d = window.juracadStore.getState().editing.draft.params;
+      return [d.rx, d.ry, d.rz].map(Number);
+    });
+    // The turn now = a turn about X (the ring's drawn axis) on top of the 40° about Z: so it carries X to X.
+    const rot = (axis, deg) => {
+      const a = (deg * Math.PI) / 180;
+      const c = Math.cos(a);
+      const s1 = Math.sin(a);
+      return axis === 0 ? [[1, 0, 0], [0, c, -s1], [0, s1, c]] : axis === 1 ? [[c, 0, s1], [0, 1, 0], [-s1, 0, c]] : [[c, -s1, 0], [s1, c, 0], [0, 0, 1]];
+    };
+    const mul = (a, b) => a.map((row) => [0, 1, 2].map((j) => row[0] * b[0][j] + row[1] * b[1][j] + row[2] * b[2][j]));
+    const after = mul(rot(2, turns[2]), mul(rot(1, turns[1]), rot(0, turns[0])));
+    const extra = mul(after, rot(2, -40));
+    const angle = (Math.acos(Math.max(-1, Math.min(1, (extra[0][0] + extra[1][1] + extra[2][2] - 1) / 2))) * 180) / Math.PI;
+    if (Math.abs(extra[0][0] - 1) > 1e-3 || angle < 20) {
+      throw new Error(`dragging the X ring after 40° about Z gave turns ${turns.join(", ")} — that's not a turn about X on top (${angle.toFixed(1)}° extra)`);
+    }
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await page.waitForFunction(() => !window.juracadStore.getState().editing && !window.juracadStore.getState().draftSteps, null, { timeout: 5_000 });
+  }
+
   step = "adding a variable";
   await tool("Variables");
   await page.getByRole("button", { name: "+ Add variable" }).click();

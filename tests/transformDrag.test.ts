@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyPoint, applyVec, compose, frameFromZ, invert, isClassicTransform, rotation, toAxisAngle, transformMotion, transformTriad, transformKeys, valuesInFrame, type Rigid, type Triad, type Vec3 } from "../src/model/transformMath";
-import { axisParam, handleAt, lengthStep, planeHit, snapTo, startTriadDrag, TRIAD_LAYOUT, type Ray } from "../src/viewport/transformDrag";
+import { axisParam, handleAt, handleUsable, lengthStep, planeHit, snapTo, startTriadDrag, TRIAD_LAYOUT, type Ray } from "../src/viewport/transformDrag";
 import type { TransformDef } from "../src/model/types";
 import { circleOf, directionOf, lineOf, spotFrame } from "../src/model/transformPicks";
 
@@ -128,14 +128,28 @@ describe("dragging the triad", () => {
 
   it("turns with a ring, by the angle round it, past half a turn too", () => {
     const ring = startTriadDrag({ kind: "ring", axis: 2 }, triad, 50, down(39, 0), { rz: 10 }, "free")!;
-    expect(ring.move(down(0, 39), snap)).toEqual({ rz: 100 });
+    expect(ring.move(down(0, 39), snap)).toEqual({ rx: 0, ry: 0, rz: 100 });
     ring.move(down(-39, 1), snap);
-    expect(ring.move(down(-30, -30), snap)).toEqual({ rz: 235 });
-    expect(ring.move(down(-30, -30), { ...free, angleStep: 5 }).rz).toBeCloseTo(235, 1);
+    // 225° on from 10° is 235°, written as the same turn the other way: −125°.
+    expect(ring.move(down(-30, -30), snap)).toEqual({ rx: 0, ry: 0, rz: -125 });
+    expect(ring.move(down(-30, -30), { ...free, angleStep: 5 }).rz).toBeCloseTo(-125, 1);
     // Seen edge-on (a ring about X from above): sliding along it turns it.
     const edge = startTriadDrag({ kind: "ring", axis: 0 }, triad, 50, down(0, 0), {}, "free")!;
     // Grabbed at the front (nearest the eye), sliding towards −Y turns it anticlockwise about X.
     expect(edge.move(down(0, -(TRIAD_LAYOUT.ring * 50 * Math.PI) / 4), free).rx).toBeCloseTo(45, 1);
+  });
+
+  it("turns about the ring's drawn axis even after turns about later axes", () => {
+    for (const [ry, rz] of [[30, 40], [80, 90]]) {
+      // The X ring, seen from the +X end (looking back along −X), grabbed at +Y and dragged a quarter round to +Z.
+      const side = (y: number, z: number): Ray => ({ origin: [100, y, z], dir: [-1, 0, 0] });
+      const ring = startTriadDrag({ kind: "ring", axis: 0 }, triad, 50, side(39, 0), { rx: 0, ry, rz, dx: 3 }, "free")!;
+      const out = ring.move(side(0, 39), snap);
+      expect(out.dx).toBeUndefined();
+      const after = transformMotion(def({ triad: { origin: [0, 0, 0], x: [1, 0, 0], z: [0, 0, 1] } }), out, [0, 0, 0]) as Rigid;
+      const want = compose(rotation([1, 0, 0], 90), transformMotion(def({ triad: { origin: [0, 0, 0], x: [1, 0, 0], z: [0, 0, 1] } }), { ry, rz }, [0, 0, 0]) as Rigid);
+      for (const p of [[1, 0, 0], [0, 1, 0], [0, 0, 1]] as Vec3[]) close(applyVec(after, p), applyVec(want, p), 4);
+    }
   });
 
   it("drags only what each way of moving uses", () => {
@@ -144,6 +158,21 @@ describe("dragging the triad", () => {
     expect(dist.move(front(3, 25), snap)).toEqual({ distance: 19 });
     const turn = startTriadDrag({ kind: "ring", axis: 2 }, triad, 50, down(0, 39), {}, "rotate")!;
     expect(turn.move(down(-39, 0), snap)).toEqual({ turn: 90 });
+  });
+
+  it("fades edge-on arrows and squares: they can't be grabbed (a tiny move would throw the part far off)", () => {
+    // Looking along −Z: the Z arrow points at you and the YZ/ZX squares are edge-on; the XY square faces you.
+    expect(handleUsable(triad, { kind: "arrow", axis: 2 }, [0, 0, -1])).toBe(false);
+    expect(handleUsable(triad, { kind: "arrow", axis: 0 }, [0, 0, -1])).toBe(true);
+    expect(handleUsable(triad, { kind: "plane", axis: 0 }, [0, 0, -1])).toBe(false);
+    expect(handleUsable(triad, { kind: "plane", axis: 2 }, [0, 0, -1])).toBe(true);
+    // A square at |cos| 0.05 is refused for dragging too.
+    const grazing: Ray = { origin: [20, -100, 25], dir: [0, Math.sqrt(1 - 0.05 * 0.05), -0.05] };
+    expect(startTriadDrag({ kind: "plane", axis: 2 }, triad, 50, grazing, {}, "free")).toBeNull();
+    // From the front (looking along +Y), the XZ square's hit test is skipped when given the view.
+    const project = (p: Vec3): [number, number] => [200 + p[0], 200 - p[2]];
+    expect(handleAt(triad, 100, project, 241, 159, 1, [0, 1, 0])).toEqual({ kind: "plane", axis: 1 });
+    expect(handleAt(triad, 100, project, 241, 159, 1, [0.99, 0.141, 0])?.kind).not.toBe("plane");
   });
 
   it("picks the handle under the pointer on screen", () => {

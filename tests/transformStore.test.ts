@@ -34,4 +34,29 @@ describe("Move / copy dialog's own undo", () => {
     const t = s().history.present.features.at(-1)!;
     expect([t.params.dx, t.transform?.mode]).toEqual(["7", "xyz"]);
   });
+
+  it("undoes typing as its own step (typing on in one box is one step), and starts every dialog afresh", () => {
+    s().startCreate("box");
+    expect(s().commitDraft()).toBe(true);
+    s().startCreate("transform");
+    s().changeDraftStep({ params: { dx: "20" } });
+    s().setDraftParam("dy", "5");
+    s().setDraftParam("dy", "50");
+    // Only choosing what a click picks isn't a step.
+    s().setDraftField({ transform: { ...s().editing!.draft.transform!, picking: "triad" } });
+    expect(s().undoDraftStep()).toBe(true);
+    expect([s().editing!.draft.params.dx, s().editing!.draft.params.dy]).toEqual(["20", "0"]);
+    expect(s().undoDraftStep()).toBe(true);
+    expect(s().editing!.draft.params.dx).toBe("0");
+    // Cancelled, then opened again: nothing from before to undo.
+    s().changeDraftStep({ params: { dx: "9" } });
+    s().cancelDraft();
+    expect(s().draftSteps).toBeNull();
+    const id = s().history.present.features.at(-1)!.id;
+    s().startCreate("transform");
+    expect(s().undoDraftStep()).toBe(false);
+    s().cancelDraft();
+    s().startEdit(id);
+    expect(s().undoDraftStep()).toBe(false);
+  });
 });
