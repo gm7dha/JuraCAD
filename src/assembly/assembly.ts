@@ -15,6 +15,7 @@ import { applyPlacement, IDENTITY, parsePlacement, type Placement, type Vec3 } f
 import { MATE_TYPES } from "./mates";
 import { startingLength } from "../model/units";
 import { massGrams, materialOf } from "../model/materials";
+import { parseFits, tidyFits } from "./fits";
 
 const assembliesOf = (doc: JuraCADDocument) => doc.assemblies ?? [];
 
@@ -27,7 +28,7 @@ export function updateAssembly(doc: JuraCADDocument, id: string, fn: (a: Assembl
   if (!assembliesOf(doc).some((a) => a.id === id)) return doc;
   // Exploded view steps forget parts that any change removed (patterns, Replicate, delete…) —
   // also parts inside sub-assemblies, in every assembly that uses this one.
-  const changed = assembliesOf(doc).map((a) => (a.id === id ? tidyExplodeSteps(fn(a)) : a));
+  const changed = assembliesOf(doc).map((a) => (a.id === id ? tidyFits(tidyExplodeSteps(fn(a))) : a));
   return withAssemblies(doc, changed.map((a) => tidyStepPaths(a, changed)));
 }
 
@@ -348,14 +349,14 @@ export function removeInstances(doc: JuraCADDocument, assemblyId: string, ids: s
 /** An assembly without these instances, and the mates (patterns, groups, steps…) that used them. */
 export function withoutInstances(a: Assembly, ids: string[]): Assembly {
   const gone = new Set(ids);
-  return tidyExplodeSteps(tidyGroups(tidyReplicates(
+  return tidyFits(tidyExplodeSteps(tidyGroups(tidyReplicates(
     tidyPatterns(
       withMates(
         { ...a, instances: a.instances.filter((i) => !gone.has(i.id)) },
         (a.mates ?? []).filter((m) => !gone.has(m.a.instanceId) && !gone.has(m.b.instanceId)),
       ),
     ),
-  )));
+  ))));
 }
 
 /** The assembly with just these mates (and the relations between mates still there). */
@@ -828,6 +829,7 @@ export function parseAssemblies(raw: unknown): Assembly[] {
       const g = parseGroup(raw);
       if (g && g.members.every((m) => instanceIds.has(m) && !groups.some((x) => x.members.includes(m)))) groups.push(g);
     }
+    const fits = parseFits(r.fits, instanceIds);
     out.push(
       tidyExplodeSteps(tidyGroups(tidyReplicates(tidyPatterns({
         ...(mates.length ? { ...assembly, mates } : assembly),
@@ -837,6 +839,7 @@ export function parseAssemblies(raw: unknown): Assembly[] {
         ...(replicates.length ? { replicates } : {}),
         ...(groups.length ? { groups } : {}),
         ...(explodeSteps.length ? { explodeSteps } : {}),
+        ...(fits.length ? { fits } : {}),
       })))),
     );
   }

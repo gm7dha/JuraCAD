@@ -1233,6 +1233,42 @@ button:disabled {
   width: 64px;
 }
 
+.fit-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--subtle);
+  font-size: 13px;
+}
+
+.fit-editor .clash-tolerance {
+  width: 64px;
+}
+
+.fit-editor-title {
+  font-weight: 600;
+}
+
+.fit-editor-note {
+  margin: 0;
+  font-size: 12px;
+}
+
+.fit-editor-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.check-part li .fit-mark {
+  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .check-headline {
   display: flex;
   gap: 8px;

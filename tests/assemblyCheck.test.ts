@@ -43,7 +43,10 @@ describe("assembly check", () => {
     // A 10 × 10 × 0.005 sliver: 2V/A ≈ 0.005 mm thick.
     const sliver = { a: "A", b: "B", volume: 0.5, area: 200.2 };
     expect(judgeContact(sliver, 0.01)).toEqual({ kind: "touch", a: "A", b: "B" });
-    expect(judgeContact(sliver, 0.001)).toEqual({ kind: "overlap", a: "A", b: "B", volume: 0.5 });
+    expect(judgeContact(sliver, 0.001)).toMatchObject({ kind: "overlap", a: "A", b: "B", volume: 0.5 });
+    // …with how deep it goes (about).
+    const d = judgeContact(sliver, 0.001);
+    expect(d?.kind === "overlap" ? d.depth : 0).toBeCloseTo(0.005, 4);
     expect(judgeContact({ a: "A", b: "B", volume: 500, area: 400 }, 0.01)?.kind).toBe("overlap");
     // A 0.02 mm cube of overlap at a corner: 2V/A says 0.0067 mm, but it's 0.02 thick — a clash at 0.01 mm.
     const corner = { a: "A", b: "B", volume: 0.02 ** 3, area: 6 * 0.02 ** 2, boxMin: 0.02 };
