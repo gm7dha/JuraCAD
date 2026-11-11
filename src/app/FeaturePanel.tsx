@@ -38,6 +38,7 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   loft: Icons.Loft,
   text: Icons.Text,
   plane: Icons.Plane,
+  mateConnector: Icons.MateConnector,
   boolean: Icons.Boolean,
   deletePart: Icons.Trash,
   simplify: Icons.Simplify,

@@ -122,6 +122,17 @@ function usesOf(f: Feature): Uses {
     needPart(plane.face?.partId);
   }
   needPart(f.text?.face?.partId);
+  // Newer Plane types' points and line, and a mate connector's spot: the part, sketch or connector each is on.
+  for (const g of [...(f.planeDef?.points ?? []), ...(f.planeDef?.line ? [f.planeDef.line] : []), ...(f.connector ? [f.connector.at] : [])]) {
+    needPart(g.pick?.partId);
+    need(g.sketchPoint?.sketch);
+    need(g.sketchLine?.sketch);
+    need(g.connector);
+  }
+  if (f.connector?.plane?.kind === "face") need(f.connector.plane.planeRef);
+  needPart(f.connector?.owner);
+  need(f.transform?.fromConnector);
+  need(f.transform?.toConnector);
   if (UP_TO_PICK.has(f.extrude?.end ?? "")) needPart(f.extrude?.upTo?.partId);
   needPart(f.extendTo?.target?.partId);
   needPart(f.transform?.partId);

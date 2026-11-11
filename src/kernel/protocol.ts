@@ -3,7 +3,7 @@ import type { SketchPlane } from "../sketch/planes";
 import type { MeshAnalysis, ThicknessEstimate } from "../geometry/meshCheck";
 import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
 import type { Measurement } from "../geometry/measureMath";
-import type { Feature, MeshQuality, ViewKind } from "../model/types";
+import type { Feature, MateConnectorDef, MeshQuality, PlaneOptions, ViewKind } from "../model/types";
 import type { BreakOutRequest, SectionRequest } from "../drawing/sections";
 import type { BedLayout, PrintPartResult } from "../model/printCheck";
 
@@ -110,6 +110,23 @@ export interface PartMesh {
   surface?: boolean;
   /** Exact volume of a solid part (mm³), from the solid model rather than the display mesh — for weights. */
   volume?: number;
+  /** Part Studio mate connectors this part owns (feature id, name, frame in the Part Studio), offered when it's mated in an assembly. */
+  connectors?: PartConnector[];
+}
+
+/** A mate connector feature owned by a part (see PartMesh.connectors). */
+export interface PartConnector {
+  id: string;
+  name: string;
+  origin: [number, number, number];
+  x: [number, number, number];
+  z: [number, number, number];
+}
+
+/** What the engine found again for a Plane feature or mate connector as the model is now (see RebuildResult.followed). */
+export interface FollowedRefs {
+  planeDef?: PlaneOptions;
+  connector?: MateConnectorDef;
 }
 
 /** A sheet metal part laid out flat (mm): the outline to cut, holes, and where it bends. */
@@ -147,6 +164,11 @@ export interface RebuildResult {
   studioOrder?: string[];
   /** Sketches on part faces or using part edges (by feature id): the face's edges, and where linked edges are now. */
   sketchLinks?: Record<string, SketchLinkInfo>;
+  /**
+   * Plane features (newer types) and mate connectors whose points, lines or spots moved with the model: their settings
+   * with the numbers as found now (the app writes them into the design, so the plane shows where it is).
+   */
+  followed?: Record<string, FollowedRefs>;
 }
 
 export interface PartCheck {

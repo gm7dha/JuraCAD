@@ -459,6 +459,20 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "angle", label: "Tilt", defaultValue: "30", group: "size", unit: "°" },
     ],
   },
+  mateConnector: {
+    type: "mateConnector",
+    label: "Mate connector",
+    namePrefix: "Mate connector",
+    description: "A point with its own X, Y and Z directions, on a face, edge, corner or sketch point, that belongs to a part: mate to it in assemblies, move parts by it, or sketch on it.",
+    params: [
+      { key: "dx", label: "Move X", defaultValue: "0", group: "position" },
+      { key: "dy", label: "Move Y", defaultValue: "0", group: "position" },
+      { key: "dz", label: "Move Z", defaultValue: "0", group: "position" },
+      { key: "rx", label: "Turn about X", defaultValue: "0", group: "position", unit: "°" },
+      { key: "ry", label: "Turn about Y", defaultValue: "0", group: "position", unit: "°" },
+      { key: "rz", label: "Turn about Z", defaultValue: "0", group: "position", unit: "°" },
+    ],
+  },
   coil: {
     type: "coil",
     label: "Coil",
@@ -549,7 +563,9 @@ export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | 
     if (f.chamferType !== "twoDistances") keys.delete("distance2");
     if (f.chamferType !== "distanceAngle") keys.delete("angle");
   }
-  if (f.type === "plane" && f.planeDef?.mode !== "angle") keys.delete("angle");
+  // Line angle turns by the angle too; the newer types (through points, square to a line…) have no distance.
+  if (f.type === "plane" && f.planeDef?.mode !== "angle" && f.planeDef?.mode !== "lineAngle") keys.delete("angle");
+  if (f.type === "plane" && f.planeDef && !["offset", "angle", "midplane"].includes(f.planeDef.mode)) keys.delete("distance");
   // Move / copy: only the boxes its way of moving uses.
   if (f.type === "transform") {
     const used = new Set(transformKeys(f.transform));
