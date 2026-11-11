@@ -211,7 +211,10 @@ export function IslandPuzzleDialog() {
   const specKey = JSON.stringify(fullSpec);
   useEffect(() => {
     if (!loaded || problems.length) {
+      // A build still running for the old settings mustn't show its puzzle beside the problem.
+      builder.current.stop();
       setPuzzle(null);
+      setWorking(false);
       return;
     }
     setWorking(true);
@@ -503,35 +506,51 @@ export function IslandPuzzleDialog() {
   );
 }
 
+/** The longest a puzzle is given before the work is taken as lost (a worker can die without saying so). */
+const BUILD_LIMIT_MS = 120_000;
+
 /**
  * Builds puzzles in a worker, one at a time: a new build stops one still running (the worker is started afresh), so
- * only the latest settings' answer arrives.
+ * only the latest settings' answer arrives. Stopping drops the answer that was waited for.
  */
 class IslandBuilder {
   private worker: Worker | null = null;
   private busy = false;
   private next = 1;
+  private watchdog: ReturnType<typeof setTimeout> | null = null;
   build(job: Omit<IslandJob, "id">, done: (reply: IslandReply) => void) {
     if (this.busy) this.stop();
     if (!this.worker) this.worker = new Worker(new URL("./islandPuzzle.worker.ts", import.meta.url), { type: "module", name: "juracad-island" });
     const id = this.next++;
     this.busy = true;
-    this.worker.onmessage = (e: MessageEvent<IslandReply>) => {
-      if (e.data.id !== id) return;
+    const finish = (reply: IslandReply) => {
+      this.clearWatchdog();
       this.busy = false;
-      done(e.data);
+      done(reply);
+    };
+    this.worker.onmessage = (e: MessageEvent<IslandReply>) => {
+      if (e.data.id === id) finish(e.data);
     };
     this.worker.onerror = (e) => {
       e.preventDefault();
       this.stop();
-      done({ id, error: "The puzzle couldn't be made — the browser stopped the work part-way. Try smaller pieces or a smaller area." });
+      finish({ id, error: "The puzzle couldn't be made — the browser stopped the work part-way. Try smaller pieces or a smaller area." });
     };
+    this.watchdog = setTimeout(() => {
+      this.stop();
+      finish({ id, error: "Making the puzzle took too long and was stopped. Try bigger pieces, a smaller area or a lower scale." });
+    }, BUILD_LIMIT_MS);
     this.worker.postMessage({ ...job, id } satisfies IslandJob);
   }
   stop() {
+    this.clearWatchdog();
     this.worker?.terminate();
     this.worker = null;
     this.busy = false;
+  }
+  private clearWatchdog() {
+    if (this.watchdog !== null) clearTimeout(this.watchdog);
+    this.watchdog = null;
   }
 }
 

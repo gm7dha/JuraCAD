@@ -30,6 +30,7 @@ import { formatGridRef, gridToLatLon, parseGridRef } from "../src/terrain/osGrid
 import { PEAKS } from "../src/terrain/peaks";
 import { FILAMENT, plate3mf, plateFiles, platesFor } from "../src/terrain/puzzle3mf";
 import { triangulate, type P2 } from "../src/terrain/triangulate";
+import { outlineSegs, SegGrid, segSegDist, segsCross } from "./support/outlineGeom";
 
 describe("OS grid references", () => {
   it("reads letters and digits, and plain eastings/northings", () => {
@@ -396,4 +397,86 @@ describe("Mountain puzzle", () => {
     expect(text).toContain("3D/3dmodel.model");
     expect(text).toContain("Metadata/model_settings.config");
   });
+});
+
+describe("Mountain puzzle: every piece held", () => {
+  const ridge = gridFrom({ e: 200000, n: 770000 }, W, H, 20, (e, n) => 200 + 700 * Math.exp(-(((n - 771500) / 500) ** 2)) * (0.6 + 0.4 * Math.sin(e / 400)));
+  const rugged = gridFrom({ e: 200000, n: 770000 }, W, H, 20, (e, n) => 150 + 500 * (1 + Math.sin(e / 230) * Math.cos(n / 310)) + 300 * Math.exp(-(((e - 202500) / 600) ** 2 + ((n - 770900) / 600) ** 2)));
+  for (const [name, grid, seed, cube, fit] of [
+    ["hill", hill, 1, 30, 0.15],
+    ["ridge", ridge, 2, 30, 0.15],
+    ["rugged", rugged, 3, 25, 0.1],
+    ["rugged", rugged, 1, 30, 0.1],
+    ["rugged", rugged, 2, 30, 0.15],
+  ] as const)
+    it(`dovetails every piece to those beside it at its level, top pieces too, keeping the gap (${name}, cube ${cube}, fit ${fit}, pattern ${seed})`, () => {
+      const p = makeMountainPuzzle(grid, W, H, { ...SPEC, seed, cube, fit });
+      const at = new Map(p.pieces.map((q) => [`${q.col},${q.row},${q.layer}`, q]));
+      const foot = new Map(p.pieces.map((q) => [q, outlineSegs(q.bodies[0], q.z0)]));
+      let [topTabs, few] = [0, 0];
+      for (const q of p.pieces) {
+        // Every side shared with a piece at its level has a dovetail.
+        expect(q.joints).toBe(q.neighbours);
+        if (q.layer > 0 && q.joints! < 2) few++;
+        // And each really is there: on every such side, one of the two reaches into the other's square.
+        let seen = 0;
+        for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const o = at.get(`${q.col + dc},${q.row + dr},${q.layer}`);
+          if (!o || o.top !== q.top || o.z0 !== q.z0) continue;
+          const into = (a: typeof q, b: typeof q) => a.outline.some(([x, y]) => x > b.col * cube + 1 && x < (b.col + 1) * cube - 1 && y > b.row * cube + 1 && y < (b.row + 1) * cube - 1);
+          if (into(q, o) || into(o, q)) seen++;
+          if (q.top) {
+            // The printed footprints keep the whole fit gap: they never cross, nor come nearer than 2 × fit.
+            const [A, B] = [foot.get(q)!, foot.get(o)!];
+            const G = new SegGrid(B, 1);
+            let nearest = Infinity;
+            for (const s of A)
+              for (const k of G.near((s[0] + s[2]) / 2, (s[1] + s[3]) / 2, 1 + Math.hypot(s[2] - s[0], s[3] - s[1]) / 2)) {
+                expect(segsCross(s, G.segs[k]), `${q.name} crosses ${o.name}`).toBe(false);
+                nearest = Math.min(nearest, segSegDist(s, G.segs[k]));
+              }
+            expect(nearest, `${q.name} beside ${o.name}`).toBeGreaterThan(2 * fit - 0.005);
+          }
+        }
+        expect(seen, q.name).toBe(q.neighbours);
+        if (q.top) topTabs += q.joints!;
+        for (const b of q.bodies) {
+          const c = closed(b);
+          expect(c.open, `${q.name} ${b.part}`).toBe(0);
+          expect(c.volume, `${q.name} ${b.part}`).toBeGreaterThan(0);
+        }
+      }
+      // Top pieces are dovetailed now (they used to be plain squares held only by their key).
+      expect(topTabs).toBeGreaterThan(0);
+      // Their tops follow the ground: every upward triangle's middle within 0.2 mm of it (snow cut flat at its line). Not
+      // where the test's height grid itself ends (the area runs a little past it, held level there: a kink in the ground).
+      const spec = { ...SPEC, seed, cube, fit };
+      const L = p.layout;
+      const ground = (x: number, y: number) => baseFor(spec) + (heightAt(grid, L.e0 + x / L.k, L.n0 + y / L.k) - L.low) * L.k * spec.exaggeration;
+      let worst = 0;
+      for (const q of p.pieces) {
+        if (!q.top || q.outline.length === 4) continue;
+        for (const b of q.bodies) {
+          const v = b.vertices;
+          for (let t = 0; t < b.triangles.length; t += 3) {
+            const [i, j, k] = [b.triangles[t] * 3, b.triangles[t + 1] * 3, b.triangles[t + 2] * 3];
+            const [ux, uy, wx, wy] = [v[j] - v[i], v[j + 1] - v[i + 1], v[k] - v[i], v[k + 1] - v[i + 1]];
+            if (ux * wy - uy * wx <= 1e-9) continue; // not facing up (walls, underside, snow's underside)
+            const [x, y, z] = [(v[i] + v[j] + v[k]) / 3, (v[i + 1] + v[j + 1] + v[k + 1]) / 3, (v[i + 2] + v[j + 2] + v[k + 2]) / 3];
+            if (Math.min(v[i + 2], v[j + 2], v[k + 2]) <= q.z0 + 1e-9) continue;
+            const edges = [(grid.e0 - L.e0) * L.k, (grid.e0 + (grid.nx - 1) * grid.spacing - L.e0) * L.k];
+            const sides = [(grid.n0 - L.n0) * L.k, (grid.n0 + (grid.ny - 1) * grid.spacing - L.n0) * L.k];
+            if (edges.some((e) => Math.abs(x - e) < 2) || sides.some((e) => Math.abs(y - e) < 2)) continue;
+            const want = ground(x, y);
+            // A rock triangle under the snow line is cut flat there.
+            if (b.part === "rock" && z < want - 1e-6 && Math.abs(z - p.snowZ) < 1e-6) continue;
+            worst = Math.max(worst, Math.abs(z - want));
+          }
+        }
+      }
+      expect(worst, "ground off by").toBeLessThan(0.2);
+      // Pieces where fewer than two are possible are counted in a warning.
+      if (few) expect(p.warnings.join(" ")).toContain(`${few} ${few === 1 ? "piece has" : "pieces have"} fewer than two dovetails`);
+      else expect(p.warnings.join(" ")).not.toMatch(/fewer than two dovetails/);
+    });
 });
