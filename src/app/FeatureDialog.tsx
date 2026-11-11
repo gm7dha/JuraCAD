@@ -1719,11 +1719,33 @@ function PatternItemsBox() {
   const of = mirror ? draft.mirror?.of : draft.pattern?.of;
   if (!of) return null;
   const nameOf = (id: string) => parts.find((p) => p.id === id)?.name ?? "(missing part)";
-  const active = mirror ? draft.mirror?.picking === "faces" : draft.type === "curvePattern" || draft.pattern?.picking === "items";
+  const active = mirror ? draft.mirror?.picking === "faces" : draft.pattern?.picking === "items";
   const activate = () => {
     if (mirror && draft.mirror) setDraftField({ mirror: { ...draft.mirror, picking: "faces" } });
     else if (draft.pattern) setDraftField({ pattern: { ...draft.pattern, picking: "items" } });
   };
+  // Finished picking: the copies are shown (while picking, the parts are shown as they were before this feature).
+  const done = active ? (
+    <button
+      type="button"
+      className="text-button small-text"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (mirror && draft.mirror) {
+          const { picking: _p, ...rest } = draft.mirror;
+          setDraftField({ mirror: rest });
+        } else if (draft.pattern) {
+          const { picking: _p, ...rest } = draft.pattern;
+          setDraftField({ pattern: rest });
+        }
+      }}
+      title="Stop picking and show the copies"
+    >
+      Done — show the copies
+    </button>
+  ) : (
+    <p className="muted small field-note">Click this box to pick more (the parts are shown as they were before this feature while you pick).</p>
+  );
   if (of === "part") {
     const ids = draft.pattern?.parts ?? [];
     return (
@@ -1751,6 +1773,7 @@ function PatternItemsBox() {
           </ul>
         ) : null}
         <p className="dialog-hint pick-hint">Click the parts to repeat, in the 3D view or the Parts list (click one again to leave it out). Each copy is a new part.</p>
+        {done}
       </fieldset>
     );
   }
@@ -1781,6 +1804,7 @@ function PatternItemsBox() {
       <p className="dialog-hint pick-hint">
         Click every face of the boss, pocket or hole — its sides as well as its top or floor (click one again to leave it out). A boss's copies are added to the part; a pocket's or hole's are cut. It must sit on a flat face.
       </p>
+      {done}
     </fieldset>
   );
 }
@@ -2237,6 +2261,9 @@ function CompositeOptions() {
       ) : null}
       <p className="dialog-hint pick-hint">
         Click two or more parts, in the 3D view or the Parts list (click one again to leave it out). They become one part — picked, coloured, exported and put in assemblies together — but stay separate pieces inside.
+      </p>
+      <p className="muted small field-note">
+        Assemblies, drawings and later features that use these parts on their own will need the composite part instead (the parts aren&apos;t there separately any more).
       </p>
     </fieldset>
   );

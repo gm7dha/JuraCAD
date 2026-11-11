@@ -62,6 +62,8 @@ describe("pattern types and composite parts in the Claude extension", () => {
     const parts = s.build().parts;
     expect(parts).toHaveLength(1);
     expect(parts[0].members?.map((m) => m.name)).toEqual(["Part 1", "Part 2"]);
+    // Export for laser gives every part of the composite as its own panel.
+    expect(await ok(s, "export_for_laser", { parts: [parts[0].name], filename: "panels" })).toMatch(/2 pieces/);
     // Plain problems.
     const r = await callTool(s, "add_feature", { type: "linear_pattern", parts: ["Part 1"], features: ["Hole"], count: 2, spacing: 5 });
     expect(r.isError).toBe(true);

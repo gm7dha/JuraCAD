@@ -293,6 +293,32 @@ export function convertPreview(features: Feature[], draft: Feature | null): Feat
   return [...features.slice(0, at), { ...features[at], sheetConvertCheck: true }];
 }
 
+/**
+ * Is the open feature picking whole parts or faces right now (a Composite part,
+ * or a part/face pattern or face mirror whose parts/faces box is the active one)?
+ * Then the parts are shown as they were before it (`pickingPreview`), so the real
+ * parts are clicked — never the copies it makes — and a picked one can be clicked
+ * again to leave it out.
+ */
+export function picksPartsBefore(draft: Feature | null): boolean {
+  if (!draft) return false;
+  if (draft.type === "composite") return true;
+  if (draft.pattern?.of && draft.pattern.picking === "items") return true;
+  return draft.mirror?.of === "face" && draft.mirror.picking === "faces";
+}
+
+/** What the engine builds while `picksPartsBefore`: the features before the open one (it's left out). */
+export function pickingPreview(features: Feature[], draft: Feature | null): Feature[] {
+  if (!draft || !picksPartsBefore(draft)) return features;
+  const at = features.findIndex((f) => f.id === draft.id);
+  return at < 0 ? features : features.slice(0, at);
+}
+
+/** Is this part made by the open feature itself (a copy it makes, or the composite)? */
+export function madeByDraft(partId: string, draftId: string): boolean {
+  return partId === draftId || partId.startsWith(`${draftId}~`);
+}
+
 export function featuresWithDraft(features: Feature[], draft: Feature | null): Feature[] {
   if (!draft) return features;
   return features.some((f) => f.id === draft.id)

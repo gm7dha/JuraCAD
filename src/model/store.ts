@@ -11,6 +11,7 @@ import {
   newId,
   commit,
   createFeature,
+  madeByDraft,
   emptyDocument,
   historyOf,
   redo as redoHistory,
@@ -1233,7 +1234,13 @@ export const useStore = create<AppState>((set, get) => {
         return { editing: { ...s.editing, draft: { ...s.editing.draft, picks: next } } };
       }),
 
-    toggleDraftPart: (partId) =>
+    toggleDraftPart: (partId) => {
+      const d0 = get().editing?.draft;
+      // Never a part the open feature makes itself (a copy or the composite): it would use itself.
+      if (d0 && (d0.type === "composite" || d0.pattern?.of === "part") && madeByDraft(partId, d0.id)) {
+        get().showToast(`That part is made by ${d0.name} itself. Click one of the parts made before it.`, "info");
+        return;
+      }
       set((s) => {
         const d = s.editing?.draft;
         if (!s.editing || !d) return {};
@@ -1241,7 +1248,8 @@ export const useStore = create<AppState>((set, get) => {
         if (d.type === "composite") return { editing: { ...s.editing, draft: { ...d, compositeParts: toggle(d.compositeParts ?? []) } } };
         if (d.pattern?.of === "part") return { editing: { ...s.editing, draft: { ...d, pattern: { ...d.pattern, parts: toggle(d.pattern.parts ?? []), picking: "items" } } } };
         return {};
-      }),
+      });
+    },
 
     toggleDraftSource: (featureId) =>
       set((s) => {

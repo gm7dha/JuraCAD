@@ -137,6 +137,18 @@ describe("face pattern and face mirror", () => {
     expect(volumes()[plate.id]).toBeCloseTo(8000 + 2 * Math.PI * 9 * 5, 2);
   });
 
+  it("notes copies that change nothing", () => {
+    const plate = base();
+    const hole = feature("cylinder", { diameter: 6, height: 10, x: 10, y: 10 }, "remove");
+    const part = build([plate, hole]).parts[0];
+    const picks = facePicks(part, (f) => f.surface === "CYLINDRE");
+    // Copy 3 is past the end of the plate (60 mm long): it cuts nothing.
+    const pat: Feature = { ...linear({ count: 3, spacing: 30 }, { of: "face" }), picks };
+    const r = build([plate, hole, pat]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.featureWarnings?.[pat.id]).toMatch(/Copy 3 doesn't reach/);
+  });
+
   it("refuses a copy that would float off the part, and faces that don't close up", () => {
     const plate = base();
     const boss = feature("cylinder", { diameter: 6, height: 5, x: 10, y: 10, z: 10 }, "add");
@@ -207,5 +219,29 @@ describe("composite part", () => {
     expect(r.featureErrors).toEqual({});
     expect(r.parts).toHaveLength(2);
     expect(r.parts[1].members).toHaveLength(2);
+    // Copies' member ids never use "/" (assembly keys do).
+    expect(r.parts[1].members!.every((m) => !m.id.includes("/") && m.id.includes("#"))).toBe(true);
+  });
+
+  it("lists its pieces again once a later feature joins its parts", () => {
+    const a = feature("box", { width: 10, depth: 10, height: 10 });
+    const b = feature("box", { width: 10, depth: 10, height: 10, x: 20 });
+    const comp: Feature = { ...feature("composite", {}), compositeParts: [a.id, b.id] };
+    // An old-style Add goes onto the latest part — the composite — and bridges its two boxes.
+    const bridge = feature("box", { width: 30, depth: 4, height: 4, x: 0, y: 3, z: 3 }, "add");
+    const r = build([a, b, comp, bridge]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.parts).toHaveLength(1);
+    expect(r.parts[0].members).toEqual([{ id: `${comp.id}#piece1`, name: `${comp.name} piece 1` }]);
+  });
+
+  it("is cut for laser as one panel per part", () => {
+    const a = feature("box", { width: 40, depth: 30, height: 3 });
+    const b = feature("box", { width: 20, depth: 20, height: 3, x: 50 });
+    const comp: Feature = { ...feature("composite", {}), compositeParts: [a.id, b.id] };
+    build([a, b, comp]);
+    const outlines = engine.laserOutlines([{ kind: "part", partId: comp.id }]);
+    expect(outlines.map((o) => (o.ok ? o.name : o.error))).toEqual(["Part 1", "Part 2"]);
+    expect(outlines.every((o) => o.ok && o.wires.length === 1)).toBe(true);
   });
 });

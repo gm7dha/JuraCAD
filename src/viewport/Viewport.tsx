@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { indexOfRef, type TopoPick } from "../geometry/topoRef";
 import { isPatternFeature, isPickFeature } from "../model/features";
+import { madeByDraft } from "../model/document";
 import { planeVisible, sketchVisible, usedSketches } from "../model/visibility";
 import { activeAssembly, activeDrawing, activeFeatures, activeHiddenDatums, activeStudioId, pickFor, studioParts, useStore, type SelectionItem } from "../model/store";
 import { ghostParts } from "../app/versionActions";
@@ -474,6 +475,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     // A face mirror picking its faces: a click on the part picks (or drops) a face.
     if (m.of === "face" && m.picking === "faces" && target?.kind === "part") {
       if (target.item.kind !== "face") return s.showToast("Click the faces of the boss or pocket to mirror (not an edge).");
+      if (madeByDraft(target.item.partId, s.editing.draft.id)) return s.showToast("That's a copy this mirror makes. Click the faces on the part as it was before it.");
       const pick = pickFor(s.parts, target.item);
       if (pick) s.toggleDraftPick(pick);
       return;
@@ -498,11 +500,12 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   // face or a sketch line) of a linear pattern, or the axis (a round face or edge, a straight edge or a sketch line) of a circular one.
   if (s.editing && isPatternFeature(s.editing.draft.type)) {
     const d = s.editing.draft;
-    // Part and face patterns: while the parts / faces box is the one picking (always for a curve pattern), a click picks them.
-    if (d.pattern?.of && (d.pattern.picking === "items" || d.type === "curvePattern")) {
+    // Part and face patterns: while the parts / faces box is the one picking, a click picks them.
+    if (d.pattern?.of && d.pattern.picking === "items") {
       if (target?.kind !== "part") return;
       if (d.pattern.of === "part") return s.toggleDraftPart(target.item.partId);
       if (target.item.kind !== "face") return s.showToast("Click the faces of the boss, pocket or hole to repeat (not an edge).");
+      if (madeByDraft(target.item.partId, d.id)) return s.showToast("That's a copy this pattern makes. Click the faces on the part as it was before it.");
       const pick = pickFor(s.parts, target.item);
       if (pick) s.toggleDraftPick(pick);
       return;
@@ -643,17 +646,17 @@ export function Viewport() {
   const shownParts = useStore(studioParts);
   const selection = useStore((s) => s.selection);
   // Whatever the open feature has picked (edges and faces) is shown highlighted.
-  const picks = useStore((s) =>
-    s.editing?.draft.picks
-      ? s.editing.draft.picks
-      : s.editing?.draft.extrude?.upTo && s.editing.draft.extrude.end.startsWith("upTo")
-        ? s.editing.draft.extrude.upTo
-        : // A mirror's clicked face, or a pattern's clicked direction (the rows' one while that's being picked).
-          s.editing?.draft.mirror?.planePick ??
-          (s.editing?.draft.pattern?.picking === "along2" ? s.editing.draft.pattern.along2 : s.editing?.draft.pattern?.along) ??
-          null,
+  const draftPicks = useStore((s) => s.editing?.draft.picks ?? null);
+  const upTo = useStore((s) => (s.editing?.draft.extrude?.upTo && s.editing.draft.extrude.end.startsWith("upTo") ? s.editing.draft.extrude.upTo : null));
+  // A mirror's clicked face, or a pattern's clicked direction (the rows' one while that's being picked) — shown
+  // together with faces picked for a face pattern or face mirror.
+  const reference = useStore(
+    (s) => s.editing?.draft.mirror?.planePick ?? (s.editing?.draft.pattern?.picking === "along2" ? s.editing.draft.pattern.along2 : s.editing?.draft.pattern?.along) ?? null,
   );
-  const pickList = useMemo(() => (picks ? (Array.isArray(picks) ? picks : [picks]) : null), [picks]);
+  const pickList = useMemo(() => {
+    const list = [...(draftPicks ?? []), ...(draftPicks ? [] : upTo ? [upTo] : []), ...(reference ? [reference] : [])];
+    return draftPicks || list.length ? list : null;
+  }, [draftPicks, upTo, reference]);
   const hiddenParts = useStore((s) => s.hiddenParts);
   const selectedPlane = useStore((s) => s.selectedPlane);
   const listHoverPlane = useStore((s) => s.listHoverPlane);
@@ -920,11 +923,11 @@ export function Viewport() {
             : mirrorFace
               ? connectorItems(parts, assembly, allAssemblies ?? [], [mirrorFace])
               : instanceSelection(display, asmSelection)
-          : picks
-            ? itemsForPicks(parts, pickList ?? [])
+          : pickList
+            ? itemsForPicks(parts, pickList)
             : selection,
       ),
-    [selection, picks, parts, assembly, display, asmSelection, mateDraft, allAssemblies, mirrorFace],
+    [selection, pickList, parts, assembly, display, asmSelection, mateDraft, allAssemblies, mirrorFace],
   );
   useEffect(
     () => viewportApi.current?.setDatums({ selected: selectedPlane, listHover: listHoverPlane, hidden: hiddenDatums }),

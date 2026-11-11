@@ -163,6 +163,8 @@ export interface PartCheck {
   thinnest: ThicknessEstimate | null;
   /** A surface (a skin with no inside), not a solid. */
   surface?: boolean;
+  /** A composite part: how many parts it groups (its separate pieces are meant). */
+  members?: number;
 }
 
 export interface CheckResult {

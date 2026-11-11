@@ -416,6 +416,20 @@ function planeCutEdges(shape: Shape3D | Face, frame: PlaneFrame, bounds: Bounds)
   }
 }
 
+/**
+ * A composite part's parts as it is now: as they were grouped while it still has
+ * one solid piece per part (in the same order); once later features have joined
+ * or split them, one entry per solid piece instead (ids "<composite>#piece<k>").
+ */
+function membersNow(p: BuiltPart): { id: string; name: string }[] {
+  const members = p.members ?? [];
+  const pieces = solidsOf(p.shape);
+  const n = pieces.length;
+  pieces.forEach((x) => x.delete());
+  if (n === members.length) return members.map((m) => ({ ...m }));
+  return Array.from({ length: n }, (_, i) => ({ id: `${p.id}#piece${i + 1}`, name: `${p.name} piece ${i + 1}` }));
+}
+
 function boundsOf(shape: Shape3D): Bounds {
   const box = shape.boundingBox;
   const b = box.bounds as Bounds;
@@ -4679,6 +4693,8 @@ export class GeometryEngine {
 
     // Where each copy goes (skipped copies are left out).
     const placements: ((s: Shape3D) => Shape3D)[] = [];
+    // Each placement's copy number (the original is 1), for notes about single copies.
+    const numbers: number[] = [];
     const skip = feature.pattern?.skip;
     // A direction or axis picked in the 3D view, found on the part as it is now.
     let along: { dir: Vec3; through: Vec3 } | null = null;
@@ -4753,6 +4769,7 @@ export class GeometryEngine {
               return turned.translate(move);
             });
           } else placements.push((s) => s.translate(move));
+          numbers.push(k + 1);
         }
       } else if (feature.type === "linearPattern") {
         // A grid when there's more than one row: rows of `count`, `count2` of them along the second direction.
@@ -4768,6 +4785,7 @@ export class GeometryEngine {
             const d = values.spacing * i * sign;
             const d2 = (values.spacing2 ?? 0) * j * sign2;
             placements.push((s) => s.translate([dir[0] * d + axis2[0] * d2, dir[1] * d + axis2[1] * d2, dir[2] * d + axis2[2] * d2]));
+            numbers.push(copyNumber(i, j, count));
           }
         }
       } else {
@@ -4776,13 +4794,17 @@ export class GeometryEngine {
         // The axis goes through (cx, cy, cz) — the origin unless moved.
         const through: Vec3 = along?.through ?? [values.cx ?? 0, values.cy ?? 0, values.cz ?? 0];
         const turnAxis = along?.dir ?? axis;
-        for (let i = 1; i < count; i++) if (!isSkipped(skip, i + 1)) placements.push((s) => s.rotate(step * i * sign, through, turnAxis));
+        for (let i = 1; i < count; i++)
+          if (!isSkipped(skip, i + 1)) {
+            placements.push((s) => s.rotate(step * i * sign, through, turnAxis));
+            numbers.push(i + 1);
+          }
       }
     }
 
     if (placements.length === 0) return { error: "Every copy is skipped, so the pattern does nothing. Take some numbers out of Skip copies." };
     if (of === "part") return this.patternParts(feature, placements, partCounter);
-    if (of === "face") return this.patternFaces(feature, placements);
+    if (of === "face") return this.patternFaces(feature, placements, numbers);
 
     // Work on copies of the parts, and only keep them if everything succeeds.
     const working = new Map<string, Shape3D>();
@@ -4917,7 +4939,8 @@ export class GeometryEngine {
               featureIds: [feature.id],
               shape,
               // A copy of a composite part is a composite of copies of its parts.
-              ...(part.members?.length ? { members: part.members.map((m) => ({ id: `${id}/${m.id}`, name: m.name })) } : {}),
+              // ("#" never appears in part ids or assembly keys.)
+              ...(part.members?.length ? { members: part.members.map((m) => ({ id: `${id}#${m.id}`, name: m.name })) } : {}),
             });
           }
         }
@@ -4935,7 +4958,7 @@ export class GeometryEngine {
    * pocket or hole the picked faces bound (see facePattern.ts) is copied to
    * every place on the same part — added for a boss, cut for a pocket or hole.
    */
-  private patternFaces(feature: Feature, placements: ((s: Shape3D) => Shape3D)[]): { error?: string } {
+  private patternFaces(feature: Feature, placements: ((s: Shape3D) => Shape3D)[], numbers: number[] = []): { error?: string } {
     const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "face");
     const verb = feature.type === "mirror" ? "mirror" : "repeat";
     if (!picks.length) return { error: `Click the faces to ${verb} — for example the side and top of a boss, or the walls and floor of a pocket or hole.` };
@@ -4964,8 +4987,11 @@ export class GeometryEngine {
     };
     const before = count(part.shape);
     let shape = part.shape.clone();
+    // Copies that change nothing (a hole's copy off the part, a boss's copy landing inside it): told in a note.
+    const idle: string[] = [];
     try {
-      for (const place of placements) {
+      let volume = measureVolume(shape);
+      for (const [k, place] of placements.entries()) {
         const copy = place(region.tool.clone());
         try {
           const next = region.operation === "remove" ? shape.cut(copy) : shape.fuse(copy);
@@ -4974,6 +5000,9 @@ export class GeometryEngine {
         } finally {
           copy.delete();
         }
+        const now = measureVolume(shape);
+        if (Math.abs(now - volume) < 1e-4) idle.push(feature.type === "mirror" ? "the mirror image" : `copy ${numbers[k] ?? k + 2}`);
+        volume = now;
       }
     } catch (e) {
       shape.delete();
@@ -4993,6 +5022,11 @@ export class GeometryEngine {
     part.shape.delete();
     part.shape = shape;
     if (!part.featureIds.includes(feature.id)) part.featureIds.push(feature.id);
+    if (idle.length) {
+      const which = idle.length === 1 ? idle[0][0].toUpperCase() + idle[0].slice(1) : `${idle.slice(0, -1).join(", ")} and ${idle.at(-1)}`.replace(/^./, (c) => c.toUpperCase());
+      const does = region.operation === "remove" ? `${idle.length === 1 ? "doesn't" : "don't"} reach ${part.name}, so ${idle.length === 1 ? "it cuts" : "they cut"} nothing` : `${idle.length === 1 ? "lands" : "land"} inside ${part.name}, so ${idle.length === 1 ? "it adds" : "they add"} nothing`;
+      this.warnings[feature.id] = `${which} ${does}. Check the ${feature.type === "mirror" ? "mirror plane" : "direction, spacing and number of copies"}.`;
+    }
     return {};
   }
 
@@ -5436,7 +5470,7 @@ export class GeometryEngine {
         geometryValid = geometrySound(geometryValid, exactVolume, !!p.surface);
         // Measuring wall thickness only makes sense on a closed surface.
         const thinnest = mesh.watertight && !p.surface ? estimateThickness(m.vertices, m.triangles) : null;
-        return { partId: p.id, name: p.name, geometryValid, exactVolume, mesh, thinnest, ...(p.surface ? { surface: true } : {}) };
+        return { partId: p.id, name: p.name, geometryValid, exactVolume, mesh, thinnest, ...(p.surface ? { surface: true } : {}), ...(p.members?.length ? { members: p.members.length } : {}) };
       }),
     };
   }
@@ -5885,7 +5919,7 @@ export class GeometryEngine {
    * problem with one (a curved face) comes back as a plain-English error for it.
    */
   laserOutlines(sources: LaserSource[]): LaserOutline[] {
-    return sources.map((src): LaserOutline => {
+    return sources.flatMap((src): LaserOutline | LaserOutline[] => {
       const part = this.parts.find((p) => p.id === (src.kind === "face" ? src.pick.partId : src.partId));
       if (!part) return { ok: false, error: "That part isn't there any more." };
       try {
@@ -5903,6 +5937,25 @@ export class GeometryEngine {
             return { ok: true, name: `${part.name} flat pattern`, partId: part.id, wires: [edges], bends: flat?.bendLines ?? [] };
           } finally {
             unfolded.delete();
+          }
+        }
+        if (src.kind === "part" && part.members?.length) {
+          // A composite part: each of its pieces is a panel of its own (named after its part while they still match).
+          const pieces = solidsOf(part.shape);
+          const names = membersNow(part).map((m) => m.name);
+          try {
+            return pieces.map((piece, i): LaserOutline => {
+              const name = names[i] ?? `${part.name} piece ${i + 1}`;
+              const found = biggestFlatFace(piece, src.toward);
+              if (!found) return { ok: false, partId: part.id, error: `${name} (in ${part.name}) has no flat face to cut round.` };
+              try {
+                return { ok: true, name, partId: part.id, wires: faceWires(found.face, faceFrame(found.normal)) };
+              } finally {
+                found.face.delete();
+              }
+            });
+          } finally {
+            pieces.forEach((x) => x.delete());
           }
         }
         if (src.kind === "part") {
@@ -6113,7 +6166,7 @@ export class GeometryEngine {
         volume = null;
       }
     }
-    return { ...mesh, ...(flat ? { flat } : {}), ...(p.surface ? { surface: true } : {}), ...(p.members?.length ? { members: p.members.map((m) => ({ ...m })) } : {}), ...(volume !== null && Number.isFinite(volume) && volume > 0 ? { volume } : {}) };
+    return { ...mesh, ...(flat ? { flat } : {}), ...(p.surface ? { surface: true } : {}), ...(p.members?.length ? { members: membersNow(p) } : {}), ...(volume !== null && Number.isFinite(volume) && volume > 0 ? { volume } : {}) };
   }
 
   /** A sheet metal part's flat pattern (null for other parts, or if it can't be unfolded). */

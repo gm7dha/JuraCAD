@@ -90,7 +90,10 @@ export function reportPart(p: PartCheck): PartReport {
   else if (p.geometryValid === false)
     findings.push({ level: "warn", text: "OpenCascade reported a geometry problem — check the exported file carefully" });
 
-  if (m.pieces > 1) {
+  if (p.members && m.pieces > 1) {
+    // A composite part is meant to be several pieces.
+    findings.push({ level: "ok", text: `A composite part of ${plural(p.members, "part")} (${m.pieces} separate pieces, made as one item)` });
+  } else if (m.pieces > 1) {
     findings.push({ level: "warn", text: `Is in ${m.pieces} separate pieces — they'll be made as separate objects` });
   } else if (m.pieces === 1) {
     findings.push({ level: "ok", text: "One solid piece" });

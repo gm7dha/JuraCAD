@@ -1,4 +1,4 @@
-import { convertPreview, featuresToBuild, featuresWithDraft, previewFeatures, previewOf } from "../model/document";
+import { convertPreview, featuresToBuild, featuresWithDraft, pickingPreview, previewFeatures, previewOf } from "../model/document";
 import { resolveVariables } from "../model/variables";
 import { useStore } from "../model/store";
 import { keepInBrowser, keepProblem, OTHER_TAB, STORAGE_KEY, VERSIONS_KEY, type Kept } from "../model/browserKeep";
@@ -27,11 +27,12 @@ function currentStudios(): StudioInput[] {
   return [...studiosOf(s.history.present).map((st) => ({ ...st, features: featuresForEngine(st.features) })).map((st) => ({
     id: st.id,
     features: convertPreview(
-      st.id === here && s.rollbackTo
+      // Picking parts or faces for the open feature: shown as they were before it (see pickingPreview).
+      pickingPreview(st.id === here && s.rollbackTo
         ? featuresToBuild(st.id === editingIn ? previewFeatures(st.features) : st.features, st.id === editingIn ? featureForEngine(previewOf(s.editing?.draft ?? null)) : null, s.rollbackTo)
         : st.id === editingIn
           ? featuresWithDraft(previewFeatures(st.features), featureForEngine(previewOf(s.editing?.draft ?? null)))
-          : st.features,
+          : st.features, st.id === editingIn ? s.editing?.draft ?? null : null),
       st.id === editingIn ? s.editing?.draft ?? null : null,
     ),
   })), ...configuredStudios(s.history.present), ...versionStudios(s.versionCompare)];

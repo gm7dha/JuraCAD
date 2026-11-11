@@ -156,7 +156,7 @@ function usesOf(f: Feature): Uses {
   }
   if (f.deleteParts?.length) lists.push({ what: "part it deletes", many: "parts it deletes", parts: f.deleteParts });
   if (f.simplifyParts?.length) lists.push({ what: "part it tidies", many: "parts it tidies", parts: f.simplifyParts });
-  if (f.compositeParts?.length) lists.push({ what: "part it groups", many: "parts it groups", parts: f.compositeParts });
+  if (f.compositeParts?.length) lists.push({ what: "part it groups", many: "parts it groups", parts: f.compositeParts, least: 2 });
   if (f.moreAreas?.length) optional.push({ what: "extra sketch it takes areas from", many: "extra sketches it takes areas from", features: f.moreAreas.map((m) => m.sketch) });
   if (f.sketch) {
     const links = sketchLinks(f.sketch.data);

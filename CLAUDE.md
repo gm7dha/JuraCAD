@@ -462,20 +462,25 @@
 - Pattern types and Composite part (Onshape's): Linear/Circular/Curve pattern `pattern.of` ("part" | "face"; missing =
   features, `sources`, exactly as before) and Mirror `mirror.of` "face" (beside `part` = whole part). Part: `pattern.parts`,
   each copy a new part (`patternParts` in engine.ts: ids `<feature>`, `~2`…, solids "Part N" numbered on, surfaces
-  "<name> (copy k)", a composite's copies keep `members`; threads not copied; sheet metal refused). Face: faces of one part in
+  "<name> (copy k)", a composite's copies keep `members` (ids "<copy>#<member>" — never "/", assembly keys use it); threads not copied; sheet metal refused). Face: faces of one part in
   `Feature.picks` (parsed only when `of` is "face") → `src/kernel/facePattern.ts` `regionOfFaces`: the faces' open rim
   (edges only one picked face uses) chained into loops, each capped flat (a rim that isn't flat is refused in plain words),
   made a solid; inside the part = a boss (copies fused; a copy that would float off is refused), outside = a pocket/hole
-  (copies cut); half and half refused. `patternFaces` does both patterns and face mirrors (same placements). Dialog: Parts /
+  (copies cut); half and half refused. `patternFaces` does both patterns and face mirrors (same placements; copy numbers
+  ride along as `numbers`); a copy that changes no volume gets a `featureWarnings` note ("Copy 3 doesn't reach Part 1…"). Dialog: Parts /
   Features / Faces segmented choice (mirror: Whole part / Features / Faces), `PatternItemsBox` takes view clicks while
-  `pattern.picking === "items"` (always for a curve pattern) / `mirror.picking === "faces"` (not saved); Parts list clicks
-  go to `toggleDraftPart`; starting a pattern with parts / faces selected picks them (store startCreate). Composite part:
+  `pattern.picking === "items"` / `mirror.picking === "faces"` (not saved; "Done — show the copies" stops it). While picking
+  (and always for an open Composite part), `picksPartsBefore` → connect.ts builds `pickingPreview` (the features before it),
+  so the real parts are clicked and lit (the Viewport's part highlight); `madeByDraft` refuses its own copies anyway. Parts
+  list clicks go to `toggleDraftPart`; the view shows picked faces together with the mirror plane / pattern direction; starting a pattern with parts / faces selected picks them (store startCreate). Composite part:
   feature "composite", `compositeParts` (≥ 2 solid parts; Toolbar next to Delete part, Parts list's several-parts menu) →
   `applyComposite`: the members are taken out and one part with id = the feature's, name = its name, shape = a compound of
   theirs (separate solids inside), their featureIds/threads, `BuiltPart.members` → `PartMesh.members` (listed under it in
-  the Parts list, renamed by partNames) is put at the end; so selection, colour, exports, assemblies treat it as one. Only
+  the Parts list, renamed by partNames; `membersNow`: once later features join or split its solids, one "<name> piece k"
+  entry per solid instead) is put at the end; Export for laser of it gives one panel per solid (named after its parts);
+  the check report calls its pieces fine (`PartCheck.members`); so selection, colour, exports, assemblies treat it as one. Only
   "closed" composites (members aren't selectable on their own). Dependents: part lists for `pattern.parts` /
-  `compositeParts` (`withoutGone` drops gone ones). Claude: linear/circular_pattern `parts` | `faces` (+ `part`) | `features`,
+  `compositeParts` (least 2, as a union; `withoutGone` drops gone ones). Claude: linear/circular_pattern `parts` | `faces` (+ `part`) | `features`,
   `skip`; mirror `faces` (+ `part`); `composite_part` `parts`. Tests: tests/patternTypes (pure), enginePartPattern (counts,
   ids, names, skip, boss/hole/pocket by faces, face mirror, composite export/assembly), mcpPatternTypes.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
