@@ -1015,16 +1015,19 @@ try {
       return { names: fs.map((f) => f.name), sketch: sk.name, extrude: ex?.name, extrudeId: ex?.id, filletOn: (fillet?.picks ?? []).map((p) => p.partId.split(/[~@]/)[0]), steps: st.history.past.length };
     });
     if (!before.extrude) throw new Error(`no extrude uses ${before.sketch}`);
-    // Round the extruded part's top face too (Fillet 2), so it's sketch → extrude → fillet.
+    // Round one straight edge of the extruded part too (Fillet 2), so it's sketch → extrude → fillet.
     await page.keyboard.press("Escape");
-    const top = await page.evaluate((id) => {
+    const edgeAt = await page.evaluate((id) => {
       const v = window.juracadViewport.current;
-      const p = v.shownParts().find((x) => x.id === id);
-      const i = p ? p.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99) : -1;
-      return i >= 0 ? v.screenPointOnFace(p.id, i) : null;
+      for (let i = 0; i < 400; i++) {
+        const at = v.screenPointOnEdge(id, i);
+        if (!at) break;
+        if (v.pickKindAt(at.x, at.y) === "edge:LINE" && v.pickPartAt(at.x, at.y) === id) return at;
+      }
+      return null;
     }, before.extrudeId);
-    if (!top) throw new Error(`couldn't find the top face of ${before.extrude}'s part on screen`);
-    await page.locator(".viewport-canvas").click({ position: top });
+    if (!edgeAt) throw new Error(`couldn't find a straight edge of ${before.extrude}'s part to click`);
+    await page.locator(".viewport-canvas").click({ position: edgeAt });
     await page.waitForTimeout(300);
     await page.keyboard.press("Shift+KeyF");
     await page.waitForSelector(".feature-dialog .pick-list li", { timeout: 5_000 });
