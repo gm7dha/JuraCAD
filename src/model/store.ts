@@ -67,6 +67,7 @@ import { hiddenDatumsOf, keepVisibility, setAllPlanesVisible, setAllSketchesVisi
 import { settlePrintedFit } from "./printSettings";
 import { addStudio, firstStudioId, MAIN_STUDIO, inStudio, moveStudio, renameStudio, studioExists, studioFeatures, studioName, studioView } from "./studios";
 import { deleteStudio, studioInUse, studioUsers } from "./studioUse";
+import { deleteFeatures as deleteFeaturesIn, findDependents } from "./dependents";
 import { designOf, withVersionsOf } from "./versions";
 import { newKeepId, readKept } from "./browserKeep";
 
@@ -409,6 +410,15 @@ export interface AppState {
    */
   suppressThenFinish: (ids: string[], commit: boolean) => void;
   deleteFeature: (id: string) => void;
+  /**
+   * The Delete question open over the feature list (Onshape's Delete dialog):
+   * the features picked, and whether it came from "Delete with dependents…"
+   * (else from the Delete key, on a feature others use). Null = closed.
+   */
+  deleteAsk: { ids: string[]; from: "menu" | "key" } | null;
+  askDelete: (ask: { ids: string[]; from: "menu" | "key" } | null) => void;
+  /** Delete features of the Part Studio on show, with every later feature that uses them (see model/dependents.ts) unless `justThese`. One undo step; returns how many went. */
+  deleteFeatures: (ids: string[], justThese?: boolean) => number;
   /** Roll the Part Studio back to just after a feature (null = roll to the end). */
   setRollback: (id: string | null) => void;
   /** Move a feature to just before another (null = the end), if what it uses stays above it. One undo step. */
@@ -1291,6 +1301,36 @@ export const useStore = create<AppState>((set, get) => {
         editing: s.editing?.draft.id === id ? null : s.editing,
         sketch: s.editing?.draft.id === id ? null : s.sketch,
       }));
+    },
+
+    deleteAsk: null,
+    askDelete: (deleteAsk) => set({ deleteAsk }),
+    deleteFeatures: (ids, justThese = false) => {
+      const features = activeFeatures(get());
+      const plan = findDependents(features, ids);
+      const going = new Set(justThese ? plan.picked : plan.going);
+      set({ deleteAsk: null });
+      if (!going.size) return 0;
+      // A rollback bar on a feature that goes moves up to the nearest earlier one that stays (the end if that's the last).
+      const bar = get().rollbackTo;
+      let rollbackTo = bar;
+      if (bar && going.has(bar)) {
+        const left = features.filter((f) => !going.has(f.id));
+        const at = features.findIndex((f) => f.id === bar);
+        const keep = features.slice(0, at).reverse().find((f) => !going.has(f.id));
+        rollbackTo = keep && keep.id !== left.at(-1)?.id ? keep.id : null;
+      }
+      changeStudio((doc) => deleteFeaturesIn(doc, going, !justThese));
+      set((s) => {
+        const open = s.editing && going.has(s.editing.draft.id);
+        return {
+          selectedFeatureId: s.selectedFeatureId && going.has(s.selectedFeatureId) ? null : s.selectedFeatureId,
+          rollbackTo,
+          editing: open ? null : s.editing,
+          sketch: open ? null : s.sketch,
+        };
+      });
+      return going.size;
     },
 
     toggleSuppressed: (id) => {

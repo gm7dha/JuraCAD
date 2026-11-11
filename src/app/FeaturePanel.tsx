@@ -353,6 +353,7 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
         },
     "divider",
     { label: "Delete", action: () => deleteFeature(feature.id), danger: true },
+    { label: "Delete with dependents…", action: () => useStore.getState().askDelete({ ids: [feature.id], from: "menu" }), danger: true },
   ];
 
   return (
@@ -819,6 +820,7 @@ export function FeaturePanel() {
                 { label: "Unsuppress all", action: () => ids.forEach((id) => features.find((f) => f.id === id && f.suppressed) && useStore.getState().toggleSuppressed(id)) },
                 "divider",
                 { label: "Remove the folder (keep its features)", action: () => useStore.getState().setFeatureFolder(ids, null) },
+                { label: "Delete the folder's features with dependents…", action: () => useStore.getState().askDelete({ ids, from: "menu" }), danger: true },
               ];
               return [
                 <li key={key} className="feature-group feature-folder" role="treeitem" aria-expanded={!shut}>

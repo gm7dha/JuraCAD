@@ -8,6 +8,16 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.56 — Delete a sketch and everything that uses it, in one go
+
+- Right-click a feature → **Delete with dependents…**: a box lists exactly what will go ("Delete Sketch 2 and the 3
+  features that use it: Extrude 2, Fillet 1 and Hole 1?") with **Delete just this** or **Delete with the 3 features that
+  use it**. One undo step. Pressing Delete on a feature that others use asks the same (Enter keeps the old "just this").
+- Features that only lose part of what they use (a fillet over two parts, a pattern of two cuts) stay and are tidied so
+  they still build; the box says what they'll lose. Parts used in assemblies or drawings are named first.
+- For several features at once, put them in a folder and use the folder's right-click menu.
+- Claude can do the same (`delete_feature` with `with_dependents`).
+
 ## v0.55 — Six-piece burr: hard puzzles appear at once
 
 - Hard puzzles that took up to a minute (number 6) or several minutes (39, 42) to work out now take a second or two.
