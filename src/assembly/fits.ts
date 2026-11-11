@@ -19,7 +19,7 @@
 import type { ContactMeasure } from "../kernel/protocol";
 import type { Finding } from "../model/checkReport";
 import { DEFAULT_FITS, FIT_LABELS, FIT_NAMES, fitVariableName, type FitName, type PrintFits } from "../model/printSettings";
-import type { Assembly, IntendedFit, Mate } from "../model/types";
+import type { Assembly, Instance, IntendedFit, Mate } from "../model/types";
 import { formatLength } from "../model/units";
 
 /** mm: parts up to this far apart have their gap measured (and listed). */
@@ -320,7 +320,7 @@ export function copyPathName(asm: Assembly, assemblies: readonly Assembly[], key
   const names: string[] = [];
   let here: Assembly | undefined = asm;
   for (const id of key.split("/")) {
-    const inst = here?.instances.find((i) => i.id === id);
+    const inst: Instance | undefined = here?.instances.find((i) => i.id === id);
     if (!inst) return "A part";
     names.push(inst.name);
     here = inst.subAssembly ? assemblies.find((a) => a.id === inst.subAssembly) : undefined;
