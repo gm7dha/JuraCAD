@@ -38,7 +38,7 @@ import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolve
 import { setMirrorReference } from "./patternRefs";
 import { defaultAxis } from "../sketch/axis";
 import { areaSelectionLapses, followedSketch, freeAreas, selectionStart, type AreaSelection } from "../sketch/areaClicks";
-import type { Assembly, AssemblyPattern, ExplodeStep, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, JuraCADDocument, PartProperties, PlaneName, DatumName } from "./types";
+import type { Assembly, AssemblyPattern, ExplodeStep, IntendedFit, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, JuraCADDocument, PartProperties, PlaneName, DatumName } from "./types";
 import { boundsOfVertices } from "../assembly/assembly";
 import { nextPatternName, removePattern, syncPattern } from "../assembly/patterns";
 import { nextReplicateName, removeReplicate, replicateSource, syncReplicate } from "../assembly/replicate";
@@ -46,6 +46,7 @@ import { replicateHoles } from "../assembly/replicateHoles";
 import { makeGroup, removeGroup, renameGroup } from "../assembly/groups";
 import { duplicateInstances, placedBox, replaceInstancePart, type Box3 } from "../assembly/assembly";
 import { putExplodeStep, removeExplodeStep } from "../assembly/explode";
+import { putFit, removeFit } from "../assembly/fits";
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { ownSymmetry, subAssemblySymmetry } from "../assembly/symmetry";
 import { setFlexible } from "../assembly/flexible";
@@ -543,6 +544,9 @@ export interface AppState {
   addExplodeStep: () => void;
   updateExplodeStep: (id: string, patch: Partial<Omit<ExplodeStep, "id">>) => void;
   removeExplodeStep: (id: string) => void;
+  /** Mark two parts of the assembly on show as meant to fit (replaces any fit marked for the pair). */
+  setAssemblyFit: (fit: IntendedFit) => void;
+  removeAssemblyFit: (id: string) => void;
   setDragPreview: (change: DragChange | null) => void;
   setDrawingTool: (tool: DrawingTool) => void;
   selectDim: (id: string | null) => void;
@@ -1831,6 +1835,14 @@ export const useStore = create<AppState>((set, get) => {
     removeExplodeStep: (id) => {
       const asm = activeAssembly(get());
       if (asm) change((doc) => updateAssembly(doc, asm.id, (a) => removeExplodeStep(a, id)));
+    },
+    setAssemblyFit: (fit) => {
+      const asm = activeAssembly(get());
+      if (asm) change((doc) => updateAssembly(doc, asm.id, (a) => putFit(a, fit)));
+    },
+    removeAssemblyFit: (id) => {
+      const asm = activeAssembly(get());
+      if (asm) change((doc) => updateAssembly(doc, asm.id, (a) => removeFit(a, id)));
     },
     deletePattern: (id) => {
       const asm = activeAssembly(get());

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getKernel } from "../kernel/connect";
 import type { PrintCheckPart } from "../kernel/protocol";
 import { newId } from "../model/document";
-import { CUSTOM_PRINTER, PRINTERS } from "../model/printBed";
+import { CUSTOM_PRINTER, printerOf, PRINTERS } from "../model/printBed";
 import { arrangeOnBed, MODEL_DOWN, printHeadline, printPartReport, type PrintPartReport, type PrintPartResult } from "../model/printCheck";
 import { FIT_LABELS, FIT_NAMES, minWallOf, withFitVariables, type PrintSettings } from "../model/printSettings";
 import { SLICERS, sentMessage, slicerById, type SlicerId } from "../model/slicers";
@@ -391,6 +391,7 @@ function PrintPanelBody() {
             ))}
             <option value={CUSTOM_PRINTER}>Another printer (type its bed size)…</option>
           </select>
+          {printerOf(setting.printer)?.note && <p className="muted small">{printerOf(setting.printer)!.note}</p>}
           {setting.printer === CUSTOM_PRINTER && (
             <div className="print-setting-grid">
               {["Bed X", "Bed Y", "Height"].map((label, i) => (

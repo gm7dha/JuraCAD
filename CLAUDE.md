@@ -185,7 +185,32 @@
   instances: `withoutSuppressed` is what the solver sees; exports/checks/parts list skip them), `origin.ts` (mates to the
   assembly origin: connector instanceId `@origin`, a virtual fixed part in the solver), `properties.ts` (part number,
   description, custom properties: `doc.partProperties`), `assemblyCheck.ts` (clash report; `judgeContact` decides clash vs
-  touching from the engine's measurements in `src/kernel/clash.ts`). Connectors can sit at an edge's ends, halfway round,
+  touching from the engine's measurements in `src/kernel/clash.ts`; an overlap's text says how deep it goes).
+  Fit check (`src/assembly/fits.ts`, pure; Onshape/SolidWorks-style interference detection plus clearances): "Check fits
+  (interference and clearance)" in the Check window (`ClashOptions.checkFits`, kept with the clash options) measures every pair;
+  unticked, an assembly with marks measures only the marked pairs (`engine.clashes(…, fitRange, fitPairs)`); check_assembly's
+  `fits` defaults to true. `fitRangeFor(marks)`: `FIT_RANGE` 1 mm, more for a looser marked gap, ≤ `MAX_FIT_RANGE` 3. Within it
+  solids get their smallest `gap`, and `pinInHole` (clash.ts: each part's cylinder faces — ≤ `MAX_ROUND_FACES`, all face
+  wrappers freed — pin vs hole from the face normal, parallel, side by side along the axis) keeps the deepest overlap ring
+  (`over`) and the tightest gap ring (`gap`) apart (coaxial within 0.01 mm; `ContactMeasure.ring` = `over` when the solids overlap,
+  else `gap`; `radial` = hole r − pin r, exact), and a parallel pin off by 0.01…range as `offAxis` (judged "the pin isn't lined up
+  with the hole", never as an amount). `ContactMeasure.ids` = the InstanceInput ids (leaf keys); overlap Contacts carry them, and
+  marked fits are matched by them, never by names. `measuredFit`: depth = −radial for a pin, else `overlapThickness`
+  (judgeContact's estimate); amounts are ON THE DIAMETER for a pin in a hole (as printSettings' fits), else straight across, worded
+  "0.1 mm on the diameter (0.05 mm a side)". `Assembly.fits` (`IntendedFit`: a/b leaf keys, kind press | printed | clearance,
+  min/max mm; `parseFits`; missing = none; `tidyFits` drops marks whose top copy is gone — run by `updateAssembly` and
+  `withoutInstances`) marks pairs. "printed" = a printed press fit: drawn with a small gap (printed holes come out small), judged as a
+  gap, default range the printer's press fit ± 0.05 (`defaultFitRange`); a "press" mark with a gap says so. `judgeIntended`: OK only
+  when measured round (a flat overlap = "not checked exactly", warn); too tight / loose / a gap instead / overlap instead / too far
+  apart. `judgeFits` takes marked overlaps out of Clashes (`handled`, id pairs), lists unmarked clearances (pins always; flat gaps
+  above the tolerance; off-centre pins) with `printFitHint`, leaves unmarked overlaps as clashes; findings carry `pair` (also "wasn't
+  checked" ones, so a stuck mark can be removed). Printed fits: `printFitsFrom` — the design's fit_* variables, else the printer
+  settings (app, `printFitsNow`) or DEFAULT_FITS (extension). UI: Check window `ReportView` "Mark as a fit…"/"Change…" →
+  `FitEditor` (keyed by the pair; Enter saves), a mate's parts via `matePair` (names with every sub-assembly level); store
+  `setAssemblyFit`/`removeAssemblyFit` (`putFit`/`removeFit`: one fit per pair). Claude: `mark_fit` (copy names or a mate; `remove`).
+  Tests: tests/fits (pure), engineFits (⌀10.1 pin in ⌀10 = 0.1 on the diameter; ⌀9.8 = 0.1 a side; a stepped pin read by its body;
+  a two-pin lid; an off-centre pin; marked press fit OK; flat overlap about; marked pairs only), mcpFits; the smoke test marks
+  Fasten 1's parts and removes the mark. Connectors can sit at an edge's ends, halfway round,
   or where clicked (`MateConnector.spot`/`point`, `spotFrame`). UI in `src/app/AssemblyUI.tsx`; instances are drawn as
   copies of part meshes moved with `SceneManager.setPlacements`.
   Sub-assemblies (`src/assembly/subassembly.ts`): an `Instance` with `subAssembly` (another assembly's id; `partId` "")
@@ -489,6 +514,11 @@
   Tests: `tests/liveRelay.test.ts` (rules, script, transport; `tests/support/relaySim.ts` simulates the tab + popup with
   real postMessage origin rules) and "Safari: through the link window" in `tests/liveLink.test.ts` (real servers + OCCT).
   Only real Safari can confirm pop-up and opener behaviour (see the PR's manual steps).
+- Printers (`src/model/printBed.ts` `PRINTERS`, listed in the print bed, 3D print panel and puzzle windows; `bedSize` is what
+  layouts and bed checks use): a two-nozzle printer may have `bothNozzles` (the room both reach) and a `note` (shown under the
+  printer choice). The Bambu Lab X2D is 256 × 256 × 260 (main nozzle; `bothNozzles` 235.5 × 256 × 256, from 3D Printing
+  Industry's launch article); nothing yet knows whether a print uses both nozzles, so `bedSize` is the main nozzle's and the print
+  bed panel adds `bothNozzlesNote` when a part fits only that way. The H2D has no `bothNozzles` yet.
 - 3D printing: `src/model/printCheck.ts` (pure: `bedRotation(down)` turns a part so `down` faces the bed, `findOverhangs`,
   `arrangeOnBed`, `printPartReport`), `src/model/printSettings.ts` (nozzle, limits, printed fits + `withFitVariables`:
   fit_press/snug/sliding/loose; a hole's size `fitExpression` "5 mm + fit_sliding"), `src/model/slicers.ts` (why there's no
