@@ -43,7 +43,7 @@ export interface IslandSpec {
   land: IslandLand;
 }
 
-export const ISLAND_DEFAULTS: Omit<IslandSpec, "bed"> = { scale: 1, piece: 35, base: 3, relief: 8, fit: 0.15, seed: 1, sea: 0.5, land: "islands" };
+export const ISLAND_DEFAULTS: Omit<IslandSpec, "bed"> = { scale: 1, piece: 35, base: 3, relief: 8, fit: 0.1, seed: 1, sea: 0.5, land: "islands" };
 
 /** Lines to cut along (boundaries, on the OS grid, metres) and names for the areas between them. */
 export interface IslandCuts {
@@ -55,6 +55,9 @@ export interface IslandPiece extends PuzzlePiece {
   /** The area it's from, when cut along boundaries that have names. */
   region?: string;
   area: number;
+  /** Dovetails holding it to its neighbours, and how many neighbours it has. */
+  joints: number;
+  neighbours: number;
 }
 
 /** The map marks on the puzzle (mm, x east, y north), for the preview: lines clipped to the land, shapes as they are. */
@@ -81,6 +84,8 @@ export interface IslandPuzzle {
   /** Dovetails made, and borders too short or crowded for one. */
   joins: number;
   unjoined: number;
+  /** Pieces with nothing to join to (islets on their own). */
+  loose: number;
   warnings: string[];
   marks: IslandMarks;
   /** The ground's height (mm) at x, y — the one field every piece's top is drawn from, marks and all. */
@@ -384,12 +389,16 @@ export function makeIslandPuzzle(
       }
     }
     const into = new Int32Array(count).map((_, i) => i);
+    const root = (a: number): number => (into[a] === a || into[a] < 0 ? into[a] : root(into[a]));
     let changed = false;
     for (let a = 0; a < count; a++) {
       if (!size[a] || size[a] >= least) continue;
       const m = border.get(a);
       if (m?.size) {
-        into[a] = [...m.entries()].sort((x, y) => y[1] - x[1])[0][0];
+        // Two small pieces side by side would each join the other, round and round: the second one stays.
+        const b = [...m.entries()].sort((x, y) => y[1] - x[1])[0][0];
+        if (root(b) === a) continue;
+        into[a] = b;
         changed = true;
       } else if (size[a] * cell * cell < 20) {
         into[a] = -1;
@@ -397,7 +406,6 @@ export function makeIslandPuzzle(
       }
     }
     if (!changed) break;
-    const root = (a: number): number => (into[a] === a || into[a] < 0 ? into[a] : root(into[a]));
     for (let c = 0; c < N; c++)
       if (piece[c] >= 0) {
         const r = root(piece[c]);
@@ -409,122 +417,28 @@ export function makeIslandPuzzle(
   }
   if (dropped) warnings.push("Some specks of land too small to print were left out.");
 
-  // Dovetails across borders long enough for one.
+  // Dovetails: every piece held by at least two (one, if it has just one neighbour), else it joins a neighbour and
+  // the joins are made again. Pieces with no neighbour at all (an islet) are loose.
   const P = spec.piece;
   const neck = Math.min(12, Math.max(4, 0.26 * P));
-  const head = 1.4 * neck;
-  const reach = 0.7 * neck;
-  const margin = 1.6 + spec.fit;
-  const borders = new Map<string, XY[]>();
-  for (let j = 0; j < ny; j++)
-    for (let i = 0; i < nx; i++) {
-      const a = piece[j * nx + i];
-      if (a < 0) continue;
-      for (const [di, dj] of [[1, 0], [0, 1]]) {
-        if (i + di >= nx || j + dj >= ny) continue;
-        const b = piece[(j + dj) * nx + i + di];
-        if (b < 0 || b === a) continue;
-        const key = a < b ? `${a},${b}` : `${b},${a}`;
-        const list = borders.get(key) ?? [];
-        list.push([(i + 0.5 + di / 2) * cell, (j + 0.5 + dj / 2) * cell]);
-        borders.set(key, list);
-      }
+  const before = piece.slice();
+  let joined = joinPieces(piece, nx, ny, cell, neck, spec);
+  for (let pass = 0; pass < MAX_JOIN_PASSES && joined.weak.length; pass++) {
+    // Each weak piece joins the neighbour it shares most border with (before the tabs were painted).
+    const into = new Map<number, number>();
+    for (const a of joined.weak) {
+      const best = [...(joined.touching.get(a) ?? new Map<number, number>()).entries()].sort((x, y) => y[1] - x[1] || x[0] - y[0])[0];
+      if (best && !into.has(best[0])) into.set(a, best[0]);
     }
-  // Each piece's box of cells, kept up to date as tabs move cells between pieces.
-  const boxes = new Map<number, number[]>();
-  for (let c = 0; c < N; c++) {
-    const p = piece[c];
-    if (p < 0) continue;
-    const [i, j] = [c % nx, Math.floor(c / nx)];
-    const b = boxes.get(p);
-    if (!b) boxes.set(p, [i, j, i, j]);
-    else [b[0], b[1], b[2], b[3]] = [Math.min(b[0], i), Math.min(b[1], j), Math.max(b[2], i), Math.max(b[3], j)];
+    if (!into.size) break;
+    const root = (x: number): number => (into.has(x) ? root(into.get(x)!) : x);
+    for (let c = 0; c < N; c++) if (before[c] >= 0) before[c] = root(before[c]);
+    piece.set(before);
+    joined = joinPieces(piece, nx, ny, cell, neck, spec);
   }
-  const rnd = seeded(spec.seed * 31 + 17);
-  const at =(x: number, y: number) => {
-    const [i, j] = [Math.floor(x / cell), Math.floor(y / cell)];
-    return i < 0 || j < 0 || i >= nx || j >= ny ? -1 : piece[j * nx + i];
-  };
-  let joins = 0;
-  let unjoined = 0;
-  for (const [key, pts] of borders) {
-    if (pts.length * cell < 1.6 * head) {
-      unjoined++;
-      continue;
-    }
-    const [a, b] = key.split(",").map(Number);
-    const mx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
-    const my = pts.reduce((s, p) => s + p[1], 0) / pts.length;
-    // Try spots along the border, nearest its middle first, each way round.
-    const spots = [...pts].sort((p, q) => (p[0] - mx) ** 2 + (p[1] - my) ** 2 - ((q[0] - mx) ** 2 + (q[1] - my) ** 2));
-    let made = false;
-    for (let s = 0; s < spots.length && s < 120 && !made; s += 2) {
-      const o = spots[s];
-      // The border's direction there: the spread of nearby border points.
-      const near = pts.filter((p) => (p[0] - o[0]) ** 2 + (p[1] - o[1]) ** 2 < head * head);
-      let [sxx, sxy, syy] = [0, 0, 0];
-      for (const p of near) {
-        const [dx, dy] = [p[0] - o[0], p[1] - o[1]];
-        sxx += dx * dx;
-        sxy += dx * dy;
-        syy += dy * dy;
-      }
-      const ang = 0.5 * Math.atan2(2 * sxy, sxx - syy);
-      const t: XY = [Math.cos(ang), Math.sin(ang)];
-      const owners = rnd() < 0.5 ? [a, b] : [b, a];
-      for (const [from, into] of [owners, [owners[1], owners[0]]]) {
-        // Normal pointing into `into`.
-        let nrm: XY = [-t[1], t[0]];
-        if (at(o[0] + nrm[0] * reach * 0.5, o[1] + nrm[1] * reach * 0.5) !== into) nrm = [-nrm[0], -nrm[1]];
-        if (at(o[0] + nrm[0] * reach * 0.5, o[1] + nrm[1] * reach * 0.5) !== into) continue;
-        const local = (u: number, v: number): XY => [o[0] + t[0] * u + nrm[0] * v, o[1] + t[1] * u + nrm[1] * v];
-        // Every cell the tab covers, and a margin round its head, must be the other piece's; its neck's base meets ours.
-        const inTab = (u: number, v: number) => v >= 0 && v <= reach && Math.abs(u) <= neck / 2 + (head - neck) / 2 * (v / reach);
-        const ok = (() => {
-          const R = head / 2 + margin;
-          for (let v = -margin; v <= reach + margin; v += cell / 2)
-            for (let u = -R; u <= R; u += cell / 2) {
-              const inside = Math.abs(u) <= neck / 2 + ((head - neck) / 2) * (Math.max(0, v) / reach) + margin && v <= reach + margin;
-              if (!inside) continue;
-              const [x, y] = local(u, v);
-              const p = at(x, y);
-              if (v > margin * 0.6 && p !== into) return false;
-              if (v <= margin * 0.6 && p !== into && p !== from) return false;
-            }
-          return true;
-        })();
-        if (!ok) continue;
-        // Paint it, then make sure the piece it went into is still one piece.
-        const changed: number[] = [];
-        const R = Math.ceil((head + reach) / cell) + 2;
-        const [ci, cj] = [Math.floor(o[0] / cell), Math.floor(o[1] / cell)];
-        for (let j = Math.max(0, cj - R); j <= Math.min(ny - 1, cj + R); j++)
-          for (let i = Math.max(0, ci - R); i <= Math.min(nx - 1, ci + R); i++) {
-            const c = j * nx + i;
-            if (piece[c] !== into) continue;
-            const [x, y] = [(i + 0.5) * cell - o[0], (j + 0.5) * cell - o[1]];
-            const [u, v] = [x * t[0] + y * t[1], x * nrm[0] + y * nrm[1]];
-            if (inTab(u, v)) {
-              piece[c] = from;
-              changed.push(c);
-            }
-          }
-        if (!changed.length || !wholePiece(piece, nx, ny, into, boxes.get(into)!)) {
-          for (const c of changed) piece[c] = into;
-          continue;
-        }
-        const fb = boxes.get(from)!;
-        for (const c of changed) {
-          const [i, j] = [c % nx, Math.floor(c / nx)];
-          [fb[0], fb[1], fb[2], fb[3]] = [Math.min(fb[0], i), Math.min(fb[1], j), Math.max(fb[2], i), Math.max(fb[3], j)];
-        }
-        made = true;
-        break;
-      }
-    }
-    if (made) joins++;
-    else unjoined++;
-  }
+  const { joints, made: joins, unjoined, loose } = joined;
+  if (joined.weak.length) warnings.push(`${joined.weak.length} ${joined.weak.length === 1 ? "piece has" : "pieces have"} fewer than two dovetails — try another pattern number or piece size.`);
+  if (loose) warnings.push(`${loose} small ${loose === 1 ? "islet is a loose piece" : "islets are loose pieces"}, with nothing to join to.`);
 
   // Each piece's mesh.
   const lift = spec.relief / Math.max(high, 1);
@@ -597,10 +511,12 @@ export function makeIslandPuzzle(
       bodies: [body],
       region,
       area: o.n * cell * cell,
+      joints: joints.get(o.id) ?? 0,
+      neighbours: joined.touching.get(o.id)?.size ?? 0,
     });
   });
   if (unjoined) warnings.push(`${unjoined} ${unjoined === 1 ? "border is" : "borders are"} too short or crowded for a dovetail; those pieces just sit side by side there.`);
-  return { width: W, height: H, k, high, pieces, alongBoundaries, joins, unjoined, warnings, marks, groundAt: top };
+  return { width: W, height: H, k, high, pieces, alongBoundaries, joins, unjoined, loose, warnings, marks, groundAt: top };
 }
 
 /**
@@ -943,4 +859,199 @@ export function pieceMesh(piece: Int32Array, nx: number, ny: number, cell: numbe
       }
     }
   return v.length ? { part: "rock", vertices: v, triangles: t } : null;
+}
+
+/** Joins wanted at least per piece, and how many times weak pieces are merged and the joins made again. */
+export const MIN_JOINTS = 2;
+const MAX_JOIN_PASSES = 8;
+/** The narrowest dovetail neck made (mm): smaller ones would snap. Short borders get smaller tabs down to this. */
+export const LEAST_NECK = 3.5;
+
+interface Joined {
+  /** Dovetails per piece. */
+  joints: Map<number, number>;
+  made: number;
+  unjoined: number;
+  /** Pieces held by fewer than they should be (and that have a neighbour to join). */
+  weak: number[];
+  /** Pieces with no neighbour at all. */
+  loose: number;
+  /** Cells of border each piece shares with each neighbour. */
+  touching: Map<number, Map<number, number>>;
+}
+
+/**
+ * Paint dovetails across the borders between pieces (changes `piece`): one per border, the biggest that fits — from
+ * the size for the piece size down to `LEAST_NECK` — and a second on the only border of a piece with one neighbour.
+ */
+function joinPieces(piece: Int32Array, nx: number, ny: number, cell: number, fullNeck: number, spec: IslandSpec): Joined {
+  const N = nx * ny;
+  const margin = 1.6 + spec.fit;
+  const borders = new Map<string, XY[]>();
+  for (let j = 0; j < ny; j++)
+    for (let i = 0; i < nx; i++) {
+      const a = piece[j * nx + i];
+      if (a < 0) continue;
+      for (const [di, dj] of [[1, 0], [0, 1]]) {
+        if (i + di >= nx || j + dj >= ny) continue;
+        const b = piece[(j + dj) * nx + i + di];
+        if (b < 0 || b === a) continue;
+        const key = a < b ? `${a},${b}` : `${b},${a}`;
+        const list = borders.get(key) ?? [];
+        list.push([(i + 0.5 + di / 2) * cell, (j + 0.5 + dj / 2) * cell]);
+        borders.set(key, list);
+      }
+    }
+  const touching = new Map<number, Map<number, number>>();
+  const touch = (a: number, b: number, n: number) => {
+    const m = touching.get(a) ?? new Map<number, number>();
+    m.set(b, n);
+    touching.set(a, m);
+  };
+  for (const [key, pts] of borders) {
+    const [a, b] = key.split(",").map(Number);
+    touch(a, b, pts.length);
+    touch(b, a, pts.length);
+  }
+  // Each piece's box of cells, kept up to date as tabs move cells between pieces.
+  const boxes = new Map<number, number[]>();
+  const pieces = new Set<number>();
+  for (let c = 0; c < N; c++) {
+    const p = piece[c];
+    if (p < 0) continue;
+    pieces.add(p);
+    const [i, j] = [c % nx, Math.floor(c / nx)];
+    const b = boxes.get(p);
+    if (!b) boxes.set(p, [i, j, i, j]);
+    else [b[0], b[1], b[2], b[3]] = [Math.min(b[0], i), Math.min(b[1], j), Math.max(b[2], i), Math.max(b[3], j)];
+  }
+  const rnd = seeded(spec.seed * 31 + 17);
+  const at = (x: number, y: number) => {
+    const [i, j] = [Math.floor(x / cell), Math.floor(y / cell)];
+    return i < 0 || j < 0 || i >= nx || j >= ny ? -1 : piece[j * nx + i];
+  };
+  // Neck sizes tried, biggest first.
+  const necks: number[] = [];
+  for (let n = fullNeck; n >= LEAST_NECK - 1e-9; n *= 0.8) necks.push(n);
+  if (necks[necks.length - 1] > LEAST_NECK + 1e-9) necks.push(LEAST_NECK);
+
+  /** One dovetail across the border a–b at a spot at least `apart` mm from every point in `away`; where it went, or null. */
+  const tryJoin = (a: number, b: number, pts: XY[], away: XY[], apart: number): XY | null => {
+    const mx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+    const my = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+    // Spots along the border, nearest its middle first (or, for a second tab, furthest from the first).
+    const far = (p: XY) => Math.min(...away.map((q) => Math.hypot(p[0] - q[0], p[1] - q[1])));
+    const spots = away.length
+      ? pts.filter((p) => far(p) >= apart).sort((p, q) => far(q) - far(p))
+      : [...pts].sort((p, q) => (p[0] - mx) ** 2 + (p[1] - my) ** 2 - ((q[0] - mx) ** 2 + (q[1] - my) ** 2));
+    for (const neck of necks) {
+      const head = 1.4 * neck;
+      const reach = 0.7 * neck;
+      if (pts.length * cell < 1.6 * head) continue;
+      for (let s = 0; s < spots.length && s < 120; s += 2) {
+        const o = spots[s];
+        // The border's direction there: the spread of nearby border points.
+        const near = pts.filter((p) => (p[0] - o[0]) ** 2 + (p[1] - o[1]) ** 2 < head * head);
+        let [sxx, sxy, syy] = [0, 0, 0];
+        for (const p of near) {
+          const [dx, dy] = [p[0] - o[0], p[1] - o[1]];
+          sxx += dx * dx;
+          sxy += dx * dy;
+          syy += dy * dy;
+        }
+        const ang = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+        const t: XY = [Math.cos(ang), Math.sin(ang)];
+        const owners = rnd() < 0.5 ? [a, b] : [b, a];
+        for (const [from, into] of [owners, [owners[1], owners[0]]]) {
+          // Normal pointing into `into`.
+          let nrm: XY = [-t[1], t[0]];
+          if (at(o[0] + nrm[0] * reach * 0.5, o[1] + nrm[1] * reach * 0.5) !== into) nrm = [-nrm[0], -nrm[1]];
+          if (at(o[0] + nrm[0] * reach * 0.5, o[1] + nrm[1] * reach * 0.5) !== into) continue;
+          const local = (u: number, v: number): XY => [o[0] + t[0] * u + nrm[0] * v, o[1] + t[1] * u + nrm[1] * v];
+          // Every cell the tab covers, and a margin round its head, must be the other piece's; its neck's base meets ours.
+          const inTab = (u: number, v: number) => v >= 0 && v <= reach && Math.abs(u) <= neck / 2 + ((head - neck) / 2) * (v / reach);
+          const ok = (() => {
+            const R = head / 2 + margin;
+            for (let v = -margin; v <= reach + margin; v += cell / 2)
+              for (let u = -R; u <= R; u += cell / 2) {
+                const inside = Math.abs(u) <= neck / 2 + ((head - neck) / 2) * (Math.max(0, v) / reach) + margin && v <= reach + margin;
+                if (!inside) continue;
+                const [x, y] = local(u, v);
+                const p = at(x, y);
+                if (v > margin * 0.6 && p !== into) return false;
+                if (v <= margin * 0.6 && p !== into && p !== from) return false;
+              }
+            return true;
+          })();
+          if (!ok) continue;
+          // Paint it, then make sure the piece it went into is still one piece.
+          const changed: number[] = [];
+          const R = Math.ceil((head + reach) / cell) + 2;
+          const [ci, cj] = [Math.floor(o[0] / cell), Math.floor(o[1] / cell)];
+          for (let j = Math.max(0, cj - R); j <= Math.min(ny - 1, cj + R); j++)
+            for (let i = Math.max(0, ci - R); i <= Math.min(nx - 1, ci + R); i++) {
+              const c = j * nx + i;
+              if (piece[c] !== into) continue;
+              const [x, y] = [(i + 0.5) * cell - o[0], (j + 0.5) * cell - o[1]];
+              const [u, v] = [x * t[0] + y * t[1], x * nrm[0] + y * nrm[1]];
+              if (inTab(u, v)) {
+                piece[c] = from;
+                changed.push(c);
+              }
+            }
+          if (!changed.length || !wholePiece(piece, nx, ny, into, boxes.get(into)!)) {
+            for (const c of changed) piece[c] = into;
+            continue;
+          }
+          const fb = boxes.get(from)!;
+          for (const c of changed) {
+            const [i, j] = [c % nx, Math.floor(c / nx)];
+            [fb[0], fb[1], fb[2], fb[3]] = [Math.min(fb[0], i), Math.min(fb[1], j), Math.max(fb[2], i), Math.max(fb[3], j)];
+          }
+          return o;
+        }
+      }
+    }
+    return null;
+  };
+
+  const joints = new Map<number, number>();
+  const add = (p: number) => joints.set(p, (joints.get(p) ?? 0) + 1);
+  const placed = new Map<string, XY[]>();
+  let made = 0;
+  let unjoined = 0;
+  for (const [key, pts] of borders) {
+    const [a, b] = key.split(",").map(Number);
+    const o = tryJoin(a, b, pts, [], 0);
+    if (o) {
+      made++;
+      add(a);
+      add(b);
+      placed.set(key, [o]);
+    } else unjoined++;
+  }
+  // A piece with one neighbour gets a second tab on that border, as far from the first as it'll go.
+  for (const p of pieces) {
+    const m = touching.get(p);
+    if (!m || m.size !== 1) continue;
+    const q = [...m.keys()][0];
+    const key = p < q ? `${p},${q}` : `${q},${p}`;
+    const first = placed.get(key);
+    if (!first || first.length > 1) continue;
+    const o = tryJoin(p, q, borders.get(key)!, first, 2.2 * 1.4 * LEAST_NECK);
+    if (o) {
+      made++;
+      add(p);
+      add(q);
+      first.push(o);
+    }
+  }
+  const weak: number[] = [];
+  let loose = 0;
+  for (const p of pieces) {
+    const n = touching.get(p)?.size ?? 0;
+    if (!n) loose++;
+    else if ((joints.get(p) ?? 0) < Math.min(MIN_JOINTS, n) || (n === 1 && !joints.get(p))) weak.push(p);
+  }
+  return { joints, made, unjoined, weak, loose, touching };
 }

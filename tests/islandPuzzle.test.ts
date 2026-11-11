@@ -7,7 +7,7 @@ import { weld } from "../src/geometry/threeMf";
 import { areaProblem, gridFrom, MAX_TILES, tilesFor, zoomFor } from "../src/terrain/elevation";
 import { BOUNDARY_LEVELS, boundaryQuery, ISLANDS } from "../src/terrain/islands";
 import { boundariesOnGrid, boundaryLevels, readOsm } from "../src/terrain/osm";
-import { distanceTransform, ISLAND_DEFAULTS, islandChecks, makeIslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
+import { distanceTransform, ISLAND_DEFAULTS, islandChecks, makeIslandPuzzle, MIN_JOINTS, type IslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
 import type { Body } from "../src/terrain/mountainPuzzle";
 import { platesFor } from "../src/terrain/puzzle3mf";
 
@@ -147,6 +147,49 @@ describe("island puzzle", () => {
     expect(islandChecks({ ...SPEC, piece: 5 })).not.toEqual([]);
     const sea = gridFrom(sw, W, H, 100, () => 0);
     expect(() => makeIslandPuzzle(sea, sw, W, H, SPEC)).toThrow(/sea/);
+  });
+});
+
+/** Every piece held by at least two dovetails, or by one when it has just one neighbour; only lone islets loose. */
+function heldTogether(p: IslandPuzzle, label: string) {
+  for (const q of p.pieces) {
+    if (!q.neighbours) continue;
+    expect(q.joints, `${label}: piece ${q.name} (${q.neighbours} neighbours)`).toBeGreaterThanOrEqual(Math.min(MIN_JOINTS, q.neighbours));
+    expect(q.joints, `${label}: piece ${q.name}`).toBeGreaterThan(0);
+  }
+  expect(p.pieces.filter((q) => !q.neighbours).length, label).toBe(p.loose);
+  // Each dovetail holds two pieces.
+  expect(p.pieces.reduce((s, q) => s + q.joints, 0), label).toBe(2 * p.joins);
+}
+
+describe("every piece is held", () => {
+  // A ragged coast: bays and headlands every few mm, where borders are short and tabs meet the sea.
+  const ragged = gridFrom(sw, W, H, 25, (e, n) => {
+    const [x, y] = [(e - sw.e) / W - 0.5, (n - sw.n) / H - 0.5];
+    const a = Math.atan2(y, x);
+    const r = Math.hypot(x / 0.42, y / 0.4) + 0.12 * Math.sin(a * 7) + 0.08 * Math.sin(a * 13 + 1) + 0.05 * Math.sin(e / 90) * Math.cos(n / 110);
+    return Math.max(0, (1 - r) * 300);
+  });
+  const small: IslandSpec = { ...SPEC, bed: [200, 200, 200] };
+  it("by at least two dovetails, on the lumpy island and a ragged coast, for several seeds and piece sizes", () => {
+    for (const [name, g] of [["lumpy", island], ["ragged", ragged]] as const)
+      for (const [piece, seed] of [[20, 1], [35, 2], [60, 3]]) {
+        const p = makeIslandPuzzle(g, sw, W, H, { ...small, piece, seed });
+        heldTogether(p, `${name} ${piece} mm seed ${seed}`);
+        for (const q of p.pieces) expect(closed(q.bodies[0]).open, q.name).toBe(0);
+      }
+  });
+  it("makes the islet off the lumpy island a loose piece and says so", () => {
+    const p = makeIslandPuzzle(island, sw, W, H, SPEC);
+    heldTogether(p, "default");
+    expect(p.loose).toBe(1);
+    expect(p.warnings.join(" ")).toMatch(/1 small islet is a loose piece/);
+  });
+  it("gives two areas cut along a boundary two dovetails between them", () => {
+    const line: [number, number][] = [[sw.e + W / 2, sw.n - 100], [sw.e + W / 2 + 300, sw.n + H / 2], [sw.e + W / 2, sw.n + H + 100]];
+    const c = makeIslandPuzzle(island, sw, W, H, SPEC, { lines: [line], names: [] });
+    heldTogether(c, "boundary");
+    expect(c.pieces.filter((q) => q.neighbours === 1).every((q) => q.joints >= 2)).toBe(true);
   });
 });
 
