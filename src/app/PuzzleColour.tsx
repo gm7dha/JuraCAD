@@ -24,7 +24,7 @@ import {
   ROAD_BLACK,
 } from "../terrain/colour";
 import type { ColourJob, ColourReply } from "../terrain/colourJob";
-import { allItems, bandPlateFile, colour3mfFiles, colourObjFiles, colourWrl, plateItems, plateSwaps, zipDeflated, type BandedPuzzle } from "../terrain/colourFiles";
+import { allItems, bandPlateFile, colour3mfFiles, colourObjFiles, colourWrl, MANY_SWAPS, plateItems, plateSwaps, zipDeflated, type BandedPuzzle } from "../terrain/colourFiles";
 import type { PuzzlePiece } from "../terrain/mountainPuzzle";
 import { zipStored } from "../geometry/threeMf";
 import type { Plate } from "../terrain/puzzle3mf";
@@ -38,6 +38,10 @@ export const COLOUR_MODES: [ColourMode, string][] = [
   ["full", "Full colour (full-colour printers and services)"],
 ];
 
+/** "in red" while the usual colour is chosen, else "in the colour picked" (the label follows the swatch). */
+const inColour = (chosen: string | null | undefined, usual: string, word: string) =>
+  !chosen || chosen.toLowerCase() === usual.toLowerCase() ? `in ${word}` : "in the colour picked";
+
 /** The colour choices: mode, bands, base, water, paths and roads colours, layer height. */
 export function ColourPanel({
   spec,
@@ -46,6 +50,7 @@ export function ColourPanel({
   usualBase,
   usualWater,
   has,
+  roadsAsked = false,
   ground,
 }: {
   spec: ColourSpec;
@@ -56,6 +61,8 @@ export function ColourPanel({
   usualWater: string;
   /** What the map loaded now has to colour: lochs and rivers, footpaths and tracks, roads. */
   has: { water: boolean; paths: boolean; roads: boolean };
+  /** "Everything" is chosen in From the map, so roads would be in the map if the area had any. */
+  roadsAsked?: boolean;
   /** The ground's lowest and highest (m), for the hint. */
   ground: [number, number] | null;
 }) {
@@ -144,23 +151,27 @@ export function ColourPanel({
           </label>
           <label className="mountain-check">
             <input type="checkbox" checked={spec.water !== null} onChange={(e) => setSpec({ ...spec, water: e.target.checked ? usualWater : null })} /> Lochs and rivers from
-            the map in blue
+            the map {inColour(spec.water, usualWater, "blue")}
             {spec.water !== null && <input type="color" value={spec.water} onChange={(e) => setSpec({ ...spec, water: e.target.value })} aria-label="Water colour" />}
           </label>
           <label className="mountain-check">
             <input type="checkbox" checked={!!spec.paths} onChange={(e) => setSpec({ ...spec, paths: e.target.checked ? PATH_RED : null })} /> Footpaths and tracks
-            from the map in red
+            from the map {inColour(spec.paths, PATH_RED, "red")}
             {!!spec.paths && <input type="color" value={spec.paths} onChange={(e) => setSpec({ ...spec, paths: e.target.value })} aria-label="Paths colour" />}
           </label>
           <label className="mountain-check">
-            <input type="checkbox" checked={!!spec.roads} onChange={(e) => setSpec({ ...spec, roads: e.target.checked ? ROAD_BLACK : null })} /> Roads from the map in
-            black
+            <input type="checkbox" checked={!!spec.roads} onChange={(e) => setSpec({ ...spec, roads: e.target.checked ? ROAD_BLACK : null })} /> Roads from the map{" "}
+            {inColour(spec.roads, ROAD_BLACK, "black")}
             {!!spec.roads && <input type="color" value={spec.roads} onChange={(e) => setSpec({ ...spec, roads: e.target.value })} aria-label="Roads colour" />}
           </label>
           {(spec.water !== null || !!spec.paths || !!spec.roads) && !hasMap && (
             <p className="muted small">Load the map's paths, rivers and lochs (From the map; roads with "Everything") to colour them.</p>
           )}
-          {hasMap && !has.roads && !!spec.roads && <p className="muted small">No roads in the map loaded — choose "Everything" in From the map to include them.</p>}
+          {hasMap && !has.roads && !!spec.roads && (
+            <p className="muted small">
+              {roadsAsked ? "There are no roads in this area's map." : 'No roads in the map loaded — choose "Everything" in From the map to include them.'}
+            </p>
+          )}
           {spec.mode === "bands" && (
             <>
               <div className="mountain-row">
@@ -262,7 +273,7 @@ class ColourRunner {
     }, COLOUR_LIMIT_MS);
     const fresh = this.sent !== pieces;
     this.sent = pieces;
-    this.worker.postMessage({ ...job, id, ...(fresh ? { pieces: pieces.map((p) => ({ bodies: p.bodies, z0: p.z0, height: p.height })) } : {}) } satisfies ColourJob);
+    this.worker.postMessage({ ...job, id, ...(fresh ? { pieces: pieces.map((p) => ({ bodies: p.bodies, z0: p.z0, height: p.height, top: p.top })) } : {}) } satisfies ColourJob);
   }
   stop() {
     if (this.watchdog !== null) clearTimeout(this.watchdog);
@@ -350,6 +361,12 @@ export function ColourDownloads({
   const plateName = (i: number) => `${fileName} - plate ${i + 1} of ${plates.length}`;
   const banded = spec.mode === "bands" ? coloured.banded ?? null : null;
   const swaps = useMemo(() => (banded ? plateSwaps(plates, banded, spec.layer) : []), [banded, plates, spec.layer]);
+  // The painted paths and roads, and what the count would be without them.
+  const lineFilaments = useMemo(() => {
+    const fs = filaments(spec, map);
+    return fs.filter((f) => (f.uses.includes("Paths") || f.uses.includes("Roads")) && f.uses.every((u) => u === "Paths" || u === "Roads")).map((f) => f.n);
+  }, [spec, map]);
+  const quieter = useMemo(() => (banded && lineFilaments.length ? plateSwaps(plates, banded, spec.layer, lineFilaments) : null), [banded, plates, spec.layer, lineFilaments]);
   const save = async (what: string, make: () => Promise<[Uint8Array, string, string]>) => {
     setBusy(what);
     try {
@@ -401,6 +418,19 @@ export function ColourDownloads({
           puzzle are on plates of their own, so every piece on a plate changes colour on the same layers.
           {banded.uncut ? ` ${banded.uncut} ${banded.uncut === 1 ? "piece" : "pieces"} couldn't be split and stay one colour.` : ""}
         </p>
+        {quieter && quieter.some((n, i) => n < swaps[i]) && (
+          <p className="muted small">
+            The painted {spec.paths && map.paths ? (spec.roads && map.roads ? "paths and roads" : "paths") : "roads"} climb the hills, so they need a filament
+            change on every layer they cross. Switch them off to bring this down to about {quieter.reduce((a, b) => a + b, 0)} in all (now{" "}
+            {swaps.reduce((a, b) => a + b, 0)}).
+          </p>
+        )}
+        {swaps.some((n) => n > MANY_SWAPS) && (
+          <p className="mountain-warn small">
+            {swaps.filter((n) => n > MANY_SWAPS).length === 1 ? "A plate needs" : "Some plates need"} over {MANY_SWAPS} filament changes — each one flushes
+            filament, so that's a long, wasteful print. Fewer bands, or paths and roads switched off, bring it down.
+          </p>
+        )}
       </>
     );
   }

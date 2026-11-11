@@ -12,6 +12,8 @@ export interface ColourPiece {
   bodies: Body[];
   z0: number;
   height: number;
+  /** A column's top piece (the ground on top; only these take the map's colours). */
+  top: boolean;
 }
 
 export interface ColourJob {

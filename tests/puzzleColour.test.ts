@@ -27,6 +27,7 @@ import {
   NO_MAP,
   paintCode,
   PATH_RED,
+  PAINT_PENETRATION,
   ROAD_BLACK,
   palette,
   SEA_BLUE,
@@ -510,7 +511,7 @@ describe("review fixes", () => {
 
   it("colours in a worker's cache: a change of colour alone doesn't cut the pieces again", () => {
     const cache = new ColourCache();
-    const pieces = island.pieces.slice(0, 2).map((p) => ({ bodies: p.bodies, z0: p.z0, height: p.height }));
+    const pieces = island.pieces.slice(0, 2).map((p) => ({ bodies: p.bodies, z0: p.z0, height: p.height, top: p.top }));
     const job = { id: 1, pieces, spec: islandSpec("bands"), scale: islandScale, map: NO_MAP, mapSize: [1, 1] as [number, number], mapId: 1 };
     const r1 = cache.run(job);
     expect("error" in r1).toBe(false);
@@ -645,5 +646,86 @@ describe("red paths and black roads", () => {
       }
     expect(red).toBeGreaterThan(50);
     expect(black).toBeGreaterThan(50);
+  });
+});
+
+describe("map paint on mountains", () => {
+  // The test hill with a footpath straight up its flank and over the top, and a road round its foot.
+  const e0 = 200000;
+  const n0 = 770000;
+  const features = {
+    lines: [
+      { kind: "path" as const, pts: [[e0 + 300, n0 + 1200], [e0 + 1500, n0 + 1200], [e0 + 2700, n0 + 1150]] as [number, number][] },
+      { kind: "road" as const, pts: [[e0 + 200, n0 + 300], [e0 + 2800, n0 + 400]] as [number, number][] },
+    ],
+    shapes: [],
+    names: [],
+  };
+  const spec = { ...MSPEC, cube: 30 };
+  const m = makeMountainPuzzle(hill, MW, MH, spec, features);
+  const scale: HeightScale = { z0: baseFor(spec), h0: m.layout.low, mmPerM: m.layout.k * spec.exaggeration };
+  const raster = mapRaster(mapOnPuzzle(features, m.layout.e0, m.layout.n0, m.layout.k), m.layout.cols * spec.cube, m.layout.rows * spec.cube);
+  const cs: ColourSpec = { ...mountainSpec("bands"), paths: PATH_RED, roads: ROAD_BLACK };
+  const ctx = { spec: cs, scale, map: raster };
+  const banded = bandPuzzle(m.pieces, ctx);
+  const fs = filaments(cs, raster);
+  const pathN = fs.find((f) => f.uses.includes("Paths"))!.n;
+
+  it("paints only the top pieces: pieces under them get none", () => {
+    let lower = 0;
+    let painted = 0;
+    for (const p of m.pieces) {
+      const parts = banded.parts.get(p)!;
+      if (!p.top) {
+        lower++;
+        for (const part of parts) expect(part.paint, `${p.name} has paint`).toBeUndefined();
+      } else painted += parts.filter((q) => q.paint).length;
+    }
+    expect(lower).toBeGreaterThan(5);
+    expect(painted).toBeGreaterThan(3);
+    // Full colour too: nothing red on a lower piece.
+    for (const p of m.pieces.filter((q) => !q.top).slice(0, 10)) {
+      const c = fullColours(p.bodies, { spec: { ...cs, mode: "full" }, scale, map: raster }, false);
+      for (let i = 0; i < c.rgb.length; i += 3) expect(c.rgb[i] > 180 && c.rgb[i + 1] < 70).toBe(false);
+    }
+  });
+
+  it("leaves no gaps on a steep flank: every face under the path that isn't a wall is painted", () => {
+    let painted = 0;
+    let gaps = 0;
+    for (const p of m.pieces.filter((q) => q.top))
+      for (const part of banded.parts.get(p)!) {
+        const V = part.vertices;
+        for (let t = 0; t < part.triangles.length; t += 3) {
+          const [a, b, c] = [part.triangles[t], part.triangles[t + 1], part.triangles[t + 2]];
+          const u = [V[b * 3] - V[a * 3], V[b * 3 + 1] - V[a * 3 + 1], V[b * 3 + 2] - V[a * 3 + 2]];
+          const w = [V[c * 3] - V[a * 3], V[c * 3 + 1] - V[a * 3 + 1], V[c * 3 + 2] - V[a * 3 + 2]];
+          const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+          const nz = n[2] / Math.hypot(n[0], n[1], n[2]);
+          if (nz <= 0.05) continue;
+          const zs = [a, b, c].map((i) => V[i * 3 + 2]);
+          // A cut face inside the piece (flat at the part's top, with a band above).
+          if (zs.every((z) => Math.abs(z - (part.high + p.z0)) < 1e-9) && part.high + p.z0 < p.z0 + p.height - 1e-6 && zs.every((z) => Math.abs(z - zs[0]) < 1e-12)) continue;
+          const x = (V[a * 3] + V[b * 3] + V[c * 3]) / 3;
+          const y = (V[a * 3 + 1] + V[b * 3 + 1] + V[c * 3 + 1]) / 3;
+          if (raster.kindAt(x, y) !== MapKind.Path) continue;
+          if (part.paint?.[t / 3] === pathN) painted++;
+          else gaps++;
+        }
+      }
+    expect(painted).toBeGreaterThan(100);
+    expect(gaps).toBe(0);
+  });
+
+  it("counts paint three layers into the part (Bambu's top paint penetration) and says how many changes the paths cost", () => {
+    expect(PAINT_PENETRATION).toBe(3);
+    const plates = platesByLevel(m.pieces, BED);
+    const all = plateSwaps(plates, banded, cs.layer);
+    const off = plateSwaps(plates, banded, cs.layer, fs.filter((f) => f.uses.includes("Paths") || f.uses.includes("Roads")).map((f) => f.n));
+    expect(off.reduce((a, b) => a + b, 0)).toBeLessThan(all.reduce((a, b) => a + b, 0));
+    // Lower pieces' plates: no paint, so the same either way.
+    plates.forEach((pl, i) => {
+      if (pl.pieces.every((x) => !x.piece.top)) expect(all[i]).toBe(off[i]);
+    });
   });
 });

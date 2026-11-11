@@ -453,6 +453,7 @@ export function IslandPuzzleDialog() {
             usualBase={SEA_BLUE}
             usualWater={SEA_BLUE}
             has={paintMap}
+            roadsAsked={detail === "all"}
             ground={puzzle ? [0, puzzle.high] : null}
           />
         </div>

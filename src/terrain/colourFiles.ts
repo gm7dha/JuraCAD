@@ -42,7 +42,7 @@ export function bandPuzzle(pieces: PuzzlePiece[], ctx: BandContext): BandedPuzzl
   const first = filaments(ctx.spec, ctx.map)[0]?.n ?? 1;
   for (const p of pieces) {
     try {
-      parts.set(p, bandParts(p.bodies, p.z0, ctx));
+      parts.set(p, bandParts(p.bodies, p.z0, ctx, p.top !== false));
     } catch (e) {
       if (!(e instanceof SliceError)) throw e;
       uncut++;
@@ -64,14 +64,22 @@ export function bandPlateFile(plate: Plate, title: string, banded: BandedPuzzle,
 }
 
 /** Roughly how many filament changes each plate takes. */
-export function plateSwaps(plates: Plate[], banded: BandedPuzzle, layer: number): number[] {
-  return plates.map((pl) => filamentSwaps(pl.pieces.flatMap((x) => banded.parts.get(x.piece) ?? []), layer));
+export function plateSwaps(plates: Plate[], banded: BandedPuzzle, layer: number, without: number[] = []): number[] {
+  // `without`: painted filaments to leave out (what the count would be with those switched off).
+  const strip = (p: BandPart): BandPart => {
+    if (!without.length || !p.paintRanges) return p;
+    return { ...p, paint: undefined, paintRanges: p.paintRanges.filter((r) => !without.includes(r.filament)) };
+  };
+  return plates.map((pl) => filamentSwaps(pl.pieces.flatMap((x) => (banded.parts.get(x.piece) ?? []).map(strip)), layer));
 }
+
+/** Above this many filament changes on a plate the window warns (each change flushes filament; hours on a big plate). */
+export const MANY_SWAPS = 200;
 
 /** Every piece coloured corner by corner. */
 export function colourPuzzle(pieces: PuzzlePiece[], ctx: FullContext): Map<PuzzlePiece, ColouredMesh> {
   const out = new Map<PuzzlePiece, ColouredMesh>();
-  for (const p of pieces) out.set(p, fullColours(p.bodies, ctx));
+  for (const p of pieces) out.set(p, fullColours(p.bodies, ctx, p.top !== false));
   return out;
 }
 

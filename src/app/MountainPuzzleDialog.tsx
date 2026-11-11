@@ -469,6 +469,7 @@ export function MountainPuzzleDialog() {
             usualBase={null}
             usualWater={WATER_BLUE}
             has={paintMap}
+            roadsAsked={detail === "all"}
             ground={puzzle ? [puzzle.layout.low, puzzle.layout.high] : null}
           />
             </>

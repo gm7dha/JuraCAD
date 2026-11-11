@@ -14,7 +14,7 @@
  * colour at a band's height).
  */
 import { weld } from "../geometry/threeMf";
-import { GROOVES } from "./groundMarks";
+import { GROOVES, WATER_DROP } from "./groundMarks";
 import type { Body } from "./mountainPuzzle";
 import type { MapFeatures, OsmLineKind } from "./osm";
 import type { P2 } from "./triangulate";
@@ -616,8 +616,11 @@ export interface BandContext {
   map: MapRaster;
 }
 
-/** Is a triangle part of the ground on top (facing up)? */
-const facesUp = (nz: number) => nz > 0.5;
+/**
+ * Is a triangle one the map's colours go on? Anything not near-vertical: grooves' walls slope at up to ~57° (nz ≈ 0.54)
+ * and steeper still on a mountain's flank, while the pieces' and dovetails' walls are vertical (nz 0).
+ */
+const takesMapPaint = (nz: number) => nz > 0.05;
 
 function normalOf(V: ArrayLike<number>, a: number, b: number, c: number): [number, number, number] {
   const [ux, uy, uz] = [V[b * 3] - V[a * 3], V[b * 3 + 1] - V[a * 3 + 1], V[b * 3 + 2] - V[a * 3 + 2]];
@@ -630,9 +633,11 @@ function normalOf(V: ArrayLike<number>, a: number, b: number, c: number): [numbe
 /**
  * A piece's bodies as one part per colour band (lowest first), with the map's water, paths and roads painted on: an
  * upward triangle whose middle the map says is water (or a footpath or track, or a road) is painted that filament — the
- * grooves' floors and sides, as the map's lines are drawn exactly as wide as their grooves.
+ * grooves' floors and sides, as the map's lines are drawn exactly as wide as their grooves. Only a column's `top` piece
+ * has the ground on it: pieces under it get no map paint (their tops are hidden), nor do the flat faces where a part
+ * was cut from the band above it.
  */
-export function bandParts(bodies: Body[], z0: number, ctx: BandContext): BandPart[] {
+export function bandParts(bodies: Body[], z0: number, ctx: BandContext, top = true): BandPart[] {
   const fs = filaments(ctx.spec, ctx.map);
   const { below, levels } = bandLevels(ctx.spec, ctx.scale, fs);
   const { below: first, cuts } = snappedCuts(levels, below, z0, ctx.spec.layer, ctx.spec.firstLayer ?? ctx.spec.layer);
@@ -650,14 +655,16 @@ export function bandParts(bodies: Body[], z0: number, ctx: BandContext): BandPar
       let high = -Infinity;
       for (let i = 2; i < slab.vertices.length; i += 3) [low, high] = [Math.min(low, slab.vertices[i]), Math.max(high, slab.vertices[i])];
       const part: BandPart = { filament, vertices: slab.vertices, triangles: slab.triangles, low: low - z0, high: high - z0 };
-      if ([waterN, pathN, roadN].some((f) => f && f !== filament)) {
+      if (top && [waterN, pathN, roadN].some((f) => f && f !== filament)) {
         const paint = new Uint8Array(slab.triangles.length / 3);
         let any = false;
         const V = slab.vertices;
         const ranges = new Map<number, [number, number][]>();
         for (let t = 0; t < slab.triangles.length; t += 3) {
           const [a, b, c] = [slab.triangles[t], slab.triangles[t + 1], slab.triangles[t + 2]];
-          if (!facesUp(normalOf(V, a, b, c)[2])) continue;
+          if (!takesMapPaint(normalOf(V, a, b, c)[2])) continue;
+          // The cap where this part was cut from the band above (flat at its top, inside the piece).
+          if (s < cuts.length && [a, b, c].every((i) => Math.abs(V[i * 3 + 2] - high) < 1e-9)) continue;
           const x = (V[a * 3] + V[b * 3] + V[c * 3]) / 3;
           const y = (V[a * 3 + 1] + V[b * 3 + 1] + V[c * 3 + 1]) / 3;
           const f = paintOf(ctx.map.kindAt(x, y));
@@ -680,6 +687,9 @@ export function bandParts(bodies: Body[], z0: number, ctx: BandContext): BandPar
   }
   return parts;
 }
+
+/** Layers counted under painted triangles (Bambu Studio's top paint penetration, 4 layers: the painted one and 3 more). */
+export const PAINT_PENETRATION = 3;
 
 /** Height ranges joined where they overlap or come within `gap`. */
 function mergeRanges(list: [number, number][], gap: number): [number, number][] {
@@ -738,9 +748,10 @@ export function filamentSwaps(
       if (painted.length && l >= b - 3) for (const f of painted) sets[l].add(f);
     }
     // Paint is on the layers its triangles span — a path climbing a hill paints a little on many layers — and Bambu
-    // Studio paints a layer or so into the part below them, so one layer more is counted under each range.
+    // Studio carries top paint down into the part: "Top paint penetration layers" (top_color_penetration_layers,
+    // default 4 — BambuStudio src/libslic3r/PrintConfig.cpp), so 3 more layers are counted under each range.
     for (const r of p.paintRanges ?? []) {
-      const ra = Math.max(0, Math.floor(r.low / layer + 1e-6) - 1);
+      const ra = Math.max(0, Math.floor(r.low / layer + 1e-6) - PAINT_PENETRATION);
       const rb = Math.min(n, Math.ceil(r.high / layer - 1e-6));
       for (let l = ra; l < Math.max(rb, ra + 1) && l < n; l++) sets[l].add(r.filament);
     }
@@ -812,8 +823,11 @@ export function tintAt(bands: ColourBand[], h: number): RGB {
   return hexRgb(stops[stops.length - 1].colour);
 }
 
-/** Every triangle corner of a piece coloured for a full-colour print. */
-export function fullColours(bodies: Body[], ctx: FullContext): ColouredMesh {
+/** How far the map can press ground below where it would be (mm): the deepest groove, or water below its shore. */
+export const DEEPEST_MARK = Math.max(WATER_DROP, ...Object.values(GROOVES).map((g) => g.depth));
+
+/** Every triangle corner of a piece coloured; the map's colours only on a column's `top` piece (the others are hidden). */
+export function fullColours(bodies: Body[], ctx: FullContext, top = true): ColouredMesh {
   const { spec, scale } = ctx;
   const snow = spec.bands.find((b) => b.snow);
   const snowRange = Math.max(5, (spec.bands[spec.bands.length - 1].from - spec.bands[0].from) * 0.03);
@@ -866,7 +880,7 @@ export function fullColours(bodies: Body[], ctx: FullContext): ColouredMesh {
       const cz = (V[T[t] * 3 + 2] + V[T[t + 1] * 3 + 2] + V[T[t + 2] * 3 + 2]) / 3;
       const ground = n[2] > 0.2;
       // The base's own colour is for its sides; ground pressed below the base's top (a groove at the coast) stays ground.
-      const inBase = baseRgb && cz < baseTop && !(ground && cz > baseTop - 2);
+      const inBase = baseRgb && cz < baseTop && !(ground && cz > baseTop - DEEPEST_MARK - 0.01);
       for (let k = 0; k < 3; k++) {
         const i = T[t + k];
         triangles.push(i + off);
@@ -881,7 +895,7 @@ export function fullColours(bodies: Body[], ctx: FullContext): ColouredMesh {
         }
         const l = Math.hypot(vn[i * 3], vn[i * 3 + 1], vn[i * 3 + 2]);
         const nn: [number, number, number] = l > 0 ? [vn[i * 3] / l, vn[i * 3 + 1] / l, vn[i * 3 + 2] / l] : n;
-        const kind = ctx.map.empty ? MapKind.None : ctx.map.kindAt(x, y);
+        const kind = ctx.map.empty || !top ? MapKind.None : ctx.map.kindAt(x, y);
         if (kind === MapKind.Water) {
           // Water is flat colour: no hill shading on it.
           rgbs.push(water[0], water[1], water[2]);
