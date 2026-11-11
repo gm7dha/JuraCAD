@@ -8,6 +8,16 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.57 — Red paths and black roads on colour puzzles
+
+- With **Colour bands**, footpaths and tracks from the map are painted **red** and roads **black** in their grooves, on
+  top of whichever colour band they cross (each its own filament; recolour or switch them off next to Water). Roads need
+  "Everything" in From the map.
+- With **Full colour**, paths are red and roads black too.
+- Paths climbing hills need a filament change on every layer they cross, so the window now says how many changes they add
+  and what it drops to with them off, and warns when a plate goes over 200 changes. Only the pieces with the ground on
+  top are painted.
+
 ## v0.56 — Delete a sketch and everything that uses it, in one go
 
 - Right-click a feature → **Delete with dependents…**: a box lists exactly what will go ("Delete Sketch 2 and the 3
