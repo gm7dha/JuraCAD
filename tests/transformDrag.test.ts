@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { applyPoint, applyVec, compose, frameFromZ, invert, isClassicTransform, rotation, toAxisAngle, transformMotion, transformTriad, transformKeys, type Rigid, type Triad, type Vec3 } from "../src/model/transformMath";
+import { applyPoint, applyVec, compose, frameFromZ, invert, isClassicTransform, rotation, toAxisAngle, transformMotion, transformTriad, transformKeys, valuesInFrame, type Rigid, type Triad, type Vec3 } from "../src/model/transformMath";
 import { axisParam, handleAt, lengthStep, planeHit, snapTo, startTriadDrag, TRIAD_LAYOUT, type Ray } from "../src/viewport/transformDrag";
 import type { TransformDef } from "../src/model/types";
+import { circleOf, directionOf, lineOf, spotFrame } from "../src/model/transformPicks";
 
 const close = (a: readonly number[], b: readonly number[], digits = 6) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i], digits));
 const def = (t: Partial<TransformDef> = {}): TransformDef => ({ partId: "p", axis: "z", about: "centre", copy: false, ...t });
@@ -156,5 +157,56 @@ describe("dragging the triad", () => {
     // A finger reaches further.
     expect(handleAt(triad, 100, project, 290, 212)).toBeNull();
     expect(handleAt(triad, 100, project, 290, 212, 2.2)).toEqual({ kind: "arrow", axis: 0 });
+  });
+});
+
+describe("moving the triad keeps the part where it is", () => {
+  it("works out the same move in the new triad's directions", () => {
+    const t = def();
+    const values = { rx: 20, ry: -35, rz: 110, dx: 4, dy: -7, dz: 12 };
+    const centre: Vec3 = [3, 1, 2];
+    const before = transformMotion(t, values, centre) as Rigid;
+    const frame = frameFromZ([10, -4, 6], [1, 1, 1], [0, 1, 0]);
+    const triad = { origin: frame.origin, x: frame.x, z: frame.z };
+    const again = transformMotion(def({ triad }), valuesInFrame(t, values, centre, frame), centre) as Rigid;
+    for (const p of [[0, 0, 0], [5, -2, 9], [-3, 8, 1]] as Vec3[]) close(applyPoint(again, p), applyPoint(before, p), 4);
+    // Straight up and down (where X and Z turns run together) too.
+    const up = { ry: 90, rz: 30, dx: 1 };
+    const there = transformMotion(def({ triad: { origin: [0, 0, 0], x: [1, 0, 0], z: [0, 0, 1] } }), valuesInFrame(t, up, centre, { origin: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }), centre) as Rigid;
+    close(applyPoint(there, [2, 3, 4]), applyPoint(transformMotion(t, up, centre) as Rigid, [2, 3, 4]), 4);
+  });
+});
+
+describe("what a click gives Move / copy", () => {
+  const edge = (a: Vec3, b: Vec3, curve = "LINE") => ({ kind: "edge" as const, curve, a, b, mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2] as Vec3 });
+  const ring = (c: Vec3, r: number): Vec3[] => Array.from({ length: 33 }, (_, k) => [c[0] + r * Math.cos((k * Math.PI) / 16), c[1] + r * Math.sin((k * Math.PI) / 16), c[2]] as Vec3);
+
+  it("puts a spot on a flat face's middle, an edge's nearest end or middle, a round edge's centre, or a plane", () => {
+    const face = spotFrame({ kind: "face", ref: { kind: "face", surface: "PLANE", center: [5, 5, 10], normal: [0, 0, 1] } }) as ReturnType<typeof frameFromZ>;
+    close(face.origin, [5, 5, 10]);
+    close(face.z, [0, 0, 1]);
+    expect(spotFrame({ kind: "face", ref: { kind: "face", surface: "CYLINDRE", center: [0, 0, 0], normal: [1, 0, 0] } })).toMatch(/curved/);
+    const e = edge([0, 0, 0], [10, 0, 0]);
+    close((spotFrame({ kind: "edge", ref: e, at: [9, 0, 0], points: [] }) as ReturnType<typeof frameFromZ>).origin, [10, 0, 0]);
+    close((spotFrame({ kind: "edge", ref: e, at: [6, 0, 0], points: [] }) as ReturnType<typeof frameFromZ>).origin, [5, 0, 0]);
+    const round = spotFrame({ kind: "edge", ref: edge([3, 0, 2], [3, 0, 2], "CIRCLE"), points: ring([1, 0, 2], 2) }) as ReturnType<typeof frameFromZ>;
+    close(round.origin, [1, 0, 2]);
+    expect(Math.abs(round.z[2])).toBeCloseTo(1, 6);
+    // On the Front plane: the point brought onto it, Z out of it.
+    const front = spotFrame({ kind: "plane", frame: { origin: [0, 0, 0], u: [1, 0, 0], v: [0, 0, 1], n: [0, -1, 0] } }, [4, 7, 2]) as ReturnType<typeof frameFromZ>;
+    close(front.origin, [4, 0, 2]);
+    close(front.z, [0, -1, 0]);
+  });
+
+  it("gives directions, axes and lines", () => {
+    const d = directionOf({ kind: "edge", ref: edge([1, 1, 0], [1, 1, 5]), points: [] }) as { dir: Vec3; through: Vec3 };
+    close(d.dir, [0, 0, 1]);
+    const axis = directionOf({ kind: "edge", ref: edge([3, 0, 2], [3, 0, 2], "CIRCLE"), points: ring([1, 0, 2], 2) }) as { dir: Vec3; through: Vec3 };
+    close(axis.through, [1, 0, 2]);
+    expect(directionOf({ kind: "edge", ref: edge([0, 0, 0], [1, 1, 1], "BSPLINE"), points: [[0, 0, 0], [0.2, 0.5, 0.1], [0.6, 0.6, 0.9], [1, 1, 1]] })).toMatch(/neither straight nor round/);
+    // From the end nearer the click.
+    expect(lineOf({ kind: "edge", ref: edge([0, 0, 0], [10, 0, 0]), at: [8, 0, 0], points: [] })).toEqual({ a: [10, 0, 0], b: [0, 0, 0] });
+    expect(lineOf({ kind: "face", ref: { kind: "face", surface: "PLANE", center: [0, 0, 0], normal: [0, 0, 1] } })).toMatch(/straight edge/);
+    expect(circleOf(ring([0, 0, 0], 5))!.radius).toBeCloseTo(5, 6);
   });
 });

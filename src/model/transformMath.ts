@@ -284,3 +284,33 @@ export const TRANSFORM_MODES: { mode: TransformMode; label: string; hint: string
   { mode: "rotate", label: "Rotate", hint: "Turn about an axis: X, Y or Z through the triad, or click a straight edge, a round edge or a flat face." },
   { mode: "mates", label: "Transform by mate connectors", hint: "Click a spot on the part, then the spot to move it to: they line up (Flip turns it over)." },
 ];
+
+/**
+ * The free (or Translate by XYZ) values that make the same move with the triad in a new frame — so moving the triad
+ * ("Move triad", or back to the centre) leaves the part where it is. Turns are about X, then Y, then Z of the new
+ * frame through its origin; Translate by XYZ only has moves.
+ */
+export function valuesInFrame(t: TransformDef, values: TransformValues, centre: Vec3, frame: Frame): Required<Pick<TransformValues, "dx" | "dy" | "dz" | "rx" | "ry" | "rz">> {
+  const m = transformMotion(t, values, centre);
+  const motion = typeof m === "string" ? IDENTITY : m;
+  // The turn as seen in the new frame's directions: Bᵀ·R·B.
+  const b = [frame.x, frame.y, frame.z];
+  const col = (j: number) => applyVec(motion, b[j]);
+  const r = (i: number, j: number) => dot(b[i], col(j));
+  const tidy = (n: number) => Math.round(n * 1e6) / 1e6 + 0;
+  let rx = 0;
+  let ry = 0;
+  let rz = 0;
+  if (transformMode(t) !== "xyz") {
+    // R = Rz(γ)·Ry(β)·Rx(α): r20 = −sin β, r21 = cos β sin α, r22 = cos β cos α, r10 = cos β sin γ, r00 = cos β cos γ.
+    const beta = Math.asin(Math.max(-1, Math.min(1, -r(2, 0))));
+    if (Math.cos(beta) > 1e-6) {
+      rx = Math.atan2(r(2, 1), r(2, 2));
+      rz = Math.atan2(r(1, 0), r(0, 0));
+    } else rx = Math.atan2(-r(1, 2), r(1, 1));
+    ry = beta;
+  }
+  const shift = sub(applyPoint(motion, frame.origin), frame.origin);
+  const deg = (a: number) => tidy((a * 180) / Math.PI);
+  return { dx: tidy(dot(shift, frame.x)), dy: tidy(dot(shift, frame.y)), dz: tidy(dot(shift, frame.z)), rx: deg(rx), ry: deg(ry), rz: deg(rz) };
+}

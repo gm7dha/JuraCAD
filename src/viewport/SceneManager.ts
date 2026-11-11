@@ -18,6 +18,8 @@ import { VIEW_DIRECTIONS, ViewCube, type StandardView } from "./ViewCube";
 import { finishOf, type FinishId } from "../model/finishes";
 import { fitToBuffer, pictureSize, showGround, supersample } from "./pictureSize";
 import { finishMaterial, paintBackground, studioEnvironment, studioRig, type PictureBackground } from "./studio";
+import { handleAt, planeAxes, TRIAD_LAYOUT, TRIAD_PIXELS, type TriadHandle } from "./transformDrag";
+import type { Triad } from "../model/transformMath";
 
 // JuraCAD is Z-up, like Onshape.
 THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
@@ -161,7 +163,20 @@ export interface SceneCallbacks {
   onDragCancel?: () => void;
   /** A selection box dragged on empty space: the parts it chose (`additive` with Shift/Ctrl/Cmd held). */
   onBoxSelect?: (partIds: string[], additive: boolean) => void;
+  /**
+   * Move / copy's triad: a drag began on one of its handles (`size`: the triad's size in mm as drawn now; `shift`:
+   * no snapping). Return false to ignore it. Then each move (with Shift as it is now), and the end or (a second
+   * finger landed, the pointer was lost) a take-back.
+   */
+  onTriadStart?: (handle: TriadHandle, ray: ScreenRay, shift: boolean, size: number) => boolean;
+  onTriadMove?: (ray: ScreenRay, shift: boolean) => void;
+  onTriadEnd?: () => void;
+  onTriadCancel?: () => void;
 }
+
+/** The triad's colours: X red, Y green, Z blue (as the origin's), the ball dark; under the pointer or dragged, orange. */
+const TRIAD_COLOURS = { x: "#d43c3c", y: "#2f9e44", z: "#2f6fd1", ball: "#3a4048", active: "#ff8a00" };
+const handleKey = (h: TriadHandle) => (h.kind === "ball" ? "ball" : `${h.kind}${h.axis}`);
 
 interface PlaneObjects {
   group: THREE.Group;
@@ -277,7 +292,16 @@ export class SceneManager {
    * What one finger (or the pen) is doing: drawing in the sketch (`sent`: the sketch tools have had its press),
    * pressing on the view cube, or (`holdDrag`) dragging a part after a long press in an assembly.
    */
-  private touchStroke: { sketch: boolean; cube: boolean; sent: boolean; holdDrag: boolean } | null = null;
+  private touchStroke: { sketch: boolean; cube: boolean; sent: boolean; holdDrag: boolean; triad?: TriadHandle | null; triadOn?: boolean } | null = null;
+  /** Move / copy's triad (null: none shown), drawn in `triadGroup`, with each handle's materials for highlighting. */
+  private triad: Triad | null = null;
+  private readonly triadGroup = new THREE.Group();
+  private triadMaterials = new Map<string, { mats: THREE.Material[]; colour: string }>();
+  private triadHover: TriadHandle | null = null;
+  /** The mouse (or desktop pen) dragging a triad handle. */
+  private triadDrag: { pointerId: number; handle: TriadHandle } | null = null;
+  /** Parts shown moved before they're rebuilt (a triad drag): id → 4×4 matrix, applied on top of any placement. */
+  private previewMoves: Record<string, number[]> = {};
 
   constructor(container: HTMLElement, callbacks: SceneCallbacks) {
     this.container = container;
@@ -331,7 +355,7 @@ export class SceneManager {
     };
     this.renderer.localClippingEnabled = true;
 
-    this.scene.add(this.partsGroup, this.ghostGroup, this.planesGroup, this.customPlanesGroup, this.originGroup, this.markersGroup, this.sketchLayer.group);
+    this.scene.add(this.partsGroup, this.ghostGroup, this.planesGroup, this.customPlanesGroup, this.originGroup, this.markersGroup, this.sketchLayer.group, this.triadGroup);
     this.buildPlanes();
     this.buildOrigin();
 
@@ -458,10 +482,12 @@ export class SceneManager {
   private applyPlacements(): void {
     for (const [id, p] of this.parts) {
       const m = this.placements[id];
+      const preview = this.previewMoves[id];
       for (const o of [p.mesh, p.lines, p.cut]) {
         o.matrixAutoUpdate = false;
         if (m) o.matrix.fromArray(m);
         else o.matrix.identity();
+        if (preview) o.matrix.premultiply(new THREE.Matrix4().fromArray(preview));
         o.matrixWorldNeedsUpdate = true;
         o.updateMatrixWorld(true);
       }
@@ -496,6 +522,20 @@ export class SceneManager {
       .applyMatrix4(p.mesh.matrixWorld)
       .project(this.camera);
     return { x: ((c.x + 1) / 2) * this.width, y: ((1 - c.y) / 2) * this.height };
+  }
+
+  /** Points along one of a part's edges (its drawn line, in order), e.g. to find a round edge's centre. */
+  edgePoints(partId: string, edgeIndex: number): [number, number, number][] {
+    const p = this.parts.get(partId);
+    const g = p?.data.edgeGroups[edgeIndex];
+    if (!p || !g) return [];
+    const l = p.data.lines;
+    const out: [number, number, number][] = [];
+    // The points come in pairs, one segment each: each segment's start, then the last one's end.
+    for (let k = g.start; k < g.start + g.count; k += 2) out.push([l[3 * k], l[3 * k + 1], l[3 * k + 2]]);
+    const last = g.start + g.count - 1;
+    if (g.count > 0) out.push([l[3 * last], l[3 * last + 1], l[3 * last + 2]]);
+    return out;
   }
 
   /** What a click at this screen point (CSS px within the viewport) would pick, e.g. "face:PLANE" — for the browser smoke test. */
@@ -1718,6 +1758,138 @@ export class SceneManager {
   }
 
   // -------------------------------------------------------------------------
+  // Move / copy's triad (Onshape's Transform manipulator): arrows, squares, rings and a ball to drag.
+
+  /** Show the triad (null: hide it). It's kept the same size on screen. */
+  setTriad(triad: Triad | null): void {
+    this.triad = triad;
+    const g = this.triadGroup;
+    for (const child of [...g.children]) {
+      g.remove(child);
+      const o = child as THREE.Mesh;
+      o.geometry?.dispose();
+      (o.material as THREE.Material | undefined)?.dispose();
+    }
+    this.triadMaterials.clear();
+    if (!triad) {
+      this.triadHover = null;
+      return;
+    }
+    const colours = ["x", "y", "z"] as const;
+    const keep = (h: TriadHandle, colour: string, ...objects: (THREE.Mesh | THREE.Line)[]) => {
+      const mats = objects.map((o) => o.material as THREE.Material);
+      this.triadMaterials.set(handleKey(h), { mats, colour });
+      for (const o of objects) {
+        o.renderOrder = 20;
+        g.add(o);
+      }
+    };
+    const basic = (colour: string, opacity = 1) => new THREE.MeshBasicMaterial({ color: colour, depthTest: false, depthWrite: false, transparent: true, opacity, side: THREE.DoubleSide });
+    const lineMat = (colour: string) => new THREE.LineBasicMaterial({ color: colour, depthTest: false, depthWrite: false, transparent: true });
+    const unitVec = (i: number) => new THREE.Vector3(i === 0 ? 1 : 0, i === 1 ? 1 : 0, i === 2 ? 1 : 0);
+    // Drawn 1 unit long in the triad's own directions; the group is turned, placed and scaled every frame.
+    for (const axis of triad.arrows) {
+      const colour = TRIAD_COLOURS[colours[axis]];
+      const d = unitVec(axis);
+      const shaft = new THREE.Line(new THREE.BufferGeometry().setFromPoints([d.clone().multiplyScalar(TRIAD_LAYOUT.arrowFrom), d.clone().multiplyScalar(0.84)]), lineMat(colour));
+      const head = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.16, 16), basic(colour));
+      head.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d);
+      head.position.copy(d.clone().multiplyScalar(0.92));
+      // (A thicker, see-through stalk so the arrow is easy to see and grab.)
+      const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.84 - TRIAD_LAYOUT.arrowFrom, 8), basic(colour, 0.85));
+      stalk.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d);
+      stalk.position.copy(d.clone().multiplyScalar((0.84 + TRIAD_LAYOUT.arrowFrom) / 2));
+      keep({ kind: "arrow", axis }, colour, shaft, head, stalk);
+    }
+    for (const axis of triad.planes) {
+      const colour = TRIAD_COLOURS[colours[axis]];
+      const [i, j] = planeAxes(axis);
+      const u = unitVec(i);
+      const v = unitVec(j);
+      const at = (a: number, b: number) => u.clone().multiplyScalar(a).add(v.clone().multiplyScalar(b));
+      const lo = TRIAD_LAYOUT.planeFrom;
+      const hi = TRIAD_LAYOUT.planeTo;
+      const c = [at(lo, lo), at(hi, lo), at(hi, hi), at(lo, hi)];
+      const fill = new THREE.Mesh(new THREE.BufferGeometry().setFromPoints([c[0], c[1], c[2], c[0], c[2], c[3]]), basic(colour, 0.28));
+      const edge = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(c), lineMat(colour));
+      keep({ kind: "plane", axis }, colour, fill, edge);
+    }
+    for (const axis of triad.rings) {
+      const colour = TRIAD_COLOURS[colours[axis]];
+      const [i, j] = planeAxes(axis);
+      const pts: THREE.Vector3[] = [];
+      for (let k = 0; k < 96; k++) {
+        const a = (2 * Math.PI * k) / 96;
+        pts.push(unitVec(i).multiplyScalar(TRIAD_LAYOUT.ring * Math.cos(a)).add(unitVec(j).multiplyScalar(TRIAD_LAYOUT.ring * Math.sin(a))));
+      }
+      const ring = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), lineMat(colour));
+      // A thin tube along it too, so it reads as a handle.
+      const curve = new THREE.CatmullRomCurve3(pts, true);
+      const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 96, 0.012, 6, true), basic(colour, 0.8));
+      keep({ kind: "ring", axis }, colour, ring, tube);
+    }
+    if (triad.ball) keep({ kind: "ball" }, TRIAD_COLOURS.ball, new THREE.Mesh(new THREE.SphereGeometry(TRIAD_LAYOUT.ball, 20, 14), basic(TRIAD_COLOURS.ball, 0.9)));
+    const f = triad.frame;
+    const basis = new THREE.Matrix4().makeBasis(new THREE.Vector3(...f.x), new THREE.Vector3(...f.y), new THREE.Vector3(...f.z));
+    g.quaternion.setFromRotationMatrix(basis);
+    g.position.set(...f.origin);
+    if (this.triadHover && !this.triadMaterials.has(handleKey(this.triadHover))) this.triadHover = null;
+    this.colourTriad();
+  }
+
+  /** The triad's size (mm from its middle to an arrow's tip) as drawn now. */
+  triadSize(): number {
+    return TRIAD_PIXELS * this.worldPerPixel();
+  }
+
+  /** Screen position (CSS px within the viewport) of a world point (for the triad and the browser smoke test). */
+  worldToScreen(p: readonly number[]): { x: number; y: number } | null {
+    this.camera.updateMatrixWorld();
+    const v = new THREE.Vector3(p[0], p[1], p[2]).project(this.camera);
+    if (!Number.isFinite(v.x) || !Number.isFinite(v.y)) return null;
+    return { x: ((v.x + 1) / 2) * this.width, y: ((1 - v.y) / 2) * this.height };
+  }
+
+  /** The triad on show, if any (for the browser smoke test). */
+  triadShown(): Triad | null {
+    return this.triad;
+  }
+
+  /** The triad handle at this screen point (CSS px), or null. */
+  triadHandleAt(x: number, y: number, reach = 1): TriadHandle | null {
+    if (!this.triad || this.sketchController) return null;
+    const project = (p: [number, number, number]): [number, number] | null => {
+      const s = this.worldToScreen(p);
+      return s ? [s.x, s.y] : null;
+    };
+    return handleAt(this.triad, this.triadSize(), project, x, y, reach);
+  }
+
+  /** Show a part moved (before it's rebuilt): a 4×4 matrix (column by column), or null to show it where it is. */
+  setPreviewMove(id: string, matrix: number[] | null): void {
+    const next = { ...this.previewMoves };
+    if (matrix) next[id] = matrix;
+    else delete next[id];
+    this.previewMoves = next;
+    this.applyPlacements();
+  }
+
+  /** Stop showing any part moved ahead of its rebuild. */
+  clearPreviewMoves(): void {
+    if (!Object.keys(this.previewMoves).length) return;
+    this.previewMoves = {};
+    this.applyPlacements();
+  }
+
+  private colourTriad(): void {
+    const lit = this.triadDrag?.handle ?? (this.touchStroke?.triadOn ? this.touchStroke.triad : null) ?? this.triadHover;
+    for (const [key, { mats, colour }] of this.triadMaterials) {
+      const c = lit && handleKey(lit) === key ? TRIAD_COLOURS.active : colour;
+      for (const m of mats) (m as THREE.MeshBasicMaterial).color.set(c);
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // References for Mirror and patterns: clickable sketch lines, and the chosen plane or axis drawn in the view.
 
   private pickLines: PickableLine[] = [];
@@ -1833,6 +2005,18 @@ export class SceneManager {
       this.renderer.domElement.setPointerCapture(e.pointerId);
     }
     this.pointerDown = { x, y, button: e.button };
+    // Move / copy's triad: a press on one of its handles starts dragging it (nothing else happens with that press).
+    if (this.triad && !this.sketchController && e.button === 0 && !this.viewCube.contains(x, y, this.width)) {
+      const handle = this.triadHandleAt(x, y);
+      if (handle && this.callbacks.onTriadStart?.(handle, this.rayAt(x, y), shiftHeld(e), this.triadSize())) {
+        e.preventDefault();
+        this.triadDrag = { pointerId: e.pointerId, handle };
+        this.renderer.domElement.setPointerCapture(e.pointerId);
+        this.renderer.domElement.style.cursor = "grabbing";
+        this.colourTriad();
+        return;
+      }
+    }
     if (this.sketchController && e.button === 0 && !this.viewCube.contains(x, y, this.width)) {
       const ptr = this.sketchPointer(e);
       if (ptr) {
@@ -1865,6 +2049,11 @@ export class SceneManager {
     if (route === "gesture") {
       const { x, y } = this.localPoint(e);
       this.runGestures(this.gestures.move(e.pointerId, x, y, eventTime(e)), e);
+      return;
+    }
+    if (this.triadDrag && this.triadDrag.pointerId === e.pointerId) {
+      const { x, y } = this.localPoint(e);
+      this.callbacks.onTriadMove?.(this.rayAt(x, y), shiftHeld(e));
       return;
     }
     const orbit = this.orbit;
@@ -1952,6 +2141,13 @@ export class SceneManager {
       return;
     }
     if (this.orbit?.id === e.pointerId) this.orbit = null;
+    // The triad's drag lost its pointer: what it did is taken back.
+    if (this.triadDrag?.pointerId === e.pointerId) {
+      this.triadDrag = null;
+      this.renderer.domElement.style.cursor = "";
+      this.callbacks.onTriadCancel?.();
+      this.colourTriad();
+    }
   };
 
   private onPointerUp = (e: PointerEvent) => {
@@ -1967,6 +2163,16 @@ export class SceneManager {
     if (this.orbit?.id === e.pointerId) {
       this.orbit = null;
       if (this.renderer.domElement.hasPointerCapture(e.pointerId)) this.renderer.domElement.releasePointerCapture(e.pointerId);
+      return;
+    }
+    if (this.triadDrag?.pointerId === e.pointerId) {
+      // (Cleared first: letting go of the capture below fires lostpointercapture, which mustn't take the drag back.)
+      this.triadDrag = null;
+      this.pointerDown = null;
+      if (this.renderer.domElement.hasPointerCapture(e.pointerId)) this.renderer.domElement.releasePointerCapture(e.pointerId);
+      this.renderer.domElement.style.cursor = "";
+      this.callbacks.onTriadEnd?.();
+      this.colourTriad();
       return;
     }
     const down = this.pointerDown;
@@ -2036,7 +2242,9 @@ export class SceneManager {
     if (this.touchIds.count === 1) {
       const cube = this.viewCube.contains(x, y, this.width);
       const sketch = !!this.sketchController && !cube;
-      this.touchStroke = { sketch, cube, sent: false, holdDrag: false };
+      // A finger (or the pen) on one of the triad's handles drags it instead of turning the view.
+      const triad = !sketch && !cube ? this.triadHandleAt(x, y, reachFor(e.pointerType)) : null;
+      this.touchStroke = { sketch, cube, sent: false, holdDrag: false, triad, triadOn: false };
       if (sketch) {
         // (As with the mouse: keep the keyboard focus where it is, e.g. in a dimension's value box.)
         e.preventDefault();
@@ -2087,6 +2295,11 @@ export class SceneManager {
     const ctl = this.sketchController;
     switch (g.type) {
       case "dragStart": {
+        if (st?.triad) {
+          st.triadOn = this.callbacks.onTriadStart?.(st.triad, this.rayAt(g.x, g.y), shiftHeld({}), this.triadSize()) ?? false;
+          this.colourTriad();
+          break;
+        }
         // With Select, a drag moves what's under it (or draws a box); with a drawing tool it starts the
         // shape where the finger went down, and lifting the finger finishes it.
         if (!st?.sketch || !ctl) break;
@@ -2100,6 +2313,10 @@ export class SceneManager {
       }
       case "drag": {
         if (!st || st.cube) break;
+        if (st.triadOn) {
+          this.callbacks.onTriadMove?.(this.rayAt(g.x, g.y), shiftHeld({}));
+          break;
+        }
         if (st.sketch) {
           const ptr = this.sketchPointerAt(g.x, g.y, e);
           if (ptr && ctl) ctl.pointerMove(ptr, st.sent);
@@ -2107,6 +2324,12 @@ export class SceneManager {
         break;
       }
       case "dragEnd": {
+        if (st?.triadOn) {
+          this.touchStroke = null;
+          this.callbacks.onTriadEnd?.();
+          this.colourTriad();
+          break;
+        }
         if (st?.sketch && ctl) {
           const ptr = this.sketchPointerAt(g.x, g.y, e);
           // Lifting the finger is a click there (the shape's other end, or the next point) — except with Select.
@@ -2152,9 +2375,11 @@ export class SceneManager {
           if (st.sent) ctl.cancelStroke();
           ctl.pointerLeave();
         }
-        // A part being moved goes back where it was.
+        // A part being moved goes back where it was (and so does a triad drag).
         if (st?.holdDrag) (this.callbacks.onDragCancel ?? this.callbacks.onDragEnd)?.();
+        if (st?.triadOn) this.callbacks.onTriadCancel?.();
         this.touchStroke = null;
+        this.colourTriad();
         break;
       case "pan":
         this.panBy(g.dx, g.dy);
@@ -2219,9 +2444,15 @@ export class SceneManager {
     this.pendingMove = null;
     const overCube = this.viewCube.contains(move.x, move.y, this.width);
     this.viewCube.setHover(overCube ? move.x : null, overCube ? move.y : null, this.width);
+    // Over one of the triad's handles: it lights up (and nothing else is hovered).
+    const handle = overCube ? null : this.triadHandleAt(move.x, move.y);
+    if ((handle ? handleKey(handle) : null) !== (this.triadHover ? handleKey(this.triadHover) : null)) {
+      this.triadHover = handle;
+      this.colourTriad();
+    }
     // While sketching, the sketch tools handle hover themselves.
-    const hit = overCube || this.sketchController ? null : this.pickAt(move.x, move.y);
-    this.renderer.domElement.style.cursor = overCube && this.viewCube.pick(move.x, move.y, this.width) ? "pointer" : "";
+    const hit = overCube || this.sketchController || handle ? null : this.pickAt(move.x, move.y);
+    this.renderer.domElement.style.cursor = overCube && this.viewCube.pick(move.x, move.y, this.width) ? "pointer" : handle ? "grab" : "";
     const partHit = hit?.kind === "part" ? hit.item : null;
     const planeHit = hit?.kind === "plane" ? hit.plane : null;
     const customHit = hit?.kind === "customPlane" ? hit.id : null;
@@ -2263,6 +2494,7 @@ export class SceneManager {
     }
     this.originGroup.scale.setScalar(36 * wpp);
     for (const m of this.markersGroup.children) m.scale.setScalar(40 * wpp);
+    this.triadGroup.scale.setScalar(TRIAD_PIXELS * wpp);
     this.sketchLayer.frameUpdate(wpp);
 
     this.renderer.setViewport(0, 0, this.width, this.height);

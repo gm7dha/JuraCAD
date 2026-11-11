@@ -39,6 +39,7 @@ import { sectionPlane } from "./section";
 import { linePlane, pickableSketchLines, referenceShape, setMirrorReference, setPatternDirection, sketchLine3D, type DirectionChoice, type PickableLine } from "../model/patternRefs";
 import { guardViewportZoom } from "./zoomGuard";
 import { finishesByKey, type FinishId } from "../model/finishes";
+import { partsArrived, transformDraft, transformPick, triadCancel, triadEnd, triadFor, triadMove, triadStart } from "./transformTriad";
 
 /** Shared empty colour list (a selector must not make a new object each time). */
 const NO_COLOURS: Record<string, string> = {};
@@ -230,6 +231,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     else if (d?.type === "split" && d.splitDef) s.setDraftField({ splitDef: { ...d.splitDef, plane, toolPartId: undefined } });
     else if (d?.type === "draft" || d?.type === "ruled") s.setDraftField({ neutral: plane });
     else if (d?.type === "replaceFace") s.setDraftField({ replaceDef: { target: plane, picking: "faces" } });
+    else if (d?.type === "transform" && d.transform?.picking && d.transform.picking !== "part") transformPick(viewportApi.current, target);
     else if (!s.editing) s.selectFeature(target.id);
     return;
   }
@@ -292,11 +294,9 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     } else s.setDraftField({ extrude: { ...ex, upTo: target.point ? { ...pick, at: target.point } : pick } });
     return;
   }
-  // Choosing the part to move.
-  if (s.editing?.draft.type === "transform" && s.editing.draft.transform) {
-    if (target?.kind === "part" && target.item.partId !== s.editing.draft.id) {
-      s.setDraftField({ transform: { ...s.editing.draft.transform, partId: target.item.partId } });
-    }
+  // Move / copy: the part to move, or where the triad, a direction, a line or a mate connector goes.
+  if (transformDraft()) {
+    transformPick(viewportApi.current, target);
     return;
   }
   // Choosing where text goes.
@@ -649,7 +649,18 @@ export function Viewport() {
     if (!container) return;
     let manager: SceneManager;
     try {
-      manager = new SceneManager(container, { onPick: handlePick, onDragStart: dragStart, onDragMove: dragMove, onDragEnd: dragEnd, onDragCancel: dragCancel, onBoxSelect: boxSelect });
+      manager = new SceneManager(container, {
+        onPick: handlePick,
+        onDragStart: dragStart,
+        onDragMove: dragMove,
+        onDragEnd: dragEnd,
+        onDragCancel: dragCancel,
+        onBoxSelect: boxSelect,
+        onTriadStart: (handle, ray, shift, size) => triadStart(viewportApi.current, handle, ray, shift, size),
+        onTriadMove: (ray, shift) => triadMove(viewportApi.current, ray, shift),
+        onTriadEnd: () => triadEnd(viewportApi.current),
+        onTriadCancel: () => triadCancel(viewportApi.current),
+      });
     } catch (e) {
       useStore.getState().showToast(
         "Your browser couldn't start 3D graphics (WebGL). Try Chrome or Edge, and check hardware acceleration is on.",
@@ -854,6 +865,8 @@ export function Viewport() {
   const printBed = useStore((s) => s.printBed);
   useEffect(() => viewportApi.current?.setPrintBed(printBed ? bedSize(printBed.printer, printBed.custom) : null), [printBed]);
   useEffect(() => {
+    // A triad drag's part shown moved ahead of its rebuild: the rebuilt one is here now.
+    partsArrived(viewportApi.current, parts);
     // Placements first, so the parts arrive already in position.
     viewportApi.current?.setPlacements(placements);
     viewportApi.current?.setParts(display);
@@ -914,6 +927,19 @@ export function Viewport() {
   }, [draft?.id, planeKey]);
 
   const inAssembly = assembly !== null;
+  // Move / copy open: its triad (arrows, squares, rings, ball) on the part, following the boxes (and a drag) live.
+  const moveDraft = useStore((s) => (s.editing?.draft.type === "transform" && s.editing.draft.transform ? s.editing.draft : null));
+  const moveCentre = useStore((s) => (s.editing ? s.transformCentres[s.editing.draft.id] : undefined));
+  const moveLive = useStore((s) => s.transformLive);
+  const triad = useMemo(
+    () => (inAssembly || !moveDraft ? null : triadFor(moveDraft as Parameters<typeof triadFor>[0], moveCentre, moveLive)),
+    [moveDraft, moveCentre, moveLive, inAssembly],
+  );
+  useEffect(() => viewportApi.current?.setTriad(triad), [triad]);
+  // Closing the dialog: nothing stays shown moved.
+  useEffect(() => {
+    if (!moveDraft) viewportApi.current?.clearPreviewMoves();
+  }, [moveDraft]);
   const theme = useStore((s) => s.theme);
   useEffect(() => setSketchTheme(theme === "dark"), [theme]);
   // A mirror or pattern open: its sketch lines can be clicked, and the plane or axis it uses is drawn.

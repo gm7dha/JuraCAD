@@ -27,6 +27,9 @@ import { ISO_COARSE } from "../kernel/thread";
 import { importedSize } from "../model/importFile";
 import { SIMPLIFY_LABELS, SIMPLIFY_LEVELS } from "../model/simplify";
 import { chooseImportFile } from "./fileActions";
+import { TRANSFORM_MODES, transformMode } from "../model/transformMath";
+import type { TransformMode } from "../model/types";
+import { placeTriad } from "../viewport/transformTriad";
 
 const OPERATIONS: Operation[] = ["new", "add", "remove", "intersect"];
 
@@ -992,19 +995,34 @@ function PartEffect() {
   ) : null;
 }
 
-/** Transform settings: which part, turned about which axis, moved or copied. */
+/** Move / copy settings (Onshape's Transform): which part, the way of moving, what it moves by, the triad, copy. */
 function TransformOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const parts = useStore(studioParts);
   const setDraftField = useStore((s) => s.setDraftField);
+  const changeDraftStep = useStore((s) => s.changeDraftStep);
+  const undoDraftStep = useStore((s) => s.undoDraftStep);
+  const canUndo = useStore((s) => !!s.editing && s.draftSteps?.id === s.editing.draft.id && s.draftSteps.drafts.length > 0);
   if (!draft || draft.type !== "transform" || !draft.transform) return null;
   const t = draft.transform;
+  const mode = transformMode(t);
   const choices = parts.filter((p) => p.id !== draft.id); // not the copy this feature makes
   const update = (patch: Partial<typeof t>) => setDraftField({ transform: { ...t, ...patch } });
+  const picking = t.picking ?? "part";
+  /** Make a click in the view choose this (again: back to choosing the part). */
+  const pick = (what: NonNullable<typeof t.picking>) => update({ picking: picking === what ? undefined : what });
+  const flip = (label: string) => (
+    <label className="check-row">
+      <input type="checkbox" checked={!!t.flip} onChange={(e) => changeDraftStep({ transform: { ...t, flip: e.target.checked || undefined } })} />
+      {label}
+    </label>
+  );
+  const alongAxis = t.along && "axis" in t.along ? t.along.axis : t.along ? null : mode === "distance" ? "x" : "z";
+  const placed = t.triad ? "Placed where you clicked" : t.about === "origin" ? "At the origin" : "At the part's centre";
   return (
-    <fieldset className="param-group">
+    <fieldset className="param-group transform-options">
       <legend>Part</legend>
-      <select className="full-select" aria-label="Part to move" value={t.partId ?? ""} onChange={(e) => update({ partId: e.target.value || undefined })}>
+      <select className="full-select" aria-label="Part to move" value={t.partId ?? ""} onChange={(e) => update({ partId: e.target.value || undefined, picking: undefined })}>
         {!t.partId && <option value="">Choose a part…</option>}
         {choices.map((p) => (
           <option key={p.id} value={p.id}>
@@ -1013,19 +1031,118 @@ function TransformOptions() {
         ))}
         {t.partId && !choices.some((p) => p.id === t.partId) && <option value={t.partId}>Missing part — choose another</option>}
       </select>
-      <p className="dialog-hint field-hint">Or click the part in the 3D view.</p>
+      <p className={`dialog-hint field-hint${picking === "part" ? "" : " muted"}`}>{picking === "part" ? "Or click the part in the 3D view." : <button type="button" className="text-button" onClick={() => update({ picking: undefined })}>Click a part to move instead</button>}</p>
       <label className="check-row">
         <input type="checkbox" checked={t.copy} onChange={(e) => update({ copy: e.target.checked })} />
         Make a copy (keep the original where it is)
       </label>
-      <label className="field-label" htmlFor="transform-about">
-        Turn about axes
+      <label className="field-label" htmlFor="transform-mode">
+        How to move it
       </label>
-      <select id="transform-about" className="full-select" aria-label="Turn about which point" value={t.about} onChange={(e) => update({ about: e.target.value as "origin" | "centre" })}>
-        <option value="centre">through the part's centre</option>
-        <option value="origin">through the origin</option>
+      <select
+        id="transform-mode"
+        className="full-select"
+        aria-label="How to move it"
+        value={mode}
+        onChange={(e) => {
+          const next = e.target.value as TransformMode;
+          const start = next === "line" ? ("line" as const) : next === "mates" ? ("from" as const) : undefined;
+          changeDraftStep({ transform: { ...t, mode: next === "free" ? undefined : next, picking: start } });
+        }}
+      >
+        {TRANSFORM_MODES.map((m) => (
+          <option key={m.mode} value={m.mode}>
+            {m.label}
+          </option>
+        ))}
       </select>
-      <p className="dialog-hint field-hint">The turns above happen about X, then Y, then Z.</p>
+      <p className="dialog-hint field-hint">{TRANSFORM_MODES.find((m) => m.mode === mode)?.hint}</p>
+      {(mode === "free" || mode === "xyz") && (
+        <>
+          <div className="transform-triad-row">
+            <span className="muted small">Triad: {placed}</span>
+            <button type="button" className={`text-button${picking === "triad" ? " active" : ""}`} aria-pressed={picking === "triad"} onClick={() => pick("triad")} title="Click a face, an edge, a corner or a plane to put the triad there, lined up with it. The part stays where it is.">
+              Move triad
+            </button>
+            {t.triad && (
+              <button type="button" className="text-button" onClick={() => placeTriad(draft as Parameters<typeof placeTriad>[0], null)} title="Put the triad back on the part, lined up with X, Y and Z">
+                Reset
+              </button>
+            )}
+          </div>
+          {picking === "triad" && <p className="dialog-hint pick-hint attention">Click a flat face, an edge, a corner or a plane to put the triad there.</p>}
+          {mode === "free" && !t.triad && (
+            <>
+              <label className="field-label" htmlFor="transform-about">
+                Turn about axes
+              </label>
+              <select id="transform-about" className="full-select" aria-label="Turn about which point" value={t.about} onChange={(e) => update({ about: e.target.value as "origin" | "centre" })}>
+                <option value="centre">through the part's centre</option>
+                <option value="origin">through the origin</option>
+              </select>
+            </>
+          )}
+          <p className="dialog-hint field-hint">
+            Drag the triad on the part: an arrow moves along it, a square moves in its plane{mode === "free" ? ", a ring turns about it" : ""} and the ball moves anywhere. It snaps to whole steps; hold Shift (or turn on No snapping) to drag freely.
+            {mode === "free" ? " Turns happen about X, then Y, then Z." : ""}
+          </p>
+        </>
+      )}
+      {(mode === "distance" || mode === "rotate") && (
+        <ReferenceBox
+          label={mode === "distance" ? "Direction" : "Axis"}
+          text={t.along && "dir" in t.along ? (mode === "distance" ? "The clicked edge or face" : "The clicked edge") : null}
+          prompt={mode === "distance" ? "Click a straight edge or a flat face in the view" : "Click a straight edge, a round edge or a flat face in the view"}
+          active={picking === "along"}
+          onActivate={() => update({ picking: "along" })}
+          onClear={() => changeDraftStep({ transform: { ...t, along: undefined, picking: undefined } })}
+        >
+          <QuickChoices label={mode === "distance" ? "Move along" : "Turn about"} options={AXIS_CHOICES} value={alongAxis} onChoose={(axis) => changeDraftStep({ transform: { ...t, along: { axis }, picking: undefined } })} />
+          {!(t.along && "dir" in t.along) && <p className="dialog-hint field-hint">{mode === "distance" ? "Along the triad's X, Y or Z" : "Through the part's centre (or the triad)"}.</p>}
+        </ReferenceBox>
+      )}
+      {mode === "distance" && flip("The other way")}
+      {mode === "rotate" && flip("Turn the other way")}
+      {mode === "line" && (
+        <>
+          <ReferenceBox
+            label="Line"
+            text={t.line ? `An edge ${formatLength(Math.hypot(t.line.b[0] - t.line.a[0], t.line.b[1] - t.line.a[1], t.line.b[2] - t.line.a[2]))} long` : null}
+            prompt="Click a straight edge in the view (it moves from the end nearer your click to the other)"
+            active={picking === "line"}
+            onActivate={() => update({ picking: "line" })}
+            onClear={() => changeDraftStep({ transform: { ...t, line: undefined, picking: "line" } })}
+          />
+          {flip("The other way")}
+        </>
+      )}
+      {mode === "mates" && (
+        <>
+          <ReferenceBox
+            label="From (on the part)"
+            text={t.from ? "A spot on the part" : null}
+            prompt="Click a face, an edge or a corner on the part"
+            active={picking === "from"}
+            onActivate={() => update({ picking: "from" })}
+            onClear={() => changeDraftStep({ transform: { ...t, from: undefined, picking: "from" } })}
+          />
+          <ReferenceBox
+            label="To"
+            text={t.to ? "Where it goes" : null}
+            prompt="Click where it goes: a face, an edge, a corner or a plane"
+            active={picking === "to"}
+            onActivate={() => update({ picking: "to" })}
+            onClear={() => changeDraftStep({ transform: { ...t, to: undefined, picking: "to" } })}
+          />
+          {flip("Flip (turn it over, so the faces meet)")}
+          <p className="dialog-hint field-hint">Spots are a flat face's middle, an edge's ends or middle, or a round edge's centre — as Onshape's mate connectors.</p>
+        </>
+      )}
+      {canUndo && (
+        <button type="button" className="text-button" onClick={() => undoDraftStep()} title="Undo the last drag or click in this dialog (Ctrl+Z)">
+          Undo last change here
+        </button>
+      )}
     </fieldset>
   );
 }
@@ -1975,6 +2092,8 @@ export function FeatureDialog() {
   const buildWarning = useStore((s) => (s.editing ? s.featureWarnings[s.editing.draft.id] : undefined));
   const buildNote = useStore((s) => (s.editing ? s.featureNotes[s.editing.draft.id] : undefined));
   const busy = useStore((s) => s.rebuildBusy);
+  // Move / copy's triad being dragged: its boxes follow it live.
+  const live = useStore((s) => s.transformLive);
   const ref = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
@@ -2112,8 +2231,8 @@ export function FeatureDialog() {
                       ? { ...p, label: draft.breakStyle === "chamfer" ? "Distance back along each edge" : "Radius" }
                       : p
                 }
-                value={draft.params[p.key] ?? p.defaultValue}
-                autoFocus={mode === "create" && gi === 0 && pi === 0}
+                value={(draft.type === "transform" ? live?.[p.key] : undefined) ?? draft.params[p.key] ?? p.defaultValue}
+                autoFocus={mode === "create" && gi === 0 && pi === 0 && draft.type !== "transform"}
               />
             ))}
           </fieldset>
