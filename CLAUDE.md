@@ -482,8 +482,8 @@
   "connector", within `CONNECTOR_PICK_PIXELS` of the middle, before faces); in an assembly only while a mate is made (key
   "<leaf key>|<id>"). They're sketch planes (`framesOf`/`refreshPlaneRefs` include them as `planeRef`s), have an eye
   (`hasEye`), and Delete with dependents knows `GeomPick`s, `connector.plane`/`owner`, `from/toConnector`. Not done: Onshape has
-  no Tangent plane; sketch points can't be clicked in the 3D view (the extension takes them); mirror/pattern across a connector
-  only through its plane (a sketch on it). Claude: add_feature "plane" (plane_type…) / "mate_connector", add_sketch "plane":
+  no Tangent plane; sketch points can't be clicked in the 3D view (the extension takes them); a connector clicked while a Mirror is
+  open is its plane (XY), but patterns can't use one as an axis yet. Claude: add_feature "plane" (plane_type…) / "mate_connector", add_sketch "plane":
   a Plane or connector name, add_mate end `{"instance", "connector"}` (`src/mcp/planeSpec.ts`). Tests: tests/planeTypes (pure),
   enginePlaneTypes (follow a variable, sketch on it in one build, Move / copy by connectors, owned connector), mcpPlanes.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values

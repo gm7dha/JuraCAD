@@ -124,6 +124,20 @@ export function geomPick(manager: SceneManager | null, target: PickTarget | null
     s.setSketchPlane(planeAsSketchPlane(f, frame));
     return true;
   }
+  // A mirror across its XY plane (followed as it moves, like a Plane feature).
+  if (d?.type === "mirror" && f && frame) {
+    s.setDraftMirrorPlane(planeAsSketchPlane(f, frame));
+    return true;
+  }
+  // Text, or a plane based on it: its XY plane.
+  if (d?.type === "text" && d.text && f && frame) {
+    s.setDraftField({ text: { ...d.text, plane: planeAsSketchPlane(f, frame) } });
+    return true;
+  }
+  if (d?.type === "plane" && d.planeDef && f && frame) {
+    s.setDraftField({ planeDef: { ...d.planeDef, ref: planeAsSketchPlane(f, frame) } });
+    return true;
+  }
   if (!s.editing && f) s.selectFeature(f.id);
   return true;
 }
