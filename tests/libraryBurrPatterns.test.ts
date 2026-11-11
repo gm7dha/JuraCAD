@@ -236,8 +236,6 @@ describe("Six-piece burr surface patterns", () => {
     let offered = 0;
     for (const d of ["easy", "medium", "hard"])
       for (let seed = 1; seed <= 12; seed++) {
-        // Hard 6 takes the burr maker ~50 s to find (its search, not this check), so it's left out to keep CI quick.
-        if (d === "hard" && seed === 6) continue;
         const b = makeBurr(seed, d);
         const path = pathApart(b.pieces);
         expect(path, `${d} ${seed}`).not.toBeNull();
@@ -250,7 +248,7 @@ describe("Six-piece burr surface patterns", () => {
         if (free) offered++;
       }
     expect(offered).toBeGreaterThan(20);
-    expect(offered).toBeLessThan(35);
+    expect(offered).toBeLessThan(36);
     // Hard 12: another way apart exists in 4 moves, but the plain solution's 4th move (piece 6 out along −x) runs into
     // an end, so badges are refused.
     const hard12 = makeBurr(12, "hard");

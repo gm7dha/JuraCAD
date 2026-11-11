@@ -88,6 +88,17 @@ function samePlace(a: SketchPlane, b: SketchPlane): boolean {
 /** No sketch links (one shared object, so selectors stay stable). */
 const NO_LINKS: Record<string, SketchLinkInfo> = {};
 const NO_WARNINGS: Record<string, string> = {};
+const NO_CENTRES: Record<string, [number, number, number]> = {};
+
+/**
+ * The open dialog's undo after a change to `before` (the draft as it was): one more step — unless `typing` names the
+ * box typed in last time too, when the step that typing began already holds what to go back to.
+ */
+function draftStepAfter(steps: { id: string; drafts: Feature[]; typing?: string } | null, before: Feature, typing?: string): { id: string; drafts: Feature[]; typing?: string } {
+  const drafts = steps?.id === before.id ? steps.drafts : [];
+  if (typing && steps?.id === before.id && steps.typing === typing && drafts.length) return steps;
+  return { id: before.id, drafts: [...drafts.slice(-49), before], ...(typing ? { typing } : {}) };
+}
 /** No drawing dimensions selected (one shared array, so selectors stay stable). */
 const NO_DIMS: string[] = [];
 export interface SelectionItem {
@@ -311,6 +322,12 @@ export interface AppState {
   featureWarnings: Record<string, string>;
   /** Plain information about features built (what Simplify did): feature ID → message. */
   featureNotes: Record<string, string>;
+  /** Move / copy features → the point they turn about before the move (from the latest rebuild): where the triad goes. */
+  transformCentres: Record<string, [number, number, number]>;
+  /** While the Move / copy triad is being dragged: the boxes' values so far (shown instead of the draft's). */
+  transformLive: Record<string, string> | null;
+  /** The open dialog's own undo: the draft before each drag of the triad (or Move triad click), newest last. */
+  draftSteps: { id: string; drafts: Feature[]; /** The box typed in last (typing on in it merges into that step). */ typing?: string } | null;
   /** Sketches on part faces or using part edges (by feature id), as found on the latest rebuild. */
   sketchLinks: Record<string, SketchLinkInfo>;
   /**
@@ -605,6 +622,12 @@ export interface AppState {
     featureWarnings?: Record<string, string>,
     featureNotes?: Record<string, string>,
   ) => void;
+  /** The Move / copy triad being dragged: the boxes' values so far (null when the drag ends or is taken back). */
+  setTransformLive: (values: Record<string, string> | null) => void;
+  /** Change the open draft as one step of the dialog's own undo (a finished drag of the triad, say). */
+  changeDraftStep: (patch: { params?: Record<string, string>; transform?: Feature["transform"] }) => void;
+  /** Undo the open dialog's last step (see changeDraftStep). False when there's nothing to undo. */
+  undoDraftStep: () => boolean;
 }
 
 // The browser-storage keys are in browserKeep.ts (the design's keeps the app's old name, PartSmith, on purpose).
@@ -839,6 +862,25 @@ export const useStore = create<AppState>((set, get) => {
     featureErrors: {},
     featureWarnings: NO_WARNINGS,
     featureNotes: NO_WARNINGS,
+    transformCentres: NO_CENTRES,
+    transformLive: null,
+    draftSteps: null,
+    setTransformLive: (transformLive) => set({ transformLive }),
+    changeDraftStep: (patch) =>
+      set((s) => {
+        if (!s.editing) return {};
+        const d = s.editing.draft;
+        const draft = { ...d, ...(patch.params ? { params: { ...d.params, ...patch.params } } : {}), ...(patch.transform ? { transform: patch.transform } : {}) };
+        return { editing: { ...s.editing, draft }, draftSteps: draftStepAfter(s.draftSteps, d), transformLive: null };
+      }),
+    undoDraftStep: () => {
+      const s = get();
+      const steps = s.draftSteps;
+      if (!s.editing || !steps || steps.id !== s.editing.draft.id || !steps.drafts.length) return false;
+      const draft = steps.drafts[steps.drafts.length - 1];
+      set({ editing: { ...s.editing, draft }, draftSteps: { id: steps.id, drafts: steps.drafts.slice(0, -1) }, transformLive: null });
+      return true;
+    },
     sketchLinks: NO_LINKS,
     sketchCandidates: null,
     setSketchCandidates: (sketchCandidates) => set({ sketchCandidates }),
@@ -861,6 +903,8 @@ export const useStore = create<AppState>((set, get) => {
 
     startCreate: (type) => {
       if (readOnly()) return;
+      // A new dialog starts with nothing to undo in it.
+      set({ draftSteps: null, transformLive: null });
       const s = get();
       if (type === "sketch") {
         // On the highlighted plane, or Plane feature, if any — or the plane of the sketch whose areas are selected.
@@ -1016,6 +1060,7 @@ export const useStore = create<AppState>((set, get) => {
       if (readOnly()) return;
       const f = activeFeatures(get()).find((x) => x.id === id);
       if (!f) return;
+      set({ draftSteps: null, transformLive: null });
       set({
         editing: { mode: "edit", draft: { ...f, params: { ...f.params } } },
         showFlat: false,
@@ -1143,12 +1188,26 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     setDraftParam: (key, value) =>
-      set((s) =>
-        s.editing ? { editing: { ...s.editing, draft: { ...s.editing.draft, params: { ...s.editing.draft.params, [key]: value } } } } : {},
-      ),
+      set((s) => {
+        if (!s.editing) return {};
+        const d = s.editing.draft;
+        // Move / copy keeps its own undo: typing in a box is a step (typing on in the same box adds to it).
+        const steps = d.type === "transform" ? { draftSteps: draftStepAfter(s.draftSteps, d, `param:${key}`) } : {};
+        return { editing: { ...s.editing, draft: { ...d, params: { ...d.params, [key]: value } } }, ...steps };
+      }),
 
     setDraftField: (patch) =>
-      set((s) => (s.editing ? { editing: { ...s.editing, draft: { ...s.editing.draft, ...patch } } } : {})),
+      set((s) => {
+        if (!s.editing) return {};
+        const d = s.editing.draft;
+        const next = { ...d, ...patch };
+        // Move / copy: a change is a step of its own undo — except only choosing what a click picks next.
+        const { picking: _a, ...was } = d.transform ?? ({} as NonNullable<Feature["transform"]>);
+        const { picking: _b, ...now } = next.transform ?? ({} as NonNullable<Feature["transform"]>);
+        const onlyPicking = Object.keys(patch).every((k) => k === "transform") && JSON.stringify(was) === JSON.stringify(now);
+        const steps = d.type === "transform" && !onlyPicking ? { draftSteps: draftStepAfter(s.draftSteps, d, Object.keys(patch).join(",") === "name" ? "name" : undefined) } : {};
+        return { editing: { ...s.editing, draft: next }, ...steps };
+      }),
 
     toggleDraftPick: (pick) =>
       set((s) => {
@@ -1198,11 +1257,11 @@ export const useStore = create<AppState>((set, get) => {
         const vars = fitted.variables;
         change((doc) => inStudio({ ...doc, variables: vars }, activeStudioId(get()) ?? firstStudioId(get().history.present), place));
       } else changeStudio(place);
-      set({ editing: null, sketch: null, selectedFeatureId: draft.id, ...(at && editing.mode === "create" ? { rollbackTo: draft.id } : {}) });
+      set({ editing: null, sketch: null, selectedFeatureId: draft.id, draftSteps: null, transformLive: null, ...(at && editing.mode === "create" ? { rollbackTo: draft.id } : {}) });
       return true;
     },
 
-    cancelDraft: () => set({ editing: null, sketch: null }),
+    cancelDraft: () => set({ editing: null, sketch: null, draftSteps: null, transformLive: null }),
 
     setRollback: (id) => {
       if (get().editing) return;

@@ -3421,6 +3421,24 @@ kbd {
   padding: 4px 0;
 }
 
+/* Move / copy: where its triad is, with Move triad and Reset. */
+.transform-triad-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+
+.transform-triad-row > span {
+  flex: 1 1 100%;
+}
+
+.transform-triad-row .text-button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* A view clicked on a drawing sheet, its corner handle for resizing, and the bar to set its scale. */
 .drawing-view-handle.selected {
   stroke: var(--accent);

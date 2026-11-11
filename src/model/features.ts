@@ -1,4 +1,5 @@
 import { hasLength } from "./fasteners";
+import { transformKeys } from "./transformMath";
 import { evaluate, type Scope } from "./expr";
 import type { Feature, FeatureType, Operation } from "./types";
 
@@ -108,7 +109,7 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     type: "transform",
     label: "Move / copy",
     namePrefix: "Transform",
-    description: "Moves and/or turns a part, or a copy of it. Turns are about X, then Y, then Z.",
+    description: "Moves and/or turns a part, or a copy of it: drag the triad on it, or type the amounts. Turns are about X, then Y, then Z.",
     params: [
       { key: "rx", label: "Turn about X (red)", defaultValue: "0", group: "size", unit: "°" },
       { key: "ry", label: "Turn about Y (green)", defaultValue: "0", group: "size", unit: "°" },
@@ -116,6 +117,8 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "dx", label: "Move X (red)", defaultValue: "0", group: "position" },
       { key: "dy", label: "Move Y (green)", defaultValue: "0", group: "position" },
       { key: "dz", label: "Move Z (blue)", defaultValue: "0", group: "position" },
+      { key: "turn", label: "Angle", defaultValue: "0", group: "size", unit: "°" },
+      { key: "distance", label: "Distance", defaultValue: "0", group: "position" },
     ],
   },
   mirror: {
@@ -524,7 +527,7 @@ export function isSolidFeature(type: FeatureType): boolean {
 }
 
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */
-export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo" | "sweepControl" | "sheetConvert">>): Set<string> {
+export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo" | "sweepControl" | "sheetConvert" | "transform">>): Set<string> {
   const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
   // Sheet metal from a part's faces has rips but no depth; from a sketch, the other way round.
   if (f.type === "sheetMetal") keys.delete(f.sheetConvert ? "depth" : "ripGap");
@@ -547,6 +550,11 @@ export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | 
     if (f.chamferType !== "distanceAngle") keys.delete("angle");
   }
   if (f.type === "plane" && f.planeDef?.mode !== "angle") keys.delete("angle");
+  // Move / copy: only the boxes its way of moving uses.
+  if (f.type === "transform") {
+    const used = new Set(transformKeys(f.transform));
+    for (const k of [...keys]) if (!used.has(k)) keys.delete(k);
+  }
   if (f.type === "fastener" && f.fastener && !hasLength(f.fastener.kind)) keys.delete("length");
   if (f.type === "hole" && f.hole) {
     if (f.hole.end !== "blind") keys.delete("depth");

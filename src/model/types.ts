@@ -30,6 +30,48 @@ export interface PlaneOptions {
 }
 
 /**
+ * Move / copy's way of moving (Onshape's Transform types). "free" (also when
+ * missing, as in older designs): turn about X, Y and Z, then move along them —
+ * typed, or by dragging the triad.
+ */
+export type TransformMode = "free" | "xyz" | "distance" | "line" | "rotate" | "mates";
+
+/** A frame kept by Move / copy: where it is, and its X and Z directions (Y = Z × X). */
+export interface TransformFrame {
+  origin: [number, number, number];
+  x: [number, number, number];
+  z: [number, number, number];
+}
+
+/** Move / copy (Transform): which part, how it moves, and what was clicked for it. */
+export interface TransformDef {
+  partId?: string;
+  /** Older designs' single turning axis (read into rx/ry/rz when opened). */
+  axis: Axis;
+  about: "origin" | "centre";
+  copy: boolean;
+  /** Missing = "free" (the original way, exactly as before). */
+  mode?: TransformMode;
+  /**
+   * "Move triad": where the triad was put (a face, an edge, a corner or a plane) and how it's turned, kept as it was
+   * when clicked. Moves and turns go along and about its directions, through its origin. Missing = at the part's
+   * centre (or the origin), along X, Y and Z — as before.
+   */
+  triad?: TransformFrame;
+  /** Translate by distance / Rotate: the triad's X, Y or Z (missing = X for a distance, Z for a turn), or a clicked edge or face (kept as clicked). */
+  along?: { axis: Axis } | { dir: [number, number, number]; through: [number, number, number] };
+  /** Translate by line: the clicked edge's ends (the move is from a to b). */
+  line?: { a: [number, number, number]; b: [number, number, number] };
+  /** Transform by mate connectors: the spot on the part, and where it goes. */
+  from?: TransformFrame;
+  to?: TransformFrame;
+  /** The other way (distance, line, turn), or (mate connectors) turned over. */
+  flip?: boolean;
+  /** What a click in the 3D view chooses (missing = the part). */
+  picking?: "part" | "triad" | "along" | "line" | "from" | "to";
+}
+
+/**
  * Join parts into one ("union"), cut some parts with others ("subtract"), or
  * keep only where parts overlap ("intersect"), like Onshape's Boolean.
  */
@@ -288,7 +330,7 @@ export interface Feature {
   /** Draft: the neutral plane (the faces pivot where they meet it; the part pulls out along its normal). Ruled surface: the strips run along this plane's normal. */
   neutral?: SketchPlane;
   /** Transform: move and/or turn a part (or a copy of it). */
-  transform?: { partId?: string; axis: Axis; about: "origin" | "centre"; copy: boolean };
+  transform?: TransformDef;
   /**
    * Linear and circular patterns: the features to repeat, and along or around
    * which axis (a circular pattern's axis passes through its cx, cy, cz).
