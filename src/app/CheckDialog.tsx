@@ -7,6 +7,11 @@ import { evaluate } from "../model/expr";
 import { lengthNumber, storeLength } from "../model/units";
 import { solveWithParts } from "../assembly/mates";
 import { assemblyReport, DEFAULT_CLASH_OPTIONS, judgeContacts, parseClashOptions, type ClashOptions } from "../assembly/assemblyCheck";
+import { DEFAULT_FIT_RANGE, FIT_RANGE, fitFor, judgeFits, matePair, MAX_FIT, type FitFinding } from "../assembly/fits";
+import { instanceAt } from "../assembly/subassembly";
+import { newId } from "../model/document";
+import type { Assembly, IntendedFit } from "../model/types";
+import { loadPrinter } from "./printerSetting";
 import { instancesForKernel } from "./assemblySolve";
 import { Icons } from "./icons";
 import { Modal } from "./Modal";
@@ -52,10 +57,15 @@ export async function runCheck(options: ClashOptions = loadClashOptions()): Prom
     const isHidden = (key: string) => options.skipHidden && s.hiddenInstances.some((h) => key === h || key.startsWith(`${h}/`));
     const instances = all.filter((i) => !isHidden(i.id));
     const hidden = all.filter((i) => isHidden(i.id));
-    // Gaps only matter when touching parts are listed.
-    const measured = await kernel.clashes(instances, options.tolerance, !options.ignoreTouching);
+    // Gaps only matter when touching parts are listed — or for the fit check (asked for, or fits are marked).
+    const withFits = !!options.checkFits || !!asm.fits?.length;
+    const range = withFits ? Math.max(FIT_RANGE, ...(asm.fits ?? []).filter((f) => f.kind === "clearance").map((f) => f.max + 0.5)) : 0;
+    const measured = await kernel.clashes(instances, options.tolerance, !options.ignoreTouching, range);
     const names = Object.fromEntries(s.parts.map((p) => [p.id, p.name]));
-    return assemblyReport(asm, solved, names, judgeContacts(measured, options), options, { hidden: hidden.length, suppressed: asm.instances.filter((i) => i.suppressed).length }, assemblies);
+    const fits = withFits
+      ? judgeFits({ measured, intended: asm.fits ?? [], tolerance: options.tolerance, printFits: loadPrinter().print.fits, nameOf: (k) => instances.find((i) => i.id === k)?.name })
+      : undefined;
+    return assemblyReport(asm, solved, names, judgeContacts(measured, options), options, { hidden: hidden.length, suppressed: asm.instances.filter((i) => i.suppressed).length }, assemblies, fits);
   }
   const s0 = useStore.getState();
   const result = await kernel.check("normal", studioParts(s0).map((p) => p.id));
@@ -82,7 +92,10 @@ function PartMass({ partId, volumeMm3 }: { partId: string; volumeMm3: number }) 
   );
 }
 
-export function ReportView({ report }: { report: CheckReport }) {
+/** The pair a Fits line is about, for marking it as a fit. */
+export type FitPair = NonNullable<FitFinding["pair"]>;
+
+export function ReportView({ report, onFit }: { report: CheckReport; onFit?: (pair: FitPair) => void }) {
   return (
     <div className="check-report">
       <div className={`check-headline ${report.level}`}>
@@ -100,11 +113,19 @@ export function ReportView({ report }: { report: CheckReport }) {
             )}
           </h4>
           <ul>
-            {p.findings.map((f, i) => (
-              <li key={i} className={f.level}>
-                <LevelIcon level={f.level} /> {f.text}
-              </li>
-            ))}
+            {p.findings.map((f, i) => {
+              const pair = (f as FitFinding).pair;
+              return (
+                <li key={i} className={f.level}>
+                  <LevelIcon level={f.level} /> <span>{f.text}</span>
+                  {pair && onFit && (
+                    <button className="link-button fit-mark" onClick={() => onFit(pair)}>
+                      {pair.fit ? "Change…" : "Mark as a fit…"}
+                    </button>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </section>
       ))}
@@ -118,6 +139,8 @@ export function CheckDialog() {
   const [error, setError] = useState<string | null>(null);
   const inAssembly = useStore((s) => !!activeAssembly(s));
   const [options, setOptions] = useState<ClashOptions>(loadClashOptions);
+  const asmFits = useStore((s) => activeAssembly(s)?.fits ?? NO_FITS);
+  const [editing, setEditing] = useState<FitPair | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -130,7 +153,7 @@ export function CheckDialog() {
     return () => {
       cancelled = true;
     };
-  }, [options]);
+  }, [options, asmFits]);
 
   const change = (patch: Partial<ClashOptions>) => {
     const next = { ...options, ...patch };
@@ -156,10 +179,12 @@ export function CheckDialog() {
       }
     >
       {inAssembly && <ClashOptionsBar options={options} onChange={change} />}
+      {inAssembly && (options.checkFits || asmFits.length > 0) && <MatePairPicker onPick={setEditing} />}
+      {inAssembly && editing && <FitEditor pair={editing} onClose={() => setEditing(null)} />}
       {error ? (
         <p className="dialog-error">{error}</p>
       ) : report ? (
-        <ReportView report={report} />
+        <ReportView report={report} onFit={inAssembly ? setEditing : undefined} />
       ) : (
         <p className="muted">Checking…</p>
       )}
@@ -201,6 +226,129 @@ function ClashOptionsBar({ options, onChange }: { options: ClashOptions; onChang
       <label title="Leave out parts you've hidden with the eye button (suppressed parts are always left out)">
         <input type="checkbox" checked={options.skipHidden} onChange={(e) => onChange({ skipHidden: e.target.checked })} /> Leave out hidden parts
       </label>
+      <label title="How much parts that overlap go into each other, and the gap between parts that nearly touch (a pin in a hole, a sliding lid) — with which of your printer's fits each gap is like">
+        <input type="checkbox" checked={!!options.checkFits} onChange={(e) => onChange({ checkFits: e.target.checked })} /> Check fits (interference and clearance)
+      </label>
+    </div>
+  );
+}
+
+const NO_FITS: IntendedFit[] = [];
+
+/** A part's name in the assembly by its key ("copy" or "copy/inner/part"). */
+function keyName(asm: Assembly, assemblies: readonly Assembly[], key: string): string {
+  const at = instanceAt(asm, assemblies, key);
+  if (!at) return "A part";
+  return at.path.length ? `${at.top.name} / ${at.part.name}` : at.top.name;
+}
+
+/** Mark the two parts a mate joins as a fit. */
+function MatePairPicker({ onPick }: { onPick: (pair: FitPair) => void }) {
+  const asm = useStore((s) => activeAssembly(s));
+  const assemblies = useStore((s) => s.history.present.assemblies ?? NO_ASSEMBLIES);
+  const mates = (asm?.mates ?? []).filter((m) => matePair(m));
+  if (!asm || !mates.length) return null;
+  return (
+    <div className="clash-options">
+      <label>
+        Mark the parts of a mate as a fit:{" "}
+        <select
+          aria-label="Mate to mark as a fit"
+          value=""
+          onChange={(e) => {
+            const m = mates.find((x) => x.id === e.target.value);
+            const p = m && matePair(m);
+            if (!p) return;
+            onPick({ a: p[0], b: p[1], names: [keyName(asm, assemblies, p[0]), keyName(asm, assemblies, p[1])], fit: fitFor(asm, p[0], p[1]) });
+          }}
+        >
+          <option value="">Choose a mate…</option>
+          {mates.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+}
+
+const NO_ASSEMBLIES: Assembly[] = [];
+
+/** Mark (or change, or remove) the fit wanted between two parts: press or clearance, and how much. */
+function FitEditor({ pair, onClose }: { pair: FitPair; onClose: () => void }) {
+  const unit = useLengthUnit();
+  const asm = useStore((s) => activeAssembly(s));
+  const setAssemblyFit = useStore((s) => s.setAssemblyFit);
+  const removeAssemblyFit = useStore((s) => s.removeAssemblyFit);
+  const existing = (asm && fitFor(asm, pair.a, pair.b)) ?? pair.fit;
+  const startKind: IntendedFit["kind"] = existing?.kind ?? (pair.measured?.kind === "gap" ? "clearance" : "press");
+  const [kind, setKind] = useState<IntendedFit["kind"]>(startKind);
+  const show = (mm: number) => lengthNumber(mm, unit, unit === "in" ? 5 : 3);
+  const [from, setFrom] = useState(show(existing?.min ?? DEFAULT_FIT_RANGE[startKind][0]));
+  const [to, setTo] = useState(show(existing?.max ?? DEFAULT_FIT_RANGE[startKind][1]));
+  const [problem, setProblem] = useState<string | null>(null);
+  const read = (t: string) => {
+    const r = evaluate(storeLength(t, unit));
+    return r.ok && Number.isFinite(r.value) ? r.value : null;
+  };
+  const save = () => {
+    const min = read(from);
+    const max = read(to);
+    if (min === null || max === null || min < 0 || max > MAX_FIT) return setProblem(`Type two amounts from 0 to ${MAX_FIT} mm.`);
+    if (min > max) return setProblem("The first amount should be the smaller one.");
+    setAssemblyFit({ id: existing?.id ?? newId("fit"), a: pair.a, b: pair.b, kind, min, max });
+    onClose();
+  };
+  return (
+    <div className="fit-editor" role="group" aria-label="Fit between two parts">
+      <div className="fit-editor-title">
+        {pair.names[0]} and {pair.names[1]}
+      </div>
+      <label>
+        Meant to be{" "}
+        <select
+          aria-label="Kind of fit"
+          value={kind}
+          onChange={(e) => {
+            const k = e.target.value as IntendedFit["kind"];
+            setKind(k);
+            if (!existing) {
+              setFrom(show(DEFAULT_FIT_RANGE[k][0]));
+              setTo(show(DEFAULT_FIT_RANGE[k][1]));
+            }
+          }}
+        >
+          <option value="press">a press fit — a little too big, so it grips</option>
+          <option value="clearance">a clearance fit — a small gap, so it slides</option>
+        </select>
+      </label>
+      <label>
+        {kind === "press" ? "Overlap" : "Gap"} from <input className="clash-tolerance" aria-label="Smallest amount" value={from} onChange={(e) => setFrom(e.target.value)} /> to{" "}
+        <input className="clash-tolerance" aria-label="Largest amount" value={to} onChange={(e) => setTo(e.target.value)} /> {unit}
+      </label>
+      <p className="muted fit-editor-note">On the diameter for a pin in a hole (as your printer's fits are), otherwise straight across.</p>
+      {problem && <p className="dialog-error">{problem}</p>}
+      <div className="fit-editor-buttons">
+        <button className="primary-button" onClick={save}>
+          Save fit
+        </button>
+        {existing && (
+          <button
+            className="text-button"
+            onClick={() => {
+              removeAssemblyFit(existing.id);
+              onClose();
+            }}
+          >
+            Remove the mark
+          </button>
+        )}
+        <button className="text-button" onClick={onClose}>
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }

@@ -79,7 +79,7 @@ ctx.onmessage = (event) => {
           body = { type: "project", result: engine.project(request.partIds, request.instances, request.views, request.hidden, request.sections, request.breakouts, request.tangent !== false) };
           break;
         case "clashes":
-          body = { type: "clashes", result: engine.clashes(request.instances, request.tolerance ?? 0, request.withGaps !== false) };
+          body = { type: "clashes", result: engine.clashes(request.instances, request.tolerance ?? 0, request.withGaps !== false, request.fitRange ?? 0) };
           break;
         case "sketchCandidates":
           body = { type: "sketchCandidates", result: engine.sketchCandidatesSince(request.studioId, request.sketchId, request.known) };

@@ -15,6 +15,7 @@ import { applyPlacement, IDENTITY, parsePlacement, type Placement, type Vec3 } f
 import { MATE_TYPES } from "./mates";
 import { startingLength } from "../model/units";
 import { massGrams, materialOf } from "../model/materials";
+import { parseFits } from "./fits";
 
 const assembliesOf = (doc: JuraCADDocument) => doc.assemblies ?? [];
 
@@ -828,6 +829,7 @@ export function parseAssemblies(raw: unknown): Assembly[] {
       const g = parseGroup(raw);
       if (g && g.members.every((m) => instanceIds.has(m) && !groups.some((x) => x.members.includes(m)))) groups.push(g);
     }
+    const fits = parseFits(r.fits, instanceIds);
     out.push(
       tidyExplodeSteps(tidyGroups(tidyReplicates(tidyPatterns({
         ...(mates.length ? { ...assembly, mates } : assembly),
@@ -837,6 +839,7 @@ export function parseAssemblies(raw: unknown): Assembly[] {
         ...(replicates.length ? { replicates } : {}),
         ...(groups.length ? { groups } : {}),
         ...(explodeSteps.length ? { explodeSteps } : {}),
+        ...(fits.length ? { fits } : {}),
       })))),
     );
   }

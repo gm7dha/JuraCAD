@@ -10,6 +10,7 @@ import { formatArea, formatLength, formatVolume, lengthUnit } from "../model/uni
 import type { SolveResult } from "./mates";
 import { mateInactive } from "./suppress";
 import { partInstances } from "./assembly";
+import { overlapThickness, pairKey, type FitsResult } from "./fits";
 
 const worst = (levels: Level[]): Level => (levels.includes("error") ? "error" : levels.includes("warn") ? "warn" : "ok");
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -28,6 +29,8 @@ export interface ClashOptions {
   tolerance: number;
   /** Leave out parts hidden in the 3D view. (Suppressed parts are always left out.) */
   skipHidden: boolean;
+  /** Also check fits: how much parts overlap or how big the gaps are where they nearly touch (see fits.ts). Missing = off. */
+  checkFits?: boolean;
 }
 
 export const DEFAULT_CLASH_OPTIONS: ClashOptions = { ignoreTouching: true, tolerance: 0.01, skipHidden: false };
@@ -40,13 +43,17 @@ export function parseClashOptions(raw: unknown): ClashOptions {
     ignoreTouching: typeof r.ignoreTouching === "boolean" ? r.ignoreTouching : DEFAULT_CLASH_OPTIONS.ignoreTouching,
     tolerance: t,
     skipHidden: typeof r.skipHidden === "boolean" ? r.skipHidden : DEFAULT_CLASH_OPTIONS.skipHidden,
+    ...(r.checkFits === true ? { checkFits: true } : {}),
   };
 }
 
 /** How two parts meet, once judged: a real clash of some kind, or just touching. */
 export type Contact =
-  /** Two solids share some space. */
-  | { kind: "overlap"; a: string; b: string; volume: number }
+  /**
+   * Two solids share some space: `depth` is how far one goes into the other (a side, mm; about, unless
+   * `round` — a pin in a hole, measured exactly).
+   */
+  | { kind: "overlap"; a: string; b: string; volume: number; depth?: number; round?: boolean }
   /** A surface goes through a solid (a is the surface). */
   | { kind: "through"; a: string; b: string; area: number }
   /** Two surfaces cross. */
@@ -73,10 +80,12 @@ export function judgeContact(m: ContactMeasure, tolerance: number): Contact | nu
       // chunk at a corner or along an edge (a cube's is a third of its side). For a chunk like that
       // the box round it is no more than 3 × 2V/A across, and its smallest side is the thickness;
       // a thin curved sleeve's box is far bigger than its thickness, so there 2V/A stands.
-      const slab = m.area && m.area > 0 ? (2 * v) / m.area : Infinity;
-      const box = m.boxMin ?? 0;
-      const thickness = box > slab && box <= 3 * slab * (1 + 1e-6) ? box : slab;
-      return thickness > tol ? { kind: "overlap", a: m.a, b: m.b, volume: v } : touch;
+      const thickness = overlapThickness(m);
+      if (!(thickness > tol)) return touch;
+      // How deep: a pin bigger than its hole exactly, else the estimate.
+      const ring = m.ring && m.ring.radial < 0 ? -m.ring.radial : null;
+      const depth = ring ?? thickness;
+      return { kind: "overlap", a: m.a, b: m.b, volume: v, ...(Number.isFinite(depth) ? { depth } : {}), ...(ring !== null ? { round: true } : {}) };
     }
   } else if (m.surfaceA && !m.surfaceB) {
     const area = m.area ?? 0;
@@ -101,8 +110,15 @@ function contactText(c: Contact | { a: string; b: string; volume: number; kind?:
       return `The surfaces ${c.a} and ${c.b} cross each other (along ${formatLength(c.length, undefined, 1)}).`;
     case "touch":
       return `${c.a} and ${c.b} touch.`;
-    default:
-      return `${c.a} and ${c.b} overlap by ${volumeText(c.volume)} — they'd be in each other's way.`;
+    default: {
+      const deep =
+        c.kind === "overlap" && c.depth !== undefined
+          ? c.round
+            ? ` (the pin is ${formatLength(2 * c.depth, undefined, 3)} too big on the diameter, ${formatLength(c.depth, undefined, 3)} a side)`
+            : ` (about ${formatLength(c.depth, undefined, 3)} deep)`
+          : "";
+      return `${c.a} and ${c.b} overlap by ${volumeText(c.volume)}${deep} — they'd be in each other's way.`;
+    }
   }
 }
 
@@ -123,6 +139,8 @@ export function assemblyReport(
   leftOut: LeftOut = {},
   /** Every assembly in the document, so the parts inside sub-assemblies are counted (and checked for missing parts). */
   assemblies: readonly Assembly[] = [],
+  /** The fit check (judgeFits), when asked for: a Fits section, and marked fits taken out of the clashes. */
+  fits?: FitsResult,
 ): CheckReport {
   const sections: PartReport[] = [];
   const section = (partId: string, name: string, findings: Finding[]) =>
@@ -155,7 +173,7 @@ export function assemblyReport(
       : [{ level: "ok", text: inUse.length ? "All mates are working" : (assembly.mates ?? []).length ? "No mates in use" : "No mates yet" }],
   );
 
-  const clashes = contacts.filter((c) => c.kind !== "touch");
+  const clashes = contacts.filter((c) => c.kind !== "touch" && !fits?.handled.has(pairKey(c.a, c.b)));
   const touching = contacts.filter((c) => c.kind === "touch");
   const notes: Finding[] = [];
   const out = [leftOut.hidden ? `${plural(leftOut.hidden, "hidden part")}` : "", leftOut.suppressed ? `${plural(leftOut.suppressed, "suppressed part")}` : ""].filter(Boolean);
@@ -166,6 +184,8 @@ export function assemblyReport(
     ...touching.map((c) => ({ level: "ok" as const, text: contactText(c) })),
     ...notes,
   ]);
+  if (fits) section("fits", "Fits", fits.findings);
+  const fitWarnings = fits?.warnings ?? 0;
 
   const level = worst(sections.map((s) => s.level));
   const problems = missing.length + mateProblems.length;
@@ -173,7 +193,9 @@ export function assemblyReport(
     level === "ok"
       ? `Everything fits: ${plural(active.length, "part")}, no clashes.`
       : problems
-        ? `${plural(problems, "problem")} to fix${clashes.length ? `, and ${plural(clashes.length, "clash", "clashes")}` : ""}.`
-        : `${plural(clashes.length, "clash", "clashes")} found — some parts overlap.`;
+        ? `${plural(problems, "problem")} to fix${clashes.length ? `, and ${plural(clashes.length, "clash", "clashes")}` : ""}${fitWarnings ? `, and ${plural(fitWarnings, "fit")} to look at` : ""}.`
+        : clashes.length
+          ? `${plural(clashes.length, "clash", "clashes")} found — some parts overlap${fitWarnings ? `; ${plural(fitWarnings, "fit")} to look at` : ""}.`
+          : `${plural(fitWarnings, "fit")} to look at — not as tight or loose as marked.`;
   return { level, headline, parts: sections };
 }
