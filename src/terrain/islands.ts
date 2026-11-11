@@ -59,3 +59,32 @@ export const BOUNDARY_LEVELS: [number, string][] = [
   [8, "Districts"],
   [10, "Parishes and communities"],
 ];
+
+/** The widest area (m, the longer side) whose paths, rivers and lochs are fetched from OpenStreetMap; bigger needs a map file. */
+export const MARKS_MOST = 130_000;
+
+/**
+ * The query for what "From the map" puts on an island, round an area, as an .osm file: footpaths, tracks, rivers,
+ * streams and lochs ("water"), and main roads too ("all"). Buildings aren't fetched (a town is tens of thousands, and at an
+ * island's scale almost all are too small to print): they come only from a map file. Null when the area is too big.
+ */
+export function marksQuery(sw: GridPoint, width: number, height: number, detail: "water" | "all"): string | null {
+  if (Math.max(width, height) > MARKS_MOST) return null;
+  const corners = [
+    gridToLatLon(sw),
+    gridToLatLon({ e: sw.e + width, n: sw.n }),
+    gridToLatLon({ e: sw.e, n: sw.n + height }),
+    gridToLatLon({ e: sw.e + width, n: sw.n + height }),
+  ];
+  const r = (x: number) => x.toFixed(4);
+  const box = [Math.min(...corners.map((c) => c.lat)), Math.min(...corners.map((c) => c.lon)), Math.max(...corners.map((c) => c.lat)), Math.max(...corners.map((c) => c.lon))].map(r).join(",");
+  const parts = [
+    `way["highway"~"^(path|footway|bridleway|steps|track)$"](${box});`,
+    `way["waterway"~"^(river|canal|stream|burn)$"](${box});`,
+    `way["natural"="water"](${box});`,
+    `relation["type"="multipolygon"]["natural"="water"](${box});`,
+  ];
+  if (detail === "all") parts.push(`way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified)$"](${box});`);
+  // One request, at most 120 s and 60 MB of answer — the same as the biggest map file read.
+  return `[out:xml][timeout:120][maxsize:62914560];(${parts.join("")});(._;>;);out qt;`;
+}
