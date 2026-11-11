@@ -12,6 +12,8 @@ export interface ColourPiece {
   bodies: Body[];
   z0: number;
   height: number;
+  /** A column's top piece (the ground on top; only these take the map's colours). */
+  top: boolean;
 }
 
 export interface ColourJob {
@@ -51,9 +53,11 @@ export class ColourCache {
       const map = this.map.raster;
       const pieces = this.pieces as PuzzlePiece[];
       if (job.spec.mode === "bands") {
-        const fs = filaments(job.spec, map.water);
+        const fs = filaments(job.spec, map);
         // What the cutting depends on: the levels and their filaments, the layers, and which filament the water is.
-        const water = job.spec.water && map.water ? fs.find((f) => f.colour === job.spec.water!.toLowerCase())?.n ?? 0 : 0;
+        const n = (c: string | null | undefined, on: boolean) => (c && on ? fs.find((f) => f.colour === c.toLowerCase())?.n ?? 0 : 0);
+        // Filaments painted on: water, paths, roads.
+        const water = [n(job.spec.water, map.water), n(job.spec.paths, map.paths), n(job.spec.roads, map.roads)];
         const key = JSON.stringify([bandLevels(job.spec, job.scale, fs), job.spec.layer, job.spec.firstLayer ?? null, water]);
         if (this.bands?.key !== key) {
           const banded = bandPuzzle(pieces, { spec: job.spec, scale: job.scale, map });
