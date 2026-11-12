@@ -47,6 +47,25 @@ export function centreRevolve(shape: Shape3D, plane: SketchPlane, data: SketchDa
 }
 
 /**
+ * Two directions (Onshape's): a shape revolved by both angles added up (`opts.angle`), turned back by the
+ * second (`back`, degrees), so it goes `back` the other way from the sketch. `shape` is used up.
+ */
+export function twoWayRevolve(shape: Shape3D, plane: SketchPlane, data: SketchData, opts: RevolveOptions, back: number, around?: { origin: V3; direction: V3 }): Shape3D {
+  const axis = around ?? revolveAxis(plane, data, opts.axis);
+  if (!axis || !(back > 0)) return shape;
+  const sign = opts.flip ? -1 : 1;
+  const d = axis.direction;
+  return shape.rotate(-back, axis.origin, [d[0] * sign, d[1] * sign, d[2] * sign]);
+}
+
+/** Two directions: both angles together (degrees), refused in plain words past a full turn. */
+export function twoWayAngle(angle: number, angle2: number): number {
+  const total = angle + angle2;
+  if (total > 360 + 1e-9) throw new Error(`The two angles add up to ${Math.round(total * 1000) / 1000}°, more than a full turn (360°). Make them smaller.`);
+  return Math.min(360, total);
+}
+
+/**
  * Where a revolve's axis (a 3D line, from another sketch) lies in this
  * sketch's plane, in sketch coordinates; null when the line isn't in the plane
  * (then this sketch's shapes can't be spun around it without passing through

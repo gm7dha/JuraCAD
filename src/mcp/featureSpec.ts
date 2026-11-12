@@ -13,7 +13,7 @@ import { SCREW_SIZES, standardParams } from "../model/holes";
 import { planeFrame, planeOnFace, type SketchPlane, type Vec3 } from "../sketch/planes";
 import { evaluate } from "../model/expr";
 import { amount, bool, InputError, list, MAX_LENGTH, noExtras, oneOf, text, tidy, xy, xyz, type Obj } from "./args";
-import { FEATURE_DEFS } from "../model/features";
+import { FEATURE_DEFS, revolveWay } from "../model/features";
 import { isAngleDimension } from "../sketch/types";
 import { pickEdges, pickFace, pickFaces, facing } from "./picks";
 import type { Session } from "./session";
@@ -48,9 +48,9 @@ const OPERATIONS = ["new", "add", "remove", "intersect"] as const;
 
 /** The settings each kind takes (besides type, name and operation). */
 export const KIND_KEYS: Record<FeatureKind, string[]> = {
-  extrude: ["sketch", "depth", "end", "up_to_face", "up_to_part", "flip", "second_depth", "draft", "areas", "more_sketches"],
-  revolve: ["sketch", "axis", "angle", "symmetric", "flip", "areas", "more_sketches"],
-  sweep: ["sketch", "path", "twist", "keep_orientation", "areas", "more_sketches"],
+  extrude: ["sketch", "depth", "end", "up_to_face", "up_to_part", "flip", "second_depth", "draft", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
+  revolve: ["sketch", "axis", "angle", "symmetric", "second_angle", "flip", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
+  sweep: ["sketch", "path", "twist", "keep_orientation", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   hole: ["sketch", "size", "fit", "style", "end", "depth", "diameter", "counterbore_diameter", "counterbore_depth", "countersink_diameter", "countersink_angle", "flip"],
   fillet: ["part", "edges", "radius", "end_radius"],
   chamfer: ["part", "edges", "distance", "second_distance", "angle", "flip_side"],
@@ -207,6 +207,41 @@ export function applySketch(f: Feature, a: Obj, ctx: SpecContext): { freedom: nu
   return result;
 }
 
+/**
+ * Thin walls (Onshape's Thin): "thin" = the wall's thickness (0 or null: a plain solid again),
+ * "thin_other_side" = a thickness on the other side too, "thin_centred" = the thickness shared both sides,
+ * "thin_flip" = the other side first.
+ */
+function thinWall(f: Feature, a: Obj, ctx: SpecContext) {
+  const keys = ["thin_other_side", "thin_centred", "thin_flip"];
+  if ("thin" in a) {
+    if (a.thin === null || a.thin === false || a.thin === 0) {
+      delete f.thin;
+      for (const k of keys) if (has(a, k)) throw new InputError(`"${k}" only goes with "thin" (the wall's thickness); leave it out when turning thin off.`);
+      return;
+    }
+    if (f.surface) throw new InputError(`${f.name} makes a surface; a thin wall is a solid. Leave "thin" out.`);
+    f.thin = { ...(f.thin ?? {}) };
+    f.params = { ...f.params, thickness: amount(a.thin, "thin", ctx.scope, { positive: true }).text };
+  } else if (keys.some((k) => has(a, k)) && !f.thin) throw new InputError('Give "thin" (the wall\'s thickness in mm) to make a thin wall; the other thin_ settings change it.');
+  if (!f.thin) return;
+  if (has(a, "thin_centred")) f.thin = { ...f.thin, midPlane: bool(a.thin_centred, "thin_centred") || undefined };
+  if (has(a, "thin_flip")) f.thin = { ...f.thin, flip: bool(a.thin_flip, "thin_flip") || undefined };
+  if (has(a, "thin_other_side")) {
+    if (f.thin.midPlane) throw new InputError('"thin_other_side" isn\'t used with "thin_centred": true (the thickness is shared both sides); leave one out.');
+    f.params = { ...f.params, thickness2: amount(a.thin_other_side, "thin_other_side", ctx.scope, { min: 0 }).text };
+  }
+  if (!f.thin.midPlane && !("thickness2" in f.params)) f.params = { ...f.params, thickness2: "0" };
+  f.thin = { ...(f.thin.midPlane ? { midPlane: true } : {}), ...(f.thin.flip ? { flip: true } : {}) };
+  // A thin wall goes round the picked areas (or along every curve); it takes no areas of other sketches, and doesn't taper.
+  if (f.moreAreas) {
+    if (has(a, "more_sketches")) throw new InputError('A thin wall follows the curves of its own sketch only; leave "more_sketches" out.');
+    delete f.moreAreas;
+  }
+  // (A draft already set is left as it is: the engine leaves it out of a thin wall, with a note.)
+  if (f.type === "extrude" && has(a, "draft") && amount(a.draft, "draft", ctx.scope).value !== 0) throw new InputError('A thin wall can\'t taper; leave "draft" out (or 0).');
+}
+
 const END_OF = { blind: "blind", symmetric: "symmetric", through_all: "throughAll", up_to_face: "upToFace" } as const;
 
 /** Set up (or change) any other feature from Claude's settings. */
@@ -272,6 +307,7 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
       param(f, a, "draft", "draft", ctx, { unit: "°" });
       areas(f, a, ctx);
       moreSketches(f, a, ctx);
+      thinWall(f, a, ctx);
       break;
     }
 
@@ -301,11 +337,32 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
       }
       if (has(a, "symmetric")) rv.symmetric = bool(a.symmetric, "symmetric") || undefined;
       if (has(a, "flip")) rv.flip = bool(a.flip, "flip");
+      if (has(a, "second_angle")) {
+        const d = amount(a.second_angle, "second_angle", ctx.scope, { min: 0, unit: "°" });
+        if (d.value > 0 && rv.symmetric && !has(a, "symmetric")) delete rv.symmetric;
+        if (d.value > 0 && rv.symmetric) throw new InputError('"second_angle" (spinning the other way too) doesn\'t go with "symmetric": true. Use one or the other.');
+        if (d.value > 0) {
+          rv.second = true;
+          f.params = { ...f.params, angle2: d.text };
+        } else delete rv.second;
+      }
+      if (rv.symmetric) delete rv.second;
       f.revolve = rv;
       param(f, a, "angle", "angle", ctx, { positive: true, unit: "°" });
       if (f.params.angle && Number(f.params.angle) > 360) throw new InputError("angle can be at most 360 (all the way round).");
+      // Two ways with no angle given: kept to a full turn together, as the app's dialog does (360° → 180°).
+      if (rv.second && !has(a, "angle")) {
+        const kept = revolveWay({ ...f, revolve: rv }, "two").params.angle;
+        if (kept !== undefined && amount(f.params.angle2 ?? "90", "second_angle", ctx.scope).value <= 180) f.params = { ...f.params, angle: kept };
+      }
+      if (rv.second) {
+        const one = amount(f.params.angle ?? "360", "angle", ctx.scope).value;
+        const two = amount(f.params.angle2 ?? "90", "second_angle", ctx.scope).value;
+        if (one + two > 360 + 1e-9) throw new InputError(`angle + second_angle = ${one + two}°, more than a full turn (360). Make them smaller.`);
+      }
       areas(f, a, ctx);
       moreSketches(f, a, ctx);
+      thinWall(f, a, ctx);
       break;
     }
 
@@ -336,6 +393,7 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
       if (f.params.twist && Math.abs(Number(f.params.twist)) > 3600) throw new InputError("twist can be at most 3600° (10 turns) either way.");
       areas(f, a, ctx);
       moreSketches(f, a, ctx);
+      thinWall(f, a, ctx);
       break;
     }
 

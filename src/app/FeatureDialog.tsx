@@ -5,7 +5,7 @@ import { formatLength, lengthNumber, showLength, storeLength } from "../model/un
 import { describeRef } from "../geometry/topoRef";
 import { AreaPicker } from "./AreaPicker";
 import { areasTaken, followedSketch, pathChange, sketchesOffered, takesSeveral } from "../sketch/areaClicks";
-import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, visibleParamKeys, type ParamDef } from "../model/features";
+import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, revolveWay, visibleParamKeys, type ParamDef } from "../model/features";
 import { describeHole, SCREW_SIZES, standardParams } from "../model/holes";
 import type { HoleOptions as HoleSettings } from "../model/types";
 import { holePositionCount } from "../sketch/holePositions";
@@ -693,10 +693,55 @@ function MoreAreasNote() {
 }
 
 /** Extrude and revolve settings: which sketch, which way (and, for revolve, around what). */
+/**
+ * Thin (Onshape's): a solid wall of a set thickness along the sketch's lines and curves (open or closed),
+ * instead of filling its closed shapes. Not the Surface option, which makes a skin with no inside.
+ */
+function ThinOptions() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  if (!draft || (draft.type !== "extrude" && draft.type !== "revolve" && draft.type !== "sweep") || draft.surface) return null;
+  const thin = draft.thin;
+  const def = FEATURE_DEFS[draft.type];
+  const param = (key: string, label?: string) => {
+    const p = def.params.find((x) => x.key === key);
+    return p ? <ParamField key={key} def={label ? { ...p, label } : p} value={draft.params[key] ?? p.defaultValue} autoFocus={false} /> : null;
+  };
+  return (
+    <>
+      <label className="check-row" title="A solid wall of a set thickness along the sketch's lines, arcs and circles — open or closed — instead of filling its closed shapes. A rectangle becomes a hollow tube, a line a flat wall">
+        <input type="checkbox" aria-label="Thin wall" checked={!!thin} onChange={(e) => setDraftField({ thin: e.target.checked ? {} : undefined })} />
+        Thin wall (a solid wall along the lines)
+      </label>
+      {thin && (
+        <fieldset className="param-group">
+          <legend>Thin wall</legend>
+          <label className="check-row" title="The wall's thickness is shared equally either side of the lines">
+            <input type="checkbox" checked={!!thin.midPlane} onChange={(e) => setDraftField({ thin: { ...thin, midPlane: e.target.checked || undefined } })} />
+            Centred on the lines (half each side)
+          </label>
+          {param("thickness", thin.midPlane ? "Wall thickness" : "Wall thickness (first side)")}
+          {!thin.midPlane && param("thickness2")}
+          {!thin.midPlane && (
+            <label className="check-row" title="Swap the two sides: the first thickness goes on the other side of the lines">
+              <input type="checkbox" checked={!!thin.flip} onChange={(e) => setDraftField({ thin: { ...thin, flip: e.target.checked || undefined } })} />
+              Flip wall (to the other side)
+            </label>
+          )}
+          <p className="dialog-hint field-hint">
+            With no areas picked it follows every line, arc and circle in the sketch{draft.type === "revolve" ? " (not the line it spins around)" : ""}; pick areas to make the wall only round them. Construction lines are left out. On a closed shape, or a line along the edge of one, the first side goes into the shape.
+          </p>
+        </fieldset>
+      )}
+    </>
+  );
+}
+
 function SketchSolidOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const mode = useStore((s) => s.editing?.mode);
   const setDraftField = useStore((s) => s.setDraftField);
+  const setDraftParam = useStore((s) => s.setDraftParam);
   const features = useStore(activeFeatures);
   const sketchLinks = useStore((s) => s.sketchLinks);
   const rollbackTo = useStore((s) => s.rollbackTo);
@@ -766,16 +811,42 @@ function SketchSolidOptions() {
             )}
           </select>
           <p className="dialog-hint field-hint">Tip: draw a construction line (Q) in the sketch to spin around any line you like.</p>
+          <div className="segmented three" role="radiogroup" aria-label="Which way round">
+            {(
+              [
+                ["one", "One way", "Spin the angle one way from the sketch"],
+                ["symmetric", "Symmetric", "Spin half the angle one way from the sketch and half the other way"],
+                ["two", "Two ways", "Spin the angle one way from the sketch and a second angle the other way"],
+              ] as const
+            ).map(([way, label, hint]) => {
+              const now = rev.symmetric ? "symmetric" : rev.second ? "two" : "one";
+              return (
+                <button
+                  type="button"
+                  key={way}
+                  role="radio"
+                  aria-checked={now === way}
+                  className={now === way ? "selected" : ""}
+                  title={hint}
+                  onClick={() => {
+                    // Two ways keeps both angles within a full turn (a new revolve's 360° becomes 180° + 90°).
+                    const next = revolveWay(draft, way);
+                    setDraftField({ revolve: next.revolve });
+                    for (const [key, value] of Object.entries(next.params)) setDraftParam(key, value);
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
           {!rev.symmetric && (
             <label className="check-row">
               <input type="checkbox" checked={rev.flip} onChange={(e) => setDraftField({ revolve: { ...rev, flip: e.target.checked } })} />
-              Flip direction (for less than a full turn)
+              {rev.second ? "Flip direction (swap which way each angle goes)" : "Flip direction (for less than a full turn)"}
             </label>
           )}
-          <label className="check-row" title="Spin half the angle one way from the sketch and half the other way">
-            <input type="checkbox" checked={!!rev.symmetric} onChange={(e) => setDraftField({ revolve: { ...rev, symmetric: e.target.checked || undefined } })} />
-            Both ways (half the angle each side of the sketch)
-          </label>
+          {rev.second && !rev.symmetric && <p className="dialog-hint field-hint">The two angles together can go up to a full turn (360°).</p>}
         </>
       )}
       {draft.type === "extrude" &&
@@ -2376,11 +2447,12 @@ export function FeatureDialog() {
             <input
               type="checkbox"
               checked={!!draft.surface}
-              onChange={(e) => setDraftField(e.target.checked ? { surface: true, operation: "new" } : { surface: undefined })}
+              onChange={(e) => setDraftField(e.target.checked ? { surface: true, operation: "new", thin: undefined } : { surface: undefined })}
             />
-            Surface (a thin skin, no inside)
+            Surface (a skin with no inside)
           </label>
         )}
+        <ThinOptions />
         <PlaneDefOptions />
         <MateConnectorOptions />
         <BooleanOptionsField />

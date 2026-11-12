@@ -367,6 +367,33 @@
   BSplines that break round corners — and the pieces, which only touch end to end, are fused with `JOIN_FUZZ`. Kept facing one way,
   a closed loop is its smooth runs moved along (a smooth loop is refused: it always goes edge-on somewhere). Surfaces still refuse
   twist round corners and loops.
+- Thin (Onshape's "Thin" on Extrude/Revolve/Sweep, solids): `Feature.thin` (`midPlane`: the whole `thickness` centred; else
+  `thickness` on the first side + `thickness2` (default 0) on the other; `flip` swaps; missing = solid, old files unchanged;
+  params in group "thin", shown by `ThinOptions` in FeatureDialog.tsx, hidden by `visibleParamKeys` unless thin; draft hidden).
+  Pure `src/sketch/thin.ts` `thinSketches(data, sides, { keep, axis, areas, verb })`: with areas picked, a ring round each
+  picked area's outline and holes (`map.join`), first side into the area; else every curve: `sketchRuns` (findChains with
+  branching, then a junction group's curves joined end to end through points where just two meet — only real junctions
+  (3+ ends) split runs; a run back at its own start is closed). Closed runs anticlockwise (first side inside); open runs
+  `facing` the area they border (an area on just one side → that side first; else from the bottom-left end), and open runs
+  with no area either side take their side from the wall they carry on from at a junction (`settleFreeRuns`: the
+  smallest turn, the first side kept on the same hand). Offsets
+  (`offsetPieces`: lines/arcs only, splines/ellipses refused; neighbours carried on or cut back to where they meet; an
+  outside corner reaching past `MITRE_LIMIT` (4) × d is cut off square, `squareCut`); open ends square, but at a junction each
+  pair of neighbouring arms (sorted by angle) is settled by `junctionGap`: a gap past a half turn has both facing sides
+  carried on to meet (≤ MITRE_LIMIT, else a shared midpoint); in a narrower one a wall facing into it is carried on to the
+  neighbour's facing face (its line where it has no thickness there) when that lies behind its end — so one-sided walls
+  join along a face, never at a point — and a square end is cut back to the neighbour's far
+  face when it reaches past it (a wall stays on its own side of the other line: no spilling into the next area or out of
+  the shape); closed runs through a junction keep their own mitred loops. Too thick = a plain `ThinError`. Each run → its
+  own SketchData (original points + construction lines kept; revolve axis line and solid lines lying on the axis turned
+  construction, `withoutAxis`). The engine's `buildThin` (top of `buildSolid`) builds each as the feature would (same ends,
+  depths, axis, path), fuses them, ignores other sketches' areas and a draft (notes say so; inner notes passed on).
+  `areasTaken` skips thin features (a floor can fill the wall's area later). "Surface" is the other checkbox (a skin);
+  the two are exclusive. Revolve "Two ways": `revolve.second` + `angle2` (not with `symmetric`): revolved by angle + angle2
+  (`twoWayAngle`, ≤ 360) then turned back by angle2 (`twoWayRevolve`; `revolveMore` too); dialog One way / Symmetric / Two
+  ways through pure `revolveWay` (features.ts: switching to Two ways keeps the sum ≤ 360 — 360 + 90 → 180 + 90). Claude:
+  `thin`, `thin_other_side`, `thin_centred`, `thin_flip` (areas kept; more_sketches and a draft given with thin refused; a draft already set is left for the engine to skip) and revolve's
+  `second_angle` (featureSpec `thinWall`). Tests: tests/sketchThin (pure), engineThin, mcpThin.
 - Surfaces: `src/kernel/surface.ts` (extrude/revolve/sweep/loft of a sketch's open or closed runs — `findChains` in
   `src/sketch/regions.ts` — as shells; Fill from edges; thicken, enclose and offset). A surface part has `surface: true`
   (BuiltPart and PartMesh); solid features add to / cut from the latest *solid* part, never a surface. replicad's

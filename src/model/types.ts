@@ -311,6 +311,8 @@ export interface Feature {
     flip: boolean;
     /** Spin both ways from the sketch, half the angle each way. */
     symmetric?: boolean;
+    /** Two directions (Onshape's): also spin the other way from the sketch, by the second angle (`angle2`). Not with `symmetric`. */
+    second?: boolean;
   };
   /**
    * Chamfer: an equal bevel (missing), two different distances, or a distance
@@ -337,6 +339,12 @@ export interface Feature {
   /** Fastener: which standard part, and whether its thread is modelled. */
   /** Extrude, Revolve, Sweep, Loft: make a thin surface (a skin with no inside) instead of a solid. */
   surface?: boolean;
+  /**
+   * Extrude, Revolve, Sweep (solids): Onshape's "Thin" — a wall along the sketch's lines and curves (open or
+   * closed) instead of filling its closed shapes; `thickness` (and `thickness2`, the other side) in params.
+   * `midPlane`: centred on the curves (the whole thickness, half each side). `flip`: swap the sides. Missing = solid.
+   */
+  thin?: { midPlane?: boolean; flip?: boolean };
   /** Derived: a part from another Part Studio (its id there), brought into this one. */
   derived?: { studioId: string; partId: string };
   fastener?: { kind: FastenerKind; size: string; threaded: boolean };
