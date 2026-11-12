@@ -15,7 +15,7 @@ import { parseMaterials } from "./materials";
 import { parsePartProperties } from "../assembly/properties";
 import { parseAssemblies } from "../assembly/assembly";
 import { parseDrawings } from "../drawing/drawing";
-import type { Feature, FeatureType, GeomPick, ImportedFile, MateConnectorDef, Operation, JuraCADDocument, PartStudio, PlaneOptions } from "./types";
+import type { Feature, FeatureType, GeomPick, ImportedFile, LoftCurve, LoftDef, LoftEnd, LoftProfile, MateConnectorDef, Operation, JuraCADDocument, PartStudio, PlaneOptions } from "./types";
 import { MAIN_STUDIO } from "./studios";
 import { parseHiddenDatums } from "./visibility";
 import { parseVersions } from "./versions";
@@ -486,6 +486,65 @@ function parsePlaneExtras(pd: Record<string, unknown>): Partial<PlaneOptions> {
   return out;
 }
 
+const LOFT_ENDS = new Set(["normal", "tangent", "matchTangent", "matchCurvature"]);
+
+function parseLoftEnd(raw: unknown): LoftEnd | null {
+  if (!raw || typeof raw !== "object") return null;
+  const e = raw as Record<string, unknown>;
+  if (typeof e.kind !== "string" || !LOFT_ENDS.has(e.kind)) return null;
+  const out: LoftEnd = { kind: e.kind as LoftEnd["kind"] };
+  if (typeof e.magnitude === "number" && Number.isFinite(e.magnitude) && e.magnitude > 0) out.magnitude = Math.min(10, e.magnitude);
+  return out;
+}
+
+function parseLoftCurve(raw: unknown): LoftCurve | null {
+  if (!raw || typeof raw !== "object") return null;
+  const c = raw as Record<string, unknown>;
+  if (typeof c.sketch === "string") return { sketch: c.sketch };
+  if (Array.isArray(c.edges)) {
+    const edges = c.edges.map(parsePick).filter((x): x is NonNullable<ReturnType<typeof parsePick>> => !!x && x.ref.kind === "edge");
+    return edges.length ? { edges } : null;
+  }
+  return null;
+}
+
+/** A loft's further choices (Onshape's Loft), or null when there are none to read. */
+export function parseLoftDef(raw: unknown): LoftDef | null {
+  if (!raw || typeof raw !== "object") return null;
+  const d = raw as Record<string, unknown>;
+  const out: LoftDef = {};
+  if (Array.isArray(d.profiles)) {
+    const profiles: LoftProfile[] = [];
+    for (const r of d.profiles) {
+      if (!r || typeof r !== "object") continue;
+      const p = r as Record<string, unknown>;
+      const turn = typeof p.turn === "number" && Number.isInteger(p.turn) ? { turn: p.turn } : {};
+      if (typeof p.sketch === "string") {
+        const areas = parseAreaPicks(p.areas);
+        profiles.push({ sketch: p.sketch, ...(areas.length ? { areas } : {}), ...turn });
+      } else if (p.face) {
+        const face = parsePick(p.face);
+        if (face && face.ref.kind === "face") profiles.push({ face, ...turn });
+      } else if (p.point) {
+        const point = parseGeomPick(p.point);
+        if (point) profiles.push({ point });
+      }
+    }
+    out.profiles = profiles;
+  }
+  const start = parseLoftEnd(d.start);
+  if (start) out.start = start;
+  const end = parseLoftEnd(d.end);
+  if (end) out.end = end;
+  const guide = parseLoftCurve(d.guide);
+  if (guide) out.guide = guide;
+  const path = parseLoftCurve(d.path);
+  if (path) out.path = path;
+  if (d.matchCorners === true) out.matchCorners = true;
+  if (d.periodic === true) out.periodic = true;
+  return Object.keys(out).length ? out : null;
+}
+
 const CONNECTOR_SPOTS = new Set(["start", "end", "middle", "clicked"]);
 
 /** A Part Studio mate connector's settings, or null when they can't be read. */
@@ -744,6 +803,10 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     }
     if (feature.type === "loft") feature.sections = Array.isArray(f.sections) ? f.sections.filter((x): x is string => typeof x === "string") : [];
     if (feature.type === "loft" && f.loftRuled === true) feature.loftRuled = true;
+    if (feature.type === "loft") {
+      const def = parseLoftDef(f.loft);
+      if (def) feature.loft = def;
+    }
     if (feature.type === "revolve") {
       if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
       const rv = f.revolve as Record<string, unknown> | undefined;

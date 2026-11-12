@@ -70,6 +70,44 @@ export interface GeomPick {
   axis?: "x" | "y" | "z";
 }
 
+/**
+ * A loft's further choices, as Onshape's Loft. `profiles` is the sections in order when any isn't a whole sketch (a
+ * picked area of a sketch, a flat face of a part, a point as the first or last); `sections` then still lists the
+ * sketches among them, so code that only reads `sections` sees every sketch used. Missing = each of `sections`.
+ */
+export interface LoftDef {
+  profiles?: LoftProfile[];
+  /** How the loft leaves its first section and arrives at its last (missing = free). */
+  start?: LoftEnd;
+  end?: LoftEnd;
+  /** A curve the sections' outlines touch, which the loft follows (scaling the shapes to keep touching it). */
+  guide?: LoftCurve;
+  /** A curve the loft runs along between its sections. */
+  path?: LoftCurve;
+  /** Line up the corners as set by each section's `turn` (Onshape's Match connections), instead of automatically. */
+  matchCorners?: boolean;
+  /** Back round to the first section (a closed ring of sections). */
+  periodic?: boolean;
+  /** What a click in the 3D view chooses while the dialog is open (missing = a flat face, as a section; "start"/"end" a corner as the first/last section). */
+  picking?: "profile" | "start" | "end" | "guide" | "path";
+}
+
+/** One section of a loft: a sketch (or one picked area of it), a flat face of a part, or a point. */
+export type LoftProfile =
+  | { sketch: string; areas?: AreaPick[]; turn?: number }
+  | { face: TopoPick; turn?: number }
+  | { point: GeomPick };
+
+/** How a loft meets an end: square to the section, a rounded tip (a point), or carrying on from a face's neighbours. */
+export interface LoftEnd {
+  kind: "normal" | "tangent" | "matchTangent" | "matchCurvature";
+  /** How far the condition reaches (Onshape's magnitude; missing = 1). */
+  magnitude?: number;
+}
+
+/** A guide or path: one run of curves in a sketch, or edges of parts. */
+export type LoftCurve = { sketch: string } | { edges: TopoPick[] };
+
 /** Where a Part Studio mate connector sits and which part it belongs to (Onshape's Mate connector feature). */
 export interface MateConnectorDef {
   /** On a part's face or edge (at `spot`, as assembly connectors), a sketch point, or a plane (at its origin). */
@@ -282,6 +320,8 @@ export interface Feature {
    * them all — so stacked outlines make sharp steps and exact 45° slopes (the Gridfinity profiles). Missing = smooth.
    */
   loftRuled?: boolean;
+  /** Loft: Onshape's further choices (sections of other kinds, end conditions, a guide or path…). Missing = a plain loft through `sections`. */
+  loft?: LoftDef;
   /** Text: what it says, where it goes, and how. */
   text?: {
     value: string;

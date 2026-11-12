@@ -367,6 +367,26 @@
   BSplines that break round corners — and the pieces, which only touch end to end, are fused with `JOIN_FUZZ`. Kept facing one way,
   a closed loop is its smooth runs moved along (a smooth loop is refused: it always goes edge-on somewhere). Surfaces still refuse
   twist round corners and loops.
+- Loft (Onshape's): plain lofts (no `Feature.loft`) take the old `loftSketches`/`loftSurface` path untouched. `Feature.loft`
+  (`LoftDef`, types.ts; pure helpers `src/model/loft.ts`, parsed by `parseLoftDef`): `profiles` (sections in order — `{sketch,
+  areas?, turn?}` (one picked area), `{face}` (a flat face, its outer wire), `{point}` (a `GeomPick`: sketch point, part corner or
+  plain p; first/last only, `profilesProblem`); `sections` is kept = the sketches among them and `profiles` dropped when all are
+  whole sketches, `withProfiles`), `start`/`end` (`LoftEnd`: normal | tangent (a point's rounded tip) | matchTangent/matchCurvature
+  (a face's neighbours), `magnitude` ≤ 4; `endChoices`), `guide`/`path` (`LoftCurve`: a sketch's one run or part edges),
+  `matchCorners` (+ each section's `turn`; sketch sections with equal piece counts; ThruSections' CheckCompatibility off),
+  `periodic` (the first wire added again: OCCT closes the ring), `picking` (what a view click chooses: `loftClick`, via geomPick).
+  Engine: `src/kernel/loft.ts` `buildLoft` (resolves through a `LoftContext` from buildSolid). OCCT's loft has no end conditions,
+  so they're helper sections: copies of the end wire moved 0.01·D and 0.1·m·D (+0.2·m·D for curvature) along the way out (a face:
+  its normal, offset in its plane by the neighbours' mean slope, `faceSpread`; uneven slopes = a featureWarnings note); a rounded
+  tip = the neighbour scaled cos θ, moved sin θ towards the point (θ 25…82°). Guide (one): the unguided loft cut at `STATIONS`
+  planes between sections, each cut outline scaled about its middle out to where the guide crosses (`guidedStation`), lofted again
+  (the pipe shell's auxiliary-spine contact turned the profile instead of scaling it, and its faces meshed for minutes). Path:
+  BRepOffsetAPI_MakePipeShell with every section. Dependents: `loftUses`/`loftWithoutGone` (sections a list of ≥ 2, guide/path
+  needed); `loftSketches` for the eyes and partLinks. Claude: add_feature "loft" (sections, start_point/end_point, start/end,
+  magnitudes, guide, path, straight, match_corners + turns, closed_loop; `applyLoft`). UI `src/app/LoftOptions.tsx`. Not done: more
+  than one guide (OCCT has nothing for it), corner matching across different piece counts, face sections with holes.
+  Tests: tests/loft (pure), engineLoft (exact pyramid/cone, dome, upright sides at a normal start and on a box's top face, guide
+  bulge, path, twist, ring), mcpLoft.
 - Thin (Onshape's "Thin" on Extrude/Revolve/Sweep, solids): `Feature.thin` (`midPlane`: the whole `thickness` centred; else
   `thickness` on the first side + `thickness2` (default 0) on the other; `flip` swaps; missing = solid, old files unchanged;
   params in group "thin", shown by `ThinOptions` in FeatureDialog.tsx, hidden by `visibleParamKeys` unless thin; draft hidden).
