@@ -20,6 +20,7 @@ import { pickEdges, pickFace, pickFaces, facing } from "./picks";
 import type { Session } from "./session";
 import { buildSketch } from "./sketchShapes";
 import { applyConnector, applyPlane, basePlane, CONNECTOR_KEYS, PLANE_KEYS } from "./planeSpec";
+import { applyCurve, CURVE_KEYS } from "./curveSpec";
 import type { SketchData, SketchLine } from "../sketch/types";
 
 /** The feature kinds Claude can add, by the name used in the tools. */
@@ -42,6 +43,7 @@ export const FEATURE_KINDS = {
   sphere: "sphere",
   plane: "plane",
   mate_connector: "mateConnector",
+  curve: "curve",
   modify_fillet: "modifyFillet",
   split_face: "split",
 } as const satisfies Record<string, FeatureType>;
@@ -54,7 +56,7 @@ const OPERATIONS = ["new", "add", "remove", "intersect"] as const;
 export const KIND_KEYS: Record<FeatureKind, string[]> = {
   extrude: ["sketch", "depth", "end", "up_to_face", "up_to_part", "flip", "second_depth", "draft", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   revolve: ["sketch", "axis", "angle", "symmetric", "second_angle", "flip", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
-  sweep: ["sketch", "path", "twist", "keep_orientation", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
+  sweep: ["sketch", "path", "path_edges", "path_part", "twist", "keep_orientation", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   loft: ["sections", "start_point", "end_point", "start", "end", "start_magnitude", "end_magnitude", "guide", "path", "straight", "match_corners", "turns", "closed_loop"],
   hole: ["sketch", "size", "fit", "style", "end", "depth", "diameter", "counterbore_diameter", "counterbore_depth", "countersink_diameter", "countersink_angle", "flip"],
   fillet: ["part", "edges", "radius", "end_radius", "all_edges"],
@@ -70,6 +72,7 @@ export const KIND_KEYS: Record<FeatureKind, string[]> = {
   sphere: ["diameter", "x", "y", "z"],
   plane: PLANE_KEYS,
   mate_connector: CONNECTOR_KEYS,
+  curve: CURVE_KEYS,
   modify_fillet: ["part", "faces", "radius", "remove", "propagate"],
   split_face: ["part", "faces", "plane", "offset", "sketch"],
 };
@@ -447,11 +450,20 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
 
     case "sweep": {
       const oldSketch = f.sketchRef;
-      if (!ctx.editing && (!has(a, "sketch") || !has(a, "path"))) {
-        throw new InputError('A sweep needs "sketch" (the one with the closed shape to carry) and "path" (another sketch with the lines and arcs to follow). Draw the shape on a plane across the start of the path.');
+      if (!ctx.editing && (!has(a, "sketch") || (!has(a, "path") && !has(a, "path_edges")))) {
+        throw new InputError('A sweep needs "sketch" (the one with the closed shape to carry) and "path" (another sketch, or a curve such as a helix) or "path_edges" (part edges joined end to end, on "path_part"). Draw the shape on a plane across the start of the path.');
       }
       if (has(a, "sketch")) f.sketchRef = ctx.session.feature(a.sketch, "sketch", ["sketch"], ctx.doc).id;
-      if (has(a, "path")) f.pathRef = ctx.session.feature(a.path, "path", ["sketch"], ctx.doc).id;
+      if (has(a, "path")) {
+        f.pathRef = ctx.session.feature(a.path, "path", ["sketch", "curve"], ctx.doc).id;
+        delete f.pathEdges;
+      }
+      if (has(a, "path_edges")) {
+        const part = ctx.session.part(ctx.parts, a.path_part, "path_part");
+        f.pathEdges = pickEdges(part, list(a.path_edges, "path_edges"), "path_edges").filter((p) => p.ref.kind === "edge");
+        if (!f.pathEdges.length) throw new InputError("path_edges: give edges (E-numbers from list_edges), not faces.");
+        delete f.pathRef;
+      }
       if (f.sketchRef === f.pathRef) throw new InputError("The shape and the path must be different sketches.");
       if (oldSketch && f.sketchRef !== oldSketch) {
         delete f.areas;
@@ -697,6 +709,9 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
       break;
     case "mate_connector":
       applyConnector(f, a, ctx);
+      break;
+    case "curve":
+      applyCurve(f, a, ctx);
       break;
     case "composite_part": {
       if (has(a, "parts") || !ctx.editing) {

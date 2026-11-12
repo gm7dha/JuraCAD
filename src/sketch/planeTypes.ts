@@ -207,6 +207,7 @@ export function planePicks(def: PlaneOptions): GeomPick[] {
 export function geomPickLabel(g: GeomPick, names: (id: string) => string | undefined = () => undefined): string {
   if (g.axis) return `${g.axis.toUpperCase()} axis`;
   if (g.connector) return names(g.connector) ?? "A mate connector";
+  if (g.curve) return `${g.end === "a" ? "The start of " : g.end === "b" ? "The end of " : g.end === "mid" ? "The middle of " : ""}${names(g.curve) ?? "a curve"}`;
   if (g.sketchPoint) return g.sketchPoint.point === "origin" ? `Origin of ${names(g.sketchPoint.sketch) ?? "a sketch"}` : `A point of ${names(g.sketchPoint.sketch) ?? "a sketch"}`;
   if (g.sketchLine) return `A line of ${names(g.sketchLine.sketch) ?? "a sketch"}`;
   if (g.pick) {

@@ -604,7 +604,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
     return;
   }
-  if (target.kind === "sketchLine" || target.kind === "connector") return;
+  if (target.kind === "sketchLine" || target.kind === "connector" || target.kind === "curve") return;
   if (target.kind === "plane") {
     // Clicking the selected plane again deselects it.
     selectPlane(selectedPlane === target.plane ? null : target.plane);
@@ -917,6 +917,23 @@ export function Viewport() {
     return out;
   }, [assembly, mateDraft, listFeatures, parts, connectorDraft, pickedFeatureForPlanes, leaves, placements, builtFrames]);
   useEffect(() => viewportApi.current?.setConnectorMarks(connectorMarks), [connectorMarks]);
+  // Curve features (Helix, Fit spline…): drawn as lines (shown with the eye), lit when selected or used by what's open.
+  const builtCurves = useStore((s) => s.builtCurves);
+  const openDraft = useStore((s) => s.editing?.draft ?? null);
+  useEffect(() => {
+    const manager = viewportApi.current;
+    if (!manager) return;
+    if (assembly) {
+      manager.setCurves([]);
+      return;
+    }
+    const lit = new Set<string>([pickedFeatureForPlanes ?? "", openDraft?.id ?? "", openDraft?.pathRef ?? "", ...(openDraft?.curve?.curves ?? [])]);
+    manager.setCurves(
+      listFeatures
+        .filter((f) => f.type === "curve" && !f.suppressed && builtCurves[f.id] && (planeVisible(f) || lit.has(f.id)))
+        .map((f) => ({ id: f.id, lines: builtCurves[f.id], lit: lit.has(f.id) })),
+    );
+  }, [assembly, listFeatures, builtCurves, pickedFeatureForPlanes, openDraft]);
   const wantsConnector = useStore((s) => connectorWanted(s, !!activeAssembly(s)));
   useEffect(() => viewportApi.current?.setConnectorPicking(wantsConnector), [wantsConnector]);
   const selectedParts = useStore((s) => s.selectedParts);

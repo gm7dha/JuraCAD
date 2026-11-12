@@ -705,6 +705,15 @@ export function sweepSketch(profilePlane: SketchPlane, profile: SketchData, path
         result = merged;
       }
     }
+    if (control.lockOrientation) {
+      // A profile that went edge-on somewhere comes out flattened: refused instead of kept.
+      const whole = segmentsWire(chain.segments, pathFrame, 0);
+      try {
+        refuseFlattened(result!, regions, frame.n as Vec3, whole);
+      } finally {
+        release(whole);
+      }
+    }
     return result!;
   } finally {
     if (spine) release(spine);
@@ -782,5 +791,124 @@ export function loftSketches(sections: { plane: SketchPlane; data: SketchData; n
     }
   } finally {
     release(...wires);
+  }
+}
+
+/**
+ * Sweep along a ready-made path (a curve feature, or part edges joined end to end): each closed shape of the profile
+ * carried along `spine` (holes stay holes), twisted or kept facing one way as asked. `frenet` follows the path's own
+ * bending (best for a helix: the profile keeps its place round the axis); otherwise the profile turns as little as it can.
+ */
+export function sweepAlongSpine(profilePlane: SketchPlane, profile: SketchData, spine: Wire, areas: AreaPick[] | undefined, control: SweepControl = {}, frenet = false): Shape3D {
+  const { regions, problems } = chosenRegions(profile, areas, "sweep");
+  if (regions.length === 0) throw new Error(`The profile sketch has no closed shapes.${problems.length ? ` ${problems.join(" ")}` : ""}`);
+  const frame = planeFrame(profilePlane);
+  if (liesAlongPath(spine, frame, regions[0].outer.polygon)) throw new Error(PROFILE_ALONG_PATH);
+  const twist = control.lockOrientation ? 0 : control.twist ?? 0;
+  const plain = Math.abs(twist) < 1e-9 && !control.lockOrientation;
+  let guide: Wire | null = null;
+  if (!plain && Math.abs(twist) >= 1e-9) {
+    checkTwistSize(twist);
+    if (spineHasCorner(spine)) {
+      throw new Error(
+        "A twist can't go round the sharp corners of a curve or of part edges yet. Draw the path in a sketch instead (a twist goes round a sketch's corners), round the corners, or set the twist to 0.",
+      );
+    }
+    guide = twistGuide(spine, twist);
+  }
+  const startAxis = control.lockOrientation ? { p: frame.origin as Vec3, n: frame.n as Vec3, x: frame.u as Vec3 } : null;
+  const sweepOne = (wire: Wire): Shape3D => {
+    try {
+      if (plain) return genericSweep(wire, spine, { frenet, transitionMode: "round", forceProfileSpineOthogonality: false });
+      return controlledSweep(wire, spine, control, guide, startAxis);
+    } catch {
+      throw new Error("Couldn't sweep the profile along that path. Check the profile sits at the start of the path and is small enough for its bends.");
+    } finally {
+      release(wire);
+    }
+  };
+  try {
+    let result: Shape3D | null = null;
+    for (const region of regions) {
+      let solid = sweepOne(loopWire(region.outer, frame, 0));
+      for (const hole of region.holes) {
+        const cutter = sweepOne(loopWire(hole, frame, 0));
+        const next = solid.cut(cutter);
+        release(solid, cutter);
+        solid = next;
+      }
+      if (!result) result = solid;
+      else {
+        const merged: Shape3D = result.fuse(solid);
+        release(result, solid);
+        result = merged;
+      }
+    }
+    // Kept facing one way, a profile that went edge-on somewhere comes out flattened: refused instead of kept.
+    if (control.lockOrientation) refuseFlattened(result!, regions, frame.n as Vec3, spine);
+    return result!;
+  } finally {
+    if (guide) release(guide);
+  }
+}
+
+/** Kept facing one way, the profile went edge-on to the path somewhere: what to say. */
+const EDGE_ON_LOCKED =
+  'Kept facing one way, the profile would turn edge-on to the path somewhere along it, flattening the sweep there. Turn off "Keep profile orientation" (then it turns with the path), or use a path that never runs along the profile\'s plane.';
+
+/** Does the path have a sharp corner (a jump in direction between its pieces)? */
+function spineHasCorner(spine: Wire): boolean {
+  const pieces = samplePath(spine, 4);
+  for (let i = 1; i < pieces.length; i++) {
+    const a = pieces[i - 1][pieces[i - 1].length - 1].t;
+    if (dot(a, pieces[i][0].t) < Math.cos((1 * Math.PI) / 180)) return true;
+  }
+  if (spine.isClosed && pieces.length > 1) return dot(pieces[pieces.length - 1][pieces[pieces.length - 1].length - 1].t, pieces[0][0].t) < Math.cos((1 * Math.PI) / 180);
+  return false;
+}
+
+/** A loop's area (shoelace). */
+function loopArea(p: [number, number][]): number {
+  let a = 0;
+  for (let i = 0; i < p.length; i++) {
+    const [x0, y0] = p[i];
+    const [x1, y1] = p[(i + 1) % p.length];
+    a += x0 * y1 - x1 * y0;
+  }
+  return Math.abs(a) / 2;
+}
+
+/**
+ * How far the path carries a profile lying in the plane with normal `n` out of that plane: ∫|t·n| ds along it. A
+ * profile kept facing one way encloses exactly its area times this (where the sweep doesn't run over itself).
+ */
+export function pathCrossing(spine: Wire, n: Vec3): number {
+  let total = 0;
+  for (const piece of samplePath(spine, 64)) {
+    for (let i = 1; i < piece.length; i++) {
+      const ds = Math.hypot(...sub(piece[i].p, piece[i - 1].p));
+      total += ds * (Math.abs(dot(piece[i].t, n)) + Math.abs(dot(piece[i - 1].t, n))) / 2;
+    }
+  }
+  return total;
+}
+
+/**
+ * A sweep kept facing one way that came out far thinner (under 5%) than its profile's real area (holes taken out)
+ * times how far the path carries it out of its plane: the profile went edge-on somewhere and OpenCascade made a
+ * flattened, broken solid. Refused in plain words (the shape is freed).
+ */
+function refuseFlattened(shape: Shape3D, regions: { outer: { polygon: [number, number][] }; holes: { polygon: [number, number][] }[] }[], n: Vec3, spine: Wire): void {
+  const area = regions.reduce((t, r) => t + loopArea(r.outer.polygon) - r.holes.reduce((h, x) => h + loopArea(x.polygon), 0), 0);
+  let volume = 0;
+  try {
+    volume = measureVolume(shape);
+  } catch {
+    volume = 0;
+  }
+  const expected = area * pathCrossing(spine, n);
+  if (!(volume > 0.05 * expected) || !(volume > 1e-9)) {
+    release(shape);
+    throw new Error(EDGE_ON_LOCKED);
   }
 }

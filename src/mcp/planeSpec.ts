@@ -34,7 +34,7 @@ export const LINE_HELP =
   'A line is "x", "y" or "z" (an axis through the origin), {"edge": "E3", "part": name} (a straight or round edge — a round one gives its axis), {"face": "F2", "part": name} (a flat face\'s normal, or a round face\'s axis), {"sketch": name, "line": [x, y] (the line nearest that point)} or {"connector": name} (its Z axis).';
 
 /** A part's corner, edge or face, a sketch point/line, a connector or an axis, as Claude names it. */
-function geomFrom(v: unknown, where: string, ctx: SpecContext, as: "point" | "line"): GeomPick {
+export function geomFrom(v: unknown, where: string, ctx: SpecContext, as: "point" | "line"): GeomPick {
   if (Array.isArray(v)) {
     if (as === "line") throw new InputError(`${where}: ${LINE_HELP}`);
     const [x, y, z] = xyz(v, where, ctx.scope);
@@ -47,6 +47,15 @@ function geomFrom(v: unknown, where: string, ctx: SpecContext, as: "point" | "li
   }
   if (!v || typeof v !== "object") throw new InputError(`${where}: ${as === "point" ? POINT_HELP : LINE_HELP}`);
   const o = v as Obj;
+  if (has(o, "curve")) {
+    // A curve feature's end or middle.
+    noExtras(o, ["curve", "end"], where);
+    const c = ctx.session.feature(o.curve, `${where}.curve`, ["curve"], ctx.doc);
+    const end = oneOf(o.end, ["start", "end", "middle"] as const, `${where}.end`, "end");
+    const line = ctx.session.build().curves?.[c.id]?.flatMap((l) => l) ?? [];
+    const at = end === "start" ? 0 : end === "end" ? line.length - 3 : Math.floor(line.length / 6) * 3;
+    return { p: line.length ? [line[at], line[at + 1], line[at + 2]] : [0, 0, 0], curve: c.id, end: end === "start" ? "a" : end === "end" ? "b" : "mid" };
+  }
   if (has(o, "connector")) {
     noExtras(o, ["connector"], where);
     const c = ctx.session.feature(o.connector, `${where}.connector`, ["mateConnector"], ctx.doc);

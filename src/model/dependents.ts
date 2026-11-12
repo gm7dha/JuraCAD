@@ -20,6 +20,7 @@
  * deleted *Add* feature changed (the part is older, so it stays). Those show
  * as errors afterwards, as a plain Delete leaves them.
  */
+import { curveUses } from "./curves";
 import { loftUses, loftWithoutGone } from "./loft";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
@@ -130,7 +131,16 @@ function usesOf(f: Feature): Uses {
     need(g.sketchPoint?.sketch);
     need(g.sketchLine?.sketch);
     need(g.connector);
+    need(g.curve);
   }
+  // Curve features (Helix, Fit spline…): what they're made from; a sweep's or pattern's path picked as edges.
+  if (f.curve) {
+    const c = curveUses(f);
+    c.features.forEach(need);
+    c.parts.forEach(needPart);
+    if (c.curveList) lists.push({ what: "curve it joins", many: "curves it joins", features: c.curveList, ...(f.picks?.length ? { least: 0 } : {}) });
+  }
+  for (const e of f.pathEdges ?? []) needPart(e.partId);
   if (f.connector?.plane?.kind === "face") need(f.connector.plane.planeRef);
   needPart(f.connector?.owner);
   need(f.transform?.fromConnector);
@@ -309,6 +319,7 @@ export function withoutGone(f: Feature, gone: Set<string>): Feature {
   if (f.mirror?.sources.some(featureGone)) set({ mirror: { ...f.mirror, sources: f.mirror.sources.filter((id) => !featureGone(id)) } });
   if (f.loft?.profiles) out = loftWithoutGone(out, featureGone, partGone);
   else if (f.sections?.some(featureGone)) set({ sections: f.sections.filter((id) => !featureGone(id)) });
+  if (f.curve?.curves?.some(featureGone)) set({ curve: { ...f.curve, curves: f.curve.curves.filter((id) => !featureGone(id)) } });
   if (f.moreAreas?.some((m) => featureGone(m.sketch))) {
     const more = f.moreAreas.filter((m) => !featureGone(m.sketch));
     if (more.length) set({ moreAreas: more });

@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.63 — 3D curves; sweep along curves and edges
+
+- New Curves tools, like Onshape's: Helix, Projected curve, Bridging curve, Composite curve, Fit spline and Intersection curve. They show as lines you can hide with the eye.
+- Sweep along a curve or along part edges you click, not just a sketch — sweep a circle along a helix for a spring.
+- Curve patterns can follow a curve or part edges too, and a "Square to an edge" plane can sit on a curve.
+- A sweep kept facing one way that would turn edge-on (and come out flattened) now says so instead of making a broken part.
+- Claude can make curves and sweep along them.
+
 ## v0.62 — Loft like Onshape's
 
 - Loft sections can now be a flat face of a part (click it), one area of a sketch, or a point at either end (cones, pyramids, rounded noses).

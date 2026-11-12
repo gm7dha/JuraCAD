@@ -3,7 +3,7 @@
  * OpenCascade (through replicad). Runs inside the Web Worker, and directly in
  * Node for the automated tests.
  */
-import { basicFaceExtrusion, cast, makePolygon, Vector, getOC, makeCompound, makeProjectedEdges, ProjectionCamera, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeVertex, makeSphere, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
+import { basicFaceExtrusion, type Wire, cast, makePolygon, Vector, getOC, makeCompound, makeProjectedEdges, ProjectionCamera, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeVertex, makeSphere, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
 
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
@@ -17,7 +17,7 @@ import { planeThroughLine, sketchLine3D, type SketchLineRef } from "../model/pat
 import { getCurrentScope, setCurrentScope } from "../model/expr";
 import { geometrySound } from "../model/checkReport";
 import { MESH_TOLERANCES, type Axis, type Feature, type GeomPick, type ImportedFile, type MateConnectorDef, type MeshQuality, type Operation, type PlaneMoreMode, type PlaneOptions, type TransformFrame } from "../model/types";
-import { deleteFaces, draftFaces, extrudeSketch } from "./extrude";
+import { deleteFaces, draftFaces, extrudeSketch, segmentsWire } from "./extrude";
 import { axisInPlane, centreRevolve, revolveAxis, revolveSketch, twoWayAngle, twoWayRevolve } from "./revolve";
 import { thinSketches } from "../sketch/thin";
 import { axisInSketch } from "../sketch/axis";
@@ -25,7 +25,10 @@ import { holeTool, type ThreadedHoleCache } from "./hole";
 import { HOLE_LEAD_IN, SCREW_SIZES, straightStart, type HoleSize } from "../model/holes";
 import { copyNumber, isSkipped } from "../model/patterns";
 import { materialRuns, shapeDistance, upToFaceSolid, upToPartsSolid } from "./upTo";
-import { loftSketches, sweepSketch } from "./sweep";
+import { loftSketches, sweepAlongSpine, sweepSketch } from "./sweep";
+import { bezierEdge, chainEdges, compoundOf, endFrame, helixWire, interpolatedEdge, planeSheet, reversedWire, sectionEdges, sheetAlong, squareTo, takeVec, wirePolyline } from "./curves";
+import { bridgePoints, curveKindInfo, fitSplineProblem, helixSizes, type BridgeEnd } from "../model/curves";
+import { walkPoints } from "../sketch/pathSample";
 import { buildLoft } from "./loft";
 import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
 import { offsetSolid, shellByCutting } from "./surface";
@@ -34,7 +37,8 @@ import { grooveVolume, maxGrooveDepth, threadPieces } from "./thread";
 import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
 import { pathStations, walkPath } from "../sketch/pathSample";
-import { findRegions } from "../sketch/regions";
+import { findChains, findRegions } from "../sketch/regions";
+import type { SketchData } from "../sketch/types";
 import { crossingOutlineNote } from "../sketch/offsetCheck";
 import { followLinks, linkProblem, shapeIsClosed, projectEdge, type RefEdge, type SketchLinkInfo } from "../sketch/links";
 import { edgePierceRefs, pierceSamples, remembered, edgePierces, edgePoint3, nearestPlace, seeEdge, seeShape, seeShapeAll, seeSketchCurve, type Conic3, sketchCurvePierces, sketchPierceRefs, sketchPointAt, sketchRefs, type CurveShape3, type SourceSketch } from "../sketch/projected";
@@ -593,7 +597,7 @@ function withoutSeams(shape: Shape3D, edges: { lines: number[]; edgeGroups: { st
  * The parameter (0…1, as replicad's `pointAt` takes it) a share `fraction` of the way along an edge by length — the
  * same as a click measured along the drawn edge, so a spline or ellipse's plane stays where it was clicked.
  */
-function paramAtLength(edge: Edge, fraction: number): number {
+function paramAtLength(edge: Edge | Wire, fraction: number): number {
   const N = 256;
   const pts: Vec3[] = [];
   for (let i = 0; i <= N; i++) pts.push(take(edge.pointAt(i / N)));
@@ -632,6 +636,125 @@ function cylinderOfFace(face: Face): Cylinder | null {
   return null;
 }
 const cross3 = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+
+
+const add3 = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const sub3 = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const scale3 = (a: Vec3, k: number): Vec3 => [a[0] * k, a[1] * k, a[2] * k];
+const dist3 = (a: Vec3, b: Vec3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+const unitVec = (a: Vec3): Vec3 => scale3(a, 1 / (Math.hypot(...a) || 1));
+
+/** A wire's edges' polylines as one run of points (they come in order along the wire). */
+function joinPolylines(lines: number[][]): Vec3[] {
+  const out: Vec3[] = [];
+  for (const line of lines) {
+    let pts: Vec3[] = [];
+    for (let i = 0; i + 2 < line.length; i += 3) pts.push([line[i], line[i + 1], line[i + 2]]);
+    // Each piece may run either way: start it at the end touching the last point so far.
+    // (The first piece may itself have run the wrong way.)
+    if (out.length && pts.length > 1 && Math.min(dist3(out[0], pts[0]), dist3(out[0], pts[pts.length - 1])) < Math.min(dist3(out[out.length - 1], pts[0]), dist3(out[out.length - 1], pts[pts.length - 1])) - 1e-9) out.reverse();
+    const last = out[out.length - 1];
+    if (last && pts.length > 1 && dist3(pts[pts.length - 1], last) < dist3(pts[0], last)) pts = pts.reverse();
+    for (const p of pts) if (!out.length || dist3(out[out.length - 1], p) > 1e-9) out.push(p);
+  }
+  return out;
+}
+
+/**
+ * The end of a curve feature nearest a point (the end that was clicked, as last found), across all its pieces: its
+ * wire, place, and the curve's direction there (as the wire runs).
+ */
+function curveEndNear(wires: Wire[], q: Vec3): { wire: Wire; p: Vec3; dir: Vec3; atStart: boolean } {
+  let best: { wire: Wire; p: Vec3; dir: Vec3; atStart: boolean; d: number } | null = null;
+  for (const w of wires) {
+    for (const atStart of [true, false]) {
+      const p = takeVec(atStart ? w.startPoint : w.endPoint);
+      const d = dist3(p, q);
+      if (!best || d < best.d - 1e-9) best = { wire: w, p, dir: [0, 0, 0], atStart, d };
+    }
+  }
+  const b = best!;
+  b.dir = unitVec(takeVec(b.wire.tangentAt(b.atStart ? 0 : 1)));
+  return b;
+}
+
+/** Where a sweep's profile sketch is (a point on its first shape), to start a path from its nearer end. */
+function profileNear(plane: SketchPlane, data: SketchData): Vec3 | undefined {
+  const { chains } = findChains(data);
+  const first = chains[0]?.segments[0];
+  if (!first) return undefined;
+  const p = "from" in first ? first.from : first.center;
+  return toWorld(planeFrame(plane), p[0], p[1]);
+}
+
+/**
+ * A round face (cylinder or cone) as a helix needs it: its axis, the bottom point on it, the radius there, how high
+ * it goes along the axis and the radius at the top. Null when it isn't round. Frees the face.
+ */
+function roundOfFace(face: Face): { origin: Vec3; axis: Vec3; r0: number; r1: number; height: number } | null {
+  try {
+    if (face.geomType !== "CYLINDRE" && face.geomType !== "CONE") return null;
+    const circles: { centre: Vec3; radius: number; normal: Vec3 }[] = [];
+    const ends: Vec3[] = [];
+    for (const e of edgesOf(face)) {
+      try {
+        const p0 = take(e.pointAt(0));
+        const p1 = take(e.pointAt(1 / 3));
+        const p2 = take(e.pointAt(2 / 3));
+        ends.push(p0, take(e.pointAt(1)), p1, p2);
+        if (e.geomType !== "CIRCLE") continue;
+        const c = circleThrough3D(p0, p1, p2);
+        const n = cross3(sub3(p1, p0), sub3(p2, p0));
+        const l = Math.hypot(...n);
+        if (c && l > 1e-12) circles.push({ ...c, normal: scale3(n, 1 / l) });
+      } finally {
+        e.delete();
+      }
+    }
+    if (!circles.length) return null;
+    const axis = canonicalAxis(circles[0].normal);
+    const base = circles[0].centre;
+    const h = (p: Vec3) => dot3(sub3(p, base), axis);
+    const hs = ends.map(h);
+    const lo = Math.min(...hs);
+    const hi = Math.max(...hs);
+    const radiusAt = (t: number): number => {
+      if (face.geomType === "CYLINDRE") return circles[0].radius;
+      const placed = circles.map((c) => ({ t: h(c.centre), r: c.radius }));
+      const a = placed[0];
+      const b = placed.length > 1 ? placed.reduce((m, c) => (Math.abs(c.t - a.t) > Math.abs(m.t - a.t) ? c : m), a) : { t: Math.abs(lo - a.t) > Math.abs(hi - a.t) ? lo : hi, r: 0 };
+      if (Math.abs(b.t - a.t) < 1e-9) return a.r;
+      return a.r + ((b.r - a.r) * (t - a.t)) / (b.t - a.t);
+    };
+    return { origin: add3(base, scale3(axis, lo)), axis, r0: radiusAt(lo), r1: radiusAt(hi), height: hi - lo };
+  } finally {
+    face.delete();
+  }
+}
+
+/** An axis pointed one fixed way for its line (up when it has any upward part, else +Y, else +X), so a helix on it rises the same way every rebuild. */
+function canonicalAxis(a: Vec3): Vec3 {
+  const k = Math.abs(a[2]) > 1e-6 ? 2 : Math.abs(a[1]) > 1e-6 ? 1 : 0;
+  return a[k] < 0 ? scale3(a, -1) : a;
+}
+
+/** A round edge's centre, axis and radius (null when it isn't a circle). Frees the edge. */
+function roundOfEdge(edge: Edge | undefined): { origin: Vec3; axis: Vec3; r0: number; r1?: number; height?: number } | null {
+  if (!edge) return null;
+  try {
+    if (edge.geomType !== "CIRCLE") return null;
+    const p0 = take(edge.pointAt(0));
+    const p1 = take(edge.pointAt(1 / 3));
+    const p2 = take(edge.pointAt(2 / 3));
+    const c = circleThrough3D(p0, p1, p2);
+    const n = cross3(sub3(p1, p0), sub3(p2, p0));
+    const l = Math.hypot(...n);
+    if (!c || l < 1e-12) return null;
+    return { origin: c.centre, axis: canonicalAxis(scale3(n, 1 / l)), r0: c.radius };
+  } finally {
+    edge.delete();
+  }
+}
 
 /** A drilled hole found in a part: where it starts, which way it goes in, and its sizes (for hole callouts). */
 export interface FoundHole {
@@ -1453,11 +1576,11 @@ function revolveMore(feature: Feature, v: Record<string, number>, sketches: Sket
  * each built as the feature would build a sketch of them (same ends, depths, axis or path), joined. Other
  * sketches' areas don't apply; a draft is left out (a thin wall doesn't taper), with a note for each.
  */
-function buildThin(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[], parts: BuiltPart[], notes?: string[]): Shape3D {
+function buildThin(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[], parts: BuiltPart[], notes?: string[], paths?: PathLookup): Shape3D {
   const plain: Feature = { ...feature, thin: undefined, areas: undefined, moreAreas: undefined };
   const source = feature.sketchRef ? sketches.get(feature.sketchRef) : undefined;
   // No usable sketch: the usual message.
-  if (!source?.sketch?.plane) return buildSolid(plain, v, sketches, all, parts, undefined, notes);
+  if (!source?.sketch?.plane) return buildSolid(plain, v, sketches, all, parts, undefined, notes, paths);
   const say = (note: string) => {
     if (notes && !notes.includes(note)) notes.push(note);
   };
@@ -1480,7 +1603,7 @@ function buildThin(feature: Feature, v: Record<string, number>, sketches: Sketch
     for (const data of pieces) {
       const map: SketchMap = new Map(sketches);
       map.set(source.id, { ...source, sketch: { plane: source.sketch.plane, data } });
-      const piece = buildSolid(plain, values, map, all, parts, undefined, inner);
+      const piece = buildSolid(plain, values, map, all, parts, undefined, inner, paths);
       if (!shape) shape = piece;
       else {
         const next: Shape3D = shape.fuse(piece);
@@ -1498,14 +1621,14 @@ function buildThin(feature: Feature, v: Record<string, number>, sketches: Sketch
 }
 
 /** `notes`: problems that don't stop it being built (shown on the feature). */
-function buildSolid(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[], parts: BuiltPart[], threaded?: ThreadedHoleCache, notes?: string[]): Shape3D {
+function buildSolid(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[], parts: BuiltPart[], threaded?: ThreadedHoleCache, notes?: string[], paths?: PathLookup): Shape3D {
   // Thin (Onshape's): a wall along the sketch's curves — each run's outlines made into a sketch of their own and built as usual.
-  if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") && feature.thin && !feature.surface) return buildThin(feature, v, sketches, all, parts, notes);
+  if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") && feature.thin && !feature.surface) return buildThin(feature, v, sketches, all, parts, notes, paths);
   // An extrude, revolve or sweep using areas of other sketches too: each made from its own sketch with the same settings
   // (a revolve round the first sketch's axis, a sweep along the same path), then put together.
   if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") && feature.moreAreas?.length && !feature.surface) {
     const verb = feature.type;
-    let shape = buildSolid({ ...feature, moreAreas: undefined }, v, sketches, all, parts, threaded);
+    let shape = buildSolid({ ...feature, moreAreas: undefined }, v, sketches, all, parts, threaded, undefined, paths);
     const main = all.find((f) => f.id === feature.sketchRef)?.name ?? "its sketch";
     for (const more of feature.moreAreas) {
       const source = all.find((f) => f.id === more.sketch);
@@ -1523,7 +1646,7 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         extra =
           feature.type === "revolve"
             ? revolveMore(feature, v, sketches, more)
-            : buildSolid({ ...feature, sketchRef: more.sketch, areas: more.areas, moreAreas: undefined }, v, sketches, all, parts, threaded);
+            : buildSolid({ ...feature, sketchRef: more.sketch, areas: more.areas, moreAreas: undefined }, v, sketches, all, parts, threaded, undefined, paths);
       } catch (e) {
         shape.delete();
         throw new Error(`${name}: ${describeError(e, `its areas couldn't be ${verb === "sweep" ? "swept" : `${verb}d`}.`)}`);
@@ -1671,6 +1794,17 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         return sk.sketch;
       };
       if (feature.sketchRef && feature.sketchRef === feature.pathRef) throw new Error("The profile and the path must be different sketches.");
+      // Along a curve feature or picked part edges.
+      const spine = paths?.(feature) ?? null;
+      if (spine) {
+        try {
+          const prof = need(feature.sketchRef, "profile");
+          if (feature.surface) throw new Error("A surface sweep follows a sketch for now. Untick Surface, or draw the path in a sketch.");
+          return sweepAlongSpine(prof.plane!, prof.data, spine.wire, feature.areas, { twist: v.twist ?? 0, lockOrientation: feature.sweepControl?.lockOrientation === true }, spine.frenet);
+        } finally {
+          spine.wire.delete();
+        }
+      }
       const profile = need(feature.sketchRef, "profile");
       const path = need(feature.pathRef, "path");
       const control = { twist: v.twist ?? 0, lockOrientation: feature.sweepControl?.lockOrientation === true };
@@ -2004,7 +2138,22 @@ interface StudioBuild {
   followed?: Record<string, FollowedFrame>;
   /** Mate connectors by the part that owns them (see PartMesh.connectors). */
   owned?: Record<string, PartConnector[]>;
+  /** Curve features (Helix, Fit spline…) built: their wires, and lines to draw (see RebuildResult.curves). */
+  curves?: Map<string, BuiltCurve>;
+  curveLines?: Record<string, number[][]>;
 }
+
+/** A curve feature as built: its runs (usually one wire), and whether a sweep along it should follow its own bending (a helix). */
+interface BuiltCurve {
+  wires: Wire[];
+  frenet?: boolean;
+}
+
+/**
+ * The path a sweep follows when it's a curve feature or picked part edges (null for a sketch path): a fresh wire the
+ * caller frees. Given to buildSolid by the engine.
+ */
+type PathLookup = (feature: Feature) => { wire: Wire; frenet: boolean } | null;
 
 /** What a sketch could snap to, kept from a build: the parts (shared copies) and sketches before it, and the list it's in. */
 interface SketchSnap {
@@ -2104,6 +2253,7 @@ export class GeometryEngine {
     const featureNotes: Record<string, string> = {};
     const transformCentres: Record<string, Vec3> = {};
     const followed: Record<string, FollowedFrame> = {};
+    const curves: Record<string, number[][]> = {};
     const shared = JSON.stringify([variables, partNames]);
     // Part Studios using parts from others (Derived) are built after them, and again whenever they change.
     const sourcesOf = (s: StudioInput) => [...new Set(s.features.filter((f) => f.type === "derived" && !f.suppressed && f.derived).map((f) => f.derived!.studioId))].filter((id) => id !== s.id);
@@ -2156,7 +2306,8 @@ export class GeometryEngine {
           for (const p of this.parts) for (const m of p.members ?? []) if (names[m.id]) m.name = names[m.id];
           // Another configuration's copies of the parts (for assemblies).
           if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
-          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, centres: this.centres, links: this.links, snaps: this.snaps ?? new Map(), followed: this.followed, owned: this.owned };
+          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, centres: this.centres, links: this.links, snaps: this.snaps ?? new Map(), followed: this.followed, owned: this.owned, curves: this.curves, curveLines: this.curveLines };
+          this.curves = new Map();
           this.snaps = null;
           this.builds.set(studio.id, b);
           building = null;
@@ -2186,6 +2337,7 @@ export class GeometryEngine {
     const sketchLinks: Record<string, SketchLinkInfo> = {};
     for (const s of studios) if (!s.partSuffix) Object.assign(sketchLinks, this.builds.get(s.id)?.links ?? {});
     for (const s of studios) if (!s.partSuffix) Object.assign(followed, this.builds.get(s.id)?.followed ?? {});
+    for (const s of studios) if (!s.partSuffix) Object.assign(curves, this.builds.get(s.id)?.curveLines ?? {});
     return {
       parts: meshes,
       featureErrors,
@@ -2193,6 +2345,7 @@ export class GeometryEngine {
       ...(Object.keys(featureNotes).length ? { featureNotes } : {}),
       ...(Object.keys(transformCentres).length ? { transformCentres } : {}),
       ...(Object.keys(followed).length ? { followed } : {}),
+      ...(Object.keys(curves).length ? { curves } : {}),
       durationMs: Math.round(performance.now() - started),
       rebuilt,
       studioOrder: studios.map((s) => s.id),
@@ -2695,6 +2848,9 @@ export class GeometryEngine {
     const sketches: SketchMap = new Map();
     // Newer Plane features and mate connectors, where they're found this build (things on them follow).
     this.followed = {};
+    this.disposeCurves(this.curves);
+    this.curves = new Map();
+    this.curveLines = {};
     this.connectorFrames = new Map();
     this.owned = {};
     this.lastBuiltName = "";
@@ -2716,6 +2872,11 @@ export class GeometryEngine {
       this.lastBuiltName = feature.name;
       if (feature.type === "mateConnector") {
         const err = this.placeConnector(feature, sketches, features, moved);
+        if (err) featureErrors[feature.id] = err;
+        continue;
+      }
+      if (feature.type === "curve") {
+        const err = this.buildCurve(feature, sketches, features);
         if (err) featureErrors[feature.id] = err;
         continue;
       }
@@ -2906,7 +3067,7 @@ export class GeometryEngine {
           continue;
         }
         try {
-          const skin = buildSolid(feature, values, sketches, features, this.parts, this.threadedHoles);
+          const skin = buildSolid(feature, values, sketches, features, this.parts, this.threadedHoles, undefined, (f) => this.sweepSpine(f, features, sketches));
           surfaceCounter++;
           this.tools.set(feature.id, { shape: skin.clone(), operation: "new", partId: feature.id });
           this.parts.push({ id: feature.id, name: `Surface ${surfaceCounter}`, featureIds: [feature.id], shape: skin, surface: true });
@@ -2963,7 +3124,7 @@ export class GeometryEngine {
       let tool: Shape3D;
       const notes: string[] = [];
       try {
-        tool = feature.type === "derived" ? this.derivedSolid(feature, values) : buildSolid(feature, values, sketches, features, this.parts, this.threadedHoles, notes);
+        tool = feature.type === "derived" ? this.derivedSolid(feature, values) : buildSolid(feature, values, sketches, features, this.parts, this.threadedHoles, notes, (f) => this.sweepSpine(f, features, sketches));
       } catch (e) {
         featureErrors[feature.id] = describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`);
         continue;
@@ -4993,9 +5154,21 @@ export class GeometryEngine {
       const count = values.count;
       if (feature.type === "curvePattern") {
         const sk = all.find((f) => f.id === feature.pathRef);
-        if (!feature.pathRef || !sk) return { error: "Choose the sketch with the path to follow." };
-        if (all.indexOf(sk) > all.indexOf(feature)) return { error: `${sk.name} comes after this curve pattern in the list.` };
-        if (sk.suppressed || !sk.sketch?.plane) return { error: `${sk.name} can't be used as the path.` };
+        // Along a curve feature or picked part edges: walked as closely spaced points.
+        let spine: { wire: Wire; frenet: boolean } | null = null;
+        try {
+          spine = this.sweepSpine(feature, all);
+        } catch (e) {
+          return { error: describeError(e, "Couldn't follow that path.") };
+        }
+        const spinePoints = spine ? [wirePolyline(spine.wire)] : null;
+        const spineClosed = spine?.wire.isClosed ?? false;
+        spine?.wire.delete();
+        if (!spinePoints) {
+          if (!feature.pathRef || !sk) return { error: "Choose the sketch with the path to follow." };
+          if (all.indexOf(sk) > all.indexOf(feature)) return { error: `${sk.name} comes after this curve pattern in the list.` };
+          if (sk.suppressed || !sk.sketch?.plane) return { error: `${sk.name} can't be used as the path.` };
+        }
         // Walk the path from the end nearest the first thing being repeated.
         const firstTool = this.tools.get(ordered[0]?.id ?? "");
         const firstPart = of === "part" ? this.parts.find((p) => p.id === feature.pattern?.parts?.[0]) : undefined;
@@ -5008,7 +5181,7 @@ export class GeometryEngine {
           const centres = (feature.picks ?? []).flatMap((p) => (p.ref.kind === "face" ? [p.ref.center] : []));
           if (centres.length) near = [0, 1, 2].map((k) => centres.reduce((t, c) => t + c[k], 0) / centres.length) as Vec3;
         }
-        const walk = walkPath(sk.sketch.plane, sk.sketch.data, near);
+        const walk = spinePoints ? walkPoints(joinPolylines(spinePoints), spineClosed, near) : walkPath(sk!.sketch!.plane!, sk!.sketch!.data, near);
         if (typeof walk === "string") return { error: walk };
         const stations = pathStations(walk, count);
         const first = walk.at(0);
@@ -5412,6 +5585,7 @@ export class GeometryEngine {
       return l > 1e-12 ? [v[0] / l, v[1] / l, v[2] / l] : v;
     };
     if (g.axis) return { p: [0, 0, 0], dir: g.axis === "x" ? [1, 0, 0] : g.axis === "y" ? [0, 1, 0] : [0, 0, 1] };
+    if (g.curve) return this.curveGeom(g, as, position);
     if (g.connector) {
       const c = this.connectorFrames.get(g.connector);
       if (!c) throw new Error("The mate connector it uses is gone, suppressed or comes later in the list. Click something else.");
@@ -6851,6 +7025,372 @@ export class GeometryEngine {
     };
   }
 
+  // -------------------------------------------------------------------------
+  // Curve features (Onshape's Helix, Projected, Bridging, Composite, Fit spline and Intersection curves): wires
+  // made at their place in the list, drawn as lines, followed by sweeps and curve patterns (see model/curves.ts).
+
+  /** Curve features built so far this build. */
+  private curves = new Map<string, BuiltCurve>();
+  /** Their lines to draw (see RebuildResult.curves). */
+  private curveLines: Record<string, number[][]> = {};
+
+  private disposeCurves(curves: Map<string, BuiltCurve> | undefined): void {
+    for (const c of curves?.values() ?? []) {
+      for (const w of c.wires) {
+        try {
+          w.delete();
+        } catch {
+          // already freed
+        }
+      }
+    }
+    curves?.clear();
+  }
+
+  /** A clicked point on a curve feature: an end, its middle, or (a Curve point plane) somewhere along it with its direction. */
+  private curveGeom(g: GeomPick, as: "point" | "line" | "curve", position: number): { p: Vec3; dir?: Vec3 } {
+    const c = this.curves.get(g.curve!);
+    if (!c?.wires.length) throw new Error("The curve it uses is gone, suppressed, failed or comes later in the list. Click something else.");
+    const w = c.wires[0];
+    // Along it by length (as the app measures a click along the drawn line), from its start.
+    const along = (share: number) => {
+      const at = paramAtLength(w, Math.min(1, Math.max(0, share)));
+      return { p: takeVec(w.pointAt(at)), dir: unitVec(takeVec(w.tangentAt(at))) };
+    };
+    if (as === "curve") return along(position);
+    if (g.end === "a" || g.end === "b") {
+      const end = curveEndNear(c.wires, g.p);
+      return { p: end.p, dir: end.dir };
+    }
+    return along(0.5);
+  }
+
+  /**
+   * A sweep's or curve pattern's path when it's a curve feature or picked part edges: one wire (the caller frees it),
+   * an open one starting at the end nearest the profile. Null for a sketch path. Throws a plain message when it can't be made.
+   */
+  private sweepSpine(feature: Feature, all: Feature[], sketches?: SketchMap): { wire: Wire; frenet: boolean } | null {
+    if (feature.type !== "sweep" && feature.type !== "curvePattern") return null;
+    let wire: Wire | null = null;
+    let frenet = false;
+    if (feature.pathEdges?.length) {
+      const edges = this.pickedEdgesOf(feature.pathEdges);
+      const wires = chainEdges(edges);
+      if (wires.length !== 1) {
+        wires.forEach((w) => w.delete());
+        throw new Error(`The picked edges make ${wires.length} separate runs. Pick edges that join end to end into one path.`);
+      }
+      wire = wires[0];
+    } else {
+      const target = all.find((f) => f.id === feature.pathRef);
+      if (target?.type !== "curve") return null;
+      if (all.indexOf(target) > all.indexOf(feature)) throw new Error(`${target.name} comes after this in the list. Move it above, or pick another path.`);
+      const c = this.curves.get(target.id);
+      if (!c?.wires.length) throw new Error(target.suppressed ? `${target.name} is suppressed, so it can't be the path.` : `${target.name} couldn't be made, so it can't be the path.`);
+      if (c.wires.length > 1) throw new Error(`${target.name} is in ${c.wires.length} separate pieces. A path must be one run: join them with a Composite curve or a Bridging curve.`);
+      wire = c.wires[0].clone() as Wire;
+      frenet = !!c.frenet;
+    }
+    if (feature.type === "sweep" && feature.sketchRef && !wire.isClosed) {
+      // Start from the end nearest the profile.
+      // (The profile sketch as built: moved with its face or plane.)
+      const sk = sketches?.get(feature.sketchRef) ?? all.find((f) => f.id === feature.sketchRef);
+      const near = sk?.sketch?.plane ? profileNear(sk.sketch.plane, sk.sketch.data) : undefined;
+      if (near) {
+        const a = takeVec(wire.startPoint);
+        const b = takeVec(wire.endPoint);
+        if (dist3(b, near) < dist3(a, near) - 1e-9) {
+          const r = reversedWire(wire);
+          wire.delete();
+          wire = r;
+        }
+      }
+    }
+    return { wire, frenet };
+  }
+
+  /** Picked part edges found on their parts as they are now (the caller frees them). */
+  private pickedEdgesOf(picks: TopoPick[]): Edge[] {
+    const out: Edge[] = [];
+    const byPart = new Map<string, TopoPick[]>();
+    for (const p of picks) byPart.set(p.partId, [...(byPart.get(p.partId) ?? []), p]);
+    try {
+      for (const [partId, list] of byPart) {
+        const part = this.parts.find((x) => x.id === partId);
+        if (!part) throw new Error("A part it uses no longer exists (or comes later in the list). Edit it and pick again.");
+        out.push(...findPickedEdges(part.shape, list));
+      }
+    } catch (e) {
+      out.forEach((x) => x.delete());
+      throw e;
+    }
+    return out;
+  }
+
+  /** Picked part faces found on their parts as they are now (the caller frees them). */
+  private pickedFacesOf(picks: TopoPick[]): Face[] {
+    const out: Face[] = [];
+    try {
+      for (const p of picks) {
+        if (p.ref.kind !== "face") continue;
+        const part = this.parts.find((x) => x.id === p.partId);
+        if (!part) throw new Error("A part it uses no longer exists (or comes later in the list). Edit it and pick again.");
+        out.push(findPickedFace(part.shape, p));
+      }
+    } catch (e) {
+      out.forEach((x) => x.delete());
+      throw e;
+    }
+    return out;
+  }
+
+  /** Build a curve feature (an error message, or null), keeping its wires for the features after it. */
+  private buildCurve(feature: Feature, sketches: SketchMap, all: Feature[]): string | null {
+    const def = feature.curve;
+    if (!def) return "Choose what kind of curve this is.";
+    const { values, errors } = resolveParams(feature);
+    const bad = FEATURE_DEFS.curve.params.find((p) => errors[p.key]);
+    if (bad) return `${bad.label}: ${errors[bad.key]}`;
+    let made: { wires: Wire[]; frenet?: boolean };
+    try {
+      made = this.makeCurve(feature, def, values, sketches, all);
+    } catch (e) {
+      return describeError(e, `Couldn't make this ${curveKindInfo(def.kind).label.toLowerCase()}.`);
+    }
+    if (!made.wires.length) return "There's no curve: nothing meets there. Check what's picked.";
+    this.curves.set(feature.id, made);
+    this.curveLines[feature.id] = made.wires.map((w) => wirePolyline(w).map((x) => Math.round(x * 1e4) / 1e4));
+    return null;
+  }
+
+  private makeCurve(feature: Feature, def: NonNullable<Feature["curve"]>, v: Record<string, number>, sketches: SketchMap, all: Feature[]): { wires: Wire[]; frenet?: boolean } {
+    const point = (g: GeomPick) => this.findGeom(g, "point", sketches, all);
+    switch (def.kind) {
+      case "helix": {
+        let origin: Vec3;
+        let axis: Vec3;
+        let x: Vec3;
+        let r0: number;
+        let rTop: number | undefined;
+        let faceHeight: number | undefined;
+        if (def.around === "face") {
+          const pick = def.on;
+          if (!pick) throw new Error("Click a round face (or a round edge) for the helix to wind round.");
+          const part = this.parts.find((p) => p.id === pick.partId);
+          if (!part) throw new Error("The part it winds round no longer exists. Click a round face.");
+          const round = pick.ref.kind === "face" ? roundOfFace(findPickedFace(part.shape, pick)) : roundOfEdge(findPickedEdges(part.shape, [pick])[0]);
+          if (!round) throw new Error("That isn't round. Click the side of a rod, hole or cone, or a round edge.");
+          axis = round.axis;
+          origin = round.origin;
+          r0 = round.r0;
+          if (round.height !== undefined) {
+            faceHeight = round.height;
+            rTop = round.r1;
+          }
+          if (def.flip) {
+            if (faceHeight !== undefined) origin = add3(origin, scale3(axis, faceHeight));
+            axis = scale3(axis, -1);
+            if (rTop !== undefined) [r0, rTop] = [rTop, r0];
+          }
+          x = squareTo(axis);
+        } else {
+          const line = this.findGeom(def.axis ?? { p: [0, 0, 0], axis: "z" }, "line", sketches, all);
+          if (!line.dir) throw new Error("Pick a line for the axis: an edge, a sketch line, a round face or edge, or X, Y or Z.");
+          axis = unitVec(line.dir);
+          if (def.flip) axis = scale3(axis, -1);
+          if (def.start) {
+            const q = point(def.start).p;
+            const d = dot3(sub3(q, line.p), axis);
+            origin = add3(line.p, scale3(axis, d));
+            const radial = sub3(q, origin);
+            r0 = Math.hypot(...radial);
+            if (!(r0 > 1e-6)) throw new Error("The start point is on the axis. Pick a point away from it (it sets the radius).");
+            x = scale3(radial, 1 / r0);
+          } else {
+            origin = line.p;
+            r0 = v.diameter / 2;
+            x = squareTo(axis);
+          }
+        }
+        const sizes = helixSizes(def.helixBy, v, def.helixBy === "turnsPitch" ? undefined : faceHeight);
+        if (typeof sizes === "string") throw new Error(sizes);
+        const a = ((v.startAngle ?? 0) * Math.PI) / 180;
+        x = add3(scale3(x, Math.cos(a)), scale3(cross3(axis, x), Math.sin(a)));
+        const r1 = rTop !== undefined && faceHeight ? r0 + ((rTop - r0) * sizes.height) / faceHeight : r0 + sizes.height * Math.tan(((v.taper ?? 0) * Math.PI) / 180);
+        return { wires: [helixWire({ origin, axis, x, r0, r1, height: sizes.height, turns: sizes.turns, clockwise: def.clockwise })], frenet: true };
+      }
+      case "fitSpline": {
+        const pts = (def.points ?? []).map((g) => point(g).p);
+        const problem = fitSplineProblem(pts, !!def.closed);
+        if (problem) throw new Error(problem);
+        const edge = interpolatedEdge(pts, !!def.closed);
+        return { wires: chainEdges([edge]) };
+      }
+      case "bridge": {
+        if (!def.from || !def.to) throw new Error("Click the two points (or edge ends) to join.");
+        const a = this.bridgeEnd(def.from, def.matchFrom ?? "tangent", !!def.flipFrom, "from", sketches, all);
+        const b = this.bridgeEnd(def.to, def.matchTo ?? "tangent", !!def.flipTo, "to", sketches, all);
+        const pts = bridgePoints(a, b, v.bulge ?? 1);
+        if (typeof pts === "string") throw new Error(pts);
+        return { wires: chainEdges([bezierEdge(pts)]) };
+      }
+      case "composite": {
+        const edges: Edge[] = feature.picks?.length ? this.pickedEdgesOf(feature.picks.filter((p) => p.ref.kind === "edge")) : [];
+        for (const id of def.curves ?? []) {
+          const c = this.curves.get(id);
+          const name = all.find((f) => f.id === id)?.name ?? "A curve it joins";
+          if (!c) {
+            edges.forEach((e) => e.delete());
+            throw new Error(`${name} is gone, suppressed, failed or comes later in the list. Take it out, or fix it.`);
+          }
+          for (const w of c.wires) edges.push(...edgesOf(w));
+        }
+        if (!edges.length) throw new Error("Click the edges and curves to join.");
+        const wires = chainEdges(edges);
+        if (wires.length > 1) {
+          wires.forEach((w) => w.delete());
+          throw new Error(`They don't join end to end: they make ${wires.length} separate runs. Pick edges and curves that meet at their ends.`);
+        }
+        return { wires };
+      }
+      case "intersection": {
+        const faces = this.pickedFacesOf(feature.picks ?? []);
+        try {
+          if (def.plane) {
+            if (!faces.length) throw new Error("Click the faces for the plane to cut.");
+            const frame = planeFrame(def.plane);
+            const all3 = compoundOf(faces);
+            const [lo, hi] = boundsOf(all3);
+            const mid: Vec3 = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+            const sheet = planeSheet(frame.origin as Vec3, frame.u as Vec3, frame.v as Vec3, mid, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 10);
+            try {
+              return { wires: chainEdges(sectionEdges(all3, sheet)) };
+            } finally {
+              sheet.delete();
+              all3.delete();
+            }
+          }
+          if (faces.length < 2) throw new Error("Click two faces (or faces and a plane) to find where they meet.");
+          const rest = compoundOf(faces.slice(1));
+          try {
+            return { wires: chainEdges(sectionEdges(faces[0], rest)) };
+          } finally {
+            rest.delete();
+          }
+        } finally {
+          faces.forEach((f) => f.delete());
+        }
+      }
+      case "projected": {
+        // Each sketch's runs as wires, pushed out both ways far enough to cross everything (twice the size of the
+        // sketches and faces together, from anywhere among them).
+        const runsOf = (id: string | undefined, what: string): { wires: Wire[]; n: Vec3 } => {
+          const sk = id ? sketches.get(id) : undefined;
+          if (!sk?.sketch?.plane) throw new Error(`Choose the ${what} sketch (one above this in the list).`);
+          const frame = planeFrame(sk.sketch.plane);
+          const { chains } = findChains(sk.sketch.data);
+          if (!chains.length) throw new Error(`${sk.name} has no lines or curves to project.`);
+          return { wires: chains.map((c) => segmentsWire(c.segments, frame, 0)), n: frame.n as Vec3 };
+        };
+        const reachOf = (shapes: { boundingBox: { bounds: unknown; delete(): void } }[]): number => {
+          const lo: Vec3 = [Infinity, Infinity, Infinity];
+          const hi: Vec3 = [-Infinity, -Infinity, -Infinity];
+          for (const sh of shapes) {
+            const box = sh.boundingBox;
+            const [a, b] = box.bounds as Bounds;
+            box.delete();
+            for (let k = 0; k < 3; k++) {
+              lo[k] = Math.min(lo[k], a[k]);
+              hi[k] = Math.max(hi[k], b[k]);
+            }
+          }
+          return 2 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 10;
+        };
+        const sheetsOf = (runs: { wires: Wire[]; n: Vec3 }, reach: number) => {
+          const each = runs.wires.map((w) => sheetAlong(w, runs.n, reach));
+          try {
+            return compoundOf(each);
+          } finally {
+            each.forEach((x) => x.delete());
+          }
+        };
+        const first = runsOf(feature.sketchRef, "first");
+        try {
+          if (def.project === "sketches") {
+            const second = runsOf(def.sketch2, "second");
+            try {
+              if (Math.abs(dot3(first.n, second.n)) > 1 - 1e-9) throw new Error("The two sketches are on parallel planes, so their curves never cross when pushed out. Draw them on planes at an angle (e.g. Top and Front).");
+              const reach = reachOf([...first.wires, ...second.wires]);
+              const a = sheetsOf(first, reach);
+              const b = sheetsOf(second, reach);
+              try {
+                return { wires: chainEdges(sectionEdges(a, b)) };
+              } finally {
+                a.delete();
+                b.delete();
+              }
+            } finally {
+              second.wires.forEach((w) => w.delete());
+            }
+          }
+          const faces = this.pickedFacesOf(feature.picks ?? []);
+          if (!faces.length) throw new Error("Click the faces to project the sketch onto.");
+          const target = compoundOf(faces);
+          const sheets = sheetsOf(first, reachOf([...first.wires, ...faces]));
+          try {
+            return { wires: chainEdges(sectionEdges(sheets, target)) };
+          } finally {
+            sheets.delete();
+            target.delete();
+            faces.forEach((f) => f.delete());
+          }
+        } finally {
+          first.wires.forEach((w) => w.delete());
+        }
+      }
+    }
+    return { wires: [] };
+  }
+
+  /** One end of a bridging curve: the point, and the direction and bend it should match there. */
+  private bridgeEnd(g: GeomPick, match: BridgeEnd["match"], flip: boolean, role: "from" | "to", sketches: SketchMap, all: Feature[]): BridgeEnd {
+    const found = this.findGeom(g, "point", sketches, all);
+    const p = found.p;
+    let t: Vec3 | undefined;
+    let k: Vec3 | undefined;
+    // An edge's end or a curve's end: carry on from it (from), or arrive running into it (to).
+    let oneD: Edge | Wire | null = null;
+    let freeIt = false;
+    if (g.curve && (g.end === "a" || g.end === "b")) {
+      const wires = this.curves.get(g.curve)?.wires;
+      oneD = wires?.length ? curveEndNear(wires, p).wire : null;
+    } else if (g.pick?.ref.kind === "edge" && (g.end === "a" || g.end === "b")) {
+      const part = this.parts.find((x) => x.id === g.pick!.partId);
+      if (part) {
+        oneD = findPickedEdges(part.shape, [g.pick])[0];
+        freeIt = true;
+      }
+    }
+    try {
+      if (oneD) {
+        const s0 = takeVec(oneD.startPoint);
+        const s1 = takeVec(oneD.endPoint);
+        const atStart = dist3(s0, p) <= dist3(s1, p);
+        const fr = endFrame(oneD, atStart ? 0 : 1);
+        // Out of the curve at its start is against its direction; at its end, along it. Arriving is the reverse.
+        const out = atStart ? scale3(fr.t, -1) : fr.t;
+        t = role === "from" ? out : scale3(out, -1);
+        k = fr.k;
+      } else if (g.connector && found.dir) {
+        t = found.dir;
+      }
+    } finally {
+      if (freeIt) oneD?.delete();
+    }
+    if (t && flip) t = scale3(t, -1);
+    return { p, ...(t ? { t } : {}), ...(k ? { k } : {}), match };
+  }
+
   private disposeBuild(b: StudioBuild): void {
     for (const p of b.parts) {
       try {
@@ -6869,6 +7409,8 @@ export class GeometryEngine {
     b.parts = [];
     b.tools.clear();
     this.disposeSnaps(b.snaps);
+    this.disposeCurves(b.curves);
+    b.curves = new Map();
   }
 
   private disposeParts(): void {

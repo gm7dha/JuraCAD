@@ -84,7 +84,12 @@ export function walkPath(plane: SketchPlane, data: SketchData, near?: Vec3): Pat
   const closed = chains[0].closed;
   const frame = planeFrame(plane);
   const pts = sampleSegments(chains[0].segments);
-  let world = pts.map(([x, y]) => toWorld(frame, x, y));
+  return walkPoints(pts.map(([x, y]) => toWorld(frame, x, y)), closed, near);
+}
+
+/** A path through closely spaced 3D points, walked by distance (an open one from the end nearest `near`, if given). */
+export function walkPoints(points: Vec3[], closed: boolean, near?: Vec3): PathWalk | string {
+  let world = points;
   // An open path starts from the end nearest `near` (the thing being repeated), if given.
   if (near && !closed && world.length > 1) {
     const dist = (p: Vec3) => Math.hypot(p[0] - near[0], p[1] - near[1], p[2] - near[2]);

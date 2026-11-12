@@ -17,6 +17,8 @@ import { mirrorReferenceText, patternReferenceText, setMirrorReference, setPatte
 import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 import { isMorePlaneMode } from "../sketch/planeTypes";
 import { MateConnectorOptions, MorePlaneFields, PlaneKindSelect } from "./PlaneMoreOptions";
+import { CurveOptions, PathChoice } from "./CurveOptions";
+import { curveKindInfo } from "../model/curves";
 import type { Axis, ExtrudeEnd, Feature } from "../model/types";
 import { axisLabel, defaultAxis } from "../sketch/axis";
 import { activeFeatures, activeStudioId, studioParts, useLengthUnit, useStore } from "../model/store";
@@ -1158,7 +1160,7 @@ function SweepLoftOptions() {
           />
         )}
         {!draft.surface && <MoreAreasNote />}
-        {select("Path to follow", draft.pathRef, (v) => setDraftField(pathChange(draft, v)))}
+        <PathChoice label="Path to follow" onSketch={(v) => setDraftField(pathChange(draft, v))} />
         <p className="dialog-hint field-hint">Draw the shape on a plane across the start of the path, e.g. a circle on Front for a path drawn on Top.</p>
         <label className="check-row" title="The shape doesn't tilt to follow the path's bends: it stays parallel to the plane it was drawn on all the way along">
           <input
@@ -1733,16 +1735,7 @@ function PatternOptions() {
       {draft.type === "curvePattern" ? (
         <fieldset className="param-group">
           <legend>Along the path</legend>
-          <select className="full-select" aria-label="Path sketch" value={draft.pathRef ?? ""} onChange={(e) => setDraftField({ pathRef: e.target.value || undefined })}>
-            <option value="">Choose a sketch…</option>
-            {features
-              .filter((f) => f.type === "sketch" && f.id !== draft.id)
-              .map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name}
-                </option>
-              ))}
-          </select>
+          <PathChoice label="Path sketch" onSketch={(v) => setDraftField({ pathRef: v })} />
           <label className="check-row">
             <input type="checkbox" checked={!!pattern.follow} onChange={(e) => setDraftField({ pattern: { ...pattern, follow: e.target.checked } })} />
             Turn the copies to follow the path
@@ -2537,7 +2530,7 @@ export function FeatureDialog() {
       }}
     >
       <header className="feature-dialog-header">
-        <span className="feature-dialog-title">{def.label}</span>
+        <span className="feature-dialog-title">{draft.type === "curve" ? curveKindInfo(draft.curve?.kind).label : def.label}</span>
         <span className="feature-dialog-actions">
           <button
             type="submit"
@@ -2562,7 +2555,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "mateConnector" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "composite" && draft.type !== "simplify" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "modifyFillet" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "cornerBreak" && draft.type !== "tab" && draft.type !== "bend" && draft.type !== "jog" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && draft.type !== "extendSurface" && draft.type !== "ruled" && !draft.surface && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "mateConnector" && draft.type !== "curve" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "composite" && draft.type !== "simplify" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "modifyFillet" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "cornerBreak" && draft.type !== "tab" && draft.type !== "bend" && draft.type !== "jog" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && draft.type !== "extendSurface" && draft.type !== "ruled" && !draft.surface && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -2593,6 +2586,7 @@ export function FeatureDialog() {
         <ThinOptions />
         <PlaneDefOptions />
         <MateConnectorOptions />
+        <CurveOptions />
         <BooleanOptionsField />
         <DeletePartOptions />
         <CompositeOptions />

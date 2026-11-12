@@ -7,6 +7,8 @@ import type { FeatureType } from "../model/types";
 import { planeForFace, viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
 import { ToolGroupButton } from "./ToolGroupButton";
+import { CURVE_KINDS, curveName, newCurveDef } from "../model/curves";
+import type { CurveKind } from "../model/types";
 import { detectPlatform, shortcut } from "./platform";
 import { startSection } from "./SectionPanel";
 import { startPrintBed } from "./PrintBedPanel";
@@ -64,6 +66,13 @@ export function startSketchFromSelection() {
   s.startCreate("sketch");
 }
 
+/** A curve feature of a kind (Helix, Fit spline…), named for it. */
+export function startCurve(kind: CurveKind) {
+  const s = useStore.getState();
+  s.startCreate("curve");
+  s.setDraftField({ curve: newCurveDef(kind), name: curveName(activeFeatures(useStore.getState()), kind) });
+}
+
 /** Plane: from the selected flat face, plane or Plane feature (or Top, to change in the dialog). */
 export function startPlaneFromSelection() {
   const s = useStore.getState();
@@ -104,6 +113,7 @@ export function Toolbar() {
   const redo = useStore((s) => s.redo);
   const startCreate = useStore((s) => s.startCreate);
   const editingType = useStore((s) => (s.editing?.mode === "create" ? s.editing.draft.type : null));
+  const editingCurve = useStore((s) => (s.editing?.mode === "create" && s.editing.draft.type === "curve" ? s.editing.draft.curve?.kind ?? null : null));
   const editingHollow = useStore((s) => !!s.editing?.draft.hollow);
   const setDraftField = useStore((s) => s.setDraftField);
   const startHollow = () => {
@@ -213,9 +223,9 @@ export function Toolbar() {
               label: "Sweep",
               icon: <Icons.Sweep />,
               onClick: () => startCreate("sweep"),
-              disabled: !ready || sketchCount < 2,
+              disabled: !ready || sketchCount < 1,
               active: editingType === "sweep",
-              title: sketchCount >= 2 ? "Sweep — carry a sketch's shape along a path drawn in another sketch (pipes, handles, rails)" : "Draw two sketches first: the shape, and the path for it to follow",
+              title: sketchCount >= 1 ? "Sweep — carry a sketch's shape along a path: another sketch, a curve (a helix for a spring) or part edges" : "Draw a sketch of the shape first (and a path: another sketch, a curve or part edges)",
             },
             {
               key: "loft",
@@ -227,6 +237,19 @@ export function Toolbar() {
               title: sketchCount >= 2 ? "Loft — a smooth solid joining shapes on different sketches" : "Draw shapes on two or more sketches (on different planes) first",
             },
           ]}
+        />
+        <ToolGroupButton
+          id="curves"
+          name="curve"
+          items={CURVE_KINDS.map((k) => ({
+            key: k.kind,
+            label: k.label,
+            icon: k.kind === "helix" ? <Icons.Coil /> : <Icons.Curve />,
+            onClick: () => startCurve(k.kind),
+            disabled: !ready,
+            active: editingCurve === k.kind,
+            title: `${k.label} — ${k.description}`,
+          }))}
         />
         <ToolGroupButton
           id="text"
