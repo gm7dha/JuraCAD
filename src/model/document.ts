@@ -16,7 +16,7 @@ import { parsePartProperties } from "../assembly/properties";
 import { parseAssemblies } from "../assembly/assembly";
 import { parseDrawings } from "../drawing/drawing";
 import { newCurveDef, parseCurveDef } from "./curves";
-import type { Feature, FeatureType, GeomPick, ImportedFile, LoftCurve, LoftDef, LoftEnd, LoftProfile, MateConnectorDef, Operation, JuraCADDocument, PartStudio, PlaneOptions } from "./types";
+import type { BoundaryCurve, Feature, FeatureType, GeomPick, ImportedFile, LoftCurve, LoftDef, LoftEnd, LoftProfile, MateConnectorDef, Operation, JuraCADDocument, PartStudio, PlaneOptions } from "./types";
 import { MAIN_STUDIO } from "./studios";
 import { parseHiddenDatums } from "./visibility";
 import { parseVersions } from "./versions";
@@ -163,6 +163,15 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
   if (type === "plane") feature.planeDef = { mode: "offset", ref: { kind: "default", name: "Top" }, axis: "u" };
   // A mate connector starts at the origin, on Top, until something is clicked.
   if (type === "curve") feature.curve = newCurveDef("helix");
+  if (type === "boundary") {
+    feature.boundary = { u: [], v: [], picking: "u" };
+    feature.operation = "new";
+  }
+  if (type === "faceBlend") {
+    feature.picks = [];
+    feature.blend = { side2: [], picking: "side1" };
+    feature.operation = "new";
+  }
   if (type === "mateConnector") feature.connector = { at: { p: [0, 0, 0] }, plane: { kind: "default", name: "Top" }, base: { origin: [0, 0, 0], x: [1, 0, 0], z: [0, 0, 1] } };
   if (type === "transform") {
     feature.operation = "add";
@@ -333,6 +342,14 @@ export function withoutPicking(f: Feature): Feature {
   if (out.curve?.picking !== undefined) {
     const { picking: _p, ...curve } = out.curve;
     out = { ...out, curve };
+  }
+  if (out.boundary?.picking !== undefined) {
+    const { picking: _p, ...boundary } = out.boundary;
+    out = { ...out, boundary };
+  }
+  if (out.blend?.picking !== undefined) {
+    const { picking: _p, ...blend } = out.blend;
+    out = { ...out, blend };
   }
   // A sweep's "part edges" chosen with none clicked: no path yet.
   if (out.pathEdges && !out.pathEdges.length) {
@@ -782,6 +799,26 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if (feature.type === "sheetMetal" && f.sheetConvert === true) feature.sheetConvert = true;
     if (feature.type === "deleteFace" && f.leaveOpen === true) feature.leaveOpen = true;
     if (feature.type === "fill" && f.continuity === "tangent") feature.continuity = "tangent";
+    if (feature.type === "boundary") {
+      const bd = (f.boundary ?? {}) as Record<string, unknown>;
+      const curves = (list: unknown): BoundaryCurve[] =>
+        (Array.isArray(list) ? list : []).flatMap((c: unknown): BoundaryCurve[] => {
+          if (!c || typeof c !== "object") return [];
+          const o = c as Record<string, unknown>;
+          const match: Pick<BoundaryCurve, "match"> = o.match === "tangent" || o.match === "curvature" ? { match: o.match } : {};
+          const edge = parsePick(o.edge);
+          if (edge && edge.ref.kind === "edge") return [{ edge, ...match }];
+          if (typeof o.curve === "string") return [{ curve: o.curve }];
+          if (typeof o.sketch === "string") return [{ sketch: o.sketch }];
+          return [];
+        });
+      feature.boundary = { u: curves(bd.u), v: curves(bd.v) };
+    }
+    if (feature.type === "faceBlend") {
+      const fb = (f.blend ?? {}) as Record<string, unknown>;
+      const side2 = Array.isArray(fb.side2) ? fb.side2.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null && p.ref.kind === "face") : [];
+      feature.blend = { side2, ...(fb.flip1 === true ? { flip1: true } : {}), ...(fb.flip2 === true ? { flip2: true } : {}), ...(fb.noTrim === true ? { noTrim: true } : {}) };
+    }
     if (feature.type === "extendSurface" && f.extendTo && typeof f.extendTo === "object") {
       const et = f.extendTo as Record<string, unknown>;
       const target = parsePick(et.target);
@@ -886,7 +923,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       });
       if (more.length) feature.moreAreas = more;
     }
-    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "modifyFillet", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled", "cornerBreak"].includes(feature.type) || (feature.type === "sheetMetal" && feature.sheetConvert) || feature.pattern?.of === "face" || feature.mirror?.of === "face") {
+    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "modifyFillet", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled", "cornerBreak", "faceBlend"].includes(feature.type) || (feature.type === "sheetMetal" && feature.sheetConvert) || feature.pattern?.of === "face" || feature.mirror?.of === "face") {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }
     features.push(feature);
