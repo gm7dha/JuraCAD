@@ -202,11 +202,9 @@ describe("land touching the area's edge, put together", () => {
 
 describe("keeping clear of the printer's corners and the prime tower", () => {
   const x1 = PRINTERS.find((q) => q.id === "bambu-x1")!;
-  it("knows the X1 / P1's no-print corner and the two-nozzle printers' one-nozzle strip (Bambu's profiles)", () => {
+  it("knows the X1 / P1's no-print corner (Bambu's profiles); the others have none", () => {
     expect(x1.bedExclude).toEqual([[0, 0, 18, 28]]);
-    expect(PRINTERS.find((q) => q.id === "bambu-x2d")!.secondNozzleFrom).toBe(20.5);
-    expect(PRINTERS.find((q) => q.id === "bambu-h2d")!.secondNozzleFrom).toBe(25);
-    expect(PRINTERS.find((q) => q.id === "bambu-a1")!.bedExclude).toBeUndefined();
+    for (const id of ["bambu-a1", "bambu-x2d", "bambu-h2d", "bambu-h3c"]) expect(PRINTERS.find((q) => q.id === id)!.bedExclude, id).toBeUndefined();
   });
   it("finds the free parts of the bed", () => {
     expect(freeRooms(BED, [])).toEqual([[0, 0, 256, 256]]);

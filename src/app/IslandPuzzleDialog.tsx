@@ -211,12 +211,11 @@ export function IslandPuzzleDialog() {
   const canFetch = !!loaded && fresh && Math.max(loaded.area.width, loaded.area.height) <= MARKS_MOST;
 
   // Put together, the island keeps out of the printer's no-print corner, and — in several filaments — out of the prime
-  // tower's corner and the strip only one nozzle reaches.
+  // tower's corner.
   const printerInfo = printerOf(printer.printer);
   const keepOut: BedRect[] = [
     ...(printerInfo?.bedExclude ?? []),
     ...(colourOn ? [towerCorner(bed)] : []),
-    ...(colourOn && printerInfo?.secondNozzleFrom ? [[0, 0, printerInfo.secondNozzleFrom, bed[1]] as BedRect] : []),
   ];
   const fullSpec: IslandSpec = spec.inPlace ? { ...spec, bed, rooms: freeRooms(bed, keepOut) } : { ...spec, bed };
   const problems = islandChecks(fullSpec);
@@ -554,7 +553,6 @@ export function IslandPuzzleDialog() {
                   {colourOn
                     ? ` The back-left corner (${TOWER_ROOM} × ${TOWER_ROOM} mm) is left free for the prime tower Bambu Studio adds for several filaments: if it shows up on the island, drag it into that corner.`
                     : ""}
-                  {colourOn && printerInfo?.secondNozzleFrom ? ` The ${printerInfo.secondNozzleFrom} mm strip down the left, which only one nozzle reaches, is left free too.` : ""}
                   {colour.mode === "full" ? " The full-colour files can't carry those settings: turn the brim off and elephant-foot compensation on yourself." : ""}
                 </p>
               )}

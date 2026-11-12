@@ -1173,7 +1173,7 @@
   `BED_MARGIN`; scale ≤ 100%, `islandChecks`); `IslandPuzzle.origin` = the grid point at (0, 0) (the map is placed from it),
   `.room` the room used. Keep-outs (the dialog): `Printer.bedExclude` (Bambu's `bed_exclude_area`: X1/P1 0×0–18×28; A1, H2D,
   X2D, H3C none), and with colour on `towerCorner` (back-left `TOWER_ROOM` 55 mm for the prime tower, default x 15 y 220,
-  35 wide) and the strip left of `Printer.secondNozzleFrom` (`extruder_printable_area`: X2D 20.5, H2D 25). `IN_PLACE_FIT` 0.1
+  35 wide); the X2D/H2D's one-nozzle strip is NOT kept free (the owner prints colour through the AMS on one nozzle). `IN_PLACE_FIT` 0.1
   (the usual): the narrowest mesh gap is then ~0.3 mm (0.4 at 0.15). `platesInPlace(pieces, bed, room)`: one plate, one move
   for every piece (centred in the room), `fits`. 3MF objects get `IN_PLACE_SETTINGS` (BambuStudio PrintObjectConfig keys read
   per object from model_settings.config even for a non-Bambu 3MF: `brim_type` no_brim, `elefant_foot_compensation` 0.15 =
