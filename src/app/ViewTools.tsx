@@ -2,9 +2,9 @@
  * Everyday Onshape helpers next to Fit in the toolbar and over the 3D view: the selection filter, named views,
  * Select other's list, and the question asked before pasting features that use missing variables.
  */
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
-import { viewNameProblem, viewsOf, type NamedView } from "../model/namedViews";
+import { viewNameProblem, type NamedView } from "../model/namedViews";
 import { useStore, viewOwner } from "../model/store";
 import { FILTER_OPTIONS, filtering, filterSummary, NO_FILTER, toggleFilter } from "../viewport/selectionFilter";
 import { setSelectOther, useSelectOther } from "../viewport/selectOtherState";
@@ -21,6 +21,13 @@ const boxOf = (el: HTMLElement | null) => {
 };
 
 const NO_VIEWS: NamedView[] = [];
+
+/** The named views of the Part Studio or assembly on show (a new array only when they change). */
+function useOwnViews(): NamedView[] {
+  const all = useStore((s) => s.history.present.namedViews);
+  const owner = useStore(viewOwner);
+  return useMemo(() => (all?.length ? all.filter((v) => v.owner === owner) : NO_VIEWS), [all, owner]);
+}
 
 function FilterIcon() {
   return (
@@ -81,7 +88,7 @@ export function SelectFilterButton() {
 
 /** Named views: save the camera under a name, and go back to it (Part Studios and assemblies). */
 export function NamedViewsButton() {
-  const views = useStore((s) => (s.history.present.namedViews?.length ? viewsOf(s.history.present, viewOwner(s)) : NO_VIEWS));
+  const views = useOwnViews();
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   return (
@@ -171,7 +178,7 @@ function NamedViewsList({ views, onGo }: { views: NamedView[]; onGo: (v: NamedVi
 
 /** A choice of the named views for the Picture window: picking one turns the view to it. */
 export function NamedViewChoice() {
-  const views = useStore((s) => (s.history.present.namedViews?.length ? viewsOf(s.history.present, viewOwner(s)) : NO_VIEWS));
+  const views = useOwnViews();
   const [chosen, setChosen] = useState("");
   if (!views.length) return null;
   return (
