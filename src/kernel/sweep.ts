@@ -2,7 +2,7 @@
  * Sweep (a profile carried along a path) and loft (a smooth solid joining
  * outlines on different sketches), with OpenCascade.
  */
-import { cast, genericSweep, getOC, isShape3D, loft, makeBSplineApproximation, makeFace, measureLength, measureVolume, assembleWire, Wire, type Shape3D } from "replicad";
+import { cast, genericSweep, getOC, isShape3D, loft, makeBSplineApproximation, makeFace, measureVolume, assembleWire, Wire, type Shape3D } from "replicad";
 
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import { findChains, findRegions, type Segment } from "../sketch/regions";
@@ -708,13 +708,11 @@ export function sweepSketch(profilePlane: SketchPlane, profile: SketchData, path
     if (control.lockOrientation) {
       // A profile that went edge-on somewhere comes out flattened: refused instead of kept.
       const whole = segmentsWire(chain.segments, pathFrame, 0);
-      let length = 0;
       try {
-        length = measureLength(whole);
+        refuseFlattened(result!, regions, frame.n as Vec3, whole);
       } finally {
         release(whole);
       }
-      refuseFlattened(result!, regions, frame, length);
     }
     return result!;
   } finally {
@@ -818,8 +816,6 @@ export function sweepAlongSpine(profilePlane: SketchPlane, profile: SketchData, 
     }
     guide = twistGuide(spine, twist);
   }
-  // Kept facing one way, the profile mustn't turn edge-on to the path anywhere (it would flatten there).
-  if (control.lockOrientation && edgeOnSomewhere(spine, frame.n as Vec3)) throw new Error(EDGE_ON_LOCKED);
   const startAxis = control.lockOrientation ? { p: frame.origin as Vec3, n: frame.n as Vec3, x: frame.u as Vec3 } : null;
   const sweepOne = (wire: Wire): Shape3D => {
     try {
@@ -848,7 +844,8 @@ export function sweepAlongSpine(profilePlane: SketchPlane, profile: SketchData, 
         result = merged;
       }
     }
-    if (control.lockOrientation) refuseFlattened(result!, regions, frame, measureLength(spine));
+    // Kept facing one way, a profile that went edge-on somewhere comes out flattened: refused instead of kept.
+    if (control.lockOrientation) refuseFlattened(result!, regions, frame.n as Vec3, spine);
     return result!;
   } finally {
     if (guide) release(guide);
@@ -870,34 +867,47 @@ function spineHasCorner(spine: Wire): boolean {
   return false;
 }
 
-/** Does the path anywhere run (within 2°) along a plane with this normal? */
-function edgeOnSomewhere(spine: Wire, n: Vec3): boolean {
-  return samplePath(spine, 48).some((piece) => piece.some((q) => Math.abs(dot(q.t, n)) < Math.sin((2 * Math.PI) / 180)));
+/** A loop's area (shoelace). */
+function loopArea(p: [number, number][]): number {
+  let a = 0;
+  for (let i = 0; i < p.length; i++) {
+    const [x0, y0] = p[i];
+    const [x1, y1] = p[(i + 1) % p.length];
+    a += x0 * y1 - x1 * y0;
+  }
+  return Math.abs(a) / 2;
 }
 
 /**
- * A sweep kept facing one way that came out far thinner than its profile carried along the path (under 1%): the
- * profile went edge-on somewhere and OpenCascade made a flattened, broken solid. Refused in plain words (the shape is freed).
+ * How far the path carries a profile lying in the plane with normal `n` out of that plane: ∫|t·n| ds along it. A
+ * profile kept facing one way encloses exactly its area times this (where the sweep doesn't run over itself).
  */
-function refuseFlattened(shape: Shape3D, regions: { outer: { polygon: [number, number][] } }[], frame: ReturnType<typeof planeFrame>, pathLength: number): void {
-  void frame;
-  const area = regions.reduce((t, r) => {
-    const p = r.outer.polygon;
-    let a = 0;
-    for (let i = 0; i < p.length; i++) {
-      const [x0, y0] = p[i];
-      const [x1, y1] = p[(i + 1) % p.length];
-      a += x0 * y1 - x1 * y0;
+export function pathCrossing(spine: Wire, n: Vec3): number {
+  let total = 0;
+  for (const piece of samplePath(spine, 64)) {
+    for (let i = 1; i < piece.length; i++) {
+      const ds = Math.hypot(...sub(piece[i].p, piece[i - 1].p));
+      total += ds * (Math.abs(dot(piece[i].t, n)) + Math.abs(dot(piece[i - 1].t, n))) / 2;
     }
-    return t + Math.abs(a) / 2;
-  }, 0);
+  }
+  return total;
+}
+
+/**
+ * A sweep kept facing one way that came out far thinner (under 5%) than its profile's real area (holes taken out)
+ * times how far the path carries it out of its plane: the profile went edge-on somewhere and OpenCascade made a
+ * flattened, broken solid. Refused in plain words (the shape is freed).
+ */
+function refuseFlattened(shape: Shape3D, regions: { outer: { polygon: [number, number][] }; holes: { polygon: [number, number][] }[] }[], n: Vec3, spine: Wire): void {
+  const area = regions.reduce((t, r) => t + loopArea(r.outer.polygon) - r.holes.reduce((h, x) => h + loopArea(x.polygon), 0), 0);
   let volume = 0;
   try {
     volume = measureVolume(shape);
   } catch {
     volume = 0;
   }
-  if (area > 0 && pathLength > 0 && volume < 0.01 * area * pathLength) {
+  const expected = area * pathCrossing(spine, n);
+  if (!(volume > 0.05 * expected) || !(volume > 1e-9)) {
     release(shape);
     throw new Error(EDGE_ON_LOCKED);
   }

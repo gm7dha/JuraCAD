@@ -562,8 +562,8 @@
   `hasEye`). Used by: Sweep/Curve pattern `pathRef` = a curve feature, or `pathEdges` (TopoPicks of part edges, chained) —
   engine `sweepSpine` (open paths start at the end nearest the profile as built; `sweepAlongSpine` in sweep.ts), handed to
   buildSolid as its `paths` argument; a twist round a curve's/edges' sharp corners is refused (a sketch path does it), and kept
-  facing one way a path running edge-on to the profile (`edgeOnSomewhere`) or a result under 1% of area × length
-  (`refuseFlattened`, sketch paths too) is refused; curve patterns walk its polyline (`walkPoints` in pathSample.ts). Drawn lines
+  facing one way a result under 5% of the profile's real area (holes out) × ∫|t·n| ds along the path (`pathCrossing`) —
+  a flattened, edge-on sweep — is refused (`refuseFlattened`, sketch paths too; edge-on only at an end is fine); curve patterns walk its polyline (`walkPoints` in pathSample.ts). Drawn lines
   are one per wire in the wire's own order and direction (`wirePolyline`: BRepAdaptor_CompCurve by C0 intervals), so their ends
   are the wire's; GeomPick `curve` (+ end a/b/mid): an end is the wire end nearest `p` across all pieces (`curveEndNear`), mid
   and Curve point `position` are by length (`paramAtLength` on the wire). Helix axes from faces/edges point one fixed way

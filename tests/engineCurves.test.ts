@@ -7,7 +7,7 @@ import { GeometryEngine } from "../src/kernel/engine";
 import type { EdgeRef, TopoPick } from "../src/geometry/topoRef";
 import type { CurveDef, Feature } from "../src/model/types";
 import { helixLength } from "../src/model/curves";
-import { addCircle, addLine } from "../src/sketch/ops";
+import { addArc, addCircle, addLine } from "../src/sketch/ops";
 import { emptySketch } from "../src/sketch/types";
 import { loadOpenCascade, feature, sketchFeature, meshOf, relativeError } from "./support/engineHelpers";
 
@@ -365,6 +365,51 @@ describe("review fixes", () => {
     expect(again.rebuilt).toEqual(["b"]);
     expect(again.curves![ha.id]).toEqual(first.curves![ha.id]);
     expect(again.curves![hb.id]).not.toEqual(first.curves![hb.id]);
+  });
+});
+
+describe("kept facing one way: good sweeps still build", () => {
+  it("a thin ring swept straight", () => {
+    engine = new GeometryEngine();
+    const ring = addCircle(addCircle(emptySketch(), { x: 0, y: 0 }, 50).sketch, { x: 0, y: 0 }, 49.8).sketch;
+    const profile = sketchFeature({ kind: "default", name: "Top" }, ring);
+    const path = sketchFeature({ kind: "default", name: "Front" }, addLine(emptySketch(), { x: 0, y: 0 }, { x: 0, y: 40 }).sketch);
+    const sweep: Feature = { ...feature("sweep", {}), sketchRef: profile.id, pathRef: path.id, apart: true, sweepControl: { lockOrientation: true } };
+    const r = engine.rebuild([profile, path, sweep]);
+    expect(r.featureErrors).toEqual({});
+    const v = engine.check("fine").parts[0].exactVolume!;
+    expect(relativeError(v, Math.PI * (50 * 50 - 49.8 * 49.8) * 40)).toBeLessThan(0.01);
+  });
+
+  it("along a quarter-arc part edge that turns edge-on only at its end", () => {
+    engine = new GeometryEngine();
+    let pie = addArc(emptySketch(), { x: 20, y: 0 }, { x: 0, y: 20 }, { x: 20 * Math.SQRT1_2, y: 20 * Math.SQRT1_2 }).sketch;
+    pie = addLine(pie, { x: 0, y: 20 }, { x: 0, y: 0 }).sketch;
+    pie = addLine(pie, { x: 0, y: 0 }, { x: 20, y: 0 }).sketch;
+    const base = sketchFeature({ kind: "default", name: "Top" }, pie);
+    const slab: Feature = { ...feature("extrude", { depth: 5 }), sketchRef: base.id, extrude: { end: "blind", flip: false }, apart: true };
+    const part = engine.rebuild([base, slab]).parts[0];
+    const arc = part.edgeRefs.find((e) => e.curve === "CIRCLE" && Math.abs(e.mid[2] - 5) < 1e-6)!;
+    expect(arc).toBeTruthy();
+    const profile = sketchFeature({ kind: "default", name: "Front" }, addCircle(emptySketch(), { x: 20, y: 5 }, 2).sketch);
+    const sweep: Feature = { ...feature("sweep", {}), sketchRef: profile.id, pathEdges: [{ partId: slab.id, ref: arc }], operation: "new", sweepControl: { lockOrientation: true } };
+    const r = engine.rebuild([base, slab, profile, sweep]);
+    expect(r.featureErrors).toEqual({});
+    const v = engine.check("fine", [sweep.id]).parts[0].exactVolume!;
+    // Area × how far the arc carries it out of the Front plane (R × ∫cos over a quarter turn = R).
+    expect(relativeError(v, Math.PI * 4 * 20)).toBeLessThan(0.03);
+  });
+});
+
+describe("kept facing one way: flattened sweeps are refused", () => {
+  it("a sketch path that bends right round (a semicircle)", () => {
+    engine = new GeometryEngine();
+    const profile = sketchFeature({ kind: "default", name: "Front" }, addCircle(emptySketch(), { x: 20, y: 0 }, 1).sketch);
+    const path = sketchFeature({ kind: "default", name: "Top" }, addArc(emptySketch(), { x: 20, y: 0 }, { x: -20, y: 0 }, { x: 0, y: 20 }).sketch);
+    const sweep: Feature = { ...feature("sweep", {}), sketchRef: profile.id, pathRef: path.id, apart: true, sweepControl: { lockOrientation: true } };
+    const r = engine.rebuild([profile, path, sweep]);
+    expect(r.featureErrors[sweep.id]).toMatch(/edge-on/);
+    expect(r.parts).toHaveLength(0);
   });
 });
 
