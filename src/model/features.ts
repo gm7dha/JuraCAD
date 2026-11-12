@@ -454,6 +454,37 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "Removes whole parts from the Part Studio (from this point on in the feature list).",
     params: [],
   },
+  frame: {
+    type: "frame",
+    label: "Frame",
+    namePrefix: "Frame",
+    description: "Makes a frame from sketch lines and arcs: a profile (aluminium extrusion, box section, angle, tube, flat bar, timber or your own sketch) runs along each, with the corners mitred or butted. Each length is its own part.",
+    params: [
+      { key: "angle", label: "Profile angle (turned about the path)", defaultValue: "0", group: "size", unit: "°" },
+      { key: "gap", label: "Gap at the corners", defaultValue: "0", min: 0, group: "size" },
+      { key: "width", label: "Width", defaultValue: "40", positive: true, group: "size" },
+      { key: "height", label: "Height", defaultValue: "40", positive: true, group: "size" },
+      { key: "wall", label: "Wall thickness", defaultValue: "2", positive: true, group: "size" },
+    ],
+  },
+  trimFrame: {
+    type: "trimFrame",
+    label: "Trim frame",
+    namePrefix: "Trim frame",
+    description: "Cuts frame members back to a plane, a flat face or another part.",
+    params: [],
+  },
+  gusset: {
+    type: "gusset",
+    label: "Gusset",
+    namePrefix: "Gusset",
+    description: "A triangular plate in the inside corner between two frame members, to stiffen the joint.",
+    params: [
+      { key: "size", label: "Size (along each member)", defaultValue: "60", positive: true, group: "size" },
+      { key: "thickness", label: "Thickness", defaultValue: "5", positive: true, group: "size" },
+      { key: "chamfer", label: "Corner cut off", defaultValue: "5", positive: true, group: "size" },
+    ],
+  },
   composite: {
     type: "composite",
     label: "Composite part",
@@ -582,7 +613,7 @@ export function isSolidFeature(type: FeatureType): boolean {
 }
 
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */
-export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo" | "sweepControl" | "sheetConvert" | "transform" | "thin" | "revolve" | "modifyFillet" | "curve">>): Set<string> {
+export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo" | "sweepControl" | "sheetConvert" | "transform" | "thin" | "revolve" | "modifyFillet" | "curve" | "frame" | "gusset">>): Set<string> {
   const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
   // Curves: only the boxes their kind uses.
   if (f.type === "curve") return new Set(curveParamKeys(f.curve));
@@ -599,6 +630,15 @@ export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | 
   if ((f.type === "flange" || f.type === "hem") && !f.mitreCorners) keys.delete("cornerGap");
   if (f.type === "extendSurface" && f.extendTo) keys.delete("distance");
   if (f.type === "modifyFillet" && f.modifyFillet?.remove) keys.delete("radius");
+  // Frames: width / height / wall only for a custom size (a tube has no height, a flat bar or timber no wall).
+  if (f.type === "frame") {
+    const pr = f.frame?.profile;
+    const custom = !!pr && pr.kind !== "sketch" && pr.size === "custom";
+    if (!custom) ["width", "height", "wall"].forEach((k) => keys.delete(k));
+    if (pr?.kind === "tube") keys.delete("height");
+    if (pr?.kind === "flat" || pr?.kind === "timber") keys.delete("wall");
+  }
+  if (f.type === "gusset" && !f.gusset?.chamfer) keys.delete("chamfer");
   const end = f.extrude?.end ?? "blind";
   if (f.type === "extrude" && end !== "blind" && end !== "symmetric") keys.delete("depth");
   if (f.type === "extrude" && !(end === "blind" && f.extrude?.second && !f.surface)) keys.delete("depth2");
