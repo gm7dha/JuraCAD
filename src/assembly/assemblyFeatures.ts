@@ -170,3 +170,17 @@ export function assemblyExtrudeCut(a: Pick<Assembly, "features">, sketchId: stri
     apart: true,
   };
 }
+
+/** One line per assembly feature, for describe_assembly. */
+export function assemblyFeaturesText(asm: Assembly, nameOf: (key: string) => string): string | null {
+  const list = assemblyFeaturesOf(asm);
+  if (!list.length) return null;
+  const lines = list.map((f) => {
+    if (f.type === "sketch") return `- ${f.name} (a sketch)${f.suppressed ? " — suppressed" : ""}`;
+    const chosen = asm.featureParts?.[f.id];
+    const whom = chosen ? (chosen.length ? `cuts only ${chosen.map(nameOf).join(", ")}` : "cuts nothing (no parts chosen)") : "cuts every part it reaches";
+    const sketch = list.find((x) => x.id === sketchOfCut(f))?.name ?? "its sketch";
+    return `- ${f.name} (${f.type === "hole" ? "hole" : `${f.type}, removing`}, from ${sketch}; ${whom})${f.suppressed ? " — suppressed" : ""}`;
+  });
+  return `Assembly features (cut only in this assembly; the parts themselves are unchanged):\n${lines.join("\n")}`;
+}

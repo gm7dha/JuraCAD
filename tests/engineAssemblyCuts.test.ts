@@ -7,6 +7,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { assemblyExtrudeCut, assemblyHole, assemblySketch, cutsFor, setFeatureParts } from "../src/assembly/assemblyFeatures";
 import { instancesForKernel } from "../src/assembly/placed";
+import { stepTree } from "../src/assembly/stepTree";
 import { billOfMaterials } from "../src/assembly/assembly";
 import { GeometryEngine } from "../src/kernel/engine";
 import type { PartMesh } from "../src/kernel/protocol";
@@ -86,6 +87,15 @@ describe("assembly features", () => {
     expect(text).toContain("CYLINDRICAL_SURFACE");
     const plainStep = new TextDecoder().decode((await engine.exportStep([], {}, instancesForKernel({ ...asm, features: [] }, parts))).step);
     expect(plainStep).not.toContain("CYLINDRICAL_SURFACE");
+  });
+
+  it("keeps the assembly's structure in STEP, each cut copy a part of its own", async () => {
+    const { asm } = drilled();
+    const tree = stepTree(asm, parts, { i1: at(0, 0, 0), i2: at(0, 0, 5) })!;
+    expect(Object.values(tree.parts).map((p) => p.name)).toEqual([`${parts[0].name} (modified in assembly)`, `${parts[1].name} (modified in assembly)`]);
+    const text = new TextDecoder().decode((await engine.exportStep([], {}, undefined, tree)).step);
+    expect(text).toContain("CYLINDRICAL_SURFACE");
+    expect(text).toContain("(modified in assembly)");
   });
 
   it("follows a copy moved by its placement: the hole stays where it was drawn in the assembly", () => {

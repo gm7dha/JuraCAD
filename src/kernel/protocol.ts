@@ -286,8 +286,8 @@ export interface StepTree {
   root: string;
   /** Assemblies by key (an assembly's id): their names and what's in them. */
   assemblies: Record<string, { name: string; components: StepComponent[] }>;
-  /** Part definitions by key: the built part (its mesh id), its name, and whether it's the mirror image. */
-  parts: Record<string, { partId: string; name: string; mirrored?: boolean }>;
+  /** Part definitions by key: the built part (its mesh id), its name, whether it's the mirror image, and (a copy cut by the assembly's own features) its cuts, made with the copy at `cutAt` (see InstanceInput). */
+  parts: Record<string, { partId: string; name: string; mirrored?: boolean; cuts?: Feature[]; cutAt?: InstanceInput["cutAt"] }>;
 }
 
 /** One instance in a STEP assembly: its name, where it sits in its assembly, and the part or sub-assembly it shows (a key). */
@@ -385,6 +385,8 @@ export interface AssemblyCutsResult {
   meshes: PartMesh[];
   /** The copies that lost material. */
   cut: string[];
+  /** Which copies each assembly feature took material from (by feature id). */
+  reached: Record<string, string[]>;
   /** Assembly features that couldn't be made, by id: why. */
   errors: Record<string, string>;
 }

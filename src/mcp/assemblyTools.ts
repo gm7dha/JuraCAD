@@ -26,6 +26,7 @@ import { RELATION_KINDS } from "../assembly/relations";
 import { mateInactive } from "../assembly/suppress";
 import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
 import type { InstanceInput, PartMesh } from "../kernel/protocol";
+import { assemblyFeaturesText } from "../assembly/assemblyFeatures";
 import { newId } from "../model/document";
 import type { Assembly, ConnectorSpot, Instance, JuraCADDocument, Mate, MateConnector, MateType } from "../model/types";
 import { amount, bool, InputError, list, noExtras, object, oneOf, text, xyz, type Obj } from "./args";
@@ -282,7 +283,9 @@ function partsListText(s: Session, asm: Assembly, structured: boolean): string {
   const parts = builtParts(s);
   const names = Object.fromEntries(parts.map((p) => [p.id, p.name]));
   const configs = Object.fromEntries((s.doc.configurations ?? []).map((c) => [c.id, c.name]));
-  const rows = billOfMaterials(asm, names, configs, undefined, s.doc.partProperties, { assemblies: assembliesOf(s.doc), structured });
+  // Copies cut by the assembly's own features are lines of their own ("… (modified in assembly)").
+  const modified = asm.features?.length ? new Set(s.withWholeEngine((e) => e.assemblyCuts(instancesForKernel(asm, parts, assembliesOf(s.doc), solve(s, asm))).cut)) : undefined;
+  const rows = billOfMaterials(asm, names, configs, undefined, s.doc.partProperties, { assemblies: assembliesOf(s.doc), structured, ...(modified ? { modified } : {}) });
   if (!rows.length) return "Parts list: empty.";
   return `Parts list${structured ? " (structured)" : ""}:\n${rows
     .map((r, i) => `${"  ".repeat(r.level ?? 0)}${r.item ?? i + 1}. ${r.name} × ${r.quantity}${r.missing ? " (MISSING: its part no longer exists)" : ""}${r.properties?.number ? ` [${r.properties.number}]` : ""}`)
@@ -641,6 +644,7 @@ export const ASSEMBLY_TOOLS: ToolDef[] = [
         inner.length ? `Parts inside sub-assemblies (name them like this in add_mate): ${leafNames(inner)}.` : null,
         (asm.mates ?? []).length ? `Mates:\n${(asm.mates ?? []).map((m) => mateText(asm, m, solved, assemblies)).join("\n")}` : "No mates yet.",
         ...assemblyExtrasText(asm, solved, leaves),
+        assemblyFeaturesText(asm, (k) => leaves.find((l) => l.key === k)?.name ?? k),
         asm.explode !== undefined ? `Exploded view: on (spread ${asm.explode}).` : null,
         partsListText(s, asm, bool(a.structured, "structured")),
       );

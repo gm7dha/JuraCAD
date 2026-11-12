@@ -6672,7 +6672,7 @@ export class GeometryEngine {
   }
 
   /** Copies already cut by assembly features: by part, cuts and place (see cutCopy). Bounded; the oldest is freed. */
-  private cutCopies = new Map<string, { part: BuiltPart; shape: Shape3D; cut: boolean; errors: Record<string, string> }>();
+  private cutCopies = new Map<string, { part: BuiltPart; shape: Shape3D; cut: boolean; by: string[]; errors: Record<string, string> }>();
 
   /**
    * One assembly copy cut by the assembly's features (`i.cuts`, in the
@@ -6682,13 +6682,13 @@ export class GeometryEngine {
    * coordinates. `cut`: whether any material went. A feature that can't be
    * made is left out (its problem in `errors`), so the rest still cut.
    */
-  private cutCopy(part: BuiltPart, i: InstanceInput, local: Shape3D): { shape: Shape3D; cut: boolean; errors: Record<string, string> } {
+  private cutCopy(part: BuiltPart, i: InstanceInput, local: Shape3D): { shape: Shape3D; cut: boolean; by: string[]; errors: Record<string, string> } {
     const at = i.cutAt ?? { position: i.position, rotation: i.rotation };
     const key = JSON.stringify([part.id, !!i.mirrored, at, i.cuts]);
     const kept = this.cutCopies.get(key);
     if (kept && kept.part === part) {
       local.delete();
-      return { shape: kept.shape.clone(), cut: kept.cut, errors: kept.errors };
+      return { shape: kept.shape.clone(), cut: kept.cut, by: kept.by, errors: kept.errors };
     }
     if (kept) {
       kept.shape.delete();
@@ -6708,6 +6708,8 @@ export class GeometryEngine {
     const sketches: SketchMap = new Map();
     for (const f of list) if (f.type === "sketch" && !f.suppressed && f.sketch?.plane) sketches.set(f.id, f);
     const errors: Record<string, string> = {};
+    const by: string[] = [];
+    let volume = before;
     for (const f of list) {
       if (f.type === "sketch" || f.suppressed) continue;
       const { values, errors: bad } = resolveParams(f);
@@ -6730,22 +6732,25 @@ export class GeometryEngine {
         const next: Shape3D = shape.cut(tool);
         shape.delete();
         shape = next;
+        const now = measureVolume(shape);
+        if (volume - now > 1e-6) by.push(f.id);
+        volume = now;
       } catch (e) {
         errors[f.id] = describeError(e, `${f.name} couldn't cut ${part.name}.`);
       } finally {
         tool.delete();
       }
     }
-    const cut = before - measureVolume(shape) > 1e-6;
+    const cut = by.length > 0;
     if (moves) shape = shape.translate([-at.position[0], -at.position[1], -at.position[2]]);
     if (turns) shape = shape.rotate(-angle, [0, 0, 0], axis);
-    this.cutCopies.set(key, { part, shape: shape.clone(), cut, errors });
+    this.cutCopies.set(key, { part, shape: shape.clone(), cut, by, errors });
     while (this.cutCopies.size > 48) {
       const [oldest, entry] = this.cutCopies.entries().next().value as [string, { shape: Shape3D }];
       entry.shape.delete();
       this.cutCopies.delete(oldest);
     }
-    return { shape, cut, errors };
+    return { shape, cut, by, errors };
   }
 
   /**
@@ -6757,6 +6762,7 @@ export class GeometryEngine {
     const meshes: PartMesh[] = [];
     const cut: string[] = [];
     const errors: Record<string, string> = {};
+    const reached: Record<string, string[]> = {};
     for (const i of instances) {
       if (!i.cuts?.length) continue;
       const part = this.parts.find((p) => p.id === i.partId) ?? this.parts.find((p) => p.id === i.partId.split("@")[0]);
@@ -6766,6 +6772,7 @@ export class GeometryEngine {
       const r = this.cutCopy(part, i, local);
       try {
         Object.assign(errors, r.errors);
+        for (const f of r.by) (reached[f] ??= []).push(i.id);
         if (!r.cut) continue;
         cut.push(i.id);
         // (Mirrored copies are shown as the part flipped by the view, so the mesh is flipped back here.)
@@ -6779,7 +6786,7 @@ export class GeometryEngine {
         r.shape.delete();
       }
     }
-    return { meshes, cut, errors };
+    return { meshes, cut, reached, errors };
   }
 
   /**
@@ -7354,8 +7361,15 @@ export class GeometryEngine {
           const part = def && (this.parts.find((p) => p.id === def.partId) ?? this.parts.find((p) => p.id === def.partId.split("@")[0]));
           if (!part) return null;
           // The mirror image is a part of its own: the part flipped across its own YZ plane (as the 3D view shows it).
-          const shape = def.mirrored ? part.shape.clone().mirror("YZ", [0, 0, 0]) : part.shape;
+          let shape = def.mirrored ? part.shape.clone().mirror("YZ", [0, 0, 0]) : part.shape;
           if (def.mirrored) made.push(shape);
+          // A copy cut by the assembly's own features: cut where it sits, in the part's own coordinates again.
+          if (def.cuts?.length && def.cutAt && !part.surface) {
+            const pos = def.cutAt.position;
+            const rot = def.cutAt.rotation;
+            shape = this.cutCopy(part, { id: key, partId: def.partId, name: def.name, position: pos, rotation: rot, cuts: def.cuts, ...(def.mirrored ? { mirrored: true } : {}) }, shape.clone()).shape;
+            made.push(shape);
+          }
           return { shape, colour: colours[def.partId] ?? colours[def.partId.split("@")[0]] ?? DEFAULT_PART_COLOUR };
         });
         return { step: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, partCount: stepPartCount(tree) };
@@ -7398,6 +7412,8 @@ export class GeometryEngine {
     this.threadedResults.clear();
     this.simplified.forEach((r) => r.shapes.forEach(([, x]) => x.delete()));
     this.simplified.clear();
+    this.cutCopies.forEach((c) => c.shape.delete());
+    this.cutCopies.clear();
   }
 
   private meshPart(p: BuiltPart): PartMesh {
