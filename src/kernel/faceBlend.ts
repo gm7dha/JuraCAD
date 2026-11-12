@@ -84,6 +84,25 @@ export function nearestOnFace(face: Face, p: Vec3): Vec3 | null {
   }
 }
 
+/**
+ * How far points are from a face's whole surface (not trimmed to the face) — much quicker than `nearestOnFace` on a
+ * detailed B-spline surface; for points that lie over the face, the same.
+ */
+export function surfaceGaps(face: Face, points: Vec3[]): number[] {
+  const oc = getOC() as any;
+  const surface = oc.BRep_Tool.Surface(face.wrapped);
+  return points.map((p) => {
+    const pnt = new oc.gp_Pnt(p[0], p[1], p[2]);
+    const proj = new oc.GeomAPI_ProjectPointOnSurf(pnt, surface);
+    try {
+      return proj.NbPoints() > 0 ? proj.LowerDistance() : Infinity;
+    } finally {
+      proj.delete();
+      pnt.delete();
+    }
+  });
+}
+
 /** Where the ball's middle runs between two faces (with the ball on side `sa` of a and `sb` of b): wires, maybe none. */
 function spineOf(a: Face, b: Face, r: number, sa: number, sb: number): Wire[] {
   const ma = movedFace(a, sa * r);

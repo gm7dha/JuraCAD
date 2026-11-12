@@ -8,19 +8,21 @@
  * as its edges, so it passes exactly through them.
  *
  * A part edge's side may carry on the face beside it smoothly (tangent) or
- * bending the same way (curvature). Then the patch is worked out first as a
- * Coons patch whose blend across the matched pair is Hermite: it leaves each
- * matched edge along the face carried on past the edge (the cross-boundary
- * direction, as long as the patch is across there) — quintic, with the face's
- * own bend across the edge, for curvature (its slope 0.6 as long, or it swings
- * out past the face's line); cubic for tangent. Each curve across (exactly
- * that blend, a Bézier curve; with V curves given, a close fit through the
- * Coons patch) is lofted along the pair — the filling, given only the edges
- * and G1, folded back over the face instead — so the surface really goes on
- * from the face; along the pair it passes through the curves' sampled points.
+ * bending the same way (curvature). Then the patch is worked out as a Coons
+ * patch whose blend across the matched pair is Hermite: it leaves each matched
+ * edge along the face carried on past the edge (the cross-boundary direction,
+ * as long as the patch is across there) — quintic, with the face's own bend
+ * across the edge, for curvature (its slope 0.6 as long, or it swings out past
+ * the face's line); cubic for tangent. That patch is made one B-spline surface
+ * by tensor-product interpolation (across with the blend's exact end slopes,
+ * then along through every place where either curve's pieces join), refined —
+ * within a fixed budget — until every curve is within 1e-4 mm of the surface's
+ * edge between the places taken. (OpenCascade's filling, given the edges and
+ * G1, folded back over the face; with the patch as its starting surface it
+ * crashes in this build on curved edges; lofting rows wiggled.)
  */
-import { assembleWire, cast, getOC, makeBezierCurve, makeBSplineApproximation, makeLine, measureLength, type Edge, type Face, type Shape3D, type Wire } from "replicad";
-import { chainEdges, endsOf, reversedWire, takeVec } from "./curves";
+import { cast, getOC, makeLine, measureLength, type Edge, type Face, type Shape3D, type Wire } from "replicad";
+import { chainEdges, endsOf, takeVec } from "./curves";
 import { edgesOf, facesOf } from "./topology";
 import { nearestOnFace } from "./faceBlend";
 
@@ -47,12 +49,14 @@ export interface BoundaryInput {
 
 /** How close ends must be to count as meeting. */
 const MEET = 1e-3;
-/** Points across and along the worked-out patch. */
-const GRID = 33;
-const ALONG = 65;
-/** How closely a smooth-sided patch must keep to its curves (mm), and the most rows across it tries. */
+/** Places across and along the worked-out patch to start with, the most it may take, and the rounds of doubling. */
+const GRID = 17;
+const ALONG = 33;
+const MOST_ALONG = 1025;
+const MOST_ACROSS = 129;
+const ROUNDS = 7;
+/** How closely a smooth-sided patch must keep to its curves (mm). */
 const TOLERANCE = 1e-4;
-const MOST_ROWS = 513;
 /** How far a curvature-matched side's slope reaches, as a share of the way across. */
 const CURVATURE_REACH = 0.6;
 
@@ -237,12 +241,12 @@ function matchedPatch(curves: BoundaryInput[], u: number, _v: number): Shape3D {
     es.forEach((e) => e.delete());
     if (!one) throw new Error("A smooth side must be one edge of a part.");
   }
-  const oc = getOC() as any;
   // Walk the pair the same way round (uncrossed), and the sides from the first curve to the second.
   const w0 = walkOf(pair[0].wire, false);
   const a0 = w0.at(0), a1 = w0.at(1);
   const b0 = takeVec(pair[1].wire.startPoint), b1 = takeVec(pair[1].wire.endPoint);
-  const w1 = walkOf(pair[1].wire, dist(a0, b0) + dist(a1, b1) > dist(a0, b1) + dist(a1, b0));
+  const flipped1 = dist(a0, b0) + dist(a1, b1) > dist(a0, b1) + dist(a1, b0);
+  const w1 = walkOf(pair[1].wire, flipped1);
   const c0s = w1.at(0), c1s = w1.at(1);
   const sideOf = (start: Vec3, end: Vec3): { walk: Walk; wire: Wire; reversed: boolean } | null => {
     for (const c of sides) {
@@ -258,26 +262,44 @@ function matchedPatch(curves: BoundaryInput[], u: number, _v: number): Shape3D {
   const d1 = side1?.walk ?? null;
   if (sides.length > (d0 ? 1 : 0) + (d1 ? 1 : 0)) throw new Error("The other curves must join the ends of the two opposite curves.");
   for (const c of curves) if (hasCorner(c.wire)) throw new Error("A curve with a sharp corner can't be one side of a smooth boundary surface (the surface would have to fold there). Use curves without corners, or set the edge to just go through.");
-  // Rows across, more of them until the surface keeps within TOLERANCE of every curve all along (between rows too).
+  const quintic = pair.some((c) => c.match === "curvature");
+  const joins = [...new Set([...breaks(pair[0].wire, false), ...breaks(pair[1].wire, flipped1)].map((x) => Math.round(x * 1e9) / 1e9))].sort((a, b) => a - b);
+  // The patch is one B-spline surface made from points of the worked-out (Hermite / Coons) patch: interpolated across
+  // at each place along (exact end slopes where nothing else is given, so it leaves a smooth edge as the blend does),
+  // then those curves' poles interpolated along. Its edges are interpolations of the curves' own points, so more
+  // places along (and across, for V curves) are taken — twice as many each time, within a fixed budget — until every
+  // curve is within TOLERANCE of the surface's edge, measured between the places taken (never at them).
+  let along = ALONG;
+  let acrossN = GRID;
   let last = Infinity;
-  for (let n = ALONG; n <= MOST_ROWS; n = 2 * n - 1) {
-    const shape = patchWith(n);
-    const gap = worstGap(shape, [pair[0].wire, pair[1].wire, ...sides.map((c) => c.wire)]);
-    if (gap <= TOLERANCE) return shape;
-    shape.delete();
-    last = gap;
+  for (let round = 0; round < ROUNDS; round++) {
+    const built = patchWith(along, acrossN);
+    if (built.gapAlong <= TOLERANCE && built.gapAcross <= TOLERANCE) return built.face();
+    last = Math.max(built.gapAlong, built.gapAcross);
+    // Gaps shrink about as the fourth power of the spacing: go straight to about enough (at least twice as many).
+    const grow = (n: number, gap: number) => {
+      const want = (n - 1) * Math.max(2, 1.6 * Math.pow(gap / TOLERANCE, 0.25));
+      let m = n;
+      while (m - 1 < want) m = 2 * m - 1;
+      return m;
+    };
+    if (built.gapAlong > TOLERANCE) along = grow(along, built.gapAlong);
+    if (built.gapAcross > TOLERANCE) acrossN = grow(acrossN, built.gapAcross);
+    if (along > MOST_ALONG || acrossN > MOST_ACROSS) break;
   }
   throw new Error(`Couldn't keep the surface on its curves closely enough (it strays ${last.toFixed(4)} mm). Try simpler curves, or set the edge to just go through.`);
 
-  function patchWith(along: number): Shape3D {
-    const ss = Array.from({ length: along }, (_, i) => i / (along - 1));
-    const ts = Array.from({ length: GRID }, (_, i) => i / (GRID - 1));
+  function patchWith(target: number, acrossN: number): { gapAlong: number; gapAcross: number; face: () => Shape3D } {
+    // Along: the places where either curve's pieces join (so each stretch between is smooth), each stretch split evenly.
+    const ss = spread(joins, target);
+    const along = ss.length;
+    // Across: closer together near the two curves (cosine spacing), where the bend is matched.
+    const ts = Array.from({ length: acrossN }, (_, j) => (1 - Math.cos((Math.PI * j) / (acrossN - 1))) / 2);
     const p0 = ss.map((s) => w0.at(s));
     const p1 = ss.map((s) => w1.at(s));
     const span = ss.map((_, i) => dist(p0[i], p1[i]));
     const size = Math.max(...span, dist(a0, a1));
     const reach = Math.max(1e-3, 0.05 * size);
-    const quintic = pair.some((c) => c.match === "curvature");
     // Cross-boundary slopes (the patch's way across, as long as it is across) and bends at each end of the pair.
     const across = (c: BoundaryInput, walk: Walk, sign: number) => {
       if (!c.match || !c.face) return null;
@@ -314,50 +336,220 @@ function matchedPatch(curves: BoundaryInput[], u: number, _v: number): Shape3D {
     if (!agrees(d0, 0, 0, m0) || !agrees(d1, along - 1, 0, m0) || !agrees(d0, 0, 1, m1) || !agrees(d1, along - 1, 1, m1))
       throw new Error("The V curves must leave a smooth edge the way its face carries on past it. Leave the V curves out (the sides then follow the surface), or set that edge to just go through.");
     // Coons: the Hermite blend across, plus the sides' difference from its own sides (none where no side is given).
-    const grid: Vec3[][] = ss.map((s, i) =>
-      ts.map((t) => {
-        let q = lv(i, t);
-        const e0 = d0 ? sub(d0.at(t), lv(0, t)) : null;
-        const e1 = d1 ? sub(d1.at(t), lv(along - 1, t)) : null;
-        if (e0) q = add(q, mul(e0, 1 - s));
-        if (e1) q = add(q, mul(e1, s));
-        return q;
-      }),
-    );
-    // The patch itself: one curve across at each place along the pair — exactly the Hermite blend as a Bézier curve
-    // (cubic or quintic), or, with sides given, a close fit through the Coons patch's points — lofted along the pair.
-    const rows: Wire[] = [];
-    const builder = new oc.BRepOffsetAPI_ThruSections(false, false, 1e-6);
-    try {
-      ss.forEach((_, i) => {
-        // The V curves themselves as the first and last rows, so the surface's sides are exactly them.
-        const exact = i === 0 ? side0 : i === along - 1 ? side1 : null;
-        if (exact) {
-          rows.push(exact.reversed ? reversedWire(exact.wire) : (exact.wire.clone() as Wire));
-          return;
-        }
-        let edge: Edge;
-        if (!d0 && !d1) {
-          const { p, v0, a0, v1, a1, q } = ends(i);
-          const poles = quintic
-            ? [p, add(p, mul(v0, 0.2)), add(add(p, mul(v0, 0.4)), mul(a0, 0.05)), add(sub(q, mul(v1, 0.4)), mul(a1, 0.05)), sub(q, mul(v1, 0.2)), q]
-            : [p, add(p, mul(v0, 1 / 3)), sub(q, mul(v1, 1 / 3)), q];
-          edge = makeBezierCurve(poles);
-        } else edge = makeBSplineApproximation(grid[i], { tolerance: 1e-5, degMax: 8, degMin: 3 });
-        rows.push(assembleWire([edge]));
-        edge.delete();
-      });
-      builder.CheckCompatibility(false);
-      for (const w of rows) builder.AddWire(w.wrapped);
-      builder.Build();
-      if (!builder.IsDone()) throw new Error("no");
-      return cast(builder.Shape()) as Shape3D;
-    } catch {
-      throw new Error("Couldn't fit a surface through those curves meeting the faces smoothly. Try just going through them, or check the curves make one outline.");
-    } finally {
-      builder.delete();
-      rows.forEach((w) => w.delete());
+    const coons = (s: number, i: number, t: number): Vec3 => {
+      let q = lv(i, t);
+      if (d0) q = add(q, mul(sub(d0.at(t), lv(0, t)), 1 - s));
+      if (d1) q = add(q, mul(sub(d1.at(t), lv(along - 1, t)), s));
+      return q;
+    };
+    // Across at each place along: interpolated (with the blend's end slopes when there are no V curves to add in).
+    const rows = ss.map((s, i) => {
+      const e = ends(i);
+      return interpolate(ts.map((t) => coons(s, i, t)), ts, d0 || d1 ? undefined : [e.v0, e.v1]);
+    });
+    // Along: each pole of those curves interpolated (the same knots everywhere, so they make one surface).
+    const poleCount = rows[0].poles.length;
+    const cols = Array.from({ length: poleCount }, (_, k) => interpolate(rows.map((r) => r.poles[k]), ss));
+    const surface = { u: cols[0], v: rows[0], poles: cols.map((c) => c.poles) };
+    const at = (s: number, t: number) => bsplineSurfaceAt(surface, s, t);
+    // How far the curves stray from the surface's edges, between the places taken.
+    let gapAlong = 0;
+    for (let i = 0; i + 1 < along; i++)
+      for (const f of [0.25, 0.5, 0.75]) {
+        const s = ss[i] + (ss[i + 1] - ss[i]) * f;
+        gapAlong = Math.max(gapAlong, dist(at(s, 0), w0.at(s)), dist(at(s, 1), w1.at(s)));
+      }
+    let gapAcross = 0;
+    for (let j = 0; j + 1 < acrossN; j++)
+      for (const f of [0.25, 0.5, 0.75]) {
+        const t = ts[j] + (ts[j + 1] - ts[j]) * f;
+        if (d0) gapAcross = Math.max(gapAcross, dist(at(0, t), d0.at(t)));
+        if (d1) gapAcross = Math.max(gapAcross, dist(at(1, t), d1.at(t)));
+      }
+    return { gapAlong, gapAcross, face: () => makeBSplineFace(surface) };
+  }
+}
+
+/** Where a curve's pieces join (its 3rd derivative may jump), as shares 0…1 of the way along as walked; with 0 and 1. */
+function breaks(w: Wire, reversed: boolean): number[] {
+  const oc = getOC() as any;
+  const curve = new oc.BRepAdaptor_CompCurve(w.wrapped, false);
+  try {
+    const C3 = oc.GeomAbs_Shape.GeomAbs_C3;
+    const n = curve.NbIntervals(C3);
+    const knots = new oc.NCollection_Array1_double(1, n + 1);
+    curve.Intervals(knots, C3);
+    const a = curve.FirstParameter();
+    const b = curve.LastParameter();
+    const out: number[] = [];
+    for (let i = 1; i <= n + 1; i++) {
+      const x = (knots.Value(i) - a) / (b - a);
+      out.push(reversed ? 1 - x : x);
     }
+    knots.delete();
+    return [0, 1, ...out].filter((x) => x >= 0 && x <= 1);
+  } finally {
+    curve.delete();
+  }
+}
+
+/** About `target` places from 0 to 1 including every join, each stretch between joins split evenly. */
+function spread(joins: number[], target: number): number[] {
+  const out: number[] = [0];
+  for (let i = 0; i + 1 < joins.length; i++) {
+    const [a, b] = [joins[i], joins[i + 1]];
+    if (b - a < 1e-9) continue;
+    const k = Math.max(1, Math.ceil((b - a) * (target - 1) - 1e-9));
+    for (let j = 1; j <= k; j++) out.push(a + ((b - a) * j) / k);
+  }
+  return out;
+}
+
+/** A B-spline curve's poles, knots (with multiplicities) and degree. */
+interface Spline {
+  poles: Vec3[];
+  knots: number[];
+  mults: number[];
+  degree: number;
+}
+
+/** OpenCascade's cubic interpolation through points at the given parameters (with end slopes if given). */
+function interpolate(points: Vec3[], params: number[], slopes?: [Vec3, Vec3]): Spline {
+  const oc = getOC() as any;
+  const made: any[] = [];
+  try {
+    const flat = new oc.NCollection_Array1_gp_Pnt(1, points.length);
+    const pars = new oc.NCollection_Array1_double(1, params.length);
+    made.push(flat, pars);
+    points.forEach((p, i) => {
+      const q = new oc.gp_Pnt(p[0], p[1], p[2]);
+      made.push(q);
+      flat.SetValue(i + 1, q);
+      pars.SetValue(i + 1, params[i]);
+    });
+    // (Held by OpenCascade's handles once given to the fit, so they aren't freed here.)
+    const fit = new oc.GeomAPI_Interpolate(new oc.NCollection_HArray1_gp_Pnt(flat), new oc.NCollection_HArray1_double(pars), false, 1e-9);
+    made.push(fit);
+    if (slopes) {
+      const a = new oc.gp_Vec(...slopes[0]);
+      const b = new oc.gp_Vec(...slopes[1]);
+      made.push(a, b);
+      fit.Load(a, b, false);
+    }
+    fit.Perform();
+    if (!fit.IsDone()) throw new Error("Couldn't fit the surface through its curves.");
+    const c = fit.Curve();
+    const poles: Vec3[] = [];
+    for (let i = 1; i <= c.NbPoles(); i++) {
+      const p = c.Pole(i);
+      poles.push([p.X(), p.Y(), p.Z()]);
+      p.delete();
+    }
+    const knots: number[] = [];
+    const mults: number[] = [];
+    for (let i = 1; i <= c.NbKnots(); i++) {
+      knots.push(c.Knot(i));
+      mults.push(c.Multiplicity(i));
+    }
+    return { poles, knots, mults, degree: c.Degree() };
+  } finally {
+    made.reverse().forEach((m) => m.delete());
+  }
+}
+
+/** A spline's full knot sequence (each knot repeated by its multiplicity), kept with it. */
+const sequences = new WeakMap<Spline, number[]>();
+function knotSequence(spline: Spline): number[] {
+  let seq = sequences.get(spline);
+  if (!seq) {
+    seq = [];
+    for (let i = 0; i < spline.knots.length; i++) for (let m = 0; m < spline.mults[i]; m++) seq.push(spline.knots[i]);
+    sequences.set(spline, seq);
+  }
+  return seq;
+}
+
+/** The B-spline basis functions not zero at x: the first pole's index and their values (The NURBS Book, A2.2). */
+function basisAt(spline: Spline, x: number): { first: number; values: number[] } {
+  const U = knotSequence(spline);
+  const p = spline.degree;
+  const n = U.length - p - 2; // last pole's index
+  const u = Math.min(Math.max(x, U[p]), U[n + 1]);
+  // The knot span holding u (binary search).
+  let span: number;
+  if (u >= U[n + 1]) span = n;
+  else {
+    let lo = p;
+    let hi = n + 1;
+    span = (lo + hi) >> 1;
+    while (u < U[span] || u >= U[span + 1]) {
+      if (u < U[span]) hi = span;
+      else lo = span;
+      span = (lo + hi) >> 1;
+    }
+  }
+  const N = [1];
+  const left = [0];
+  const right = [0];
+  for (let j = 1; j <= p; j++) {
+    left[j] = u - U[span + 1 - j];
+    right[j] = U[span + j] - u;
+    let saved = 0;
+    for (let r = 0; r < j; r++) {
+      const temp = N[r] / (right[r + 1] + left[j - r]);
+      N[r] = saved + right[r + 1] * temp;
+      saved = left[j - r] * temp;
+    }
+    N[j] = saved;
+  }
+  return { first: span - p, values: N };
+}
+
+/** A point of the tensor-product surface (u along: the columns' basis; v across: the rows'). */
+function bsplineSurfaceAt(sf: { u: Spline; v: Spline; poles: Vec3[][] }, s: number, t: number): Vec3 {
+  const bu = basisAt(sf.u, s);
+  const bv = basisAt(sf.v, t);
+  const out: Vec3 = [0, 0, 0];
+  bu.values.forEach((wu, l) => {
+    bv.values.forEach((wv, k) => {
+      const p = sf.poles[bv.first + k][bu.first + l];
+      out[0] += wu * wv * p[0];
+      out[1] += wu * wv * p[1];
+      out[2] += wu * wv * p[2];
+    });
+  });
+  return out;
+}
+
+/** The surface as a face (OpenCascade's B-spline surface: poles u × v, its knots). */
+function makeBSplineFace(sf: { u: Spline; v: Spline; poles: Vec3[][] }): Shape3D {
+  const oc = getOC() as any;
+  const made: any[] = [];
+  const array = (xs: number[], ctor: string) => {
+    const a = new oc[ctor](1, xs.length);
+    xs.forEach((x, i) => a.SetValue(i + 1, x));
+    made.push(a);
+    return a;
+  };
+  try {
+    const nu = sf.u.poles.length;
+    const nv = sf.v.poles.length;
+    const poles = new oc.NCollection_Array2_gp_Pnt(1, nu, 1, nv);
+    made.push(poles);
+    for (let l = 0; l < nu; l++)
+      for (let k = 0; k < nv; k++) {
+        const p = sf.poles[k][l];
+        const q = new oc.gp_Pnt(p[0], p[1], p[2]);
+        made.push(q);
+        poles.SetValue(l + 1, k + 1, q);
+      }
+    const surface = new oc.Geom_BSplineSurface(poles, array(sf.u.knots, "NCollection_Array1_double"), array(sf.v.knots, "NCollection_Array1_double"), array(sf.u.mults, "NCollection_Array1_int"), array(sf.v.mults, "NCollection_Array1_int"), sf.u.degree, sf.v.degree, false, false);
+    const face = new oc.BRepBuilderAPI_MakeFace(surface, 1e-6);
+    made.push(face);
+    if (!face.IsDone()) throw new Error("Couldn't make the surface.");
+    return cast(face.Face()) as Shape3D;
+  } finally {
+    made.reverse().forEach((m) => m.delete());
   }
 }
 
@@ -385,27 +577,4 @@ function hasCorner(w: Wire): boolean {
   } finally {
     es.forEach((e) => e.delete());
   }
-}
-
-/** The farthest any of the curves strays from the surface, sampled finely along each. */
-function worstGap(shape: Shape3D, wires: Wire[]): number {
-  const faces = facesOf(shape);
-  let worst = 0;
-  try {
-    for (const w of wires) {
-      const n = 256;
-      for (let k = 0; k <= n; k++) {
-        const p = takeVec(w.pointAt(k / n));
-        let best = Infinity;
-        for (const f of faces) {
-          const q = nearestOnFace(f, p);
-          if (q) best = Math.min(best, dist(p, q));
-        }
-        worst = Math.max(worst, best);
-      }
-    }
-  } finally {
-    faces.forEach((f) => f.delete());
-  }
-  return worst;
 }

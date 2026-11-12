@@ -438,11 +438,15 @@
   an open outline closed by straight lines (one open run: one line; two: two, uncrossed). Matched (`matchedPatch`; one pair only,
   both U or both V): Hermite across the pair — cubic (tangent: slope = the face carried on past the edge, `acrossFace` (away from
   the face, decided mid-edge), × the span) or quintic (curvature: slope × `CURVATURE_REACH` 0.6, second derivative = the face's
-  bend from a point h back, κ·|slope|²; an unmatched end bends as the cubic would); no V: each row an exact Bézier, lofted along the
-  pair (ThruSections; B-spline interpolation through the grid wiggled; the filling with G1 folded back over the face); V curves:
-  Coons correction, rows fitted, the V curves themselves the first/last rows (exact), and they must leave a matched edge within
-  10° of the face (else refused). Rows (65, 129, … ≤ 513) are doubled until every curve is within `TOLERANCE` 1e-4 mm of the
-  surface (`worstGap`, 256 points each), else refused; curves with a sharp corner (> 1° between edges, `hasCorner`) are refused. Face blend (Onshape's): feature
+  bend from a point h back, κ·|slope|²; an unmatched end bends as the cubic would) + Coons correction for V curves (which must
+  leave a matched edge within 10° of the face, else refused). Made ONE B-spline surface by tensor interpolation (`interpolate` =
+  GeomAPI_Interpolate at given parameters, so every row shares knots): across (cosine-spaced t, the blend's exact end slopes
+  `Load`ed when there are no V curves), then each pole along, at places `spread` over the stretches between both curves'
+  C3 `breaks` (else a spline curve's own knots cap convergence); `bsplineSurfaceAt` (local Cox–de Boor) measures each curve
+  against the surface's edge at ¼ ½ ¾ between places; along/across grow ~(gap/1e-4)^¼ × 1.6 (h⁴) within `MOST_ALONG` 1025 /
+  `MOST_ACROSS` 129 / `ROUNDS`, else refused; `makeBSplineFace`. Not tried again: the filling with G1 (folds back over the
+  face), LoadInitSurface (crashes on curved edges in this build), lofting rows (wiggles along). Curves with a sharp corner
+  (> 1° between edges, `hasCorner`) are refused with a smooth side. Face blend (Onshape's): feature
   "faceBlend", side 1 = `picks` (faces), `Feature.blend` (`FaceBlendDef`: `side2`, `flip1`/`flip2`, `noTrim`, `picking`), param
   `radius`. `src/kernel/faceBlend.ts` `faceBlend`: per pair of faces the spine = section of the two faces moved out by r
   (MakeOffsetShape skin) to the ball's side — tried (+,+), (−,−), (+,−), (−,+), flips relative to the side found; arcs from the

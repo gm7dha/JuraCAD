@@ -4,10 +4,10 @@
  * radius, works between separate parts and surfaces (trimmed and joined), rings round a boss, and refuses plainly.
  */
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { getOC, makeLine, makePolygon, makeThreePointArc, assembleWire, measureArea, measureDistanceBetween, measureVolume, type Face, type Shape3D } from "replicad";
+import { getOC, makeBezierCurve, makeLine, makePolygon, makeThreePointArc, assembleWire, measureArea, measureDistanceBetween, measureVolume, type Face, type Shape3D } from "replicad";
 import { GeometryEngine } from "../src/kernel/engine";
 import { boundarySurface } from "../src/kernel/boundary";
-import { faceBlend, nearestOnFace } from "../src/kernel/faceBlend";
+import { faceBlend, nearestOnFace, surfaceGaps } from "../src/kernel/faceBlend";
 import { interpolatedEdge } from "../src/kernel/curves";
 import { edgesOf, facesOf, shellsOf } from "../src/kernel/topology";
 import type { Feature } from "../src/model/types";
@@ -85,18 +85,39 @@ function gapAlong(e: { pointAt(t: number): { x: number; y: number; z: number } }
 function boundaryWall(): Shape3D {
   const c = 20 * Math.SQRT1_2;
   const arc = makeThreePointArc([-c, 10 + c, 0], [0, 30, 0], [c, 10 + c, 0]);
-  const up = arc.clone().translate([0, 0, 10]);
-  const wire0 = assembleWire([arc]);
-  const wire1 = assembleWire([up as typeof arc]);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
-  const loft = new oc.BRepOffsetAPI_ThruSections(false, true, 1e-6);
-  loft.AddWire(wire0.wrapped);
-  loft.AddWire(wire1.wrapped);
-  loft.Build();
-  const out = facesOf({ wrapped: loft.Shape() })[0] as unknown as Shape3D;
-  loft.delete();
+  const vec = new oc.gp_Vec(0, 0, 10);
+  const prism = new oc.BRepPrimAPI_MakePrism(arc.wrapped, vec, false, true);
+  const out = facesOf({ wrapped: prism.Shape() })[0] as unknown as Shape3D;
+  prism.delete();
+  vec.delete();
   return out;
+}
+
+/** A curve pushed up `h` as a face. */
+function prismFace(e: { wrapped: unknown }, h: number): Shape3D {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const vec = new oc.gp_Vec(0, 0, h);
+  const prism = new oc.BRepPrimAPI_MakePrism(e.wrapped, vec, false, true);
+  const out = facesOf({ wrapped: prism.Shape() })[0] as unknown as Shape3D;
+  prism.delete();
+  vec.delete();
+  return out;
+}
+
+/**
+ * The farthest a curve strays from a surface, at 601 places along it at odd fractions (never where the surface's own
+ * places are taken), measured to its whole underlying surface (quick on a big B-spline surface).
+ */
+function gapBetween(e: { pointAt(t: number): { x: number; y: number; z: number } }, s: Shape3D): number {
+  const pts: Vec3[] = [];
+  for (let k = 0; k <= 600; k++) {
+    const v = e.pointAt(Math.min(1, (k + 0.3731) / 600.5));
+    pts.push([v.x, v.y, v.z]);
+  }
+  return Math.max(...surfaceGaps(facesOf(s)[0], pts));
 }
 
 /** Is a surface sound (OpenCascade's check) and one piece? */
@@ -391,6 +412,37 @@ describe("Boundary surface", () => {
     // Two straight lines with a corner, opposite the smooth edge: refused plainly.
     const bent = assembleWire([makeLine([10, 0, 0], [12, 5, 0]), makeLine([12, 5, 0], [10, 10, 0])]);
     expect(() => boundarySurface([{ wire: assembleWire([top]), face: flat, match: "tangent" }, { wire: bent }], 2, 0)).toThrow(/sharp corner/);
+  });
+
+  it("keeps to a wavy spline opposite an arc, and to four curves round a patch, between the places it takes", () => {
+    // A curved wall: a quarter arc of radius 30 (centre the origin) pushed up 10. Opposite its top arc, a spline at
+    // radius 45 ± 3 with 8 waves on the ground.
+    const wall = prismFace(makeThreePointArc([30, 0, 0], [30 * Math.SQRT1_2, 30 * Math.SQRT1_2, 0], [0, 30, 0]), 10);
+    const top = edgesOf(wall).find((e) => Math.abs(e.startPoint.z - 10) < 1e-9 && Math.abs(e.endPoint.z - 10) < 1e-9)!;
+    const wavy = interpolatedEdge(
+      Array.from({ length: 129 }, (_, i) => {
+        const a = (i / 128) * (Math.PI / 2);
+        const r = 45 + 3 * Math.sin(8 * 2 * a * 2);
+        return [r * Math.cos(a), r * Math.sin(a), 0] as Vec3;
+      }),
+      false,
+    );
+    const t0 = Date.now();
+    const s = boundarySurface([{ wire: assembleWire([top]), face: facesOf(wall)[0], match: "tangent" }, { wire: assembleWire([wavy]) }], 2, 0);
+    const took = Date.now() - t0;
+    expect(gapBetween(top, s)).toBeLessThan(1e-4);
+    expect(gapBetween(wavy, s)).toBeLessThan(1e-4);
+    expect(leaving(s, [30 * Math.SQRT1_2, 30 * Math.SQRT1_2, 10]).dir[2]).toBeGreaterThan(0.99);
+    expect(took).toBeLessThan(30_000);
+    // Four curves: the top arc (smooth), a slanted arc opposite, and two Bézier curves leaving the wall upward.
+    const slanted = makeThreePointArc([45, 0, 0], [45 * Math.SQRT1_2, 45 * Math.SQRT1_2, 8], [0, 45, 0]);
+    const v0 = makeBezierCurve([[30, 0, 10], [30, 0, 16], [40, 0, 8], [45, 0, 0]]);
+    const v1 = makeBezierCurve([[0, 30, 10], [0, 30, 16], [0, 40, 8], [0, 45, 0]]);
+    const t1 = Date.now();
+    const four = boundarySurface([{ wire: assembleWire([top]), face: facesOf(wall)[0], match: "tangent" }, { wire: assembleWire([slanted]) }, { wire: assembleWire([v0]) }, { wire: assembleWire([v1]) }], 2, 2);
+    expect(Date.now() - t1).toBeLessThan(30_000);
+    for (const e of [top, slanted, v0, v1]) expect(gapBetween(e, four)).toBeLessThan(1e-4);
+    expect(leaving(four, [30 * Math.SQRT1_2, 30 * Math.SQRT1_2, 10]).dir[2]).toBeGreaterThan(0.99);
   });
 
   it("carries a curved face on, and its bend too with curvature", () => {
