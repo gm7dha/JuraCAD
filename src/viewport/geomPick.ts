@@ -7,7 +7,8 @@
 import { useStore, activeFeatures, pickFor } from "../model/store";
 import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 import { planeFrame, type PlaneFrame } from "../sketch/planes";
-import { connectorFromClick, planeClick, type GeomClick } from "../model/geomClicks";
+import { connectorFromClick, fractionAlong, planeClick, type GeomClick } from "../model/geomClicks";
+import { curveClick, curvePoint, pathClick, type CurveClick } from "../model/curveClicks";
 import { isMorePlaneMode } from "../sketch/planeTypes";
 import { sketchLine3D } from "../model/patternRefs";
 import type { Feature } from "../model/types";
@@ -47,6 +48,13 @@ export function studioConnectorMarks(features: Feature[], parts: PartMesh[], dra
   return out;
 }
 
+/** A curve feature's drawn lines as one list of points. */
+function curvePoints(lines: number[][] | undefined): Vec3[] {
+  const out: Vec3[] = [];
+  for (const line of lines ?? []) for (let i = 0; i + 2 < line.length; i += 3) out.push([line[i], line[i + 1], line[i + 2]]);
+  return out;
+}
+
 /** A click as the newer planes and mate connectors take it (null: nothing they can use). */
 export function geomClickOf(manager: SceneManager | null, target: PickTarget | null): GeomClick | null {
   const s = useStore.getState();
@@ -83,6 +91,50 @@ export function geomClickOf(manager: SceneManager | null, target: PickTarget | n
 export function geomPick(manager: SceneManager | null, target: PickTarget | null): boolean {
   const s = useStore.getState();
   const d = s.editing?.draft;
+  // Curve features (Helix, Fit spline…), and a Sweep's or Curve pattern's path.
+  const curveTarget = (): CurveClick | null => {
+    if (target?.kind !== "curve") return geomClickOf(manager, target);
+    return { kind: "curve", id: target.id, at: target.point, points: curvePoints(s.builtCurves[target.id]) };
+  };
+  if (d?.type === "curve" && d.curve) {
+    const c = curveTarget();
+    if (!c) return true;
+    const next = curveClick(d, c);
+    if (typeof next === "string") s.showToast(next);
+    else s.setDraftField(next);
+    return true;
+  }
+  if ((d?.type === "sweep" || d?.type === "curvePattern") && (target?.kind === "curve" || d.pathEdges)) {
+    const c = curveTarget();
+    const next = c ? pathClick(d, c) : null;
+    if (next) {
+      if (next.pathRef && d.sketchRef === next.pathRef) return true;
+      s.setDraftField(next);
+      return true;
+    }
+  }
+  // A Curve point plane on a curve feature: where along it was clicked.
+  if (target?.kind === "curve" && d?.type === "plane" && d.planeDef?.mode === "curvePoint") {
+    const pts = curvePoints(s.builtCurves[target.id]);
+    s.setDraftField({ planeDef: { ...d.planeDef, points: [{ p: target.point, curve: target.id }], position: fractionAlong(pts, target.point) } });
+    return true;
+  }
+  if (target?.kind === "curve" && d?.type === "plane" && d.planeDef && isMorePlaneMode(d.planeDef.mode)) {
+    // Other plane types: an end or the middle of the curve as a point.
+    const c = curveTarget();
+    if (c?.kind === "curve") {
+      const pt = curvePoint(c);
+      const list = d.planeDef.points ?? [];
+      const many = d.planeDef.mode === "threePoint" || d.planeDef.mode === "fit";
+      s.setDraftField({ planeDef: { ...d.planeDef, points: many ? [...list, pt] : [pt] } });
+    }
+    return true;
+  }
+  if (target?.kind === "curve") {
+    // Nothing that takes a curve is open: select it in the list.
+    if (!s.editing) s.selectFeature(target.id);
+    return true;
+  }
   if (d?.type === "plane" && d.planeDef && isMorePlaneMode(d.planeDef.mode)) {
     if (target?.kind === "customPlane" && target.id === d.id) return true;
     const c = geomClickOf(manager, target);

@@ -88,7 +88,7 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     if (type === "extrude") feature.extrude = { end: "blind", flip: false };
     else feature.revolve = { axis: sketch?.sketch ? defaultAxis(sketch.sketch.data) : "vertical", flip: false };
     // Like Onshape: the first solid is a new part, later extrudes add to it.
-    const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
+    const hasSolid = doc.features.some((f) => f.type !== "sketch" && f.type !== "curve" && !f.suppressed);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
     // Pieces that don't touch become separate parts (as in Onshape); Intersect works on every part it reaches.
     feature.apart = true;
@@ -96,7 +96,7 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
   }
   if (type === "sweep" || type === "loft") {
     const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
-    const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
+    const hasSolid = doc.features.some((f) => f.type !== "sketch" && f.type !== "curve" && !f.suppressed);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
     if (type === "sweep") {
       feature.apart = true;
@@ -106,7 +106,7 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     } else feature.sections = sketches.slice(-2).map((f) => f.id);
   }
   if (type === "text") {
-    const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
+    const hasSolid = doc.features.some((f) => f.type !== "sketch" && f.type !== "curve" && !f.suppressed);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
     feature.text = { value: "JuraCAD", plane: { kind: "default", name: "Top" }, bold: false, flip: false };
   }
@@ -329,6 +329,15 @@ export function withoutPicking(f: Feature): Feature {
   if (out.mirror?.picking !== undefined) {
     const { picking: _p, ...mirror } = out.mirror;
     out = { ...out, mirror };
+  }
+  if (out.curve?.picking !== undefined) {
+    const { picking: _p, ...curve } = out.curve;
+    out = { ...out, curve };
+  }
+  // A sweep's "part edges" chosen with none clicked: no path yet.
+  if (out.pathEdges && !out.pathEdges.length) {
+    const { pathEdges: _e, ...rest } = out;
+    out = rest;
   }
   return out;
 }

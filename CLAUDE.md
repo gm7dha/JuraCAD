@@ -546,6 +546,29 @@
   `compositeParts` (least 2, as a union; `withoutGone` drops gone ones). Claude: linear/circular_pattern `parts` | `faces` (+ `part`) | `features`,
   `skip`; mirror `faces` (+ `part`); `composite_part` `parts`. Tests: tests/patternTypes (pure), enginePartPattern (counts,
   ids, names, skip, boss/hole/pocket by faces, face mirror, composite export/assembly), mcpPatternTypes.
+- Curve features (Onshape's Helix, Projected curve, Bridging curve, Composite curve, Fit spline, Intersection curve): ONE
+  feature type "curve" with `Feature.curve` (`CurveDef`, types.ts: `kind` + its picks; sizes in params height/turns/pitch/
+  diameter/startAngle/taper/bulge, shown by `curveParamKeys`); missing everywhere else, so old files are unchanged. Pure in
+  `src/model/curves.ts` (`CURVE_KINDS` names/descriptions, `curveName` "Helix 1", `newCurveDef`, `helixSizes`, `bridgePoints` —
+  a line, a cubic matching directions, or a quintic matching curvature vectors too (P2 = 2P1 − P0 + 25h²K/20), `bulge` scales the
+  handles — `fitSplineProblem`, `curveUses` for dependents, `parseCurveDef`). Clicks: `src/model/curveClicks.ts` (`curveClick`,
+  `curvePoint`, `pathClick`), glue at the top of geomPick.ts. Engine (`buildCurve`/`makeCurve` in engine.ts, OCC in
+  `src/kernel/curves.ts`): helix = a straight line on an unrolled cylinder, or a cone when tapered (`helixWire`, exact; round a
+  face from its circles, `roundOfFace`; frenet sweeps), fit spline = GeomAPI_Interpolate, bridge = a Bézier edge (ends from
+  `endFrame`: finite differences), projected = the sketch's runs pushed out ±5 m along its normal (`sheetAlong`) cut by the faces
+  or the other sketch's sheets (`sectionEdges`), intersection = faces against faces or a big square on `plane`; every result
+  chained into wires (`chainEdges`). Wires live per build (`StudioBuild.curves`, freed in `disposeBuild`); drawn lines go out as
+  `RebuildResult.curves` → `store.builtCurves` → `SceneManager.setCurves` (PickTarget "curve"; shown with the eye like planes,
+  `hasEye`). Used by: Sweep/Curve pattern `pathRef` = a curve feature, or `pathEdges` (TopoPicks of part edges, chained) —
+  engine `sweepSpine` (open paths start at the end nearest the profile; `sweepAlongSpine` in sweep.ts), set per feature through the
+  module-level `pathSpine` because buildSolid has no `this`; curve patterns walk its polyline (`walkPoints` in pathSample.ts);
+  GeomPick `curve` (+ end a/b/mid) for planes (Curve point: `position` by parameter, not length, on curves), fit splines, bridges.
+  Dialog `src/app/CurveOptions.tsx` (`CurveOptions`, `PathChoice`: sketch / curve / "Part edges (click them)"); Toolbar group
+  "curves" (`startCurve`). Claude: add_feature "curve" with `curve_type` (`src/mcp/curveSpec.ts`), sweep `path` (sketch or
+  curve) / `path_edges` + `path_part`; points may be {"curve", "end"}. Not done: isocline, offset and trim curves; sketches can't
+  Use/project or pierce a curve feature yet; surface sweeps along curves. Tests: tests/curves, curveClicks (pure), engineCurves
+  (helix length/pitch/taper/face, spring volume, ellipse of a slanted cut, projected onto a ball, fit spline, bridge, sweep along
+  an edge, composite, curve pattern on a helix), mcpCurves.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.

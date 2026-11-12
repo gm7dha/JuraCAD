@@ -11,6 +11,8 @@ import { applyVariables, resolveVariables, checkName, type Variable } from "../m
 import { describeHole } from "../model/holes";
 import type { Feature, JuraCADDocument } from "../model/types";
 import { describeMore, LINE_HELP, POINT_HELP } from "./planeSpec";
+import { CURVE_HELP } from "./curveSpec";
+import { describeCurve } from "../model/curves";
 import { SIMPLIFY_LEVELS } from "../model/simplify";
 import { planeFrame, planeLabel } from "../sketch/planes";
 import { holePositionsIn } from "../sketch/holePositions";
@@ -134,7 +136,7 @@ export function summarize(f: Feature, doc: JuraCADDocument, built?: Record<strin
       if (f.surface) return `surface sweep of ${nameOf(f.sketchRef)} along ${nameOf(f.pathRef)} (made in the app)`;
       const more = (f.moreAreas ?? []).map((m) => nameOf(m.sketch));
       const twist = f.sweepControl?.lockOrientation ? ", keeping its orientation" : p.twist && p.twist !== "0" ? `, twisting ${p.twist}°` : "";
-      return `sweep ${nameOf(f.sketchRef)}${more.length ? ` (with areas of ${more.join(", ")} too)` : ""} along ${nameOf(f.pathRef)}${twist}${thinText(f)}, ${op}`;
+      return `sweep ${nameOf(f.sketchRef)}${more.length ? ` (with areas of ${more.join(", ")} too)` : ""} along ${f.pathEdges?.length ? `${f.pathEdges.length} part edge(s)` : nameOf(f.pathRef)}${twist}${thinText(f)}, ${op}`;
     }
     case "hole": {
       const h = f.hole!;
@@ -163,6 +165,8 @@ export function summarize(f: Feature, doc: JuraCADDocument, built?: Record<strin
       return `cylinder ⌀${p.diameter} × ${p.height} mm at (${p.x}, ${p.y}, ${p.z}), ${op}`;
     case "sphere":
       return `sphere ⌀${p.diameter} mm at (${p.x}, ${p.y}, ${p.z}), ${op}`;
+    case "curve":
+      return `${describeCurve(f)} (a curve: sweeps and curve patterns can follow it)`;
     case "plane":
     case "mateConnector":
       return describeMore(f, (id) => doc.features.find((x) => x.id === id)?.name, built?.[f.id]);
@@ -358,7 +362,7 @@ const SHAPES_SCHEMA = {
 const KIND_HELP: Record<FeatureKind, string> = {
   extrude: 'extrude: sketch (name; default the latest), depth, end ("blind" default | "symmetric" | "through_all" (right through, both ways) | "up_to_face" with up_to_face, up_to_part), flip (a "remove" cut on a face sketch goes into the part unless flip is given), second_depth (also extrude the other way), draft (°), areas ([[x,y],…] points inside the sketch areas to use; default every closed shape), more_sketches ([{"sketch": name, "areas": [[x,y],…]}, …]: areas of other sketches made with the same settings, as clicking them in the app does; null or [] for none), thin (a wall this thick along the sketch lines/arcs/circles — open or closed — instead of filling closed shapes; null to turn off), thin_other_side (thickness on the other side too, default 0), thin_centred (true: the thickness shared both sides), thin_flip (swap the sides; on a closed shape the first side is inside), operation',
   revolve: 'revolve: sketch, axis ("vertical" | "horizontal" — the sketch\'s axes through its origin — or {"from":[x,y],"to":[x,y]} naming a line drawn in the sketch), angle (° default 360), symmetric, second_angle (° the other way from the sketch too; angle + second_angle ≤ 360; 0 to turn off), flip, areas, more_sketches (spun round the same axis, which must lie in their planes), thin, thin_other_side, thin_centred, thin_flip (as extrude; the axis line is left out of the wall), operation',
-  sweep: 'sweep: sketch (the closed shape, drawn on a plane across the start of the path), path (another sketch: the lines/arcs to follow), twist (° turned along the whole path, default 0; whole turns — 360, 720… — on a closed loop), keep_orientation (true: the shape doesn\'t turn with the path; no twist then), areas, more_sketches (more shapes swept along the same path), thin, thin_other_side, thin_centred, thin_flip (as extrude: the profile curves made into a wall, then swept), operation',
+  sweep: 'sweep: sketch (the closed shape, drawn on a plane across the start of the path), path (another sketch: the lines/arcs to follow — or a curve feature, e.g. a helix for a spring), or path_edges (part edges joined end to end, E-numbers) on path_part, twist (° turned along the whole path, default 0; whole turns — 360, 720… — on a closed loop), keep_orientation (true: the shape doesn\'t turn with the path; no twist then), areas, more_sketches (more shapes swept along the same path), thin, thin_other_side, thin_centred, thin_flip (as extrude: the profile curves made into a wall, then swept), operation',
   hole: 'hole: sketch (whose points and circle centres mark the holes — draw it on the face the holes start from, with add_sketch "on_face"), size ("M2"…"M12") with fit ("clearance" default | "tapped"), or diameter for a custom hole; style ("simple" | "counterbore" | "countersink"), end ("through_all" default | "blind" with depth), flip. Custom holes may set counterbore_diameter/counterbore_depth/countersink_diameter/countersink_angle',
   fillet: "fillet: edges (see edge choices), radius, end_radius (optional, a radius growing along the edge), part (default the latest)",
   chamfer: "chamfer: edges, distance, and optionally second_distance or angle (°), flip_side, part",
@@ -373,6 +377,7 @@ const KIND_HELP: Record<FeatureKind, string> = {
   sphere: "sphere: diameter, x, y, z (its centre), operation",
   plane: `plane (a construction plane to sketch on, mirror across or use in assemblies; Onshape's types): plane_type ("offset" default — from + distance; "angle" — from + angle + tilt_about "across"|"up"; "point" — through point, parallel to from; "point_normal" — through point, square to line; "line_angle" — through line, turned by angle from the upright plane holding it; "three_point" — through points (3); "curve_point" — square to line (an edge) at position 0…1 along it; "fit" — best fit through points (3 or more)), from ("Top"|"Front"|"Right" or a Plane / mate connector name), point, points, line, angle (°), distance, position, flip (turn it over). ${POINT_HELP} ${LINE_HELP} Points and lines on parts follow them when the design changes`,
   mate_connector: 'mate_connector (a point with its own X/Y/Z that belongs to a part: mate to it in assemblies with add_mate\'s "connector", sketch on it with add_sketch "plane", move parts by it): at (a point — see plane; or {"edge": "E3", "part": name}: an edge\'s middle with Z along it, a round edge\'s centre with Z along its axis; or {"face": "F2", "part": name}: a flat face\'s centre, Z out of it), or on_plane ("Top"|"Front"|"Right" or a Plane name: at its origin), spot ("start"|"end"|"middle" on an edge), owner (the part it belongs to; default the part it\'s on), flip_z, move ([x, y, z] mm along its own axes), turn ([x, y, z]° about its own axes)',
+  curve: CURVE_HELP,
 };
 
 /** A part (list_faces / list_edges), or with "assembly" and "instance", a copy of one as it sits in an assembly. */

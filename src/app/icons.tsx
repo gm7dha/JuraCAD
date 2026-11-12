@@ -736,6 +736,13 @@ export const Icons = {
       <circle cx="21" cy="7" r="1.4" fill="currentColor" />
     </Svg>
   ),
+  Curve: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 18c3-9 6-12 9-6s6 3 9-6" />
+      <circle cx="3" cy="18" r="1.2" />
+      <circle cx="21" cy="6" r="1.2" />
+    </Svg>
+  ),
   Coil: (p: IconProps) => (
     <Svg {...p}>
       <path d="M6 4c4 0 12 1 12 3s-12 1-12 3 12 1 12 3-12 1-12 3 12 1 12 3-8 1-12 1" />
