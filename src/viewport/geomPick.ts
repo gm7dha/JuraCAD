@@ -11,6 +11,7 @@ import { connectorFromClick, fractionAlong, planeClick, type GeomClick } from ".
 import { curveClick, curvePoint, pathClick, type CurveClick } from "../model/curveClicks";
 import { isMorePlaneMode } from "../sketch/planeTypes";
 import { loftClick } from "../model/loft";
+import { boundaryClick } from "../model/surfaceClicks";
 import { sketchLine3D } from "../model/patternRefs";
 import type { Feature } from "../model/types";
 import type { PartMesh } from "../kernel/protocol";
@@ -97,6 +98,13 @@ export function geomPick(manager: SceneManager | null, target: PickTarget | null
     if (target?.kind !== "curve") return geomClickOf(manager, target);
     return { kind: "curve", id: target.id, at: target.point, points: curvePoints(s.builtCurves[target.id]) };
   };
+  // A Boundary surface: a curve feature clicked is one of its curves.
+  if (d?.type === "boundary" && d.boundary && target?.kind === "curve") {
+    const next = boundaryClick(d.boundary, { kind: "curve", id: target.id });
+    if (typeof next === "string") s.showToast(next);
+    else s.setDraftField({ boundary: next });
+    return true;
+  }
   if (d?.type === "curve" && d.curve) {
     const c = curveTarget();
     if (!c) return true;

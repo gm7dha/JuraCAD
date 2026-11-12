@@ -59,6 +59,8 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   fullRound: Icons.FullRound,
   wrap: Icons.Wrap,
   fill: Icons.Fill,
+  boundary: Icons.Fill,
+  faceBlend: Icons.Fillet,
   enclose: Icons.Enclose,
   offsetSurface: Icons.OffsetSurface,
   extendSurface: Icons.ExtendSurface,

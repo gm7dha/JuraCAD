@@ -3,7 +3,7 @@
  * OpenCascade (through replicad). Runs inside the Web Worker, and directly in
  * Node for the automated tests.
  */
-import { basicFaceExtrusion, type Wire, cast, makePolygon, Vector, getOC, makeCompound, makeProjectedEdges, ProjectionCamera, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeVertex, makeSphere, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
+import { assembleWire, basicFaceExtrusion, type Wire, cast, makePolygon, Vector, getOC, makeCompound, makeProjectedEdges, ProjectionCamera, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeVertex, makeSphere, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
 
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
@@ -25,13 +25,15 @@ import { holeTool, type ThreadedHoleCache } from "./hole";
 import { HOLE_LEAD_IN, SCREW_SIZES, straightStart, type HoleSize } from "../model/holes";
 import { copyNumber, isSkipped } from "../model/patterns";
 import { materialRuns, shapeDistance, upToFaceSolid, upToPartsSolid } from "./upTo";
-import { loftSketches, sweepAlongSpine, sweepSketch } from "./sweep";
+import { loftSketches, pathWire, sweepAlongSpine, sweepSketch } from "./sweep";
 import { bezierEdge, chainEdges, compoundOf, endFrame, helixWire, interpolatedEdge, planeSheet, reversedWire, sectionEdges, sheetAlong, squareTo, takeVec, wirePolyline } from "./curves";
 import { bridgePoints, curveKindInfo, fitSplineProblem, helixSizes, type BridgeEnd } from "../model/curves";
 import { walkPoints } from "../sketch/pathSample";
 import { buildLoft } from "./loft";
 import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
 import { offsetSolid, shellByCutting } from "./surface";
+import { boundarySurface, type BoundaryInput } from "./boundary";
+import { faceBlend, nearestOnFace, sewnLoosely, trimUnder, type BlendPiece } from "./faceBlend";
 import { encloseSurfaces, extendSurface, extrudeSurface, fillEdges, gapReport, gathered, joinSurfaces, loftSurface, offsetSurface, removeFaces, revolveSurface, ruledSurface, splitBySurface, sweepSurface, thickenSurface } from "./surface";
 import { grooveVolume, maxGrooveDepth, threadPieces } from "./thread";
 import { fastenerSolid } from "./fastener";
@@ -1172,6 +1174,81 @@ function sectionCut(shape: Shape3D, origin: Vec3, normal: Vec3, flat: (p: Vec3) 
     for (const k of ids) faces.push(...flat([v[3 * k], v[3 * k + 1], v[3 * k + 2]]));
   }
   return { shape: cut, faces };
+}
+
+/**
+ * Face blend's trim: each surface cut back where the blend touches it, then everything sewn into one surface. Returns
+ * it, or why not (in a few words) when the result isn't sound, isn't one piece, or a surface kept almost none of itself.
+ */
+function trimAndJoin(pieces: BlendPiece[], surfaces: BuiltPart[], partOfA: string[], partOfB: string[], radius: number): Shape3D | string {
+  const sheets = new Map<string, Shape3D>(surfaces.map((p) => [p.id, p.shape.clone() as Shape3D]));
+  const before = new Map(surfaces.map((p) => [p.id, measureArea(p.shape)]));
+  const freeAll = () => sheets.forEach((x) => x.delete());
+  for (const piece of pieces) {
+    for (const [partId, touch] of [
+      [partOfA[piece.a], piece.touchA],
+      [partOfB[piece.b], piece.touchB],
+    ] as const) {
+      const sheet = sheets.get(partId);
+      if (!sheet) continue;
+      // The face as it is now in the (perhaps already cut) surface: the one where the blend touches, at its middle.
+      const mid = touch[Math.floor(touch.length / 2)].p;
+      const now = facesOf(sheet);
+      let best: Face | null = null;
+      let bestD = Infinity;
+      for (const f of now) {
+        const q = nearestOnFace(f, mid);
+        const d = q ? Math.hypot(q[0] - mid[0], q[1] - mid[1], q[2] - mid[2]) : Infinity;
+        if (d < bestD) {
+          bestD = d;
+          best = f;
+        }
+      }
+      now.forEach((f) => f !== best && f.delete());
+      const left = best ? trimUnder(sheet, best, touch, radius, piece.closed) : null;
+      best?.delete();
+      if (!left) {
+        freeAll();
+        return "the blend doesn't run from edge to edge across a face it touches";
+      }
+      sheet.delete();
+      sheets.set(partId, sewnLoosely(left as unknown as Shape3D[]));
+      left.forEach((f) => f.delete());
+    }
+  }
+  for (const [id, sheet] of sheets) {
+    const was = before.get(id) ?? 0;
+    const now = measureArea(sheet);
+    if (!(now > 0.05 * was) || now > was * (1 + 1e-6)) {
+      freeAll();
+      return "a surface would have been left with almost nothing";
+    }
+  }
+  const joined = sewnLoosely([...sheets.values(), ...pieces.map((p) => p.shape)]);
+  freeAll();
+  const shells = shellsOf(joined);
+  const one = shells.length === 1;
+  shells.forEach((x) => x.delete());
+  if (!one || !isValidSolid(joined, true)) {
+    joined.delete();
+    return one ? "the result wasn't sound" : "the pieces didn't join into one surface";
+  }
+  return joined;
+}
+
+/** Which way a face faces, in plain words ("facing up", "facing +X", "curved"). */
+function facingWords(n: Vec3, kind: string): string {
+  if (kind !== "PLANE") return "that's curved";
+  const words: [Vec3, string][] = [
+    [[0, 0, 1], "facing up"],
+    [[0, 0, -1], "facing down"],
+    [[1, 0, 0], "facing +X"],
+    [[-1, 0, 0], "facing −X"],
+    [[0, 1, 0], "facing +Y"],
+    [[0, -1, 0], "facing −Y"],
+  ];
+  const best = words.map(([d, w]) => ({ w, dot: d[0] * n[0] + d[1] * n[1] + d[2] * n[2] })).sort((a, b) => b.dot - a.dot)[0];
+  return best.dot > 0.9 ? best.w : "that's slanted";
 }
 
 /**
@@ -3103,8 +3180,15 @@ export class GeometryEngine {
         continue;
       }
 
+      // Face blend: a new surface, or the faces it touches trimmed and joined to it, or a solid's edge rounded.
+      if (feature.type === "faceBlend") {
+        const r = this.applyFaceBlend(feature, values.radius, surfaceCounter + 1);
+        if (r.error) featureErrors[feature.id] = r.error;
+        if (r.newSurface) surfaceCounter++;
+        continue;
+      }
       // Surfaces are always new parts; Enclose closes surfaces up into a solid.
-      if (feature.surface || feature.type === "fill" || feature.type === "offsetSurface" || feature.type === "enclose" || feature.type === "ruled") {
+      if (feature.surface || feature.type === "fill" || feature.type === "offsetSurface" || feature.type === "enclose" || feature.type === "ruled" || feature.type === "boundary") {
         if (feature.type === "enclose") {
           const r = this.applyEnclose(feature, partCounter + 1);
           if (r.error) featureErrors[feature.id] = r.error;
@@ -3112,7 +3196,7 @@ export class GeometryEngine {
           continue;
         }
         try {
-          const skin = buildSolid(feature, values, sketches, features, this.parts, this.threadedHoles, undefined, (f) => this.sweepSpine(f, features, sketches));
+          const skin = feature.type === "boundary" ? this.boundaryShape(feature, sketches, features) : buildSolid(feature, values, sketches, features, this.parts, this.threadedHoles, undefined, (f) => this.sweepSpine(f, features, sketches));
           surfaceCounter++;
           this.tools.set(feature.id, { shape: skin.clone(), operation: "new", partId: feature.id });
           this.parts.push({ id: feature.id, name: `Surface ${surfaceCounter}`, featureIds: [feature.id], shape: skin, surface: true });
@@ -7363,6 +7447,191 @@ export class GeometryEngine {
       }
     }
     return { wire, frenet };
+  }
+
+  /** A Boundary surface's skin (throws a plain message when it can't be made); a note says which faces its smooth sides meet. */
+  private boundaryShape(feature: Feature, sketches: SketchMap, all: Feature[]): Shape3D {
+    const def = feature.boundary ?? { u: [], v: [] };
+    const list = [...def.u, ...def.v];
+    const inputs: BoundaryInput[] = [];
+    const faces: Face[] = [];
+    const usedFaces: string[] = [];
+    try {
+      for (const c of list) {
+        if (c.edge) {
+          const part = this.parts.find((p) => p.id === c.edge!.partId);
+          if (!part) throw new Error("A part one of its edges was on no longer exists. Edit this and pick the edge again.");
+          const [edge] = findPickedEdges(part.shape, [c.edge]);
+          let face: Face | null = null;
+          if (c.match) {
+            // The faces beside the edge (a solid's edge has two): the one asked for.
+            const beside: Face[] = [];
+            for (const f of facesOf(part.shape)) {
+              const mine = edgesOf(f);
+              const has = mine.some((e) => e.isSame(edge));
+              mine.forEach((e) => e.delete());
+              if (has && beside.length < 2) beside.push(f);
+              else f.delete();
+            }
+            face = (c.otherFace ? beside[1] : beside[0]) ?? beside[0] ?? null;
+            beside.forEach((f) => (f === face ? faces.push(f) : f.delete()));
+            if (face) {
+              const mid = takeVec(edge.pointAt(0.5));
+              const facing = (f: Face) => {
+                try {
+                  return facingWords(takeVec(f.normalAt(mid)), f.geomType);
+                } catch {
+                  return "beside it";
+                }
+              };
+              const which = `${c.match === "curvature" ? "Smooth and bending with" : "Smooth with"} the face ${facing(face)} beside ${(def.u.includes(c) ? "U" : "V")} curve ${(def.u.includes(c) ? def.u.indexOf(c) : def.v.indexOf(c)) + 1}`;
+              usedFaces.push(beside.length > 1 ? `${which} (tick “Use the other face” for the other one).` : `${which}.`);
+            }
+          }
+          inputs.push({ wire: assembleWire([edge]), face, ...(c.match ? { match: c.match } : {}) });
+          edge.delete();
+        } else if (c.curve) {
+          const target = all.find((f) => f.id === c.curve);
+          if (!target || all.indexOf(target) > all.indexOf(feature)) throw new Error("One of its curves is gone or comes later in the list. Pick another.");
+          const built = this.curves.get(target.id);
+          if (!built?.wires.length) throw new Error(`${target.name} couldn't be made (or is suppressed), so it can't be a boundary.`);
+          if (built.wires.length > 1) throw new Error(`${target.name} is in ${built.wires.length} separate pieces. Join them with a Composite curve first.`);
+          inputs.push({ wire: built.wires[0].clone() as Wire });
+        } else if (c.sketch) {
+          const sk = sketches.get(c.sketch);
+          const f = all.find((x) => x.id === c.sketch);
+          if (!sk?.sketch?.plane) throw new Error(f ? `${f.name} can't be used (it's suppressed, comes later in the list, or has no plane).` : "One of its sketches has been deleted. Edit the boundary surface.");
+          inputs.push({ wire: pathWire(sk.sketch.plane, sk.sketch.data) });
+        }
+      }
+      if (inputs.length < list.length) throw new Error("One of its boundary curves couldn't be found.");
+      const made = boundarySurface(inputs, def.u.length, def.v.length);
+      if (usedFaces.length) this.notes[feature.id] = usedFaces.join(" ");
+      return made;
+    } finally {
+      inputs.forEach((i) => i.wire.delete());
+      faces.forEach((f) => f.delete());
+    }
+  }
+
+  /**
+   * Face blend: a rolling ball of `radius` between side 1 (`picks`) and side 2's faces. Untrimmed: a new surface part.
+   * Trimmed (the usual): faces of one solid that meet along edges are rounded there (a fillet: the same rolling ball);
+   * surface parts are cut back where the blend touches them and joined to it as one surface part; a solid's faces
+   * otherwise stay as they are (a note says so) and the blend is a new surface.
+   */
+  private applyFaceBlend(feature: Feature, radius: number, surfaceNumber: number): { error?: string; newSurface?: boolean } {
+    const blend = feature.blend ?? { side2: [] };
+    const side1 = (feature.picks ?? []).filter((p) => p.ref.kind === "face");
+    const side2 = blend.side2.filter((p) => p.ref.kind === "face");
+    if (!side1.length) return { error: "Click the faces for side 1 of the blend." };
+    if (!side2.length) return { error: "Click the faces for side 2 of the blend (choose Side 2 in the dialog first)." };
+    let facesA: Face[] = [];
+    let facesB: Face[] = [];
+    const free = () => {
+      facesA.forEach((f) => f.delete());
+      facesB.forEach((f) => f.delete());
+    };
+    try {
+      facesA = this.pickedFacesOf(side1);
+      facesB = this.pickedFacesOf(side2);
+    } catch (e) {
+      free();
+      return { error: describeError(e, "Couldn't find the picked faces.") };
+    }
+    const partOfA = side1.map((p) => p.partId);
+    const partOfB = side2.map((p) => p.partId);
+    const owners = [...new Set([...partOfA, ...partOfB])].map((id) => this.parts.find((p) => p.id === id)!);
+    try {
+      // Faces of one solid that meet along edges: round those edges (a fillet is exactly this rolling ball).
+      if (!blend.noTrim && owners.length === 1 && !owners[0].surface) {
+        const part = owners[0];
+        const shared: Edge[] = [];
+        for (const fa of facesA) {
+          const ea = edgesOf(fa);
+          for (const fb of facesB) {
+            const eb = edgesOf(fb);
+            for (const e of ea) if (eb.some((x) => x.isSame(e)) && !shared.some((x) => x.isSame(e))) shared.push(e.clone() as Edge);
+            eb.forEach((x) => x.delete());
+          }
+          ea.forEach((x) => x.delete());
+        }
+        if (shared.length) {
+          // Faces of either side that meet none of the other side's: nothing to round there.
+          const touches = (f: Face) => {
+            const mine = edgesOf(f);
+            const any = mine.some((e) => shared.some((x) => x.isSame(e)));
+            mine.forEach((e) => e.delete());
+            return any;
+          };
+          const unused = [...facesA, ...facesB].filter((f) => !touches(f)).length;
+          if (blend.flip1 || blend.flip2) {
+            shared.forEach((e) => e.delete());
+            return { error: "These faces meet along an edge of the part, so the blend rounds that edge from inside the corner; flipping a side doesn't apply. Untick Flip, or untick Trim to make the blend as a surface of its own." };
+          }
+          let rounded: Shape3D;
+          try {
+            rounded = part.shape.fillet((e: Edge) => (shared.some((c) => c.isSame(e)) ? radius : null)) as Shape3D;
+          } catch {
+            return { error: "Couldn't round where those faces meet with that radius. Try a smaller radius." };
+          } finally {
+            shared.forEach((e) => e.delete());
+          }
+          if (!isValidSolid(rounded)) {
+            rounded.delete();
+            return { error: "Couldn't round where those faces meet with that radius. Try a smaller radius." };
+          }
+          part.shape.delete();
+          part.shape = rounded;
+          part.featureIds.push(feature.id);
+          this.notes[feature.id] = "Rounded where the two sides meet, from inside the corner — the same as a fillet of this radius.";
+          if (unused)
+            this.warnings[feature.id] = `${unused} of the picked faces ${unused === 1 ? "doesn't" : "don't"} meet the other side along an edge, so ${unused === 1 ? "it was" : "they were"} left out. On one solid the blend rounds where the two sides meet; untick Trim to blend faces that don't meet.`;
+          return {};
+        }
+      }
+      let made: ReturnType<typeof faceBlend>;
+      try {
+        made = faceBlend(facesA, facesB, radius, !!blend.flip1, !!blend.flip2);
+      } catch (e) {
+        return { error: describeError(e, "Couldn't make the blend.") };
+      }
+      const blends = made.pieces.map((p) => p.shape);
+      const surfaces = owners.filter((p) => p.surface);
+      const way = (side: number, n: 1 | 2) => (side > 0 ? `in front of side ${n}'s faces (the way they face)` : `behind side ${n}'s faces`);
+      const sideNote = `The ball rolls ${way(made.sides[0], 1)} and ${way(made.sides[1], 2)}. Tick Flip on a side to roll it on the other side of those faces.`;
+      this.notes[feature.id] = sideNote;
+      if (blend.noTrim || !surfaces.length) {
+        const skin = blends.length === 1 ? blends[0] : sewnLoosely(blends);
+        if (blends.length > 1) blends.forEach((b) => b.delete());
+        if (!blend.noTrim && owners.some((p) => !p.surface)) this.warnings[feature.id] = "Solid parts' faces are left as they are: the blend is a surface of its own. (Faces of one solid that meet along an edge are rounded instead.)";
+        this.tools.set(feature.id, { shape: skin.clone(), operation: "new", partId: feature.id });
+        this.parts.push({ id: feature.id, name: `Surface ${surfaceNumber}`, featureIds: [feature.id], shape: skin, surface: true });
+        return { newSurface: true };
+      }
+      // Trim each surface back where the blend touches it, then join everything into one surface — checked: sound, one
+      // piece, and each surface keeping a sensible share of itself. Otherwise the blend is made on its own, with a note.
+      const joined = trimAndJoin(made.pieces, surfaces, partOfA, partOfB, radius);
+      if (typeof joined === "string") {
+        const skin = blends.length === 1 ? blends[0] : sewnLoosely(blends);
+        if (blends.length > 1) blends.forEach((b) => b.delete());
+        this.warnings[feature.id] = `The surfaces couldn't be trimmed cleanly (${joined}), so the blend is a surface of its own and they're left as they were. Untick Trim to make it so on purpose.`;
+        this.tools.set(feature.id, { shape: skin.clone(), operation: "new", partId: feature.id });
+        this.parts.push({ id: feature.id, name: `Surface ${surfaceNumber}`, featureIds: [feature.id], shape: skin, surface: true });
+        return { newSurface: true };
+      }
+      blends.forEach((b) => b.delete());
+      for (const p of surfaces) {
+        this.parts.splice(this.parts.indexOf(p), 1);
+        p.shape.delete();
+      }
+      if (owners.some((p) => !p.surface)) this.warnings[feature.id] = "Solid parts' faces are left as they are; only the surfaces were trimmed and joined to the blend.";
+      this.tools.set(feature.id, { shape: joined.clone(), operation: "new", partId: feature.id });
+      this.parts.push({ id: feature.id, name: `Surface ${surfaceNumber}`, featureIds: [...new Set([...surfaces.flatMap((p) => p.featureIds), feature.id])], shape: joined, surface: true });
+      return { newSurface: true };
+    } finally {
+      free();
+    }
   }
 
   /** Picked part edges found on their parts as they are now (the caller frees them). */

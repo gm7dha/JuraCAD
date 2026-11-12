@@ -643,7 +643,7 @@ function distanceToFace(face: Face, p: Vec3): number {
  * Along an edge of a face: points on it, and at each the direction straight
  * on across the edge, in the surface and away from the face.
  */
-function acrossEdge(edge: Edge, face: Face, samples: number): { at: Vec3[]; out: Vec3[] } {
+export function acrossEdge(edge: Edge, face: Face, samples: number): { at: Vec3[]; out: Vec3[] } {
   const at: Vec3[] = [];
   const out: Vec3[] = [];
   for (let i = 0; i <= samples; i++) {

@@ -206,6 +206,20 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "A surface spanning a ring of edges — flat if they lie in a plane, else a smooth patch — to close an opening or make a skin (a new surface part).",
     params: [],
   },
+  boundary: {
+    type: "boundary",
+    label: "Boundary surface",
+    namePrefix: "Boundary surface",
+    description: "A surface through curves round its edges, in two directions: two opposite sides (joined by straight lines), or the curves all round. A part edge's side can meet the face beside it smoothly. A new surface part.",
+    params: [],
+  },
+  faceBlend: {
+    type: "faceBlend",
+    label: "Face blend",
+    namePrefix: "Face blend",
+    description: "A rounded blend rolled between two sets of faces, on any parts or surfaces, as if by a ball of the radius touching both. Surfaces are trimmed back and joined to it; faces of one solid that meet are rounded like a fillet.",
+    params: [{ key: "radius", label: "Radius", defaultValue: "2", positive: true, group: "size" }],
+  },
   enclose: {
     type: "enclose",
     label: "Enclose",

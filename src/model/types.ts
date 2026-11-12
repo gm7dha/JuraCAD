@@ -13,7 +13,7 @@ import type { FinishId } from "./finishes";
 import type { LibraryInsert } from "../library/types";
 
 /** The kinds of feature JuraCAD can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog" | "simplify" | "mateConnector" | "composite" | "modifyFillet" | "frame" | "trimFrame" | "gusset" | "curve";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog" | "simplify" | "mateConnector" | "composite" | "modifyFillet" | "frame" | "trimFrame" | "gusset" | "curve" | "boundary" | "faceBlend";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -421,6 +421,10 @@ export interface Feature {
   breakStyle?: "chamfer";
   /** Fill: meet the faces beside the edges smoothly (tangent to them) instead of at an angle. */
   continuity?: "tangent";
+  /** Boundary surface: its curves each way (missing on every other feature). */
+  boundary?: BoundaryDef;
+  /** Face blend: side 2's faces and its other choices (side 1 is `picks`). */
+  blend?: FaceBlendDef;
   /** Thicken: half the thickness each side of the face or surface (then which way doesn't matter). */
   bothSides?: boolean;
   /** Shell: hollow the part closed inside, keeping every face (no opening), whatever faces are picked. (Shell's `flipSide` puts the walls outside the part.) */
@@ -1285,3 +1289,34 @@ export interface CurveDef {
 
 /** How a bridging curve meets what it joins: just touching, in the same direction, or bending the same too. */
 export type BridgeMatch = "position" | "tangent" | "curvature";
+
+/** One boundary curve of a Boundary surface: a part's edge, a curve feature or a sketch's curves (one run). */
+export interface BoundaryCurve {
+  edge?: TopoPick;
+  curve?: string;
+  sketch?: string;
+  /** A part edge's side meets the face beside it smoothly ("tangent") or bending the same ("curvature"). Missing = just through it. */
+  match?: "tangent" | "curvature";
+  /** A solid's edge has a face either side: match the other one (missing = the first found; a note names it). */
+  otherFace?: boolean;
+}
+
+/** Boundary surface (Onshape's): curves in two directions round one patch (up to two each way). */
+export interface BoundaryDef {
+  u: BoundaryCurve[];
+  v: BoundaryCurve[];
+  /** While editing: which direction a click adds to. Not saved. */
+  picking?: "u" | "v";
+}
+
+/** Face blend (Onshape's): a rolling-ball blend between side 1 (`Feature.picks`) and side 2's faces. */
+export interface FaceBlendDef {
+  side2: TopoPick[];
+  /** Roll the ball on the other side of side 1's / side 2's faces (from the side found automatically). */
+  flip1?: boolean;
+  flip2?: boolean;
+  /** Leave the faces as they are: the blend is a surface of its own (missing = trim the faces back and join them to it). */
+  noTrim?: boolean;
+  /** While editing: which side a click adds to. Not saved. */
+  picking?: "side1" | "side2";
+}

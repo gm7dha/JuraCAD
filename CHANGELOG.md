@@ -8,6 +8,16 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.66 — Boundary surface and Face blend
+
+- New **Boundary surface**: a surface through curves round its edges in two directions (part edges, 3D curves or sketches).
+  An edge can carry the face beside it on smoothly, or bending the same way; at a solid's edge you choose which face, and a
+  note says which was used. It follows its curves exactly.
+- New **Face blend**: a rounded blend rolled between two sets of faces on any parts or surfaces. Surfaces are trimmed and
+  joined to it (if they can't be trimmed cleanly you get the blend on its own, with a note); faces of one solid that meet are
+  rounded like a fillet. A note says which side the ball rolls on; Flip changes it.
+- Claude can make both.
+
 ## v0.65 — Frames
 
 - New **Frame** tool, like Onshape's: aluminium extrusion (2020, 2040, 3030, 4040), box section, angle, round tube, flat bar,

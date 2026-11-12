@@ -143,6 +143,14 @@ function usesOf(f: Feature): Uses {
     if (c.curveList) lists.push({ what: "curve it joins", many: "curves it joins", features: c.curveList, ...(f.picks?.length ? { least: 0 } : {}) });
   }
   for (const e of f.pathEdges ?? []) needPart(e.partId);
+  // A Boundary surface needs every curve it goes through (the outline changes without one).
+  for (const c of [...(f.boundary?.u ?? []), ...(f.boundary?.v ?? [])]) {
+    needPart(c.edge?.partId);
+    need(c.curve);
+    need(c.sketch);
+  }
+  // A Face blend's side 2 (side 1 is its picks).
+  if (f.blend?.side2.length) lists.push({ what: "face of its side 2", many: "faces of its side 2", parts: f.blend.side2.map((p) => p.partId) });
   if (f.connector?.plane?.kind === "face") need(f.connector.plane.planeRef);
   needPart(f.connector?.owner);
   need(f.transform?.fromConnector);
@@ -212,7 +220,7 @@ const SOLID_MAKERS = new Set<Feature["type"]>(["fastener", "derived", "coil", "t
 /** Types that, without `apart`, add to / cut from the latest solid part. */
 const LATEST_USERS = new Set<Feature["type"]>(["box", "cylinder", "sphere", "extrude", "revolve", "hole", "import", "sweep", "loft", "text", "coil", "rib", "fastener"]);
 
-const isSurfaceFeature = (f: Feature) => !!f.surface || f.type === "fill" || f.type === "offsetSurface" || f.type === "enclose" || f.type === "ruled";
+const isSurfaceFeature = (f: Feature) => !!f.surface || f.type === "fill" || f.type === "offsetSurface" || f.type === "enclose" || f.type === "ruled" || f.type === "boundary" || f.type === "faceBlend";
 
 /**
  * Does this feature (built) make a new solid part, so it becomes the part old-style Add/Remove features act on?
@@ -327,6 +335,7 @@ export function withoutGone(f: Feature, gone: Set<string>): Feature {
     out = { ...out, ...patch };
   };
   if (f.picks?.some((p) => partGone(p.partId))) set({ picks: f.picks.filter((p) => !partGone(p.partId)) });
+  if (f.blend?.side2.some((p) => partGone(p.partId))) set({ blend: { ...f.blend, side2: f.blend.side2.filter((p) => !partGone(p.partId)) } });
   if (f.pattern?.sources.some(featureGone)) set({ pattern: { ...f.pattern, sources: f.pattern.sources.filter((id) => !featureGone(id)) } });
   if (f.mirror?.sources.some(featureGone)) set({ mirror: { ...f.mirror, sources: f.mirror.sources.filter((id) => !featureGone(id)) } });
   if (f.loft?.profiles) out = loftWithoutGone(out, featureGone, partGone);
