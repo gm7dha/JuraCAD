@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addDrawing, addRevision, parseDrawings, putDimension, putNote, setStandard } from "../src/drawing/drawing";
+import { addDrawing, addRevision, numberInspections, parseDrawings, putDimension, putNote, removeDimension, setStandard, withProjection } from "../src/drawing/drawing";
 import { clipToOutline, cropKeeps, cropOutline, insideOutline, parseCrop, smoothLoop, withoutCrop } from "../src/drawing/crop";
 import { layoutSheet, withComma, type Prim } from "../src/drawing/sheet";
 import { CsvError, parseCsv, parseTable } from "../src/drawing/tables";
@@ -42,6 +42,14 @@ describe("crop view: clipping", () => {
     const pieces = clipToOutline(arc, square);
     expect(pieces.length).toBe(4);
     for (const p of pieces) for (let i = 0; i < p.length; i += 2) expect(p[i] >= -1e-9 && p[i] <= 10 + 1e-9 && p[i + 1] >= -1e-9 && p[i + 1] <= 10 + 1e-9).toBe(true);
+  });
+  it("keeps a line lying exactly along the crop's edge", () => {
+    const poly = cropOutline({ a: [0, 0], b: [0.5, 1] }, [0, 0, 40, 20]);
+    // The 40 × 20 rectangle's outline: its top and bottom edges lie along the crop's.
+    const kept = clipToOutline([0, 0, 40, 0, 40, 20, 0, 20, 0, 0], poly);
+    const len = kept.reduce((sum, p) => sum + p.reduce((acc, _v, i) => (i >= 2 && i % 2 === 0 ? acc + Math.hypot(p[i] - p[i - 2], p[i + 1] - p[i - 1]) : acc), 0), 0);
+    expect(len).toBeCloseTo(20 + 20 + 20, 6);
+    expect(clipToOutline([0, 20, 40, 20], poly)).toEqual([[0, 20, 20, 20]]);
   });
   it("works with a clicked outline that isn't convex, and a smooth one", () => {
     const L: [number, number][] = [
@@ -97,6 +105,28 @@ describe("crop view on the sheet", () => {
     const frontLines = l.prims.filter((p) => p.kind === "path" && p.style === "visible" && p.points.every((v, i) => (i % 2 ? v >= whole.box[1] - 1e-6 && v <= whole.box[3] + 1e-6 : v >= whole.box[0] - 1e-6 && v <= whole.box[2] + 1e-6)));
     for (const p of frontLines) if (p.kind === "path") for (let i = 0; i < p.points.length; i += 2) expect(p.points[i]).toBeLessThanOrEqual(right + 1e-6);
   });
+  it("also crops the section line, a detail's circle and letter, and balloons on that view", () => {
+    const base = cropped(newDrawing());
+    const d: Drawing = {
+      ...base,
+      // (No 3D view, so the balloons go on the front view.)
+      views: [...base.views.filter((v) => v.kind !== "iso"), { id: "sv", kind: "section", section: "s1" }, { id: "dv", kind: "detail", detail: "x1" }],
+      sections: [{ id: "s1", letter: "A", host: "front", a: [0, 0.5], b: [1, 0.5] }],
+      details: [{ id: "x1", letter: "B", host: "front", centre: [0.9, 0.5], radius: 2, zoom: 2 }],
+    };
+    const projections = { ...block, "section:s1": rectView("front", 0, 0, 40, 20), "detail:x1": { ...rectView("front", 34, 8, 4, 4), zoom: 2 } };
+    const l = layoutSheet(d, projections, { ...info, balloons: [{ item: 1, at: [5, 0, 10] }, { item: 2, at: [35, 0, 10] }] });
+    const front = l.views.find((v) => v.key === "front")!;
+    // The cutting line (dashed "centre" style) stays within the crop, give or take its 5 mm overrun.
+    const cutLines = l.prims.filter((p) => p.kind === "path" && p.style === "centre" && p.points.length === 4 && Math.abs(p.points[1] - p.points[3]) < 1e-6 && Math.abs(p.points[1] - (front.box[1] + front.box[3]) / 2) < 1e-6);
+    expect(cutLines.length).toBe(1);
+    for (const p of cutLines) if (p.kind === "path") expect(Math.max(p.points[0], p.points[2])).toBeLessThanOrEqual(front.box[2] + 5 + 1e-6);
+    const t = texts(l.prims);
+    // The detail's letter is outside the crop (its view's own name still says DETAIL B); balloon 2 points outside it too.
+    expect(t.filter((x) => x === "B").length).toBe(0);
+    expect(t).toContain("1");
+    expect(t).not.toContain("2");
+  });
   it("is saved with the view and reopened", () => {
     const d = cropped(newDrawing());
     const [read] = parseDrawings(JSON.parse(JSON.stringify([d])));
@@ -150,16 +180,20 @@ describe("title block entries and templates", () => {
     expect(parseDrawings([{ ...d, fields: [{ label: "", value: "x" }, 3] }])[0].fields).toBeUndefined();
   });
   it("saves a template and puts it on another drawing", () => {
-    const src: Drawing = { ...setStandard(newDrawing(), "ansi"), sheet: "ANSI B", title: { company: "GTS", drawnBy: "Me", title: "Bracket" }, fields: [{ label: "Finish", value: "" }], decimalComma: true };
+    const src: Drawing = { ...setStandard(newDrawing(), "ansi"), projection: "third", sheet: "ANSI B", title: { company: "GTS", drawnBy: "Me", title: "Bracket" }, fields: [{ label: "Finish", value: "" }], decimalComma: true };
     const t = templateFrom(src, "t1", "  US shop ");
     expect(t.name).toBe("US shop");
     expect(t.title).toEqual({ company: "GTS", drawnBy: "Me" });
     const list = parseTemplates(JSON.parse(serializeTemplates([t])));
     expect(list).toEqual([t]);
-    const other: Drawing = { ...newDrawing(), title: { title: "Lid", material: "Oak" } };
+    // (A hand-placed top view on sheet 2 goes back to its place when the projection changes.)
+    const base = newDrawing();
+    const other: Drawing = { ...base, title: { title: "Lid", material: "Oak" }, pages: [{ id: "p2", sheet: "A4", views: [{ id: "t", kind: "top", at: [50, 50] }, { id: "i", kind: "iso", at: [200, 100] }] }] };
     const out = applyTemplate(other, list[0]);
     expect([out.sheet, out.standard, out.projection, out.decimalComma]).toEqual(["ANSI B", "ansi", "third", true]);
-    expect(out.title).toEqual({ title: "Lid", company: "GTS", drawnBy: "Me" });
+    // (Material isn't in the template, so the drawing's stays.)
+    expect(out.title).toEqual({ title: "Lid", material: "Oak", company: "GTS", drawnBy: "Me" });
+    expect(out.pages![0].views).toEqual([{ id: "t", kind: "top" }, { id: "i", kind: "iso", at: [200, 100] }]);
     expect(out.fields).toEqual([{ label: "Finish", value: "" }]);
     expect(putTemplate(list, { ...t, id: "t2", name: "us SHOP", sheet: "A3" })).toEqual([{ ...t, name: "us SHOP", sheet: "A3" }]);
     expect(parseTemplates([{ id: 5 }, { id: "x", sheet: "A9" }, "junk"])).toEqual([{ id: "x", name: "My template", sheet: "A4", title: {} }]);
@@ -167,12 +201,26 @@ describe("title block entries and templates", () => {
 });
 
 describe("drawing standards", () => {
-  it("ANSI turns to third-angle; ISO back to first-angle", () => {
-    const a = setStandard(newDrawing(), "ansi");
+  it("the standard is its own choice: nothing moves, and choosing the one shown changes nothing", () => {
+    const placed: Drawing = { ...newDrawing(), projection: "third", views: newDrawing().views.map((v) => (v.kind === "top" ? { ...v, at: [80, 150] as [number, number] } : v)) };
+    expect(setStandard(placed, "iso")).toBe(placed);
+    const a = setStandard(placed, "ansi");
     expect([a.standard, a.projection]).toEqual(["ansi", "third"]);
-    const i = setStandard(a, "iso");
+    expect(a.views).toEqual(placed.views);
+    const i = setStandard({ ...a, projection: undefined }, "iso");
     expect(i.standard).toBeUndefined();
-    expect(i.projection).toBeUndefined();
+    expect(setStandard(a, "ansi")).toBe(a);
+    // Inch designs start ANSI.
+    const inch = addDrawing({ ...emptyDocument(), units: "in" }, "d1", null).drawings![0];
+    expect([inch.standard, inch.projection, inch.sheet]).toEqual(["ansi", "third", "ANSI A"]);
+  });
+  it("switching projection re-places the lined-up views on every sheet, and nothing when it isn't changing", () => {
+    const d: Drawing = { ...newDrawing(), views: [{ id: "f", kind: "front", at: [100, 100] }, { id: "i", kind: "iso", at: [250, 150] }], pages: [{ id: "p2", sheet: "A3", views: [{ id: "r", kind: "right", at: [20, 20] }], fit: { down: true } }] };
+    expect(withProjection(d, false)).toBe(d);
+    const t = withProjection(d, true);
+    expect(t.projection).toBe("third");
+    expect(t.views).toEqual([{ id: "f", kind: "front" }, { id: "i", kind: "iso", at: [250, 150] }]);
+    expect(t.pages).toEqual([{ id: "p2", sheet: "A3", views: [{ id: "r", kind: "right" }] }]);
   });
   it("ANSI writes an upright dimension's number across the sheet, in a gap in its line", () => {
     const dim: Dimension = { id: "v", view: "front", type: "vertical", a: pt(0, 0), b: pt(0, 20), offset: -8 };
@@ -184,6 +232,15 @@ describe("drawing standards", () => {
     const paths = (l: ReturnType<typeof layoutSheet>) => l.prims.slice(l.dims[0].from, l.dims[0].to).filter((p) => p.kind === "path").length;
     expect(paths(ansi)).toBe(paths(iso) + 1);
   });
+  it("a decimal comma goes on every number the sheet works out, never on what the user typed", () => {
+    const d: Drawing = { ...newDrawing(), scale: 2.5, title: { partNumber: "BRK-1.2" }, decimalComma: true, views: newDrawing().views.map((v) => (v.kind === "top" ? { ...v, scale: 1.5 } : v)) };
+    const t = texts(layoutSheet(d, block, { ...info, bom: [{ item: 1, name: "Pin 2.5", quantity: 2, weight: "12.5 g" }] }).prims);
+    expect(t).toContain("2,5:1");
+    expect(t).toContain("SCALE 1,5:1");
+    expect(t).toContain("12,5 g");
+    expect(t).toContain("BRK-1.2");
+    expect(t).toContain("Pin 2.5");
+  });
   it("a decimal comma changes the numbers only", () => {
     expect(withComma({ kind: "text", x: 0, y: 0, text: "Ø12.5 [0.492]", size: 3, anchor: "middle" })).toMatchObject({ text: "Ø12,5 [0,492]" });
     expect(withComma({ kind: "text", x: 0, y: 0, text: "M6x1. THRU", size: 3, anchor: "middle" })).toMatchObject({ text: "M6x1. THRU" });
@@ -191,13 +248,27 @@ describe("drawing standards", () => {
     const l = layoutSheet({ ...putDimension(newDrawing(), dim), decimalComma: true }, block, info);
     expect(texts(l.prims.slice(l.dims[0].from, l.dims[0].to))).toContain("12,5");
   });
-  it("inspection balloons number each dimension", () => {
-    let d = newDrawing();
-    d = putDimension(d, { id: "a", view: "front", type: "horizontal", a: pt(0, 0), b: pt(40, 0), offset: -8 });
-    d = putDimension(d, { id: "b", view: "front", type: "vertical", a: pt(0, 0), b: pt(0, 20), offset: -8 });
-    const t = texts(layoutSheet({ ...d, inspection: true }, block, info).prims);
-    expect(t).toContain("1");
-    expect(t).toContain("2");
+  it("inspection balloons keep their numbers across sheets, crops and deletes", () => {
+    let d: Drawing = { ...newDrawing(), inspection: true };
+    d = putDimension(d, { id: "a", view: "front", type: "horizontal", a: pt(0, 0), b: pt(10, 0), offset: -8 });
+    d = putDimension(d, { id: "b", view: "front", type: "horizontal", a: pt(30, 0), b: pt(35, 0), offset: -8 });
+    d = { ...d, pages: [{ id: "p2", sheet: "A4", views: [{ id: "f2", kind: "front" }], dimensions: [{ id: "c", view: "front", type: "vertical", a: pt(0, 0), b: pt(0, 20), offset: -8 }] }] };
+    d = numberInspections(d);
+    expect([...d.dimensions!.map((x) => x.check), d.pages![0].dimensions![0].check]).toEqual([1, 2, 3]);
+    // A new one gets the next number; deleting one leaves the others alone.
+    d = numberInspections(removeDimension(putDimension(d, { id: "e", view: "front", type: "vertical", a: pt(40, 0), b: pt(40, 20), offset: 8 }), "a"));
+    expect(d.dimensions!.map((x) => [x.id, x.check])).toEqual([
+      ["b", 2],
+      ["e", 4],
+    ]);
+    // Cropping "b" out hides its balloon but doesn't renumber "e".
+    const cropped: Drawing = { ...d, views: d.views.map((v) => (v.kind === "front" ? { ...v, crop: { a: [0.9, 0] as [number, number], b: [1.1, 1] as [number, number] } } : v)) };
+    const t = texts(layoutSheet(cropped, block, info).prims);
+    expect(t).toContain("4");
+    expect(t).not.toContain("2");
+    expect(parseDrawings(JSON.parse(JSON.stringify([d])))[0].dimensions!.map((x) => x.check)).toEqual([2, 4]);
+    // Off: nothing is numbered.
+    expect(numberInspections({ ...d, inspection: undefined })).toEqual({ ...d, inspection: undefined });
   });
 });
 

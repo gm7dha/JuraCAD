@@ -243,7 +243,7 @@ export const DRAWING_EXTRA_TOOLS: ToolDef[] = [
     name: "set_drawing_style",
     title: "Set a drawing's standard and title block entries",
     description:
-      'Drawing-wide settings: "standard": "iso" (first-angle, numbers along dimension lines) or "ansi" (third-angle, numbers always read across); "decimal_comma": true for 12,5; "inspection_balloons": true numbers every dimension in a small balloon for a checking report; "title_fields": up to 6 entries of your own for a row on top of the title block, e.g. [{"label": "Finish", "value": "Anodised"}, {"label": "Checked by", "value": "JS"}] ([] removes them).',
+      'Drawing-wide settings: "standard": "iso" (numbers along dimension lines) or "ansi" (numbers always read across) — the first/third-angle arrangement is separate (edit_drawing "projection"); "decimal_comma": true for 12,5; "inspection_balloons": true numbers every dimension in a small balloon for a checking report; "title_fields": up to 6 entries of your own for a row on top of the title block, e.g. [{"label": "Finish", "value": "Anodised"}, {"label": "Checked by", "value": "JS"}] ([] removes them).',
     inputSchema: { type: "object", properties: { drawing: DRAWING_REF, standard: { type: "string", enum: ["iso", "ansi"] }, decimal_comma: { type: "boolean" }, inspection_balloons: { type: "boolean" }, title_fields: { type: "array", items: { type: "object" } } } },
     run: async (s, a) => {
       noExtras(a, ["drawing", "standard", "decimal_comma", "inspection_balloons", "title_fields"], "set_drawing_style");
@@ -253,7 +253,8 @@ export const DRAWING_EXTRA_TOOLS: ToolDef[] = [
       if (a.standard !== undefined) {
         const std = oneOf(a.standard, ["iso", "ansi"] as const, "standard");
         next = setStandard(next, std);
-        said.push(std === "ansi" ? "ANSI (third-angle)" : "ISO (first-angle)");
+        const usual = std === "ansi";
+        said.push(`standard ${std === "ansi" ? "ANSI" : "ISO"}${(next.projection === "third") !== usual ? ` (its views are still arranged ${next.projection === "third" ? "third" : "first"} angle; edit_drawing "projection": "${usual ? "third" : "first"}" changes that)` : ""}`);
       }
       const flag = (raw: unknown, key: "decimalComma" | "inspection", where: string, words: string) => {
         if (raw === undefined) return;
@@ -270,6 +271,7 @@ export const DRAWING_EXTRA_TOOLS: ToolDef[] = [
           const o = object(f, `title_fields[${i}]`);
           noExtras(o, ["label", "value"], `title_fields[${i}]`);
           text(o.label, `title_fields[${i}].label`);
+          if (o.value !== undefined && typeof o.value !== "string") throw new InputError(`title_fields[${i}].value should be text, e.g. "Anodised" (write a number in quotes: "0.1").`);
         });
         if (raw.length > 6) throw new InputError("title_fields: at most 6 entries.");
         const { fields: _old, ...rest } = next;

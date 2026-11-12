@@ -8,6 +8,8 @@
 export const MAX_TABLE_ROWS = 60;
 export const MAX_TABLE_COLUMNS = 12;
 export const MAX_CELL = 80;
+/** Most characters of CSV read (a 60 × 12 table of 80-character cells is under 60,000). */
+export const MAX_CSV_CHARS = 200_000;
 
 /** Plain-English trouble reading a CSV file. */
 export class CsvError extends Error {}
@@ -18,6 +20,7 @@ export class CsvError extends Error {}
  * Empty lines are skipped; trailing empty cells dropped. Throws CsvError.
  */
 export function parseCsv(text: string): string[][] {
+  if (text.length > MAX_CSV_CHARS) throw new CsvError(`That file is too big for a drawing table (more than ${MAX_CSV_CHARS / 1000} thousand characters).`);
   const src = text.replace(/^﻿/, "").replace(/\r\n?/g, "\n");
   const first = src.split("\n", 1)[0] ?? "";
   const count = (c: string) => first.split(c).length - 1;

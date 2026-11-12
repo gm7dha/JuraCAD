@@ -91,6 +91,8 @@ function crossings(p: P2, q: P2, poly: readonly P2[]): number[] {
 /** A polyline (flat x, y list) cut to the inside of a closed outline: the pieces left. */
 export function clipToOutline(line: readonly number[], poly: readonly P2[]): number[][] {
   if (poly.length < 3) return [line.slice()];
+  // (A line lying along the crop's edge — a part edge where the crop follows it — counts as inside.)
+  const tol = edgeTolerance(poly);
   const pieces: number[][] = [];
   let cur: number[] | null = null;
   const end = () => {
@@ -107,7 +109,7 @@ export function clipToOutline(line: readonly number[], poly: readonly P2[]): num
       if (t1 - t0 < 1e-12) continue;
       const tm = (t0 + t1) / 2;
       const mid = [p[0] + (q[0] - p[0]) * tm, p[1] + (q[1] - p[1]) * tm];
-      if (!insideOutline(mid, poly)) {
+      if (!insideOutline(mid, poly) && !onOutline(mid, poly, tol)) {
         end();
         continue;
       }
@@ -131,17 +133,24 @@ export function outlineBox(poly: readonly P2[]): [number, number, number, number
 /** Is a dimension (or tag) that measures these points kept by the crop? Yes when any of them is inside. */
 export function cropKeeps(points: readonly (readonly number[])[], poly: readonly P2[] | null): boolean {
   if (!poly || poly.length < 3) return true;
-  return points.some((p) => insideOutline(p, poly) || onOutline(p, poly));
+  const tol = edgeTolerance(poly);
+  return points.some((p) => insideOutline(p, poly) || onOutline(p, poly, tol));
 }
 
-/** Is a point on the outline itself (within a hair)? */
-function onOutline(p: readonly number[], poly: readonly P2[]): boolean {
+/** How near the outline counts as on it: a millionth of its size (at least 1e-9 mm). */
+export function edgeTolerance(poly: readonly P2[]): number {
+  const [x0, y0, x1, y1] = outlineBox(poly);
+  return Math.max(1e-9, Math.hypot(x1 - x0, y1 - y0) * 1e-6);
+}
+
+/** Is a point on the outline itself (within `tol`)? */
+export function onOutline(p: readonly number[], poly: readonly P2[], tol: number): boolean {
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
     const [ax, ay] = poly[j];
     const [bx, by] = poly[i];
     const L2 = (bx - ax) ** 2 + (by - ay) ** 2;
     const t = L2 > 0 ? Math.max(0, Math.min(1, ((p[0] - ax) * (bx - ax) + (p[1] - ay) * (by - ay)) / L2)) : 0;
-    if (Math.hypot(p[0] - (ax + t * (bx - ax)), p[1] - (ay + t * (by - ay))) < 1e-6) return true;
+    if (Math.hypot(p[0] - (ax + t * (bx - ax)), p[1] - (ay + t * (by - ay))) <= tol) return true;
   }
   return false;
 }

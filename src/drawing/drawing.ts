@@ -64,7 +64,7 @@ export function addDrawing(doc: JuraCADDocument, id: string, source: Drawing["so
     name: nextDrawingName(doc),
     source,
     sheet: us ? "ANSI A" : "A4",
-    ...(us ? { projection: "third" as const } : {}),
+    ...(us ? { projection: "third" as const, standard: "ansi" as const } : {}),
     hiddenLines: true,
     views: DEFAULT_VIEWS.map((kind) => ({ id: `${id}-${kind}`, kind })),
     title: {},
@@ -165,14 +165,57 @@ export function addRevision(d: Drawing, id: string, r: { description: string; da
 }
 
 /**
- * Choose the drawing standard: ISO (missing) or ANSI. The projection follows
- * (ISO first-angle, ANSI third-angle, as Onshape's templates do) and the
- * lined-up views go back to their places for it.
+ * Choose the drawing standard: ISO (missing) or ANSI — how dimensions read.
+ * The projection is a separate choice (as in Onshape), so nothing moves; the
+ * same drawing back when the standard isn't changing.
  */
 export function setStandard(d: Drawing, standard: "iso" | "ansi"): Drawing {
-  const { standard: _s, projection: _p, ...rest } = d;
-  const next: Drawing = standard === "ansi" ? { ...rest, standard: "ansi", projection: "third" } : rest;
-  return (next.projection === "third") === (d.projection === "third") ? next : arrangeLinedUp(next);
+  if ((d.standard === "ansi") === (standard === "ansi")) return d;
+  const { standard: _s, ...rest } = d;
+  return standard === "ansi" ? { ...rest, standard: "ansi" } : rest;
+}
+
+/** The projection a standard usually goes with (ISO first-angle, ANSI third-angle). */
+export const usualThird = (standard: Drawing["standard"]) => standard === "ansi";
+
+/**
+ * Switch first/third angle on a whole drawing: every sheet's lined-up views
+ * go back to their places for it (3D, section, detail and flat views you
+ * moved stay put). The same drawing back when it isn't changing.
+ */
+export function withProjection(d: Drawing, third: boolean): Drawing {
+  if ((d.projection === "third") === third) return d;
+  const { projection: _p, ...rest } = arrangeLinedUp(d);
+  const next: Drawing = third ? { ...rest, projection: "third" } : rest;
+  if (!next.pages) return next;
+  // (Each sheet's own views and its saved room for dimensions.)
+  return {
+    ...next,
+    pages: next.pages.map((p) => {
+      const { fit: _f, ...q } = p;
+      return { ...q, views: placedOffLinedUp(p.views) };
+    }),
+  };
+}
+
+/** The biggest inspection number used on any sheet (0 for none). */
+function lastCheck(d: Drawing): number {
+  let most = 0;
+  for (const x of [...(d.dimensions ?? []), ...(d.pages ?? []).flatMap((p) => p.dimensions ?? [])]) most = Math.max(most, x.check ?? 0);
+  return most;
+}
+
+/**
+ * With inspection balloons on: give every dimension that hasn't one yet (on
+ * any sheet, in order) the next inspection number, so numbers never change
+ * when other dimensions are deleted, hidden or moved. Off: unchanged.
+ */
+export function numberInspections(d: Drawing): Drawing {
+  if (!d.inspection) return d;
+  let n = lastCheck(d);
+  const number = <T extends { dimensions?: Dimension[] }>(x: T): T => (x.dimensions?.some((m) => !m.check) ? { ...x, dimensions: x.dimensions.map((m) => (m.check ? m : { ...m, check: ++n })) } : x);
+  const first = number(d);
+  return first.pages ? { ...first, pages: first.pages.map(number) } : first;
 }
 
 export function removeNote(d: Drawing, id: string): Drawing {
@@ -187,8 +230,13 @@ export function removeNote(d: Drawing, id: string): Drawing {
  * the 3D, section, detail and flat pattern views were moved to.
  */
 export function arrangeLinedUp(d: Drawing): Drawing {
+  return { ...withoutFit(d), views: placedOffLinedUp(d.views) };
+}
+
+/** Views with the lined-up ones' hand-placed spots dropped (they go back to their automatic places). */
+function placedOffLinedUp(views: DrawingView[]): DrawingView[] {
   const lined = new Set<ViewKind>(["front", "top", "right", "left", "back", "bottom"]);
-  return { ...withoutFit(d), views: d.views.map(({ at, ...v }) => (lined.has(v.kind) || !at ? v : { ...v, at })) };
+  return views.map(({ at, ...v }) => (lined.has(v.kind) || !at ? v : { ...v, at }));
 }
 
 /**
@@ -529,6 +577,7 @@ function parseDimension(raw: unknown): Dimension | null {
     ...(r.callout === true && type === "diameter" ? { callout: true } : {}),
     ...(type === "angle" ? angleParts(r) : {}),
     ...(isPlaces(r.places) ? { places: r.places as number } : {}),
+    ...(typeof r.check === "number" && Number.isInteger(r.check) && r.check > 0 && r.check < 100000 ? { check: r.check } : {}),
     ...(r.frame === "basic" || r.frame === "inspection" ? { frame: r.frame } : {}),
     ...parseLimitsFit(r.limitsFit, type),
     ...(type === "chamfer" && (r.along === "h" || r.along === "v") ? { along: r.along } : {}),

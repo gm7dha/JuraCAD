@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { putNote, updateDrawing } from "../src/drawing/drawing";
 import { DesignFolder } from "../src/mcp/files";
 import { Session } from "../src/mcp/session";
 import { callTool, type ToolResult } from "../src/mcp/tools";
@@ -68,10 +69,21 @@ describe("drawing revisions, crops and style for Claude", () => {
     expect(await fails(s, "crop_view", { view: "front", remove: true })).toMatch(/isn't cropped/);
 
     expect(await ok(s, "set_drawing_style", { standard: "ansi", decimal_comma: true, title_fields: [{ label: "Finish", value: "Anodised" }] })).toMatch(/ANSI/);
-    expect([drawing(s).standard, drawing(s).projection, drawing(s).decimalComma]).toEqual(["ansi", "third", true]);
+    // (The projection is its own choice: the reply says how to change it.)
+    expect([drawing(s).standard, drawing(s).projection, drawing(s).decimalComma]).toEqual(["ansi", undefined, true]);
+    expect(await fails(s, "set_drawing_style", { title_fields: [{ label: "Tolerance", value: 0.1 }] })).toMatch(/should be text/);
+    await ok(s, "set_drawing_style", { inspection_balloons: true });
+    expect(drawing(s).dimensions ?? []).toEqual([]);
+    expect(await ok(s, "add_dimension", { view: "front", from: [0, 0, 0], to: [40, 0, 0] })).toMatch(/40/);
+    expect(drawing(s).dimensions!.map((x) => x.check)).toEqual([1]);
+    expect(await ok(s, "describe_drawing", {})).toMatch(/Style: standard ANSI; decimal comma; inspection balloons; title block entries Finish "Anodised"; revisions A \(01\/11\/2026\): First issue; B/);
     expect(drawing(s).fields).toEqual([{ label: "Finish", value: "Anodised" }]);
-    await ok(s, "set_drawing_style", { standard: "iso", decimal_comma: false, title_fields: [] });
+    await ok(s, "set_drawing_style", { standard: "iso", decimal_comma: false, inspection_balloons: false, title_fields: [] });
     expect([drawing(s).standard, drawing(s).projection, drawing(s).decimalComma, drawing(s).fields]).toEqual([undefined, undefined, undefined, undefined]);
     expect(await fails(s, "set_drawing_style", {})).toMatch(/at least one/);
+
+    // A table from a CSV file is described with its cells.
+    s.commit(updateDrawing(s.doc, drawing(s).id, (d) => putNote(d, { id: "t1", at: [20, 190], text: "", table: [["Part", "Qty"], ["Bolt", "4"]] })));
+    expect(await ok(s, "describe_drawing", {})).toMatch(/N1: table \(2 rows × 2 columns, the first the heading\): \[Part \| Qty\] \[Bolt \| 4\] at \(20, 190\)/);
   });
 });

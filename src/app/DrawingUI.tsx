@@ -12,7 +12,7 @@ import { create } from "zustand";
 import { addPage, changePage, FIRST_PAGE, knownPage, missingPartMessage, nextLetterOnAnySheet, pageIds, pageNumber, pageOf, removePage, addedSheetMessage } from "../drawing/pages";
 
 import { chooseProjections } from "./projectionChoice";
-import { arrangeLinedUp, arrangeViews, withoutFit, nextRevision, PLACES, projectionKinds, putDimension, putNote, removeDimension, removeNote, SHEET_LABELS, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
+import { arrangeViews, withProjection, withoutFit, nextRevision, PLACES, projectionKinds, putDimension, putNote, removeDimension, removeNote, SHEET_LABELS, SHEET_SIZES, toggleView, VIEW_KINDS, VIEW_LABELS } from "../drawing/drawing";
 import { sheetDxf, sheetsPdf, sheetSvg } from "../drawing/export";
 import { autoDimensionSheet } from "../drawing/autoDimension";
 import { holeOfCircle, tapSizes } from "../drawing/holeCallouts";
@@ -26,7 +26,7 @@ import type { InstanceInput, PartMesh, ViewProjection } from "../kernel/protocol
 import { activeDrawing, partsInStudio, useLengthUnit, useStore } from "../model/store";
 import { fromUnit, lengthNumber } from "../model/units";
 import { studiosOf } from "../model/studios";
-import { cropRel, MAX_CROP_POINTS } from "../drawing/crop";
+import { cropRel, MAX_CROP_POINTS, withoutCrop } from "../drawing/crop";
 import { CropsList, DrawingStyleFields, pickCsvTable, TemplatesSection, TitleFieldsEditor } from "./DrawingExtrasPanel";
 import type { ViewCrop } from "../model/types";
 import type { Shortening, BreakOut, DetailView, Dimension, Drawing, DrawingRevision, DrawingSymbol, GdtCharacteristic, JuraCADDocument, SectionCut, ViewHost } from "../model/types";
@@ -948,12 +948,11 @@ export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
                   title={tip}
                   aria-checked={(drawing.projection === "third") === third}
                   className={(drawing.projection === "third") === third ? "selected" : ""}
-                  onClick={() =>
-                    change((d) => {
-                      const { projection: _old, ...rest } = arrangeLinedUp(d);
-                      return withFit(third ? { ...rest, projection: "third" } : rest, projections ?? undefined, info);
-                    })
-                  }
+                  onClick={() => {
+                    // (Every sheet's lined-up views go back to their places; nothing when it isn't changing.)
+                    if ((drawing.projection === "third") === third) return;
+                    useStore.getState().changeDrawing((w) => changePage(withProjection(w, third), pageId, (p) => withFit(p, projections ?? undefined, info)));
+                  }}
                 >
                   {label}
                 </button>
@@ -1180,7 +1179,7 @@ export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
         </div>
         <TitleFieldsEditor drawing={drawing} change={change} />
       </section>
-      <TemplatesSection drawing={drawing} change={change} />
+      <TemplatesSection drawing={drawing} pageId={pageId} />
     </aside>
   );
 }
@@ -1699,8 +1698,10 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     if (resize) d = { ...d, views: d.views.map((v) => (v.id === resize.viewId ? { ...v, scale: resize.scale } : v)) };
     if (dimDrag) d = { ...d, dimensions: d.dimensions?.map((x) => (x.id === dimDrag.id ? withDimPatch(x, dimDrag.patch) : x)) };
     if (noteDrag) d = { ...d, notes: d.notes?.map((x) => (x.id === noteDrag.id ? { ...x, at: noteDrag.at } : x)) };
+    // While cropping, every view is shown whole (and found by its whole outline), so a crop can be drawn bigger.
+    if ((tool === "crop" || tool === "cropShape") && d.views.some((v) => v.crop)) d = { ...d, views: d.views.map((v) => withoutCrop(v)) };
     return d;
-  }, [drawing, drag, resize, dimDrag, noteDrag]);
+  }, [drawing, drag, resize, dimDrag, noteDrag, tool]);
   const unit = useLengthUnit();
   const taps = useMemo(() => tapSizes(doc, drawing), [doc, drawing]);
   const ownInfo = useMemo<SheetInfo>(

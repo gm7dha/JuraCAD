@@ -64,7 +64,7 @@ import { setPartProperties as setPartPropertiesIn } from "../assembly/properties
 import { moveFeature as moveFeatureIn } from "./reorder";
 import { DEFAULT_MATERIAL } from "./materials";
 import { chooseFinish, setColourIn, type FinishId } from "./finishes";
-import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameDrawing as renameDrawingIn, updateDrawing } from "../drawing/drawing";
+import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameDrawing as renameDrawingIn, updateDrawing, numberInspections } from "../drawing/drawing";
 import { withDragChange, type DragChange } from "../assembly/drag";
 import type { Placement } from "../assembly/math";
 import { importName } from "./importFile";
@@ -1633,7 +1633,8 @@ export const useStore = create<AppState>((set, get) => {
 
     changeDrawing: (fn) => {
       const d = activeDrawing(get());
-      if (d) change((doc) => updateDrawing(doc, d.id, fn));
+      // (With inspection balloons on, new dimensions get the next numbers — numberInspections.)
+      if (d) change((doc) => updateDrawing(doc, d.id, (x) => numberInspections(fn(x))));
     },
 
     renameDrawing: (id, name) => change((doc) => renameDrawingIn(doc, id, name)),

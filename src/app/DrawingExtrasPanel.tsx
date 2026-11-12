@@ -5,9 +5,10 @@
  * The logic is pure in src/drawing (crop.ts, templates.ts, tables.ts).
  */
 import { useEffect, useState } from "react";
-import { setStandard } from "../drawing/drawing";
+import { setStandard, usualThird, withoutFit } from "../drawing/drawing";
+import { changePage } from "../drawing/pages";
 import { isRectCrop, withoutCrop } from "../drawing/crop";
-import { CsvError, parseCsv } from "../drawing/tables";
+import { CsvError, MAX_CSV_CHARS, parseCsv } from "../drawing/tables";
 import { applyTemplate, putTemplate, templateFrom, type DrawingTemplate } from "../drawing/templates";
 import { defaultTemplateId, loadTemplates, saveTemplates, setDefaultTemplateId } from "../drawing/templateStorage";
 import { MAX_TITLE_FIELDS, SHEETS } from "../drawing/sheet";
@@ -34,11 +35,24 @@ export function DrawingStyleFields({ drawing, change, part }: { drawing: Drawing
               ["ansi", "ANSI (US)", "ANSI (US): third-angle views, dimension numbers always read across the sheet"],
             ] as const
           ).map(([key, label, tip]) => (
-            <button type="button" key={key} role="radio" title={tip} aria-checked={ansi === (key === "ansi")} className={ansi === (key === "ansi") ? "selected" : ""} onClick={() => change((d) => setStandard(d, key))}>
+            <button
+              type="button"
+              key={key}
+              role="radio"
+              title={tip}
+              aria-checked={ansi === (key === "ansi")}
+              className={ansi === (key === "ansi") ? "selected" : ""}
+              onClick={() => {
+                if (ansi !== (key === "ansi")) change((d) => setStandard(d, key));
+              }}
+            >
               {label}
             </button>
           ))}
         </div>
+        {usualThird(drawing.standard) !== (drawing.projection === "third") && (
+          <p className="panel-hint">{ansi ? "ANSI drawings usually have their views arranged third angle" : "ISO drawings usually have their views arranged first angle"} — you can change that under "Views arranged".</p>
+        )}
       </div>
     );
   }
@@ -125,7 +139,7 @@ function FieldRow({ field, onChange, onRemove }: { field: TitleField; onChange: 
 }
 
 /** Templates kept in this browser: save this drawing's sheet and title block as one, use one, choose one for new drawings. */
-export function TemplatesSection({ drawing, change }: { drawing: Drawing; change: Change }) {
+export function TemplatesSection({ drawing, pageId }: { drawing: Drawing; pageId: string }) {
   const [list, setList] = useState<DrawingTemplate[]>(() => loadTemplates());
   const [chosen, setChosen] = useState<string | null>(() => defaultTemplateId());
   const [name, setName] = useState("");
@@ -157,7 +171,10 @@ export function TemplatesSection({ drawing, change }: { drawing: Drawing; change
               <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }} title={`${t.name}: ${t.sheet}${t.standard === "ansi" ? ", ANSI" : ", ISO"}`}>
                 {t.name}
               </span>
-              <button type="button" className="text-button small-text" onClick={() => change((d) => applyTemplate(d, t))} title="Put this template's paper, standard and title block on this drawing">
+              <button type="button" className="text-button small-text" onClick={() =>
+                  // (The paper size goes on the sheet on show; the rest is the whole drawing's, every sheet's views re-placed if the projection changes.)
+                  useStore.getState().changeDrawing((w) => changePage({ ...applyTemplate(w, t), sheet: w.sheet }, pageId, (p) => (p.sheet === t.sheet ? p : withoutFit({ ...p, sheet: t.sheet }))))
+                } title="Put this template's paper, standard and title block on this drawing">
                 Use
               </button>
               <label className="check-row" title="New drawings start from this template">
@@ -231,6 +248,11 @@ export function CropsList({ drawing, change, name }: { drawing: Drawing; change:
 /** Table from CSV: pick a file and put it near the sheet's top-left corner (one undo step). */
 export function pickCsvTable(changeShownPage: (fn: (d: Drawing) => Drawing) => void) {
   pickFile(".csv,text/csv,text/plain", (file) => {
+    // (Checked before reading, so a huge file isn't loaded at all.)
+    if (file.size > MAX_CSV_CHARS * 4) {
+      useStore.getState().showToast("That file is too big for a drawing table.", "error");
+      return;
+    }
     void file.text().then(
       (text) => {
         const s = useStore.getState();

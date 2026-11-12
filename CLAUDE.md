@@ -326,11 +326,17 @@
   UI in `src/app/DrawingUI.tsx` (the sheet is an SVG drawn over the 3D view, which stays mounted).
   Crop view (`DrawingView.crop`: `{a, b}` rectangle or `{points, smooth?}` outline, fractions of the view's bounds; pure
   `src/drawing/crop.ts`: `cropOutline` (smooth = closed Catmull–Rom), `clipToOutline` every drawn line in layoutSheet's `draw`,
-  the view's box shrinks to the crop, dimensions/hole tags whose points are all outside are skipped, `cropKeeps`); tools "crop" /
-  "cropShape" (click the first point again to close), panel `CropsList`. Revisions may carry `by`/`approved` (BY and APPROVED
-  columns only when any row has them; `addRevision`). `Drawing.standard` "ansi" (`setStandard`: ANSI → third-angle, ISO → first;
-  `DimStyle.unidirectional`: lengths' numbers read across in a gap in the line), `decimalComma` (`withComma` on dimension text),
-  `inspection` (`inspectionBalloon` numbers each dimension), `fields` (≤ `MAX_TITLE_FIELDS` 6 entries of the user's own in a
+  points on the outline count as inside (`edgeTolerance`), the view's box shrinks to the crop, dimensions/hole tags/balloon
+  targets/detail letters whose points are all outside are skipped (`cropKeeps`), bend lines, detail circles and section lines are
+  clipped (a section's arrows sit at the clipped ends); tools "crop" / "cropShape" (click the first point again to close; while
+  one is on every view is shown and found whole), panel `CropsList`. Revisions may carry `by`/`approved` (BY and APPROVED
+  columns only when any row has them; `addRevision`). `Drawing.standard` "ansi" (`setStandard`: the standard only, nothing moves, a
+  no-op when unchanged; projection stays its own choice — the panel only suggests it; inch designs start ANSI;
+  `DimStyle.unidirectional`: lengths' numbers read across in a gap in the line). `withProjection(whole, third)` re-places the
+  lined-up views on EVERY sheet (panel, templates, edit_drawing). `decimalComma`: `withComma` on every number the sheet works out
+  (dimensions, hole table, scale notes and SCALE, bend list, parts list weights) — never on the user's text.
+  `inspection`: `Dimension.check` numbers given once by `numberInspections` (store `changeDrawing`, MCP `commitDrawing`; next after
+  the biggest on any sheet), so deleting, hiding or cropping never renumbers; `fields` (≤ `MAX_TITLE_FIELDS` 6 entries of the user's own in a
   `FIELDS_H` row on top of the title block, counted in `bottomReserve`). Templates (`src/drawing/templates.ts`: sheet, standard,
   projection, company/drawn by/material, fields, number style; `templateFrom`/`applyTemplate`/`parseTemplates`) kept in
   localStorage by `templateStorage.ts` (`juracad.drawingTemplates`, `juracad.drawingTemplate.default` = new drawings start from it,

@@ -6,7 +6,7 @@
  * making one from a drawing and putting one on a drawing.
  */
 import type { Drawing, SheetSize, TitleField } from "../model/types";
-import { arrangeLinedUp, parseFields, SHEET_SIZES, withoutFit } from "./drawing";
+import { parseFields, SHEET_SIZES, withoutFit, withProjection } from "./drawing";
 
 /** Title block entries a template keeps (the title, part number and notes belong to each drawing). */
 export const TEMPLATE_TITLE_KEYS = ["drawnBy", "material", "company"] as const;
@@ -49,16 +49,15 @@ export function templateFrom(d: Drawing, id: string, name: string): DrawingTempl
 /**
  * Put a template on a drawing: its sheet, standard, projection, number style
  * and title block entries (its own entries replace the drawing's; the title,
- * part number and notes stay). The views go back to their places when the
- * sheet or projection changes.
+ * part number and notes stay, and so do company, drawn by and material when
+ * the template has none). The views go back to their places when the sheet
+ * or projection changes — on every sheet (see withProjection).
  */
 export function applyTemplate(d: Drawing, t: DrawingTemplate): Drawing {
   const { standard: _s, projection: _p, fields: _f, places: _pl, decimalComma: _c, dualUnits: _du, ...rest } = d;
   const title: Drawing["title"] = { ...d.title };
-  for (const k of TEMPLATE_TITLE_KEYS) {
-    if (t.title[k]) title[k] = t.title[k];
-    else delete title[k];
-  }
+  // (Entries the template doesn't have are left as the drawing has them.)
+  for (const k of TEMPLATE_TITLE_KEYS) if (t.title[k]) title[k] = t.title[k];
   let next: Drawing = {
     ...rest,
     sheet: t.sheet,
@@ -71,7 +70,11 @@ export function applyTemplate(d: Drawing, t: DrawingTemplate): Drawing {
     ...(t.dualUnits ? { dualUnits: true as const } : {}),
   };
   if (next.sheet !== d.sheet) next = withoutFit(next);
-  if ((next.projection === "third") !== (d.projection === "third")) next = arrangeLinedUp(next);
+  if ((next.projection === "third") !== (d.projection === "third")) {
+    // (withProjection compares with the projection it's given, so start from the old one.)
+    const { projection: _q, ...plain } = next;
+    next = withProjection({ ...plain, ...(d.projection ? { projection: d.projection } : {}) }, next.projection === "third");
+  }
   return next;
 }
 

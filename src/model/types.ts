@@ -640,14 +640,15 @@ export interface DrawingView {
   source?: NonNullable<Drawing["source"]>;
   /** A view projected from a view of another part (one with `source`): that view's id. It shows the same part. */
   parent?: string;
-  /** Crop view (Onshape's): only what's inside this rectangle or outline is drawn (see drawing/crop.ts); missing = the whole view. */
+  /** Crop view (Onshape's): only what's inside this rectangle or outline is drawn, kept as fractions of the view's bounds (see drawing/crop.ts); missing = the whole view. */
   crop?: ViewCrop;
 }
 
 /**
  * A view's crop: a rectangle (two opposite corners) or a closed outline of
- * clicked points (`smooth` = a smooth curve through them), each as fractions
- * of the view's width and height, so it stays on the same place of the part.
+ * clicked points (`smooth` = a smooth curve through them), each point as
+ * fractions across the view's bounds (its whole drawn extent, x0…x1 and
+ * y0…y1, before any crop), so it stays on the same place of the part.
  */
 export type ViewCrop = { a: [number, number]; b: [number, number] } | { points: [number, number][]; smooth?: true };
 
@@ -912,6 +913,8 @@ export interface Dimension {
   rays?: [number, number];
   /** Decimal places to show (0–4, kept even when they're zeros); missing = the drawing's setting. */
   places?: number;
+  /** Its inspection balloon's number (Drawing.inspection), given once and kept, unique across the drawing's sheets. */
+  check?: number;
   /** A box round the number: "basic" (a theoretically exact size, for GD&T) or "inspection" (a rounded box: check this one). */
   frame?: "basic" | "inspection";
   /**
