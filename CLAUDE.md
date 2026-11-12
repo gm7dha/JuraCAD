@@ -440,7 +440,9 @@
   the face, decided mid-edge), × the span) or quintic (curvature: slope × `CURVATURE_REACH` 0.6, second derivative = the face's
   bend from a point h back, κ·|slope|²; an unmatched end bends as the cubic would); no V: each row an exact Bézier, lofted along the
   pair (ThruSections; B-spline interpolation through the grid wiggled; the filling with G1 folded back over the face); V curves:
-  Coons correction, rows fitted, and V curves must leave a matched edge along the face (else refused). Face blend (Onshape's): feature
+  Coons correction, rows fitted, the V curves themselves the first/last rows (exact), and they must leave a matched edge within
+  10° of the face (else refused). Rows (65, 129, … ≤ 513) are doubled until every curve is within `TOLERANCE` 1e-4 mm of the
+  surface (`worstGap`, 256 points each), else refused; curves with a sharp corner (> 1° between edges, `hasCorner`) are refused. Face blend (Onshape's): feature
   "faceBlend", side 1 = `picks` (faces), `Feature.blend` (`FaceBlendDef`: `side2`, `flip1`/`flip2`, `noTrim`, `picking`), param
   `radius`. `src/kernel/faceBlend.ts` `faceBlend`: per pair of faces the spine = section of the two faces moved out by r
   (MakeOffsetShape skin) to the ball's side — tried (+,+), (−,−), (+,−), (−,+), flips relative to the side found; arcs from the

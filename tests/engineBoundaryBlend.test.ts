@@ -7,7 +7,8 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { getOC, makeLine, makePolygon, makeThreePointArc, assembleWire, measureArea, measureDistanceBetween, measureVolume, type Face, type Shape3D } from "replicad";
 import { GeometryEngine } from "../src/kernel/engine";
 import { boundarySurface } from "../src/kernel/boundary";
-import { faceBlend } from "../src/kernel/faceBlend";
+import { faceBlend, nearestOnFace } from "../src/kernel/faceBlend";
+import { interpolatedEdge } from "../src/kernel/curves";
 import { edgesOf, facesOf, shellsOf } from "../src/kernel/topology";
 import type { Feature } from "../src/model/types";
 import type { TopoPick } from "../src/geometry/topoRef";
@@ -61,6 +62,41 @@ function leaving(s: Shape3D, at: Vec3): { dir: Vec3; bend: number } {
   const w: Vec3 = [p2[0] - at0[0], p2[1] - at0[1], p2[2] - at0[2]];
   const cr = Math.hypot(u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]);
   return { dir, bend: (2 * cr) / (a * b * c) };
+}
+
+/** The farthest a curve strays from a surface, at 400 places along it. */
+function gapAlong(e: { pointAt(t: number): { x: number; y: number; z: number } }, s: Shape3D): number {
+  const faces = facesOf(s);
+  let worst = 0;
+  for (let k = 0; k <= 400; k++) {
+    const v = e.pointAt(k / 400);
+    const p: Vec3 = [v.x, v.y, v.z];
+    let best = Infinity;
+    for (const f of faces) {
+      const q = nearestOnFace(f, p);
+      if (q) best = Math.min(best, Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]));
+    }
+    worst = Math.max(worst, best);
+  }
+  return worst;
+}
+
+/** A curved wall: an arc of radius 20 round (0, 10) on the ground, from (−14.1…, 24.1…) over (0, 30) to (14.1…, 24.1…), 10 high. */
+function boundaryWall(): Shape3D {
+  const c = 20 * Math.SQRT1_2;
+  const arc = makeThreePointArc([-c, 10 + c, 0], [0, 30, 0], [c, 10 + c, 0]);
+  const up = arc.clone().translate([0, 0, 10]);
+  const wire0 = assembleWire([arc]);
+  const wire1 = assembleWire([up as typeof arc]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const loft = new oc.BRepOffsetAPI_ThruSections(false, true, 1e-6);
+  loft.AddWire(wire0.wrapped);
+  loft.AddWire(wire1.wrapped);
+  loft.Build();
+  const out = facesOf({ wrapped: loft.Shape() })[0] as unknown as Shape3D;
+  loft.delete();
+  return out;
 }
 
 /** Is a surface sound (OpenCascade's check) and one piece? */
@@ -330,6 +366,31 @@ describe("Boundary surface", () => {
       expect(leaving(curved, [0, L / 2, 10]).bend).toBeLessThan(0.02);
       expect(leaving(smooth, [0, L / 2, 10]).bend).toBeGreaterThan(0.05);
     }
+  });
+
+  it("keeps exactly to its curves between samples too: a spline opposite, V curves; a curve with a corner is refused", () => {
+    // A curved wall (an arc on Top, radius 20, pushed up 10) whose top arc is the smooth side; opposite, a wavy spline.
+    const wallShape = boundaryWall();
+    const topArc = edgesOf(wallShape).find((e) => e.geomType === "CIRCLE" && Math.abs(e.startPoint.z - 10) < 1e-9)!;
+    const wall = facesOf(wallShape)[0];
+    const wavy = interpolatedEdge([[-14, 30, 0], [-6, 34, 1.5], [0, 36, 0], [6, 33, -1], [14, 30, 0]], false);
+    for (const match of ["tangent", "curvature"] as const) {
+      const s = boundarySurface([{ wire: assembleWire([topArc]), face: wall, match }, { wire: assembleWire([wavy]) }], 2, 0);
+      expect(gapAlong(topArc, s)).toBeLessThan(1e-4);
+      expect(gapAlong(wavy, s)).toBeLessThan(1e-4);
+    }
+    // A flat wall's top edge with V curves leaving it upward (quarter circles) over to a line at x = 10, z = 20.
+    const flat = makePolygon([[0, 0, 0], [0, 10, 0], [0, 10, 10], [0, 0, 10]]) as Face;
+    const top = edgesOf(flat).find((e) => Math.abs(e.startPoint.z - 10) < 1e-9 && Math.abs(e.endPoint.z - 10) < 1e-9)!;
+    const high = makeLine([10, 0, 20], [10, 10, 20]);
+    const r = 10 * (1 - Math.SQRT1_2);
+    const sides = [0, 10].map((y) => makeThreePointArc([0, y, 10], [r, y, 10 + 10 * Math.SQRT1_2], [10, y, 20]));
+    const withSides = boundarySurface([{ wire: assembleWire([top]), face: flat, match: "tangent" }, { wire: assembleWire([high]) }, ...sides.map((e) => ({ wire: assembleWire([e]) }))], 2, 2);
+    for (const e of [top, high, ...sides]) expect(gapAlong(e, withSides)).toBeLessThan(1e-4);
+    expect(leaving(withSides, [0, 5, 10]).dir[2]).toBeGreaterThan(0.99);
+    // Two straight lines with a corner, opposite the smooth edge: refused plainly.
+    const bent = assembleWire([makeLine([10, 0, 0], [12, 5, 0]), makeLine([12, 5, 0], [10, 10, 0])]);
+    expect(() => boundarySurface([{ wire: assembleWire([top]), face: flat, match: "tangent" }, { wire: bent }], 2, 0)).toThrow(/sharp corner/);
   });
 
   it("carries a curved face on, and its bend too with curvature", () => {

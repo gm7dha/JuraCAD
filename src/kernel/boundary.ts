@@ -20,7 +20,7 @@
  * from the face; along the pair it passes through the curves' sampled points.
  */
 import { assembleWire, cast, getOC, makeBezierCurve, makeBSplineApproximation, makeLine, measureLength, type Edge, type Face, type Shape3D, type Wire } from "replicad";
-import { chainEdges, endsOf, takeVec } from "./curves";
+import { chainEdges, endsOf, reversedWire, takeVec } from "./curves";
 import { edgesOf, facesOf } from "./topology";
 import { nearestOnFace } from "./faceBlend";
 
@@ -49,7 +49,10 @@ export interface BoundaryInput {
 const MEET = 1e-3;
 /** Points across and along the worked-out patch. */
 const GRID = 33;
-const ALONG = 33;
+const ALONG = 65;
+/** How closely a smooth-sided patch must keep to its curves (mm), and the most rows across it tries. */
+const TOLERANCE = 1e-4;
+const MOST_ROWS = 513;
 /** How far a curvature-matched side's slope reaches, as a share of the way across. */
 const CURVATURE_REACH = 0.6;
 
@@ -241,97 +244,168 @@ function matchedPatch(curves: BoundaryInput[], u: number, _v: number): Shape3D {
   const b0 = takeVec(pair[1].wire.startPoint), b1 = takeVec(pair[1].wire.endPoint);
   const w1 = walkOf(pair[1].wire, dist(a0, b0) + dist(a1, b1) > dist(a0, b1) + dist(a1, b0));
   const c0s = w1.at(0), c1s = w1.at(1);
-  const sideWalk = (start: Vec3, end: Vec3): Walk | null => {
+  const sideOf = (start: Vec3, end: Vec3): { walk: Walk; wire: Wire; reversed: boolean } | null => {
     for (const c of sides) {
       const s0 = takeVec(c.wire.startPoint), s1 = takeVec(c.wire.endPoint);
-      if (dist(s0, start) < MEET && dist(s1, end) < MEET) return walkOf(c.wire, false);
-      if (dist(s1, start) < MEET && dist(s0, end) < MEET) return walkOf(c.wire, true);
+      if (dist(s0, start) < MEET && dist(s1, end) < MEET) return { walk: walkOf(c.wire, false), wire: c.wire, reversed: false };
+      if (dist(s1, start) < MEET && dist(s0, end) < MEET) return { walk: walkOf(c.wire, true), wire: c.wire, reversed: true };
     }
     return null;
   };
-  const d0 = sideWalk(a0, c0s);
-  const d1 = sideWalk(a1, c1s);
+  const side0 = sideOf(a0, c0s);
+  const side1 = sideOf(a1, c1s);
+  const d0 = side0?.walk ?? null;
+  const d1 = side1?.walk ?? null;
   if (sides.length > (d0 ? 1 : 0) + (d1 ? 1 : 0)) throw new Error("The other curves must join the ends of the two opposite curves.");
-  const ss = Array.from({ length: ALONG }, (_, i) => i / (ALONG - 1));
-  const ts = Array.from({ length: GRID }, (_, i) => i / (GRID - 1));
-  const p0 = ss.map((s) => w0.at(s));
-  const p1 = ss.map((s) => w1.at(s));
-  const span = ss.map((_, i) => dist(p0[i], p1[i]));
-  const size = Math.max(...span, dist(a0, a1));
-  const reach = Math.max(1e-3, 0.05 * size);
-  const quintic = pair.some((c) => c.match === "curvature");
-  // Cross-boundary slopes (the patch's way across, as long as it is across) and bends at each end of the pair.
-  const across = (c: BoundaryInput, walk: Walk, sign: number) => {
-    if (!c.match || !c.face) return null;
-    const { out, bend } = acrossFace(walk, c.face, ss, reach);
-    return {
-      // As long as the patch is across there (a curvature match a little less, or it swings out past the face's line).
-      v: out.map((d, i) => mul(d, sign * span[i] * (c.match === "curvature" ? CURVATURE_REACH : 1))),
-      // Bending as the face does: the second derivative across, along its normal, κ × the slope squared.
-      a: c.match === "curvature" ? bend.map((b, i) => mul(b, (span[i] * CURVATURE_REACH) ** 2)) : null,
-    };
-  };
-  const m0 = across(pair[0], w0, 1);
-  const m1 = across(pair[1], w1, -1);
-  const ends = (i: number) => {
-    const straight = sub(p1[i], p0[i]);
-    const v0 = m0?.v[i] ?? straight;
-    const v1 = m1?.v[i] ?? straight;
-    // An end without a curvature to match bends as the plain (cubic) blend would there.
-    const a0 = m0?.a?.[i] ?? add(add(mul(p0[i], -6), mul(v0, -4)), add(mul(p1[i], 6), mul(v1, -2)));
-    const a1 = m1?.a?.[i] ?? add(add(mul(p0[i], 6), mul(v0, 2)), add(mul(p1[i], -6), mul(v1, 4)));
-    return { p: p0[i], v0, a0, v1, a1, q: p1[i] };
-  };
-  const lv = (i: number, t: number): Vec3 => {
-    const e = ends(i);
-    return hermite(t, e.p, e.v0, e.a0, e.q, e.v1, e.a1, quintic);
-  };
-  // V curves given must leave a smooth edge the way the face carries on, or the patch can't do both.
-  const agrees = (side: Walk | null, i: number, at: 0 | 1, m: typeof m0) => {
-    if (!side || !m) return true;
-    const t = side.along(at);
-    const want = at === 0 ? m.v[i] : mul(m.v[i], -1);
-    return dot(unit(t), unit(want)) * (at === 0 ? 1 : -1) > Math.cos((10 * Math.PI) / 180);
-  };
-  if (!agrees(d0, 0, 0, m0) || !agrees(d1, ALONG - 1, 0, m0) || !agrees(d0, 0, 1, m1) || !agrees(d1, ALONG - 1, 1, m1))
-    throw new Error("The V curves must leave a smooth edge the way its face carries on past it. Leave the V curves out (the sides then follow the surface), or set that edge to just go through.");
-  // Coons: the Hermite blend across, plus the sides' difference from its own sides (none where no side is given).
-  const grid: Vec3[][] = ss.map((s, i) =>
-    ts.map((t) => {
-      let q = lv(i, t);
-      const side0 = d0 ? sub(d0.at(t), lv(0, t)) : null;
-      const side1 = d1 ? sub(d1.at(t), lv(ALONG - 1, t)) : null;
-      if (side0) q = add(q, mul(side0, 1 - s));
-      if (side1) q = add(q, mul(side1, s));
-      return q;
-    }),
-  );
-  // The patch itself: one curve across at each place along the pair — exactly the Hermite blend as a Bézier curve
-  // (cubic or quintic), or, with sides given, a close fit through the Coons patch's points — lofted along the pair.
-  const rows: Wire[] = [];
-  const builder = new oc.BRepOffsetAPI_ThruSections(false, false, 1e-6);
-  try {
-    ss.forEach((_, i) => {
-      let edge: Edge;
-      if (!d0 && !d1) {
-        const { p, v0, a0, v1, a1, q } = ends(i);
-        const poles = quintic
-          ? [p, add(p, mul(v0, 0.2)), add(add(p, mul(v0, 0.4)), mul(a0, 0.05)), add(sub(q, mul(v1, 0.4)), mul(a1, 0.05)), sub(q, mul(v1, 0.2)), q]
-          : [p, add(p, mul(v0, 1 / 3)), sub(q, mul(v1, 1 / 3)), q];
-        edge = makeBezierCurve(poles);
-      } else edge = makeBSplineApproximation(grid[i], { tolerance: 1e-5, degMax: 8, degMin: 3 });
-      rows.push(assembleWire([edge]));
-      edge.delete();
-    });
-    builder.CheckCompatibility(false);
-    for (const w of rows) builder.AddWire(w.wrapped);
-    builder.Build();
-    if (!builder.IsDone()) throw new Error("no");
-    return cast(builder.Shape()) as Shape3D;
-  } catch {
-    throw new Error("Couldn't fit a surface through those curves meeting the faces smoothly. Try just going through them, or check the curves make one outline.");
-  } finally {
-    builder.delete();
-    rows.forEach((w) => w.delete());
+  for (const c of curves) if (hasCorner(c.wire)) throw new Error("A curve with a sharp corner can't be one side of a smooth boundary surface (the surface would have to fold there). Use curves without corners, or set the edge to just go through.");
+  // Rows across, more of them until the surface keeps within TOLERANCE of every curve all along (between rows too).
+  let last = Infinity;
+  for (let n = ALONG; n <= MOST_ROWS; n = 2 * n - 1) {
+    const shape = patchWith(n);
+    const gap = worstGap(shape, [pair[0].wire, pair[1].wire, ...sides.map((c) => c.wire)]);
+    if (gap <= TOLERANCE) return shape;
+    shape.delete();
+    last = gap;
   }
+  throw new Error(`Couldn't keep the surface on its curves closely enough (it strays ${last.toFixed(4)} mm). Try simpler curves, or set the edge to just go through.`);
+
+  function patchWith(along: number): Shape3D {
+    const ss = Array.from({ length: along }, (_, i) => i / (along - 1));
+    const ts = Array.from({ length: GRID }, (_, i) => i / (GRID - 1));
+    const p0 = ss.map((s) => w0.at(s));
+    const p1 = ss.map((s) => w1.at(s));
+    const span = ss.map((_, i) => dist(p0[i], p1[i]));
+    const size = Math.max(...span, dist(a0, a1));
+    const reach = Math.max(1e-3, 0.05 * size);
+    const quintic = pair.some((c) => c.match === "curvature");
+    // Cross-boundary slopes (the patch's way across, as long as it is across) and bends at each end of the pair.
+    const across = (c: BoundaryInput, walk: Walk, sign: number) => {
+      if (!c.match || !c.face) return null;
+      const { out, bend } = acrossFace(walk, c.face, ss, reach);
+      return {
+        // As long as the patch is across there (a curvature match a little less, or it swings out past the face's line).
+        v: out.map((d, i) => mul(d, sign * span[i] * (c.match === "curvature" ? CURVATURE_REACH : 1))),
+        // Bending as the face does: the second derivative across, along its normal, κ × the slope squared.
+        a: c.match === "curvature" ? bend.map((b, i) => mul(b, (span[i] * CURVATURE_REACH) ** 2)) : null,
+      };
+    };
+    const m0 = across(pair[0], w0, 1);
+    const m1 = across(pair[1], w1, -1);
+    const ends = (i: number) => {
+      const straight = sub(p1[i], p0[i]);
+      const v0 = m0?.v[i] ?? straight;
+      const v1 = m1?.v[i] ?? straight;
+      // An end without a curvature to match bends as the plain (cubic) blend would there.
+      const a0 = m0?.a?.[i] ?? add(add(mul(p0[i], -6), mul(v0, -4)), add(mul(p1[i], 6), mul(v1, -2)));
+      const a1 = m1?.a?.[i] ?? add(add(mul(p0[i], 6), mul(v0, 2)), add(mul(p1[i], -6), mul(v1, 4)));
+      return { p: p0[i], v0, a0, v1, a1, q: p1[i] };
+    };
+    const lv = (i: number, t: number): Vec3 => {
+      const e = ends(i);
+      return hermite(t, e.p, e.v0, e.a0, e.q, e.v1, e.a1, quintic);
+    };
+    // V curves given must leave a smooth edge the way the face carries on, or the patch can't do both.
+    const agrees = (side: Walk | null, i: number, at: 0 | 1, m: typeof m0) => {
+      if (!side || !m) return true;
+      const t = side.along(at);
+      const want = at === 0 ? m.v[i] : mul(m.v[i], -1);
+      return dot(unit(t), unit(want)) * (at === 0 ? 1 : -1) > Math.cos((10 * Math.PI) / 180);
+    };
+    if (!agrees(d0, 0, 0, m0) || !agrees(d1, along - 1, 0, m0) || !agrees(d0, 0, 1, m1) || !agrees(d1, along - 1, 1, m1))
+      throw new Error("The V curves must leave a smooth edge the way its face carries on past it. Leave the V curves out (the sides then follow the surface), or set that edge to just go through.");
+    // Coons: the Hermite blend across, plus the sides' difference from its own sides (none where no side is given).
+    const grid: Vec3[][] = ss.map((s, i) =>
+      ts.map((t) => {
+        let q = lv(i, t);
+        const e0 = d0 ? sub(d0.at(t), lv(0, t)) : null;
+        const e1 = d1 ? sub(d1.at(t), lv(along - 1, t)) : null;
+        if (e0) q = add(q, mul(e0, 1 - s));
+        if (e1) q = add(q, mul(e1, s));
+        return q;
+      }),
+    );
+    // The patch itself: one curve across at each place along the pair — exactly the Hermite blend as a Bézier curve
+    // (cubic or quintic), or, with sides given, a close fit through the Coons patch's points — lofted along the pair.
+    const rows: Wire[] = [];
+    const builder = new oc.BRepOffsetAPI_ThruSections(false, false, 1e-6);
+    try {
+      ss.forEach((_, i) => {
+        // The V curves themselves as the first and last rows, so the surface's sides are exactly them.
+        const exact = i === 0 ? side0 : i === along - 1 ? side1 : null;
+        if (exact) {
+          rows.push(exact.reversed ? reversedWire(exact.wire) : (exact.wire.clone() as Wire));
+          return;
+        }
+        let edge: Edge;
+        if (!d0 && !d1) {
+          const { p, v0, a0, v1, a1, q } = ends(i);
+          const poles = quintic
+            ? [p, add(p, mul(v0, 0.2)), add(add(p, mul(v0, 0.4)), mul(a0, 0.05)), add(sub(q, mul(v1, 0.4)), mul(a1, 0.05)), sub(q, mul(v1, 0.2)), q]
+            : [p, add(p, mul(v0, 1 / 3)), sub(q, mul(v1, 1 / 3)), q];
+          edge = makeBezierCurve(poles);
+        } else edge = makeBSplineApproximation(grid[i], { tolerance: 1e-5, degMax: 8, degMin: 3 });
+        rows.push(assembleWire([edge]));
+        edge.delete();
+      });
+      builder.CheckCompatibility(false);
+      for (const w of rows) builder.AddWire(w.wrapped);
+      builder.Build();
+      if (!builder.IsDone()) throw new Error("no");
+      return cast(builder.Shape()) as Shape3D;
+    } catch {
+      throw new Error("Couldn't fit a surface through those curves meeting the faces smoothly. Try just going through them, or check the curves make one outline.");
+    } finally {
+      builder.delete();
+      rows.forEach((w) => w.delete());
+    }
+  }
+}
+
+/** Does a curve turn sharply where two of its edges meet (more than 1°)? */
+function hasCorner(w: Wire): boolean {
+  const es = edgesOf(w);
+  try {
+    if (es.length < 2) return false;
+    const endsOfEdge = es.map((e) => ({
+      a: takeVec(e.startPoint),
+      b: takeVec(e.endPoint),
+      ta: unit(takeVec(e.tangentAt(0))),
+      tb: unit(takeVec(e.tangentAt(1))),
+    }));
+    for (let i = 0; i < es.length; i++)
+      for (let j = 0; j < es.length; j++) {
+        if (i === j) continue;
+        const p = endsOfEdge[i], q = endsOfEdge[j];
+        // p's end meeting q's start (or end): their directions there must agree.
+        for (const [pt, pd] of [[p.b, p.tb], [p.a, mul(p.ta, -1)]] as [Vec3, Vec3][])
+          for (const [qt, qd] of [[q.a, q.ta], [q.b, mul(q.tb, -1)]] as [Vec3, Vec3][])
+            if (dist(pt, qt) < MEET && dot(pd, qd) < Math.cos(Math.PI / 180)) return true;
+      }
+    return false;
+  } finally {
+    es.forEach((e) => e.delete());
+  }
+}
+
+/** The farthest any of the curves strays from the surface, sampled finely along each. */
+function worstGap(shape: Shape3D, wires: Wire[]): number {
+  const faces = facesOf(shape);
+  let worst = 0;
+  try {
+    for (const w of wires) {
+      const n = 256;
+      for (let k = 0; k <= n; k++) {
+        const p = takeVec(w.pointAt(k / n));
+        let best = Infinity;
+        for (const f of faces) {
+          const q = nearestOnFace(f, p);
+          if (q) best = Math.min(best, dist(p, q));
+        }
+        worst = Math.max(worst, best);
+      }
+    }
+  } finally {
+    faces.forEach((f) => f.delete());
+  }
+  return worst;
 }
