@@ -546,6 +546,27 @@
   `compositeParts` (least 2, as a union; `withoutGone` drops gone ones). Claude: linear/circular_pattern `parts` | `faces` (+ `part`) | `features`,
   `skip`; mirror `faces` (+ `part`); `composite_part` `parts`. Tests: tests/patternTypes (pure), enginePartPattern (counts,
   ids, names, skip, boss/hole/pocket by faces, face mirror, composite export/assembly), mcpPatternTypes.
+- Split face and Modify fillet (Onshape's). Split face = a "split" with `splitDef.mode: "face"` (missing = Split part, exactly as
+  before): `picks` = faces of one part (+ edges when `splitDef.tool` is "edges"); `tool` missing = `splitDef.plane` (its section with
+  each face, `planeCutEdges`), "sketch" = the feature's `sketchRef` (its curves as an `extrudeSurface` symmetric past the parts, sectioned
+  with each face), "edges" = picked edges lying on the faces. `src/kernel/splitFace.ts` `splitFaces`: BRepAlgoAPI_Splitter with the
+  section edges as tools; refused when nothing crosses, no face is added or the volume changes; one part, more faces, so Draft /
+  Move face / colour etc. can take half a face (the halves are ordinary face picks). Dialog: Part / Faces segmented choice in
+  `SplitOptionsField` → `SplitFaceFields`; view clicks by `splitDef.picking` ("faces"/"plane"/"edges"). Modify fillet = feature
+  "modifyFillet": `picks` = rounded faces, `radius` param, `modifyFillet.remove` (take off), `noPropagate` (Onshape's Propagate is on
+  unless set). `src/kernel/modifyFillet.ts`: each cylinder/torus piece (replicad's pointOnSurface takes 0…1 shares of the UV range) →
+  its cross-section (the arc + the two tangent lines to their corner, `crossSection`) pushed along it or spun round its axis (the
+  piece's own angle) = the "wedge", fused on (outside edge: the normal at the arc's middle points to the corner) or cut (inside
+  corner) — replicad's fuse/cut unify, so the sharp faces come back whole; Change radius then fillets the edges lying on the corner
+  lines/circles (`recoveredEdges`). Propagate = neighbouring cylinder/torus faces with the same tube radius (`propagateFillets`); a
+  note says how many more were changed. Works on imported STEP/simplified parts (no history needed). Not BRepAlgoAPI_Defeaturing
+  (missing from this OCCT build — Delete face can't remove blended fillets). Corner blend patches (three fillets meeting) aren't
+  cylinders/tori and are refused (`NotAFillet`, plain words). Fillet/Chamfer `allEdges`: every edge of the picked parts (equal
+  chamfers only). Not done (OCCT can't): conic/curvature fillet sections, partial fillets, turning tangent propagation off.
+  Dependents: split face needs its sketch (tool sketch only — the plane only for tool plane) and its picks' parts, makes no part.
+  Claude: `modify_fillet` (faces, radius | remove, propagate), `split_face` (faces, plane + offset | sketch), fillet/chamfer `all_edges`.
+  Tests: tests/splitFaceModel (pure), engineSplitFillet (split counts/volume, draft on the top half, radius 2 → 4, removed, hole rim,
+  rounded-rectangle chain, imported STEP, all edges), mcpSplitFillet.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.
