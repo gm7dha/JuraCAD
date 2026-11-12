@@ -20,6 +20,7 @@
  * deleted *Add* feature changed (the part is older, so it stays). Those show
  * as errors afterwards, as a plain Delete leaves them.
  */
+import { loftUses, loftWithoutGone } from "./loft";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 import { partCopiesPlan } from "../assembly/assembly";
@@ -161,7 +162,13 @@ function usesOf(f: Feature): Uses {
       if (f.pattern.parts?.length) lists.push({ what: "part it repeats", many: "parts it repeats", parts: f.pattern.parts });
     } else if (!f.pattern.of && f.pattern.sources.length) lists.push({ what: "feature it repeats", many: "features it repeats", features: f.pattern.sources });
   }
-  if (f.sections?.length) lists.push({ what: "loft section", many: "loft sections", features: f.sections, least: 2 });
+  if (f.loft) {
+    // A loft's sections may be sketches, faces or points; its guide and path it can't do without.
+    const lu = loftUses(f);
+    if (lu.sectionFeatures.length + lu.sectionParts.length) lists.push({ what: "loft section", many: "loft sections", features: lu.sectionFeatures, parts: lu.sectionParts, least: 2 });
+    features.push(...lu.features);
+    parts.push(...lu.parts);
+  } else if (f.sections?.length) lists.push({ what: "loft section", many: "loft sections", features: f.sections, least: 2 });
   if (f.picks?.length) lists.push({ what: "picked edge or face", many: "picked edges and faces", parts: f.picks.map((p) => p.partId) });
   if (f.booleanDef) {
     const sub = f.booleanDef.op === "subtract";
@@ -300,7 +307,8 @@ export function withoutGone(f: Feature, gone: Set<string>): Feature {
   if (f.picks?.some((p) => partGone(p.partId))) set({ picks: f.picks.filter((p) => !partGone(p.partId)) });
   if (f.pattern?.sources.some(featureGone)) set({ pattern: { ...f.pattern, sources: f.pattern.sources.filter((id) => !featureGone(id)) } });
   if (f.mirror?.sources.some(featureGone)) set({ mirror: { ...f.mirror, sources: f.mirror.sources.filter((id) => !featureGone(id)) } });
-  if (f.sections?.some(featureGone)) set({ sections: f.sections.filter((id) => !featureGone(id)) });
+  if (f.loft?.profiles) out = loftWithoutGone(out, featureGone, partGone);
+  else if (f.sections?.some(featureGone)) set({ sections: f.sections.filter((id) => !featureGone(id)) });
   if (f.moreAreas?.some((m) => featureGone(m.sketch))) {
     const more = f.moreAreas.filter((m) => !featureGone(m.sketch));
     if (more.length) set({ moreAreas: more });

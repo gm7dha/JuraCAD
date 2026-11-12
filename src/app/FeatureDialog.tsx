@@ -4,6 +4,7 @@ import { evaluate } from "../model/expr";
 import { formatLength, lengthNumber, showLength, storeLength } from "../model/units";
 import { describeRef } from "../geometry/topoRef";
 import { AreaPicker } from "./AreaPicker";
+import { LoftOptions } from "./LoftOptions";
 import { areasTaken, followedSketch, pathChange, sketchesOffered, takesSeveral } from "../sketch/areaClicks";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, revolveWay, visibleParamKeys, type ParamDef } from "../model/features";
 import { describeHole, SCREW_SIZES, standardParams } from "../model/holes";
@@ -1172,33 +1173,7 @@ function SweepLoftOptions() {
       </fieldset>
     );
   }
-  const sections = draft.sections ?? [];
-  return (
-    <fieldset className="param-group">
-      <legend>Shapes to join, in order</legend>
-      {sketches.map((f) => {
-        const at = sections.indexOf(f.id);
-        return (
-          <label key={f.id} className="check-row">
-            <input
-              type="checkbox"
-              checked={at >= 0}
-              onChange={() => setDraftField({ sections: at >= 0 ? sections.filter((x) => x !== f.id) : [...sections, f.id] })}
-            />
-            {at >= 0 ? `${at + 1}. ` : ""}
-            {f.name}
-          </label>
-        );
-      })}
-      <p className="dialog-hint field-hint">Tick the sketches in the order the solid should pass through them. Each needs one closed shape.</p>
-      {!draft.surface && (
-        <label className="check-row" title="Straight sides from each shape to the next, so the steps stay sharp, instead of one smooth curve through them all">
-          <input type="checkbox" aria-label="Straight between shapes" checked={!!draft.loftRuled} onChange={(e) => setDraftField({ loftRuled: e.target.checked || undefined })} />
-          Straight between shapes (sharp steps)
-        </label>
-      )}
-    </fieldset>
-  );
+  return <LoftOptions sketches={sketches} />;
 }
 
 /** What an Extrude, Revolve, Sweep or Hole does to which parts, from its preview (those parts are lit up in the view too). */

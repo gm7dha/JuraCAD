@@ -26,6 +26,7 @@ import { HOLE_LEAD_IN, SCREW_SIZES, straightStart, type HoleSize } from "../mode
 import { copyNumber, isSkipped } from "../model/patterns";
 import { materialRuns, shapeDistance, upToFaceSolid, upToPartsSolid } from "./upTo";
 import { loftSketches, sweepSketch } from "./sweep";
+import { buildLoft } from "./loft";
 import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
 import { offsetSolid, shellByCutting } from "./surface";
 import { encloseSurfaces, extendSurface, extrudeSurface, fillEdges, gapReport, gathered, joinSurfaces, loftSurface, offsetSurface, removeFaces, revolveSurface, ruledSurface, splitBySurface, sweepSurface, thickenSurface } from "./surface";
@@ -1735,6 +1736,19 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       return textSolid(t.plane, { value: t.value, bold: t.bold, flip: t.flip, size: v.size, depth: v.depth, x: v.x, y: v.y, angle: v.angle });
     }
     case "loft": {
+      if (feature.loft) {
+        // Onshape's further loft choices (faces, points, end conditions, a guide or path…): src/kernel/loft.ts.
+        return buildLoft(feature, {
+          sketch: (id) => {
+            const sk = sketches.get(id);
+            return sk?.sketch?.plane ? { plane: sk.sketch.plane, data: sk.sketch.data, name: sk.name } : null;
+          },
+          part: (id) => parts.find((p) => p.id === id)?.shape ?? null,
+          face: (shape, pick) => findPickedFace(shape, pick),
+          edges: (shape, picks) => findPickedEdges(shape, picks),
+          name: (id) => all.find((f) => f.id === id)?.name,
+        }, notes);
+      }
       const sections = (feature.sections ?? []).map((id) => {
         const sk = sketches.get(id);
         const f = all.find((x) => x.id === id);
