@@ -15,6 +15,7 @@ import { startPrintBed } from "./PrintBedPanel";
 import { togglePrintPanel, usePrintPanel } from "./printState";
 import { toggleLaser, useLaserPanel } from "./laserState";
 import { chooseImportFile } from "./fileActions";
+import { NamedViewsButton, SelectFilterButton } from "./ViewTools";
 
 function ToolButton({
   label,
@@ -822,6 +823,8 @@ export function Toolbar() {
       </div>
       <div className="tool-group">
         <ToolButton label="Fit" icon={<Icons.Fit />} onClick={() => viewportApi.current?.fit()} title="Zoom to fit (F)" />
+        <NamedViewsButton />
+        <SelectFilterButton />
         <ToolButton
           label="Picture"
           icon={<Icons.Picture />}

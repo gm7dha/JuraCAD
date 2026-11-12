@@ -32,6 +32,7 @@ import { Icons } from "./icons";
 import { toggleMateAnimation } from "./animateMate";
 import { detectPlatform, shortcut } from "./platform";
 import { startSection } from "./SectionPanel";
+import { NamedViewsButton } from "./ViewTools";
 
 function ToolButton({ label, icon, onClick, disabled, active, title }: { label: string; icon: ReactNode; onClick?: () => void; disabled?: boolean; active?: boolean; title?: string }) {
   return (
@@ -254,6 +255,7 @@ export function AssemblyToolbar() {
       </div>
       <div className="tool-group">
         <ToolButton label="Fit" icon={<Icons.Fit />} onClick={() => viewportApi.current?.fit()} title="Zoom to fit (F)" />
+        <NamedViewsButton />
         <ToolButton
           label="Picture"
           icon={<Icons.Picture />}

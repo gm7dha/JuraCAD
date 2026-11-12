@@ -15,6 +15,7 @@ import { clickRow, dragRows } from "../model/listSelection";
 import { featuresOfParts, groupByPart, partsOfFeature } from "../model/partLinks";
 import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 import { DEFAULT_FINISH, FINISHES } from "../model/finishes";
+import { copyFromMenu, pasteFromMenu } from "./featureClipboardApp";
 
 const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   box: Icons.Box,
@@ -361,6 +362,9 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
           },
         },
     "divider",
+    { label: "Copy (Ctrl+C)", action: () => copyFromMenu([feature.id]) },
+    { label: "Paste features (Ctrl+V)", action: pasteFromMenu },
+    "divider",
     { label: "Delete", action: () => deleteFeature(feature.id), danger: true },
     { label: "Delete with dependents…", action: () => useStore.getState().askDelete({ ids: [feature.id], from: "menu" }), danger: true },
   ];
@@ -467,6 +471,8 @@ const VISIBILITY_MENU: MenuEntry[] = [
   { label: "Show all planes (P)", action: () => useStore.getState().setAllPlanesVisible(true) },
   { label: "Hide all planes (P)", action: () => useStore.getState().setAllPlanesVisible(false) },
 ];
+
+const LIST_MENU: MenuEntry[] = [...VISIBILITY_MENU, "divider", { label: "Paste features (Ctrl+V)", action: pasteFromMenu }];
 
 /** Onshape's rollback bar: the model is shown as it was at this point; new features go in here. */
 function RollbackBar() {
@@ -801,7 +807,7 @@ export function FeaturePanel() {
         className="panel-section features"
         // Right-click on the list (not on a row, whose own menu comes first): show or hide all sketches or planes.
         onContextMenu={(e) => {
-          if (!e.defaultPrevented) onMenu(e, VISIBILITY_MENU);
+          if (!e.defaultPrevented) onMenu(e, LIST_MENU);
         }}
       >
         <h3 className="panel-heading-row">
@@ -840,6 +846,7 @@ export function FeaturePanel() {
                 },
                 { label: "Suppress all", action: () => ids.forEach((id) => features.find((f) => f.id === id && !f.suppressed) && useStore.getState().toggleSuppressed(id)) },
                 { label: "Unsuppress all", action: () => ids.forEach((id) => features.find((f) => f.id === id && f.suppressed) && useStore.getState().toggleSuppressed(id)) },
+                { label: "Copy the folder's features", action: () => copyFromMenu(ids) },
                 "divider",
                 { label: "Remove the folder (keep its features)", action: () => useStore.getState().setFeatureFolder(ids, null) },
                 { label: "Delete the folder's features with dependents…", action: () => useStore.getState().askDelete({ ids, from: "menu" }), danger: true },

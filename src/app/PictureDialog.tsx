@@ -7,6 +7,7 @@ import { viewportApi } from "../viewport/Viewport";
 import { downloadFile, safeFileName } from "./download";
 import { Icons } from "./icons";
 import { Modal } from "./Modal";
+import { NamedViewChoice } from "./ViewTools";
 
 const SIZES: { scale: number; label: string; hint: string }[] = [
   { scale: 1, label: "Same as the screen", hint: "As sharp as your screen shows it — for a message or a forum post" },
@@ -71,6 +72,7 @@ export function PictureDialog() {
       }
     >
       <div className="form-grid">
+        <NamedViewChoice />
         <span className="form-label">Size</span>
         <div className="quality-options" role="radiogroup" aria-label="Size">
           {SIZES.map((o) => {

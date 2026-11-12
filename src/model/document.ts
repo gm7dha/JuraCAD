@@ -1,4 +1,5 @@
 import { isSimplifyLevel } from "./simplify";
+import { parseNamedViews } from "./namedViews";
 import { parsePick } from "../geometry/topoRef";
 import { parseLineRef } from "./patternRefs";
 import { FASTENER_KINDS, FASTENER_SIZES, type FastenerKind } from "./fasteners";
@@ -644,7 +645,8 @@ function parseTransformExtras(t: Record<string, unknown>): Partial<NonNullable<F
   return out;
 }
 
-function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
+/** Features read from a file (or pasted); null when anything is off. `seen` collects their ids (a repeat = null). */
+export function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
   const features: Feature[] = [];
   for (const raw of list) {
     if (!raw || typeof raw !== "object") return null;
@@ -1004,5 +1006,6 @@ export function parseDocument(data: unknown): JuraCADDocument | null {
     ...configurationsOf(d),
     ...(parseVersions(d.versions).length ? { versions: parseVersions(d.versions) } : {}),
     ...(parseLibraryInserts(d.libraryInserts).length ? { libraryInserts: parseLibraryInserts(d.libraryInserts) } : {}),
+    ...(parseNamedViews(d.namedViews).length ? { namedViews: parseNamedViews(d.namedViews) } : {}),
   };
 }

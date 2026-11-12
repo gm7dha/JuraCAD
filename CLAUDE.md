@@ -707,6 +707,28 @@
   Tests: tests/splitFaceModel (pure), engineSplitFillet (split counts/volume, draft on the top half, radius 2 → 4, removed, hole rim,
   rounded-rectangle chain, a sharp scoop refused, slanted ends, a fully rounded box off/resized vs direct, mitres, inside corner
   resized vs direct, holes/grooves/pockets/a chamfer beside fillets left alone (exact volumes), imported STEP, all edges), mcpSplitFillet.
+- Everyday picking and views (Onshape's): selection filter `src/viewport/selectionFilter.ts` (pure; `store.selectFilter`, session
+  only; empty = everything; kinds face/edge/part/plane/sketch — no vertices, JuraCAD can't pick corners; `partHitAs`: a face/edge
+  whose kind is off becomes its whole part when Parts is on (`PickTarget.whole`, handlePick → `selectedParts`; only with nothing
+  open, else "Parts" = faces and edges); `SceneManager.setSelectFilter` applies it in `pickAt` (a filtered face still hides what's
+  behind), hover (`hoverWhole`) and box select (`boxPicks`: faces/edges only → `itemsInBox` → `onBoxSelectItems`; else parts as
+  before); Part Studios only, toolbar "Pick" button in `src/app/ViewTools.tsx`). Select other: mouse held still `HOLD_MS` 800 ms (not
+  in sketches/assemblies; the release then picks nothing, `holdFired`), a right-click that didn't orbit, or a touch long press in a
+  Part Studio (gestures' long press is now on there too; a drag after it still orbits) → `otherHitsAt` (every face/edge/area/curve/
+  plane on the ray) → pure `src/viewport/selectOther.ts` `orderChoices` (front to back, edges before their face, once each, filter,
+  whole parts last, ≤ `MOST_CHOICES`) + `choiceLabel` → `selectOtherState.ts` → `SelectOtherMenu` (hover = `previewPick`, click =
+  `pickChoice` → handlePick as a click). Named views `src/model/namedViews.ts` (pure): `doc.namedViews` (`NamedView`: owner = Part
+  Studio or assembly id, dir/target/zoom/up; saved by fileFormat, parsed by parseDocument, missing = none; a same name replaces;
+  views of a deleted studio/assembly are dropped), store `saveNamedView`/`renameNamedView`/`deleteNamedView` (undoable),
+  `viewOwner`; `SceneManager.cameraState`/`goToCamera`; toolbar "Views" (studios and assemblies) and the Picture window's View
+  choice. Not in drawings or the Claude extension. Copy/paste features `src/model/featureClipboard.ts` (pure): `copyFeatures` (picked
+  + the sketches/curves they use + variables used, `outside` = other features referred to), JSON text `juracad-features` v1 read back
+  through document.ts's `parseFeatures`; `pasteFeatures` — new ids, every id remapped as a whole word in the JSON (`remapIds`: also
+  "<id>~2", "<id>@…", "<id>_p3"), outside refs kept if the studio has them else `withoutGone` + `needsPick`, names `freeName`,
+  after the rollback bar (which moves past them); store `pasteFeatures` (one undo step with any variables added), `pasteAsk` →
+  `PasteDialog` (add missing variables?). App side `src/app/featureClipboardApp.ts`: Ctrl/⌘+C on the selected feature (clipboard +
+  localStorage `juracad.copiedFeatures`), Ctrl/⌘+V via the paste event (else this browser's copy), row/folder/list menus Copy/Paste.
+  Tests: tests/viewTools, featureClipboard (pure), viewToolsStore.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.
