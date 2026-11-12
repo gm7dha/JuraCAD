@@ -11,6 +11,7 @@ import { IDENTITY, type Placement, type Vec3 } from "./math";
 import { findMesh, meshIdOf } from "./configured";
 import { kernelInstances, leavesOf, leavesOfTop, topBox, type Leaf } from "./subassembly";
 import type { Assembly } from "../model/types";
+import { cutsFor } from "./assemblyFeatures";
 import type { InstanceInput, PartMesh } from "../kernel/protocol";
 
 const NO_LEAVES: Leaf[] = [];
@@ -56,5 +57,7 @@ export function instancesForKernel(
   shift?: Record<string, Vec3>,
 ): InstanceInput[] {
   const own = (id: string) => assembly.instances.find((i) => i.id === id)?.placement ?? IDENTITY;
-  return kernelInstances(leavesOf(assembly, parts, assemblies, solved.inner), parts, shown ?? solved.placements, (id) => solved.placements[id] ?? own(id), shift);
+  // Assembly features cut the copies they reach (older assemblies have none: exactly as before).
+  const cuts = assembly.features?.length ? (key: string) => cutsFor(assembly, key) : undefined;
+  return kernelInstances(leavesOf(assembly, parts, assemblies, solved.inner), parts, shown ?? solved.placements, (id) => solved.placements[id] ?? own(id), shift, cuts);
 }

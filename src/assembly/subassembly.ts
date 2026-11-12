@@ -10,13 +10,13 @@
  * the clash check, the parts list) goes through `leavesOf`.
  */
 import { newId } from "../model/document";
-import type { Assembly, Instance, JuraCADDocument } from "../model/types";
+import type { Assembly, Feature, Instance, JuraCADDocument } from "../model/types";
 import type { InstanceInput, PartMesh } from "../kernel/protocol";
 import { mirroredBox, nextInstanceName, placedBox, updateAssembly, usesAssembly, type Box3 } from "./assembly";
 
 export { tidySubAssemblies, usesAssembly } from "./assembly";
 import { findMesh, meshIdOf } from "./configured";
-import { compose, IDENTITY, type Placement, type Vec3 } from "./math";
+import { compose, IDENTITY, samePlacement, type Placement, type Vec3 } from "./math";
 import { flexibleInner, solvedInside } from "./mates";
 import { hasFlexible, isFlexible } from "./flexible";
 
@@ -197,6 +197,8 @@ export function kernelInstances(
   fallback: (top: string) => Placement,
   /** Parts inside sub-assemblies moved on their own (an exploded view's steps), by key: how far (mm). */
   shift: Record<string, Vec3> = {},
+  /** Assembly features cutting a part, by key (see assemblyFeatures.ts `cutsFor`). */
+  cuts?: (key: string) => Feature[] | undefined,
 ): InstanceInput[] {
   const out: InstanceInput[] = [];
   for (const l of leaves) {
@@ -206,7 +208,16 @@ export function kernelInstances(
     const placed = l.path.length ? compose(at, l.relative) : at;
     const d = l.path.length ? shift[l.key] : undefined;
     const p = d ? { ...placed, position: [placed.position[0] + d[0], placed.position[1] + d[1], placed.position[2] + d[2]] as Vec3 } : placed;
-    out.push({ id: l.key, partId: meshIdOf(l.instance), name: l.name, position: p.position, rotation: p.rotation, ...(l.instance.mirrored ? { mirrored: true } : {}) });
+    const input: InstanceInput = { id: l.key, partId: meshIdOf(l.instance), name: l.name, position: p.position, rotation: p.rotation, ...(l.instance.mirrored ? { mirrored: true } : {}) };
+    const cut = cuts?.(l.key);
+    if (cut?.length) {
+      // Cut where the solve puts it (an exploded view then moves the cut copy on).
+      const home = fallback(l.top);
+      const solved = l.path.length ? compose(home, l.relative) : home;
+      input.cuts = cut;
+      if (!samePlacement(solved, p, 1e-9)) input.cutAt = { position: solved.position, rotation: solved.rotation };
+    }
+    out.push(input);
   }
   return out;
 }

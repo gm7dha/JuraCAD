@@ -596,6 +596,40 @@ export interface JuraCADDocument {
   versions?: DesignVersion[];
   /** Designs inserted from the Design library (so their sizes can be changed again). Optional: older saves have none. */
   libraryInserts?: LibraryInsert[];
+  /** Assemblies' parts shown in Part Studios for reference (Edit in context; src/assembly/inContext.ts). Optional: older saves have none. */
+  contexts?: EditContext[];
+}
+
+/**
+ * Edit in context (Onshape's): a part's Part Studio opened from an assembly, with
+ * the assembly's other parts shown around it, faint, to sketch on, snap to and
+ * Use edges from. Their places are a snapshot (relative to the part being
+ * edited); "Update context" takes it again. Their shapes are the parts as built now.
+ */
+export interface EditContext {
+  id: string;
+  /** e.g. "Assembly 1 (Plate <1>)". */
+  name: string;
+  /** The Part Studio it's shown in. */
+  studioId: string;
+  assemblyId: string;
+  /** The copy being edited: its key in the assembly. */
+  instance: string;
+  /** The other parts, placed relative to the copy being edited. */
+  parts: ContextPart[];
+  /** Hidden for now (still usable by sketches already linked to it). */
+  hidden?: boolean;
+}
+
+export interface ContextPart {
+  /** Its key in the assembly. */
+  key: string;
+  partId: string;
+  /** The Part Studio its part is in. */
+  studioId: string;
+  name: string;
+  placement: Placement;
+  mirrored?: boolean;
 }
 
 /**
@@ -1185,6 +1219,14 @@ export interface Assembly {
   groups?: AssemblyGroup[];
   /** Pairs of parts marked as meant to fit together a set amount (the fit check; optional: older saves have none). */
   fits?: IntendedFit[];
+  /**
+   * Assembly features (Onshape's): sketches here, and cuts and holes made through
+   * the chosen parts in this assembly only (src/assembly/assemblyFeatures.ts). Their
+   * Part Studio parts don't change. Optional: older saves have none.
+   */
+  features?: Feature[];
+  /** Which parts each assembly feature cuts, by feature id (part keys); missing = every top-level part it reaches. */
+  featureParts?: Record<string, string[]>;
 }
 
 /**

@@ -28,8 +28,33 @@ export function updateAssembly(doc: JuraCADDocument, id: string, fn: (a: Assembl
   if (!assembliesOf(doc).some((a) => a.id === id)) return doc;
   // Exploded view steps forget parts that any change removed (patterns, Replicate, delete…) —
   // also parts inside sub-assemblies, in every assembly that uses this one.
-  const changed = assembliesOf(doc).map((a) => (a.id === id ? tidyFits(tidyExplodeSteps(fn(a))) : a));
+  const changed = assembliesOf(doc).map((a) => (a.id === id ? tidyFeatureParts(tidyFits(tidyExplodeSteps(fn(a)))) : a));
   return withAssemblies(doc, changed.map((a) => tidyStepPaths(a, changed)));
+}
+
+/**
+ * Assembly features' chosen parts (`featureParts`) whose copy is gone (an instance
+ * deleted) are taken out; a feature left choosing nothing keeps an empty list (it
+ * cuts nothing, as chosen). Entries for features that no longer exist go too.
+ */
+export function tidyFeatureParts(a: Assembly): Assembly {
+  if (!a.featureParts) return a;
+  const tops = new Set(a.instances.map((i) => i.id));
+  const ids = new Set((a.features ?? []).map((f) => f.id));
+  let changed = false;
+  const out: Record<string, string[]> = {};
+  for (const [id, keys] of Object.entries(a.featureParts)) {
+    if (!ids.has(id)) {
+      changed = true;
+      continue;
+    }
+    const kept = keys.filter((k) => tops.has(k.split("/")[0]));
+    if (kept.length !== keys.length) changed = true;
+    out[id] = kept;
+  }
+  if (!changed) return a;
+  const { featureParts: _p, ...plain } = a;
+  return Object.keys(out).length ? { ...plain, featureParts: out } : plain;
 }
 
 /** Next free name: "Assembly 1", "Assembly 2"… */
@@ -473,6 +498,11 @@ export interface BomOptions {
    * deep, as if it were in the assembly itself.
    */
   structured?: boolean;
+  /**
+   * Copies cut by the assembly's own features (their keys: "copy" or "copy/inner/part"): each is its own line,
+   * "Plate (modified in assembly)", as it's no longer the plain part.
+   */
+  modified?: ReadonlySet<string>;
 }
 
 /** What the parts list can say about the part an instance shows: its material (key) and solid volume (mm³; null for a surface). */
@@ -494,13 +524,13 @@ export function billOfMaterials(
   options: BomOptions = {},
 ): BomRow[] {
   const all = options.assemblies ?? [];
-  const partRow = (rows: Map<string, BomRow>, shown: Instance, count: number, flip = false) => {
+  const partRow = (rows: Map<string, BomRow>, shown: Instance, count: number, flip = false, cut = false) => {
     // (Inside a mirrored sub-assembly copy, every part is the opposite hand.)
     const i = flip ? { ...shown, mirrored: !shown.mirrored } : shown;
     // A part in another configuration is a different line ("Bracket (Large)").
     const cfgKey = i.configuration && configurationNames[i.configuration] ? `${i.partId}@${i.configuration}` : i.partId;
     // A mirrored copy is the opposite hand: a different part to make.
-    const key = i.mirrored ? `${cfgKey}~mirrored` : cfgKey;
+    const key = (i.mirrored ? `${cfgKey}~mirrored` : cfgKey) + (cut ? "~modified" : "");
     const row = rows.get(key);
     if (row) {
       row.quantity += count;
@@ -512,7 +542,7 @@ export function billOfMaterials(
     const props = name !== undefined ? info?.(i) : null;
     rows.set(key, {
       partId: key,
-      name: base + cfg + (i.mirrored ? " (mirrored)" : ""),
+      name: base + cfg + (i.mirrored ? " (mirrored)" : "") + (cut ? " (modified in assembly)" : ""),
       quantity: count,
       missing: name === undefined,
       ...(props ? { material: materialOf(props.material).label } : {}),
@@ -527,14 +557,17 @@ export function billOfMaterials(
     return sub && !within.includes(sub.id) ? sub : null;
   };
   // Flattened: every part, however deep, counted once for each copy of what it's in.
-  const flat = (a: Assembly, count: number, rows: Map<string, BomRow>, within: string[], flip = false) => {
+  const modified = options.modified;
+  const isCut = (prefix: string | null, i: Instance) => prefix !== null && !!modified?.has(prefix + i.id);
+  /** `prefix`: the key so far ("" at the top), null inside a sub-assembly seen from another level (its cuts aren't this assembly's). */
+  const flat = (a: Assembly, count: number, rows: Map<string, BomRow>, within: string[], flip = false, prefix: string | null = "") => {
     // Suppressed parts aren't in the parts list (like Onshape).
     for (const i of a.instances) {
       if (i.suppressed) continue;
       if (i.subAssembly) {
         const sub = subOf(i, within);
-        if (sub) flat(sub, count, rows, [...within, sub.id], flip !== !!i.mirrored);
-      } else partRow(rows, i, count, flip);
+        if (sub) flat(sub, count, rows, [...within, sub.id], flip !== !!i.mirrored, prefix === null ? null : `${prefix}${i.id}/`);
+      } else partRow(rows, i, count, flip, isCut(prefix, i));
     }
     return rows;
   };
@@ -547,7 +580,7 @@ export function billOfMaterials(
     for (const i of a.instances) {
       if (i.suppressed) continue;
       if (!i.subAssembly) {
-        partRow(rows, i, 1, flip);
+        partRow(rows, i, 1, flip, depth === 0 && isCut("", i));
         continue;
       }
       const sub = subOf(i, within);
@@ -572,7 +605,7 @@ export function billOfMaterials(
       }
       const sub = found.sub;
       // What one of it weighs: everything in it (unknown if any part's weight is).
-      const weight = bomTotalMass([...flat(sub, 1, new Map(), [...within, sub.id], found.flip).values()]);
+      const weight = bomTotalMass([...flat(sub, 1, new Map(), [...within, sub.id], found.flip, null).values()]);
       out.push({ ...r, level: depth, item, ...(!weight.partial && weight.grams > 0 ? { massEach: weight.grams } : {}) });
       out.push(...level(sub, depth + 1, `${item}.`, [...within, sub.id], found.flip));
     });

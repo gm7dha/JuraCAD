@@ -51,6 +51,7 @@ export function serializeDocument(doc: JuraCADDocument, savedAt = new Date()): s
     ...(doc.configurations?.length ? { configurations: doc.configurations } : {}),
     ...(doc.configurations?.length && doc.activeConfiguration ? { activeConfiguration: doc.activeConfiguration } : {}),
     ...(doc.libraryInserts?.length ? { libraryInserts: doc.libraryInserts } : {}),
+    ...(doc.contexts?.length ? { contexts: doc.contexts } : {}),
     // Saved versions go last (they're the bulk of a file that has them; each is packed, see versions.ts).
     ...(doc.versions?.length ? { versions: doc.versions } : {}),
   };

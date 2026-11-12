@@ -17,6 +17,13 @@ export interface InstanceInput {
   rotation: [number, number, number, number];
   /** The part's mirror image (flipped across its own YZ plane before it's placed). */
   mirrored?: boolean;
+  /**
+   * Assembly features cutting this copy (src/assembly/assemblyFeatures.ts): the sketches and the
+   * Extrude / Revolve (remove) and Hole features, in the assembly's coordinates. Missing = none.
+   */
+  cuts?: Feature[];
+  /** Where the copy sat when cut (its solved place; an exploded view moves the cut copy on). Missing = where it's placed. */
+  cutAt?: { position: [number, number, number]; rotation: [number, number, number, number] };
 }
 
 /** A drawing view's lines, in the view's own flat coordinates (mm; x right, y up on the paper). */
@@ -317,6 +324,7 @@ export type KernelRequest =
   | { type: "exportStl"; partIds: string[]; quality: MeshQuality; instances?: InstanceInput[] }
   | { type: "exportStep"; partIds: string[]; colours?: Record<string, string>; instances?: InstanceInput[]; tree?: StepTree }
   | { type: "clashes"; instances: InstanceInput[]; tolerance?: number; withGaps?: boolean; fitRange?: number; fitPairs?: [string, string][] }
+  | { type: "assemblyCuts"; instances: InstanceInput[] }
   | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sections?: SectionRequest[]; breakouts?: BreakOutRequest[]; tangent?: boolean }
   | { type: "measure"; picks: TopoPick[] }
   | { type: "measureParts"; partIds: string[] }
@@ -346,7 +354,18 @@ export type KernelResponseBody =
   | { type: "printCheck"; result: PrintPartResult[] }
   | { type: "exportPrint3mf"; result: PrintExportResult }
   | { type: "clashes"; result: ContactMeasure[] }
+  | { type: "assemblyCuts"; result: AssemblyCutsResult }
   | { type: "project"; result: ViewProjection[] };
+
+/** An assembly's copies as its own features cut them (see GeometryEngine.assemblyCuts). */
+export interface AssemblyCutsResult {
+  /** Each cut copy's mesh (id = its key in the assembly), in its part's own coordinates. */
+  meshes: PartMesh[];
+  /** The copies that lost material. */
+  cut: string[];
+  /** Assembly features that couldn't be made, by id: why. */
+  errors: Record<string, string>;
+}
 
 /** Messages sent from the main thread to the worker. */
 export type ToWorker = { id: number; request: KernelRequest };

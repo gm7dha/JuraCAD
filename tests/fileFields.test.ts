@@ -46,6 +46,7 @@ function everyField(): Required<JuraCADDocument> {
     activeConfiguration: doc.configurations![1].id,
     versions: [{ id: "ver1", name: "V1", note: "Before the holes", createdAt: "2026-11-01T10:00:00.000Z", packed: `json:${JSON.stringify(emptyDocument("Old"))}` }],
     libraryInserts: [{ id: "lib1", design: "finger-box", name: "Finger box", prefix: "box", values: { width: 120, lid: true, measure: "inside" }, features: [box.id], variables: { width: "v1" } }],
+    contexts: [{ id: "ctx1", name: "Assembly 1 (Plate <1>)", studioId: "ps2", assemblyId: "a1", instance: "i1", parts: [{ key: "i2", partId: box.id, studioId: "first", name: "Box <2>", placement: { position: [0, 0, 10], rotation: [0, 0, 0, 1] } }] }],
   };
   return full;
 }

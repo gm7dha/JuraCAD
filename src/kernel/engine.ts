@@ -55,7 +55,7 @@ import { measureContacts } from "./clash";
 import { biggestFlatFace, faceFrame, faceWires, flatFaceNormal, planeOutline, type FlatFrame } from "./laserFaces";
 import type { LaserOutline, LaserSource } from "../laser/sources";
 import type { FollowedFrame, PartConnector } from "./protocol";
-import type { CheckResult, ContactMeasure, ExportResult, FlatPatternData, InstanceInput, PartMesh, PrintCheckPart, PrintCheckSettings, PrintExportResult, RebuildResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
+import type { AssemblyCutsResult, CheckResult, ContactMeasure, ExportResult, FlatPatternData, InstanceInput, PartMesh, PrintCheckPart, PrintCheckSettings, PrintExportResult, RebuildResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
 import { fromRel, sectionGeometry, type BreakOutRequest, type SectionRequest } from "../drawing/sections";
 import { dropCoveredHidden } from "../drawing/hidden";
@@ -6618,6 +6618,8 @@ export class GeometryEngine {
       let shape = part.shape.clone();
       // A mirrored copy: the part's mirror image, flipped across its own YZ plane.
       if (i.mirrored) shape = shape.mirror("YZ", [0, 0, 0]);
+      // Cut by the assembly's own features (in the part's own coordinates again afterwards).
+      if (i.cuts?.length && !part.surface) shape = this.cutCopy(part, i, shape).shape;
       const [x, y, z, w] = i.rotation;
       const s = Math.sqrt(Math.max(0, 1 - w * w));
       const angle = (2 * Math.acos(Math.max(-1, Math.min(1, w))) * 180) / Math.PI;
@@ -6626,6 +6628,117 @@ export class GeometryEngine {
       out.push({ id: i.id, partId: i.partId, name: i.name, shape, ...(part.surface ? { surface: true } : {}) });
     }
     return out;
+  }
+
+  /** Copies already cut by assembly features: by part, cuts and place (see cutCopy). Bounded; the oldest is freed. */
+  private cutCopies = new Map<string, { part: BuiltPart; shape: Shape3D; cut: boolean; errors: Record<string, string> }>();
+
+  /**
+   * One assembly copy cut by the assembly's features (`i.cuts`, in the
+   * assembly's coordinates): `local` (the part, mirrored if the copy is; this
+   * takes it over) is placed where the copy sat when cut, the tools are made
+   * and cut away, and the result is moved back into the part's own
+   * coordinates. `cut`: whether any material went. A feature that can't be
+   * made is left out (its problem in `errors`), so the rest still cut.
+   */
+  private cutCopy(part: BuiltPart, i: InstanceInput, local: Shape3D): { shape: Shape3D; cut: boolean; errors: Record<string, string> } {
+    const at = i.cutAt ?? { position: i.position, rotation: i.rotation };
+    const key = JSON.stringify([part.id, !!i.mirrored, at, i.cuts]);
+    const kept = this.cutCopies.get(key);
+    if (kept && kept.part === part) {
+      local.delete();
+      return { shape: kept.shape.clone(), cut: kept.cut, errors: kept.errors };
+    }
+    if (kept) {
+      kept.shape.delete();
+      this.cutCopies.delete(key);
+    }
+    const [x, y, z, w] = at.rotation;
+    const s = Math.sqrt(Math.max(0, 1 - w * w));
+    const angle = (2 * Math.acos(Math.max(-1, Math.min(1, w))) * 180) / Math.PI;
+    const turns = s > 1e-9 && Math.abs(angle) > 1e-9;
+    const axis: Vec3 = turns ? [x / s, y / s, z / s] : [0, 0, 1];
+    const moves = Math.abs(at.position[0]) + Math.abs(at.position[1]) + Math.abs(at.position[2]) > 0;
+    let shape: Shape3D = local;
+    if (turns) shape = shape.rotate(angle, [0, 0, 0], axis);
+    if (moves) shape = shape.translate(at.position);
+    const before = measureVolume(shape);
+    const list = i.cuts ?? [];
+    const sketches: SketchMap = new Map();
+    for (const f of list) if (f.type === "sketch" && !f.suppressed && f.sketch?.plane) sketches.set(f.id, f);
+    const errors: Record<string, string> = {};
+    for (const f of list) {
+      if (f.type === "sketch" || f.suppressed) continue;
+      const { values, errors: bad } = resolveParams(f);
+      const def = FEATURE_DEFS[f.type];
+      const wrong = def?.params.find((p) => bad[p.key] && visibleParamKeys(f).has(p.key));
+      if (wrong) {
+        errors[f.id] = `${wrong.label}: ${bad[wrong.key]}`;
+        continue;
+      }
+      const here: BuiltPart = { id: part.id, name: part.name, featureIds: [], shape };
+      let tool: Shape3D;
+      try {
+        // (Always a cut, whatever the record says: assemblies only take material away.)
+        tool = buildSolid({ ...f, operation: "remove", moreAreas: undefined }, values, sketches, list, [here], this.threadedHoles);
+      } catch (e) {
+        errors[f.id] = describeError(e, `Couldn't make ${f.name}.`);
+        continue;
+      }
+      try {
+        const next: Shape3D = shape.cut(tool);
+        shape.delete();
+        shape = next;
+      } catch (e) {
+        errors[f.id] = describeError(e, `${f.name} couldn't cut ${part.name}.`);
+      } finally {
+        tool.delete();
+      }
+    }
+    const cut = before - measureVolume(shape) > 1e-6;
+    if (moves) shape = shape.translate([-at.position[0], -at.position[1], -at.position[2]]);
+    if (turns) shape = shape.rotate(-angle, [0, 0, 0], axis);
+    this.cutCopies.set(key, { part, shape: shape.clone(), cut, errors });
+    while (this.cutCopies.size > 48) {
+      const [oldest, entry] = this.cutCopies.entries().next().value as [string, { shape: Shape3D }];
+      entry.shape.delete();
+      this.cutCopies.delete(oldest);
+    }
+    return { shape, cut, errors };
+  }
+
+  /**
+   * The assembly copies its own features cut, for the 3D view: each one's
+   * mesh in its part's own coordinates (moved into place as any copy is),
+   * which copies lost material, and each feature's problem.
+   */
+  assemblyCuts(instances: InstanceInput[]): AssemblyCutsResult {
+    const meshes: PartMesh[] = [];
+    const cut: string[] = [];
+    const errors: Record<string, string> = {};
+    for (const i of instances) {
+      if (!i.cuts?.length) continue;
+      const part = this.parts.find((p) => p.id === i.partId) ?? this.parts.find((p) => p.id === i.partId.split("@")[0]);
+      if (!part || part.surface) continue;
+      let local = part.shape.clone();
+      if (i.mirrored) local = local.mirror("YZ", [0, 0, 0]);
+      const r = this.cutCopy(part, i, local);
+      try {
+        Object.assign(errors, r.errors);
+        if (!r.cut) continue;
+        cut.push(i.id);
+        // (Mirrored copies are shown as the part flipped by the view, so the mesh is flipped back here.)
+        const shown: Shape3D = i.mirrored ? r.shape.mirror("YZ", [0, 0, 0]) : r.shape;
+        try {
+          meshes.push({ ...this.meshPart({ id: i.id, name: i.name, featureIds: [], shape: shown }), id: i.id, name: i.name, featureIds: [] });
+        } finally {
+          if (shown !== r.shape) shown.delete();
+        }
+      } finally {
+        r.shape.delete();
+      }
+    }
+    return { meshes, cut, errors };
   }
 
   /**

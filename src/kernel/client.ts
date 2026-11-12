@@ -5,7 +5,7 @@ import type { Feature, MeshQuality, ViewKind } from "../model/types";
 import type { BreakOutRequest, SectionRequest } from "../drawing/sections";
 import type { PrintPartResult } from "../model/printCheck";
 import type { LaserOutline, LaserSource } from "../laser/sources";
-import type { CheckResult, ContactMeasure, DeleteFaceBlockers, ExportResult, InstanceInput, Measurement, PartMesh, PrintCheckPart, PrintCheckSettings, PrintExportResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
+import type { AssemblyCutsResult, CheckResult, ContactMeasure, DeleteFaceBlockers, ExportResult, InstanceInput, Measurement, PartMesh, PrintCheckPart, PrintCheckSettings, PrintExportResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
 
 /**
  * Main-thread handle on the geometry worker. Every call returns a promise.
@@ -178,6 +178,11 @@ export class KernelClient {
   }
 
   /** How pairs of assembly instances meet: overlapping, or (`withGaps`) within `tolerance` (mm) of each other. */
+  /** The copies an assembly's own features cut, for the 3D view. */
+  assemblyCuts(instances: InstanceInput[]): Promise<AssemblyCutsResult> {
+    return this.send({ type: "assemblyCuts", instances }).then((body) => body.result as AssemblyCutsResult);
+  }
+
   clashes(instances: InstanceInput[], tolerance = 0, withGaps = true, fitRange = 0, fitPairs?: [string, string][]): Promise<ContactMeasure[]> {
     return this.send({ type: "clashes", instances, tolerance, withGaps, ...(fitRange > 0 ? { fitRange } : {}), ...(fitPairs ? { fitPairs } : {}) }).then((body) => body.result as ContactMeasure[]);
   }
