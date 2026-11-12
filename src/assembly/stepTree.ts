@@ -30,7 +30,15 @@ export const stepPartKey = (i: Pick<Instance, "partId" | "configuration" | "mirr
  * `SolveResult.inner`), which can differ from copy to copy, so each flexible
  * copy is a product of its own.
  */
-export function stepTree(assembly: Assembly, parts: readonly PartMesh[], tops: Record<string, Placement>, assemblies: readonly Assembly[] = [], inner?: Record<string, Placement>): StepTree | null {
+export function stepTree(
+  assembly: Assembly,
+  parts: readonly PartMesh[],
+  tops: Record<string, Placement>,
+  assemblies: readonly Assembly[] = [],
+  inner?: Record<string, Placement>,
+  /** The copies the assembly's features really cut (AssemblyCutsResult.cut), when known: only those get definitions of their own. */
+  cut?: ReadonlySet<string>,
+): StepTree | null {
   // Copies the assembly's own features may cut (top-level ones): each its own part definition, "<part> (modified in
   // assembly)", which the engine turns back into the shared plain one if nothing was taken away (StepTree.parts' `plain`).
   const stager = assembly.features?.length ? cutStager(assembly, parts, assemblies) : null;
@@ -75,7 +83,7 @@ export function stepTree(assembly: Assembly, parts: readonly PartMesh[], tops: R
       const mesh = findMesh(parts, meshIdOf(i));
       if (!mesh) continue;
       const shown = { ...i, mirrored };
-      const cuts = stager && key === assembly.id ? stager({ key: i.id, top: i.id, path: [], instance: shown, name: i.name, relative: IDENTITY }, own) : undefined;
+      const cuts = stager && key === assembly.id && (!cut || cut.has(i.id)) ? stager({ key: i.id, top: i.id, path: [], instance: shown, name: i.name, relative: IDENTITY }, own) : undefined;
       if (cuts) {
         const plain = stepPartKey(shown);
         const ck = `${plain}~cut:${i.id}`;

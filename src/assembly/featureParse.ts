@@ -81,7 +81,7 @@ export function contextInputs(doc: Pick<JuraCADDocument, "contexts" | "assemblie
 
 /** Contexts of a Part Studio that's gone are forgotten. */
 export function tidyContexts(doc: JuraCADDocument, studioIds: readonly string[]): JuraCADDocument {
-  const list = contextsOf(doc);
+  const list = doc.contexts ?? [];
   const kept = list.filter((c) => studioIds.includes(c.studioId));
   if (kept.length === list.length) return doc;
   const { contexts: _c, ...rest } = doc;

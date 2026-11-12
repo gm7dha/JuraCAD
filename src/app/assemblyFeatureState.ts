@@ -29,6 +29,7 @@ import { addCircle, addPoint, addRectangle } from "../sketch/ops";
 import type { SketchPlane } from "../sketch/planes";
 import { emptySketch, type SketchData } from "../sketch/types";
 import { useSolvedAssembly } from "./assemblySolve";
+import { solveWithParts } from "../assembly/mates";
 
 /** What the Hole / Cut dialog is making (null = closed). */
 export interface AsmCutDraft {
@@ -195,8 +196,12 @@ export function draftSketch(d: AsmCutDraft): SketchData {
   return data;
 }
 
-/** Accept: the sketch and its Hole / Extrude go at the end of the assembly's features (one undo step). */
-export function acceptAsmCut(): string | null {
+/**
+ * Accept: the sketch and its Hole / Extrude go at the end of the assembly's features (one undo step). Unless parts
+ * were chosen, it cuts the parts it reaches now (kept as its list, as Onshape lists them: a bolt mated into the hole
+ * later isn't drilled too). Resolves to a problem in plain words, or null.
+ */
+export async function acceptAsmCut(): Promise<string | null> {
   const d = useAsmFeatures.getState().draft;
   const s = useStore.getState();
   const asm = activeAssembly(s);
@@ -211,7 +216,22 @@ export function acceptAsmCut(): string | null {
     d.kind === "hole"
       ? assemblyHole(list, sketch.id, { diameter: d.diameter, throughAll: d.throughAll, depth: d.throughAll ? undefined : d.depth, flip: d.flip })
       : assemblyExtrudeCut(list, sketch.id, { throughAll: d.throughAll, depth: d.throughAll ? undefined : d.depth, flip: d.flip });
-  s.changeDocument((doc) => addAssemblyFeatures(doc, asm.id, [sketch, tool], d.parts ? { [tool.id]: d.parts } : undefined));
+  const trial = addAssemblyFeatures(s.history.present, asm.id, [sketch, tool], d.parts ? { [tool.id]: d.parts } : undefined);
+  const made = trial.assemblies?.find((a) => a.id === asm.id);
+  if (!made) return null;
+  let reached: string[] = [];
+  try {
+    const assemblies = trial.assemblies ?? [];
+    const solved = solveWithParts(asm, s.parts, { assemblies: s.history.present.assemblies });
+    const r = await getKernel().assemblyCuts(instancesForKernel(made, s.parts, assemblies, solved));
+    if (r.errors[tool.id]) return r.errors[tool.id];
+    reached = r.reached[tool.id] ?? [];
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+  if (!reached.length) return `It wouldn't cut anything from there. Check where you clicked${d.throughAll ? "" : ", or tick Through all or Flip direction"}.`;
+  // (The assembly may have changed while the worker was cutting: added to the latest one.)
+  useStore.getState().changeDocument((doc) => addAssemblyFeatures(doc, asm.id, [sketch, tool], { [tool.id]: d.parts ?? reached }));
   useAsmFeatures.setState({ draft: null });
   return null;
 }

@@ -67,7 +67,7 @@ describe("assembly features for Claude", () => {
     expect(said).toContain(`${Math.round((1600 * 5 - hole * 5) * 100) / 100} mm³`);
     const text = await ok(s, "describe_assembly", {});
     expect(text).toMatch(/Assembly features/);
-    expect(text).toMatch(/Hole 1 \(hole, from Sketch 1; cuts every part it reaches\)/);
+    expect(text).toMatch(/Hole 1 \(hole, from Sketch 1; cuts only Lower <1>, Upper <1>\)/);
     expect(text).toMatch(/Lower \(modified in assembly\) × 1/);
     // Exported STEP has the hole; the Part Studio's parts are unchanged.
     await ok(s, "export_model", { assembly: "Stack", format: "step", filename: "stack" });

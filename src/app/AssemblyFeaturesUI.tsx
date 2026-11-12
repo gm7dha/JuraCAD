@@ -186,15 +186,30 @@ export function AsmCutPanel() {
   const draft = useAsmFeatures((s) => s.draft);
   const asm = useStore(activeAssembly);
   const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   if (!draft || !asm) return null;
   const hole = draft.kind === "hole";
-  const accept = () => setProblem(acceptAsmCut());
+  const accept = () => {
+    if (busy) return;
+    setBusy(true);
+    setProblem(null);
+    void acceptAsmCut().then(
+      (p) => {
+        setBusy(false);
+        setProblem(p);
+      },
+      (e: unknown) => {
+        setBusy(false);
+        setProblem(e instanceof Error ? e.message : String(e));
+      },
+    );
+  };
   return (
     <div className="feature-dialog instance-panel" role="region" aria-label={hole ? "Hole in the assembly" : "Cut in the assembly"}>
       <header className="feature-dialog-header">
         <span className="feature-dialog-title">{hole ? "Hole" : "Cut"} (in this assembly)</span>
         <span className="feature-dialog-actions">
-          <button type="button" className="dialog-ok" onClick={accept} title="Accept" aria-label="Accept">
+          <button type="button" className="dialog-ok" onClick={accept} disabled={busy} title={busy ? "Working…" : "Accept"} aria-label="Accept">
             <Icons.Tick size={18} />
           </button>
           <button type="button" className="dialog-cancel" onClick={cancelAsmCut} title="Cancel" aria-label="Cancel">
@@ -245,7 +260,7 @@ export function AsmCutPanel() {
             Flip direction (out of the face)
           </label>
         )}
-        <p className="dialog-hint">It cuts every part it reaches. Afterwards, “Parts…” in the Assembly features list chooses which.</p>
+        <p className="dialog-hint">It cuts the parts it reaches now. Afterwards, “Parts…” in the Assembly features list changes which.</p>
         {problem && <div className="param-message error">{problem}</div>}
       </div>
     </div>

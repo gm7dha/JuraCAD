@@ -832,7 +832,8 @@ export async function exportAssemblyBytes(s: Session, asm: Assembly, format: "st
     // unless parts inside sub-assemblies are cut by assembly features (then every part is listed on its own).
     const flat = cutsInsideSubAssemblies(asm, builtParts(s), assembliesOf(s.doc));
     if (flat) notes.push(FLAT_STEP_NOTE);
-    const tree = flat ? null : stepTree(asm, builtParts(s), solved.placements, assembliesOf(s.doc), solved.inner);
+    const cut = hasAssemblyFeatures(asm, assembliesOf(s.doc)) ? new Set(e.assemblyCuts(instances).cut) : undefined;
+    const tree = flat ? null : stepTree(asm, builtParts(s), solved.placements, assembliesOf(s.doc), solved.inner, cut);
     const r = await e.exportStep([], exportColours(s.doc), instances, tree ?? undefined);
     said(r);
     return new Uint8Array(r.step);

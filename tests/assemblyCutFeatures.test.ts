@@ -8,7 +8,8 @@ import { describe, expect, it } from "vitest";
 import { addAssemblyFeatures, assemblyFeatureDependents, assemblyHole, assemblySketch, cutsFor, deleteAssemblyFeatures, featureCuts, setFeatureParts } from "../src/assembly/assemblyFeatures";
 import { updateAssembly, withoutInstances } from "../src/assembly/assembly";
 import { instancesForKernel } from "../src/assembly/placed";
-import { contextInputs, contextPartOf, contextPartId, removeContext, setContextHidden, takeContext, tidyContexts } from "../src/assembly/inContext";
+import { contextGone, contextInputs, contextPartOf, contextPartId, removeContext, setContextHidden, takeContext, tidyContexts } from "../src/assembly/inContext";
+import { removeStudio } from "../src/model/studios";
 import { emptyDocument } from "../src/model/document";
 import { readDocumentFile, serializeDocument } from "../src/model/fileFormat";
 import type { PartMesh } from "../src/kernel/protocol";
@@ -139,5 +140,19 @@ describe("edit in context", () => {
     const { doc: d } = doc();
     expect(takeContext(d, "A", "nope", parts)).toEqual({ error: "That part isn't in this assembly any more." });
     expect(takeContext(d, "A", "i1", [mesh("p2", "ps2")])).toEqual({ error: "That part hasn't been built yet. Wait a moment, then try again." });
+  });
+
+  it("goes with its Part Studio, and stops showing anything once its assembly or part is gone", () => {
+    const { doc: d } = doc();
+    const withStudio = { ...d, partStudios: [{ id: "ps2", name: "Part Studio 2", features: [] }] };
+    const r = takeContext(withStudio, "A", "i2", parts, undefined, "c1");
+    if ("error" in r) throw new Error(r.error);
+    expect(removeStudio(r.doc, "ps2").contexts).toBeUndefined();
+    expect(contextGone(r.doc, r.context)).toBeNull();
+    const noPart = updateAssembly(r.doc, "A", (a) => withoutInstances(a, ["i2"]));
+    expect(contextGone(noPart, r.context)).toMatch(/no longer in Assembly 1/);
+    expect(contextInputs(noPart, "ps2")).toBeUndefined();
+    const noAssembly = { ...r.doc, assemblies: r.doc.assemblies!.filter((a) => a.id !== "A") };
+    expect(contextGone(noAssembly, r.context)).toMatch(/assembly has been deleted/);
   });
 });

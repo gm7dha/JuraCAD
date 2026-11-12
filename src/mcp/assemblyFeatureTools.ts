@@ -4,7 +4,7 @@
  * through two mated plates at once. The parts in their Part Studios don't
  * change; only this assembly's copies are cut (src/assembly/assemblyFeatures.ts).
  */
-import { addAssemblyFeatures, assemblyExtrudeCut, assemblyFeaturesOf, assemblyHole, assemblySketch, deleteAssemblyFeatures } from "../assembly/assemblyFeatures";
+import { addAssemblyFeatures, assemblyExtrudeCut, assemblyFeaturesOf, assemblyHole, assemblySketch, deleteAssemblyFeatures, setFeatureParts } from "../assembly/assemblyFeatures";
 import { updateAssembly } from "../assembly/assembly";
 import { instancesForKernel } from "../assembly/placed";
 import { leavesOf } from "../assembly/subassembly";
@@ -48,7 +48,7 @@ export const ASSEMBLY_FEATURE_TOOLS: ToolDef[] = [
     name: "add_assembly_feature",
     title: "Cut or drill through parts in an assembly",
     description:
-      'Make a hole or a cut in an assembly (Onshape\'s assembly features), e.g. drill through two plates that are mated together at once. Only the copies in THIS assembly are cut (its 3D view, exports, drawings, clash check and parts list, which says "modified in assembly"); the parts in their Part Studios are unchanged. The cut stays where it was made in the assembly. "kind": "hole" (plain round holes at "points" [[x, y], …], "diameter") or "cut" (an Extrude that removes, from "rectangles" [{"corner": [x, y], "size": [w, h]}] and/or "circles" [{"centre": [x, y], "diameter": d}]). "on": a copy\'s flat face {"instance": "Plate <1>", "face": "top"} (x, y measured in that face\'s plane: on a face looking up, as the assembly\'s X and Y) or "top" / "front" / "right" (the assembly\'s planes). "through_all" (default true) or "depth" (mm, into the face; "flip": true goes the other way). "parts": copies to cut (default: every top-level part it reaches; parts inside sub-assemblies only when named, as "Sub <1> / Part <1>"). Refused, nothing changed, if it cuts nothing.',
+      'Make a hole or a cut in an assembly (Onshape\'s assembly features), e.g. drill through two plates that are mated together at once. Only the copies in THIS assembly are cut (its 3D view, exports, drawings, clash check and parts list, which says "modified in assembly"); the parts in their Part Studios are unchanged. The cut stays where it was made in the assembly. "kind": "hole" (plain round holes at "points" [[x, y], …], "diameter") or "cut" (an Extrude that removes, from "rectangles" [{"corner": [x, y], "size": [w, h]}] and/or "circles" [{"centre": [x, y], "diameter": d}]). "on": a copy\'s flat face {"instance": "Plate <1>", "face": "top"} (x, y measured in that face\'s plane: on a face looking up, as the assembly\'s X and Y) or "top" / "front" / "right" (the assembly\'s planes). "through_all" (default true) or "depth" (mm, into the face; "flip": true goes the other way). "parts": copies to cut (default: the top-level parts it reaches now — kept as its list, so parts put there later aren\'t cut; parts inside sub-assemblies only when named, as "Sub <1> / Part <1>"). Refused, nothing changed, if it cuts nothing.',
     inputSchema: {
       type: "object",
       properties: {
@@ -128,7 +128,9 @@ export const ASSEMBLY_FEATURE_TOOLS: ToolDef[] = [
         );
       }
       s.throwIfCancelled();
-      s.commit(next);
+      // The parts it cuts are the ones it reaches now (as Onshape lists them): a bolt mated into the hole later isn't
+      // drilled too. Change them with the app's "Parts…".
+      s.commit(parts ? next : updateAssembly(next, asm.id, (x) => setFeatureParts(x, tool.id, reached)));
       const names = reached.map((k) => leaves.find((l) => l.key === k)?.name ?? k);
       const volumes = r.meshes.filter((m) => reached.includes(m.id)).map((m) => `${leaves.find((l) => l.key === m.id)?.name ?? m.id} ${r2(m.volume ?? 0)} mm³`);
       return say(`Made ${tool.name} in ${asm.name} (on ${label}): it cuts ${names.join(", ")} in this assembly only — their Part Studio parts are unchanged.`, volumes.length ? `Volumes now: ${volumes.join(", ")}.` : null);
