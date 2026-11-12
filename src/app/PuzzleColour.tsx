@@ -348,6 +348,8 @@ export function ColourDownloads({
   map,
   fileName,
   bedWidth,
+  settings,
+  inPlace,
 }: {
   spec: ColourSpec;
   coloured: Coloured;
@@ -356,6 +358,10 @@ export function ColourDownloads({
   map: MapRaster;
   fileName: string;
   bedWidth: number;
+  /** Each piece's own Bambu Studio settings in the colour-band plates (printed put together). */
+  settings?: Readonly<Record<string, string>>;
+  /** The pieces are on one plate where they sit in the finished puzzle. */
+  inPlace?: boolean;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const plateName = (i: number) => `${fileName} - plate ${i + 1} of ${plates.length}`;
@@ -380,7 +386,7 @@ export function ColourDownloads({
   };
   if (banded) {
     const ctx = { spec, scale, map };
-    const file = (i: number) => bandPlateFile(plates[i], `${fileName} - plate ${i + 1}`, banded, ctx);
+    const file = (i: number) => bandPlateFile(plates[i], `${fileName} - plate ${i + 1}`, banded, ctx, settings);
     return (
       <>
         <div className="mountain-downloads">
@@ -414,8 +420,10 @@ export function ColourDownloads({
           {busy && <span className="muted small">Making the file…</span>}
         </div>
         <p className="muted small">
-          Filament changes, roughly: {swaps.map((n, i) => `plate ${i + 1} about ${n}`).join(", ")}. Pieces standing at different heights in the
-          puzzle are on plates of their own, so every piece on a plate changes colour on the same layers.
+          Filament changes, roughly: {swaps.map((n, i) => `plate ${i + 1} about ${n}`).join(", ")}.{" "}
+          {inPlace
+            ? "The whole island is on one plate, put together, so every piece changes colour on the same layers."
+            : "Pieces standing at different heights in the puzzle are on plates of their own, so every piece on a plate changes colour on the same layers."}
           {banded.uncut ? ` ${banded.uncut} ${banded.uncut === 1 ? "piece" : "pieces"} couldn't be split and stay one colour.` : ""}
         </p>
         {quieter && quieter.some((n, i) => n < swaps[i]) && (
