@@ -92,4 +92,25 @@ describe("assembly features for Claude", () => {
     expect(await ok(s, "delete_assembly_feature", { feature: "Sketch 1" })).toMatch(/Deleted Sketch 1, Hole 1/);
     expect(s.doc.assemblies![0].features).toBeUndefined();
   });
+  it("mates a pin into the hole it drilled (the hole's wall is a face of the cut copy)", async () => {
+    const { s } = newSession();
+    await ok(s, "new_design", { name: "Pin" });
+    await ok(s, "add_feature", { type: "box", width: 40, depth: 40, height: 5 });
+    await ok(s, "add_feature", { type: "cylinder", diameter: 6, height: 20, x: 100, y: 0, z: 0, operation: "new" });
+    const parts = s.build().parts;
+    await ok(s, "rename_part", { part: parts[0].name, name: "Plate" });
+    await ok(s, "rename_part", { part: parts[1].name, name: "Pin" });
+    await ok(s, "create_assembly", { name: "Pinned" });
+    await ok(s, "insert_into_assembly", { part: "Plate", at: [0, 0, 0] });
+    await ok(s, "insert_into_assembly", { part: "Pin", at: [-130, 7, 0] });
+    await ok(s, "add_assembly_feature", { kind: "hole", on: { instance: "Plate <1>", face: "top" }, points: [[20, 12]], diameter: 6 });
+    const said = await ok(s, "add_mate", { type: "cylindrical", first: { instance: "Plate <1>", face: { near: [20, 12, 2.5] } }, second: { instance: "Pin <1>", face: { near: [-30, 7, 10] } } });
+    expect(said).not.toMatch(/PROBLEM/);
+    const text = await ok(s, "describe_assembly", {});
+    expect(text).not.toMatch(/doesn't work|can't be found/i);
+    // The pin's axis is now the hole's: its part's axis (x = 100) moved to x = 20.
+    const pos = s.doc.assemblies![0].instances.find((i) => i.name === "Pin <1>")!.placement.position;
+    expect(pos[0] + 100).toBeCloseTo(20, 3);
+    expect(pos[1]).toBeCloseTo(12, 3);
+  });
 });

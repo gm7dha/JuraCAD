@@ -69,11 +69,32 @@ export function parseContexts(raw: unknown): EditContext[] {
 export const contextPartId = (contextId: string, key: string): string => `ctx:${contextId}:${key}`;
 
 /** The engine's view of one Part Studio's contexts (undefined when it has none, so older designs build exactly as before). */
-export function contextInputs(doc: Pick<JuraCADDocument, "contexts">, studioId: string): ContextInput[] | undefined {
-  const list = (doc.contexts ?? []).filter((c) => c.studioId === studioId);
+export function contextInputs(doc: Pick<JuraCADDocument, "contexts" | "assemblies">, studioId: string): ContextInput[] | undefined {
+  // (A context whose assembly or part is gone shows nothing: its sketches' references then say they're lost.)
+  const list = (doc.contexts ?? []).filter((c) => c.studioId === studioId && !contextGone(doc, c));
   if (!list.length) return undefined;
   return list.map((c) => ({
     id: c.id,
     parts: c.parts.map((p) => ({ id: contextPartId(c.id, p.key), partId: p.partId, studioId: p.studioId, placement: p.placement, ...(p.mirrored ? { mirrored: true } : {}) })),
   }));
+}
+
+/** Contexts of a Part Studio that's gone are forgotten. */
+export function tidyContexts(doc: JuraCADDocument, studioIds: readonly string[]): JuraCADDocument {
+  const list = contextsOf(doc);
+  const kept = list.filter((c) => studioIds.includes(c.studioId));
+  if (kept.length === list.length) return doc;
+  const { contexts: _c, ...rest } = doc;
+  return kept.length ? { ...rest, contexts: kept } : rest;
+}
+
+/**
+ * Why a context no longer shows anything (its assembly deleted, or the copy it was taken for removed), in plain
+ * words — null while it's fine. Such a context's parts aren't shown or used; it can be removed.
+ */
+export function contextGone(doc: Pick<JuraCADDocument, "assemblies">, c: Pick<EditContext, "assemblyId" | "instance">): string | null {
+  const asm = (doc.assemblies ?? []).find((a) => a.id === c.assemblyId);
+  if (!asm) return "Its assembly has been deleted, so its parts aren't shown any more.";
+  if (!asm.instances.some((i) => i.id === c.instance.split("/")[0])) return `The part it was taken for is no longer in ${asm.name}, so its parts aren't shown any more.`;
+  return null;
 }

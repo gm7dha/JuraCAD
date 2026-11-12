@@ -12,6 +12,7 @@ import { openLaser } from "./laserState";
 import { instancesForKernel } from "./assemblySolve";
 import { solveWithParts } from "../assembly/mates";
 import { stepTree } from "../assembly/stepTree";
+import { cutsInsideSubAssemblies, FLAT_STEP_NOTE } from "../assembly/placed";
 import { exportColours } from "../model/finishes";
 
 const QUALITY: { value: MeshQuality; label: string; hint: string }[] = [
@@ -79,21 +80,23 @@ export function ExportDialog() {
       if (format === "step") {
         // A whole assembly keeps its structure (sub-assemblies, each part once, every copy placed), as Onshape's STEP files do.
         const solvedAll = asm && which === "all" ? solveWithParts(asm, allParts, { assemblies }) : null;
-        const tree = asm && solvedAll ? stepTree(asm, allParts, solvedAll.placements, assemblies ?? [], solvedAll.inner) : null;
-        const { step, partCount } = await getKernel().exportStep(partIds, exportColours(doc), chosenInstances, tree ?? undefined);
+        // (Parts inside sub-assemblies cut by assembly features: every part on its own instead — said below.)
+        const flat = !!asm && !!solvedAll && cutsInsideSubAssemblies(asm, allParts, assemblies ?? []);
+        const tree = asm && solvedAll && !flat ? stepTree(asm, allParts, solvedAll.placements, assemblies ?? [], solvedAll.inner) : null;
+        const { step, partCount, cutNotes } = await getKernel().exportStep(partIds, exportColours(doc), chosenInstances, tree ?? undefined);
         const name = `${safeFileName(fileName, "juracad")}.step`;
         downloadFile(step, name, "model/step");
-        showToast(`Saved ${name} (${partCount === 1 ? "1 part" : `${partCount} parts`})`, "success");
+        showToast(`Saved ${name} (${partCount === 1 ? "1 part" : `${partCount} parts`})${flat ? `. ${FLAT_STEP_NOTE}` : ""}${cutNotes?.length ? `. Problem: ${cutNotes.join(" ")}` : ""}`, cutNotes?.length ? "error" : "success");
       } else if (format === "3mf") {
-        const { data, triangleCount } = await getKernel().export3mf(partIds, quality, doc.name, exportColours(doc), chosenInstances);
+        const { data, triangleCount, cutNotes } = await getKernel().export3mf(partIds, quality, doc.name, exportColours(doc), chosenInstances);
         const name = `${safeFileName(fileName, "juracad")}.3mf`;
         downloadFile(data, name, "model/3mf");
-        showToast(`Saved ${name} (${triangleCount.toLocaleString()} triangles)`, "success");
+        showToast(`Saved ${name} (${triangleCount.toLocaleString()} triangles)${cutNotes?.length ? `. Problem: ${cutNotes.join(" ")}` : ""}`, cutNotes?.length ? "error" : "success");
       } else {
-        const { stl, triangleCount } = await getKernel().exportStl(partIds, quality, chosenInstances);
+        const { stl, triangleCount, cutNotes } = await getKernel().exportStl(partIds, quality, chosenInstances);
         const name = `${safeFileName(fileName, "juracad")}.stl`;
         downloadFile(stl, name, "model/stl");
-        showToast(`Saved ${name} (${triangleCount.toLocaleString()} triangles)`, "success");
+        showToast(`Saved ${name} (${triangleCount.toLocaleString()} triangles)${cutNotes?.length ? `. Problem: ${cutNotes.join(" ")}` : ""}`, cutNotes?.length ? "error" : "success");
       }
       close();
     } catch (e) {

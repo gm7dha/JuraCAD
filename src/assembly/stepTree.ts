@@ -10,10 +10,10 @@ import type { PartMesh, StepComponent, StepTree } from "../kernel/protocol";
 import type { Assembly, Instance } from "../model/types";
 import { findMesh, meshIdOf } from "./configured";
 import { flexibleInner, solvedInside } from "./mates";
-import { compose, invert, type Placement } from "./math";
+import { compose, IDENTITY, invert, type Placement } from "./math";
 import { hasFlexible, isFlexible } from "./flexible";
 import { mirroredPlacement } from "./subassembly";
-import { cutsFor } from "./assemblyFeatures";
+import { cutStager } from "./placed";
 
 /** A part definition's key: the built part, and "~mirrored" for its mirror image (the opposite hand is a different part). */
 export const stepPartKey = (i: Pick<Instance, "partId" | "configuration" | "mirrored">): string => meshIdOf(i) + (i.mirrored ? "~mirrored" : "");
@@ -31,8 +31,9 @@ export const stepPartKey = (i: Pick<Instance, "partId" | "configuration" | "mirr
  * copy is a product of its own.
  */
 export function stepTree(assembly: Assembly, parts: readonly PartMesh[], tops: Record<string, Placement>, assemblies: readonly Assembly[] = [], inner?: Record<string, Placement>): StepTree | null {
-  // Copies cut by the assembly's own features (top-level ones: a part of its own each, "<part> (modified in assembly)").
-  const cutOf = (i: Instance) => (assembly.features?.length ? cutsFor(assembly, i.id) : undefined);
+  // Copies the assembly's own features may cut (top-level ones): each its own part definition, "<part> (modified in
+  // assembly)", which the engine turns back into the shared plain one if nothing was taken away (StepTree.parts' `plain`).
+  const stager = assembly.features?.length ? cutStager(assembly, parts, assemblies) : null;
   const out: StepTree = { root: assembly.id, assemblies: {}, parts: {} };
   /**
    * Fills in an assembly's product (once, under `key`); false when it has nothing in it. `places` gives each
@@ -74,11 +75,12 @@ export function stepTree(assembly: Assembly, parts: readonly PartMesh[], tops: R
       const mesh = findMesh(parts, meshIdOf(i));
       if (!mesh) continue;
       const shown = { ...i, mirrored };
-      const cuts = key === assembly.id ? cutOf(i) : undefined;
+      const cuts = stager && key === assembly.id ? stager({ key: i.id, top: i.id, path: [], instance: shown, name: i.name, relative: IDENTITY }, own) : undefined;
       if (cuts) {
-        // Cut where it sits; the file then places that shape, so it's made in the part's own coordinates.
-        const ck = `${stepPartKey(shown)}~cut:${i.id}`;
-        out.parts[ck] = { partId: meshIdOf(i), name: `${mesh.name}${mirrored ? " (mirrored)" : ""} (modified in assembly)`, ...(mirrored ? { mirrored: true } : {}), cuts, cutAt: { position: p.position, rotation: p.rotation } };
+        const plain = stepPartKey(shown);
+        const ck = `${plain}~cut:${i.id}`;
+        const plainName = mesh.name + (mirrored ? " (mirrored)" : "");
+        out.parts[ck] = { partId: meshIdOf(i), name: `${plainName} (modified in assembly)`, ...(mirrored ? { mirrored: true } : {}), cuts, plain, plainName };
         components.push({ name: i.name, position: p.position, rotation: p.rotation, part: ck });
         continue;
       }

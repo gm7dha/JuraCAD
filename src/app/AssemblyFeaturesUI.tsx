@@ -18,6 +18,7 @@ import { applyPlacement, compose, rotate, type Vec3 } from "../assembly/math";
 import { solveWithParts } from "../assembly/mates";
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { leavesOf } from "../assembly/subassembly";
+import { contextGone } from "../assembly/inContext";
 import { evaluate } from "../model/expr";
 import { activeAssembly, activeStudioId, useLengthUnit, useStore } from "../model/store";
 import { lengthNumber, storeLength } from "../model/units";
@@ -341,21 +342,29 @@ export function ContextBar() {
   const studio = useStore(activeStudioId);
   const inAssembly = useStore((s) => !!activeAssembly(s));
   const contexts = useStore((s) => s.history.present.contexts);
+  const assemblies = useStore((s) => s.history.present.assemblies);
   const here = contexts?.filter((c) => c.studioId === studio) ?? [];
   if (inAssembly || !here.length) return null;
   return (
     <div className="context-bar" role="region" aria-label="Edit in context">
-      {here.map((c) => (
+      {here.map((c) => {
+        const gone = contextGone({ assemblies }, c);
+        return (
         <div className="context-bar-row" key={c.id}>
           <span title="The assembly's other parts are shown faint for reference: sketch on their faces, snap to them and Use their edges. Their places are as they were when this context was taken.">
             In context: <strong>{c.name}</strong>
+            {gone && <span className="muted"> — {gone}</span>}
           </span>
-          <button className="text-button small" onClick={() => updateContextNow(c.id)} title="Take the parts' places from the assembly again (sketches using their edges follow)">
-            Update context
-          </button>
-          <button className="text-button small" onClick={() => hideContext(c.id, !c.hidden)} title={c.hidden ? "Show its parts again" : "Hide its parts (sketches using them keep working)"}>
-            {c.hidden ? "Show" : "Hide"}
-          </button>
+          {!gone && (
+            <button className="text-button small" onClick={() => updateContextNow(c.id)} title="Take the parts' places from the assembly again (sketches using their edges follow)">
+              Update context
+            </button>
+          )}
+          {!gone && (
+            <button className="text-button small" onClick={() => hideContext(c.id, !c.hidden)} title={c.hidden ? "Show its parts again" : "Hide its parts (sketches using them keep working)"}>
+              {c.hidden ? "Show" : "Hide"}
+            </button>
+          )}
           <button
             className="text-button small"
             onClick={() => {
@@ -366,7 +375,8 @@ export function ContextBar() {
             Remove
           </button>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

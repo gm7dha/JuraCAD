@@ -31,7 +31,7 @@ import { findMesh, meshIdOf } from "./configured";
 import { leavesOf, type Leaf } from "./subassembly";
 import { solveWithParts } from "./mates";
 
-export { contextInputs, contextPartId } from "./featureParse";
+export { contextGone, contextInputs, contextPartId, tidyContexts } from "./featureParse";
 
 /** True for the id of a context's part (never a Part Studio's own part). */
 export const isContextPartId = (id: string): boolean => id.startsWith("ctx:");
@@ -170,11 +170,3 @@ export function removeContext(doc: JuraCADDocument, contextId: string): JuraCADD
   return contexts.length ? { ...rest, contexts } : rest;
 }
 
-/** Contexts of a Part Studio that's gone are forgotten. */
-export function tidyContexts(doc: JuraCADDocument, studioIds: readonly string[]): JuraCADDocument {
-  const list = contextsOf(doc);
-  const kept = list.filter((c) => studioIds.includes(c.studioId));
-  if (kept.length === list.length) return doc;
-  const { contexts: _c, ...rest } = doc;
-  return kept.length ? { ...rest, contexts: kept } : rest;
-}

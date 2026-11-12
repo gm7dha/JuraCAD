@@ -62,14 +62,16 @@ describe("which copies an assembly feature cuts", () => {
   it("gives the engine the cuts in assembly coordinates, and plain parts exactly as before", () => {
     const { asm } = withHole();
     const inputs = instancesForKernel(asm, parts, [asm]);
-    expect(inputs.find((i) => i.id === "i2")?.cuts?.map((f) => f.id)).toEqual(["sk", "ho"]);
-    // Placed where solved: no separate place to cut at.
-    expect(inputs.find((i) => i.id === "i2")?.cutAt).toBeUndefined();
+    const stage = inputs.find((i) => i.id === "i2")!.cuts!;
+    expect(stage.map((c) => c.features.map((f) => f.id))).toEqual([["sk", "ho"]]);
+    // Cut where it's solved to be.
+    expect(stage[0].at.position).toEqual([0, 0, 5]);
     // An exploded view moves the copy on, but it's cut where it sits in the assembly.
     const shown = instancesForKernel(asm, parts, [asm], undefined, { i1: at(0, 0, 0), i2: at(0, 0, 50) });
-    expect(shown.find((i) => i.id === "i2")?.cutAt?.position).toEqual([0, 0, 5]);
+    const moved = shown.find((i) => i.id === "i2")!;
+    expect([moved.position, moved.cuts![0].at.position]).toEqual([[0, 0, 50], [0, 0, 5]]);
     const plain = { ...asm, features: undefined };
-    expect(instancesForKernel(plain, parts, [asm]).every((i) => !("cuts" in i) && !("cutAt" in i))).toBe(true);
+    expect(instancesForKernel(plain, parts, [asm]).every((i) => !("cuts" in i))).toBe(true);
     // A suppressed hole cuts nothing.
     const off = { ...asm, features: asm.features!.map((f) => (f.id === "ho" ? { ...f, suppressed: true } : f)) };
     expect(cutsFor(off, "i1")).toBeUndefined();

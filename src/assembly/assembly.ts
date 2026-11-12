@@ -500,9 +500,10 @@ export interface BomOptions {
   structured?: boolean;
   /**
    * Copies cut by the assembly's own features (their keys: "copy" or "copy/inner/part"): each is its own line,
-   * "Plate (modified in assembly)", as it's no longer the plain part.
+   * "Plate (modified in assembly)", as it's no longer the plain part — with the cut copy's volume (mm³) when known,
+   * so its weight is the cut part's (copies cut to the same volume share a line).
    */
-  modified?: ReadonlySet<string>;
+  modified?: ReadonlyMap<string, number | undefined>;
 }
 
 /** What the parts list can say about the part an instance shows: its material (key) and solid volume (mm³; null for a surface). */
@@ -524,13 +525,15 @@ export function billOfMaterials(
   options: BomOptions = {},
 ): BomRow[] {
   const all = options.assemblies ?? [];
-  const partRow = (rows: Map<string, BomRow>, shown: Instance, count: number, flip = false, cut = false) => {
+  /** `cut`: the copy is modified in the assembly (its cut volume, when known; null when not cut). */
+  const partRow = (rows: Map<string, BomRow>, shown: Instance, count: number, flip = false, cut: number | undefined | null = null) => {
     // (Inside a mirrored sub-assembly copy, every part is the opposite hand.)
     const i = flip ? { ...shown, mirrored: !shown.mirrored } : shown;
     // A part in another configuration is a different line ("Bracket (Large)").
     const cfgKey = i.configuration && configurationNames[i.configuration] ? `${i.partId}@${i.configuration}` : i.partId;
     // A mirrored copy is the opposite hand: a different part to make.
-    const key = (i.mirrored ? `${cfgKey}~mirrored` : cfgKey) + (cut ? "~modified" : "");
+    const modified = cut !== null;
+    const key = (i.mirrored ? `${cfgKey}~mirrored` : cfgKey) + (modified ? `~modified${cut !== undefined ? `:${Math.round(cut * 1000) / 1000}` : ""}` : "");
     const row = rows.get(key);
     if (row) {
       row.quantity += count;
@@ -539,10 +542,12 @@ export function billOfMaterials(
     const name = partNames[i.partId];
     const base = name ?? i.name.replace(/\s*<\d+>$/, "");
     const cfg = cfgKey !== i.partId ? ` (${configurationNames[i.configuration!]})` : "";
-    const props = name !== undefined ? info?.(i) : null;
+    const own = name !== undefined ? info?.(i) : null;
+    // A cut copy weighs what's left of it.
+    const props = own && modified && cut !== undefined && own.volume !== null ? { ...own, volume: cut } : own;
     rows.set(key, {
       partId: key,
-      name: base + cfg + (i.mirrored ? " (mirrored)" : "") + (cut ? " (modified in assembly)" : ""),
+      name: base + cfg + (i.mirrored ? " (mirrored)" : "") + (modified ? " (modified in assembly)" : ""),
       quantity: count,
       missing: name === undefined,
       ...(props ? { material: materialOf(props.material).label } : {}),
@@ -558,7 +563,7 @@ export function billOfMaterials(
   };
   // Flattened: every part, however deep, counted once for each copy of what it's in.
   const modified = options.modified;
-  const isCut = (prefix: string | null, i: Instance) => prefix !== null && !!modified?.has(prefix + i.id);
+  const isCut = (prefix: string | null, i: Instance): number | undefined | null => (prefix !== null && modified?.has(prefix + i.id) ? modified.get(prefix + i.id) : null);
   /** `prefix`: the key so far ("" at the top), null inside a sub-assembly seen from another level (its cuts aren't this assembly's). */
   const flat = (a: Assembly, count: number, rows: Map<string, BomRow>, within: string[], flip = false, prefix: string | null = "") => {
     // Suppressed parts aren't in the parts list (like Onshape).
@@ -580,7 +585,7 @@ export function billOfMaterials(
     for (const i of a.instances) {
       if (i.suppressed) continue;
       if (!i.subAssembly) {
-        partRow(rows, i, 1, flip, depth === 0 && isCut("", i));
+        partRow(rows, i, 1, flip, depth === 0 ? isCut("", i) : null);
         continue;
       }
       const sub = subOf(i, within);

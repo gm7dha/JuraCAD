@@ -106,7 +106,7 @@ export function documentStudioInputs(doc: JuraCADDocument): StudioInput[] {
 }
 
 /** A Part Studio's input with its Edit in context parts, if it has any (else the same object, so nothing changes). */
-export function withContexts(doc: Pick<JuraCADDocument, "contexts">, input: StudioInput): StudioInput {
+export function withContexts(doc: Pick<JuraCADDocument, "contexts" | "assemblies">, input: StudioInput): StudioInput {
   const contexts = doc.contexts?.length ? contextInputs(doc, input.id) : undefined;
   return contexts ? { ...input, contexts } : input;
 }

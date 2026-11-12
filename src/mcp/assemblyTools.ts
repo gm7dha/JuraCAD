@@ -17,7 +17,7 @@ import { findMesh, meshIdOf } from "../assembly/configured";
 import { applyPlacement, compose, eulerDegFromQuat, IDENTITY, quatFromEulerDeg, rotate, type Placement, type Vec3 } from "../assembly/math";
 import { MATE_ORDER, MATE_TYPES, nextMateName, solveWithParts, type SolveResult } from "../assembly/mates";
 import { isOrigin, originConnector, ORIGIN_PLANES, type OriginPlane } from "../assembly/origin";
-import { explodeAssembly, instancesForKernel, partBox } from "../assembly/placed";
+import { cutsInsideSubAssemblies, explodeAssembly, FLAT_STEP_NOTE, hasAssemblyFeatures, instancesForKernel, partBox } from "../assembly/placed";
 import { stepPartOffsets } from "../assembly/explode";
 import { ownConnectorPick } from "../assembly/connectors";
 import { stepTree } from "../assembly/stepTree";
@@ -26,7 +26,7 @@ import { RELATION_KINDS } from "../assembly/relations";
 import { mateInactive } from "../assembly/suppress";
 import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
 import type { InstanceInput, PartMesh } from "../kernel/protocol";
-import { assemblyFeaturesText } from "../assembly/assemblyFeatures";
+import { assemblyFeaturesText, modifiedCopies } from "../assembly/assemblyFeatures";
 import { newId } from "../model/document";
 import type { Assembly, ConnectorSpot, Instance, JuraCADDocument, Mate, MateConnector, MateType } from "../model/types";
 import { amount, bool, InputError, list, noExtras, object, oneOf, text, xyz, type Obj } from "./args";
@@ -60,8 +60,20 @@ function insertableParts(s: Session): PartMesh[] {
   return builtParts(s).filter((p) => !p.configuration);
 }
 
-export function solve(s: Session, asm: Assembly, hold: string[] = []): SolveResult {
-  return solveWithParts(asm, builtParts(s), { assemblies: assembliesOf(s.doc), hold });
+export function solve(s: Session, asm: Assembly, hold: string[] = [], doc = s.doc): SolveResult {
+  const assemblies = assembliesOf(doc);
+  const base = solveWithParts(asm, builtParts(s), { assemblies, hold });
+  // A mate on a face made by the assembly's own features (a drilled hole) is found on the cut copies.
+  const cutMeshes = cutMeshesOf(s, asm, assemblies, base);
+  return cutMeshes ? solveWithParts(asm, builtParts(s), { assemblies, hold, cutMeshes }) : base;
+}
+
+/** The copies an assembly's features cut, by key, in the part's own coordinates (undefined when none are). */
+export function cutMeshesOf(s: Session, asm: Assembly, assemblies: readonly Assembly[] = assembliesOf(s.doc), solved?: SolveResult): Record<string, PartMesh> | undefined {
+  if (!hasAssemblyFeatures(asm, assemblies)) return undefined;
+  const parts = builtParts(s);
+  const r = s.withWholeEngine((e) => e.assemblyCuts(instancesForKernel(asm, parts, assemblies, solved ?? solveWithParts(asm, parts, { assemblies }))));
+  return r.meshes.length ? Object.fromEntries(r.meshes.map((m) => [m.id, m])) : undefined;
 }
 
 const norm = (name: string) => name.toLowerCase().replace(/\s*\/\s*/g, " / ").replace(/\s+/g, " ").trim();
@@ -94,8 +106,11 @@ export function findTarget(s: Session, asm: Assembly, ref: unknown, where: strin
     if (top?.suppressed) throw new InputError(`${where}: ${top.name} is suppressed (switched off). Switch it back on with place_instance {"suppressed": false} first.`);
     throw new InputError(`${where}: there's no copy called "${ref}" in ${asm.name}. ${leaves.length ? `Its parts are: ${leafNames(leaves)}.` : `It's empty: insert parts with insert_into_assembly.`}`);
   }
-  const mesh = findMesh(parts, meshIdOf(leaf.instance));
-  if (!mesh) throw new InputError(`${where}: ${leaf.name}'s part no longer exists in its Part Studio. Remove it (remove_from_assembly) or undo the change that removed the part.`);
+  const plain = findMesh(parts, meshIdOf(leaf.instance));
+  if (!plain) throw new InputError(`${where}: ${leaf.name}'s part no longer exists in its Part Studio. Remove it (remove_from_assembly) or undo the change that removed the part.`);
+  // A copy cut by the assembly's features: its faces as cut (a drilled hole's wall can be mated to), named by its part.
+  const cut = cutMeshesOf(s, asm, assembliesOf(s.doc), solved)?.[leaf.key];
+  const mesh = cut ? { ...plain, ...cut, id: plain.id, name: plain.name } : plain;
   const top = asm.instances.find((i) => i.id === leaf!.top)!;
   const at = solved.placements[top.id] ?? top.placement;
   return { leaf, placement: leaf.path.length ? compose(at, leaf.relative) : at, mesh };
@@ -284,7 +299,7 @@ function partsListText(s: Session, asm: Assembly, structured: boolean): string {
   const names = Object.fromEntries(parts.map((p) => [p.id, p.name]));
   const configs = Object.fromEntries((s.doc.configurations ?? []).map((c) => [c.id, c.name]));
   // Copies cut by the assembly's own features are lines of their own ("… (modified in assembly)").
-  const modified = asm.features?.length ? new Set(s.withWholeEngine((e) => e.assemblyCuts(instancesForKernel(asm, parts, assembliesOf(s.doc), solve(s, asm))).cut)) : undefined;
+  const modified = hasAssemblyFeatures(asm, assembliesOf(s.doc)) ? modifiedCopies(s.withWholeEngine((e) => e.assemblyCuts(instancesForKernel(asm, parts, assembliesOf(s.doc), solve(s, asm))))) : undefined;
   const rows = billOfMaterials(asm, names, configs, undefined, s.doc.partProperties, { assemblies: assembliesOf(s.doc), structured, ...(modified ? { modified } : {}) });
   if (!rows.length) return "Parts list: empty.";
   return `Parts list${structured ? " (structured)" : ""}:\n${rows
@@ -355,7 +370,7 @@ export async function tryAssemblyChange(s: Session, asmId: string, next: JuraCAD
   const beforeProblems = before ? assemblyProblems(before, solve(s, before), assembliesOf(s.doc)) : {};
   await s.checkpoint();
   const asm = assembliesOf(next).find((a) => a.id === asmId)!;
-  const solved = solveWithParts(asm, builtParts(s), { assemblies: assembliesOf(next), hold });
+  const solved = solve(s, asm, hold, next);
   // Anything that worked and doesn't now (a mate, a relation, a pattern, a group) — or something new that doesn't work.
   const fresh = Object.entries(assemblyProblems(asm, solved, assembliesOf(next))).filter(([id, p]) => beforeProblems[id]?.text !== p.text);
   if (fresh.length) {
@@ -367,7 +382,7 @@ export async function tryAssemblyChange(s: Session, asmId: string, next: JuraCAD
   const settled = settleSolved(next, asmId, solved);
   s.commit(settled);
   const out = assembliesOf(settled).find((a) => a.id === asmId)!;
-  return { asm: out, solved: solveWithParts(out, builtParts(s), { assemblies: assembliesOf(settled) }) };
+  return { asm: out, solved: solve(s, out, [], settled) };
 }
 
 /**
@@ -644,7 +659,11 @@ export const ASSEMBLY_TOOLS: ToolDef[] = [
         inner.length ? `Parts inside sub-assemblies (name them like this in add_mate): ${leafNames(inner)}.` : null,
         (asm.mates ?? []).length ? `Mates:\n${(asm.mates ?? []).map((m) => mateText(asm, m, solved, assemblies)).join("\n")}` : "No mates yet.",
         ...assemblyExtrasText(asm, solved, leaves),
-        assemblyFeaturesText(asm, (k) => leaves.find((l) => l.key === k)?.name ?? k),
+        assemblyFeaturesText(
+          asm,
+          (k) => leaves.find((l) => l.key === k)?.name ?? k,
+          asm.features?.length ? s.withWholeEngine((e) => e.assemblyCuts(instancesForKernel(asm, builtParts(s), assemblies, solved))).errors : {},
+        ),
         asm.explode !== undefined ? `Exploded view: on (spread ${asm.explode}).` : null,
         partsListText(s, asm, bool(a.structured, "structured")),
       );
@@ -790,18 +809,33 @@ function boxesInWith(s: Session, asm: Assembly, solved: SolveResult, doc: JuraCA
 }
 
 /** Export an assembly's parts in their places (export_model with "assembly"). */
-export async function exportAssemblyBytes(s: Session, asm: Assembly, format: "stl" | "3mf" | "step"): Promise<{ bytes: Uint8Array; count: number }> {
+export async function exportAssemblyBytes(s: Session, asm: Assembly, format: "stl" | "3mf" | "step"): Promise<{ bytes: Uint8Array; count: number; notes: string[] }> {
   await s.buildAllAsync();
   const solved = solve(s, asm);
   const instances = instancesForKernel(asm, builtParts(s), assembliesOf(s.doc), solved);
   if (!instances.length) throw new InputError(`${asm.name} has nothing in it to export yet. Insert parts with insert_into_assembly.`);
   await s.checkpoint();
+  const notes: string[] = [];
   const bytes = await s.withWholeEngine(async (e) => {
-    if (format === "stl") return new Uint8Array(e.exportStl([], "normal", instances).stl);
-    if (format === "3mf") return new Uint8Array(e.export3mf([], "normal", `${s.doc.name} ${asm.name}`, exportColours(s.doc), instances).data);
-    // STEP keeps the assembly's structure (sub-assemblies, each part once, every copy placed), as the app's export does.
-    const tree = stepTree(asm, builtParts(s), solved.placements, assembliesOf(s.doc), solved.inner);
-    return new Uint8Array((await e.exportStep([], exportColours(s.doc), instances, tree ?? undefined)).step);
+    const said = (r: { cutNotes?: string[] }) => notes.push(...(r.cutNotes ?? []).map((n) => `PROBLEM (assembly feature): ${n}`));
+    if (format === "stl") {
+      const r = e.exportStl([], "normal", instances);
+      said(r);
+      return new Uint8Array(r.stl);
+    }
+    if (format === "3mf") {
+      const r = e.export3mf([], "normal", `${s.doc.name} ${asm.name}`, exportColours(s.doc), instances);
+      said(r);
+      return new Uint8Array(r.data);
+    }
+    // STEP keeps the assembly's structure (sub-assemblies, each part once, every copy placed), as the app's export does —
+    // unless parts inside sub-assemblies are cut by assembly features (then every part is listed on its own).
+    const flat = cutsInsideSubAssemblies(asm, builtParts(s), assembliesOf(s.doc));
+    if (flat) notes.push(FLAT_STEP_NOTE);
+    const tree = flat ? null : stepTree(asm, builtParts(s), solved.placements, assembliesOf(s.doc), solved.inner);
+    const r = await e.exportStep([], exportColours(s.doc), instances, tree ?? undefined);
+    said(r);
+    return new Uint8Array(r.step);
   });
-  return { bytes, count: instances.length };
+  return { bytes, count: instances.length, notes };
 }

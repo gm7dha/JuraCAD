@@ -5,7 +5,7 @@
  */
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { assemblyExtrudeCut, assemblyHole, assemblySketch, cutsFor, setFeatureParts } from "../src/assembly/assemblyFeatures";
+import { assemblyExtrudeCut, assemblyHole, assemblySketch, cutsFor, modifiedCopies, setFeatureParts } from "../src/assembly/assemblyFeatures";
 import { instancesForKernel } from "../src/assembly/placed";
 import { stepTree } from "../src/assembly/stepTree";
 import { billOfMaterials } from "../src/assembly/assembly";
@@ -63,7 +63,7 @@ describe("assembly features", () => {
   it("cuts both plates in the assembly, and leaves the Part Studio's parts whole", () => {
     const { asm } = drilled();
     const inputs = instancesForKernel(asm, parts);
-    expect(inputs.every((i) => i.cuts?.length === 2)).toBe(true);
+    expect(inputs.every((i) => i.cuts?.length === 1 && i.cuts[0].features.length === 2)).toBe(true);
     const r = engine.assemblyCuts(inputs);
     expect(r.errors).toEqual({});
     expect(r.cut.sort()).toEqual(["i1", "i2"]);
@@ -121,7 +121,7 @@ describe("assembly features", () => {
     expect(r.cut).toEqual(["i2"]);
     const clashes = engine.clashes(instancesForKernel(one, parts));
     expect(clashes.every((c) => (c.volume ?? 0) < 1e-6)).toBe(true);
-    const bom = billOfMaterials(one, { [lower.id]: "Lower", [upper.id]: "Upper" }, {}, undefined, {}, { modified: new Set(r.cut) });
+    const bom = billOfMaterials(one, { [lower.id]: "Lower", [upper.id]: "Upper" }, {}, undefined, {}, { modified: modifiedCopies(r) });
     expect(bom.map((b) => b.name)).toEqual(["Lower", "Upper (modified in assembly)"]);
   });
 

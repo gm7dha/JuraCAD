@@ -21,6 +21,7 @@ import { newId } from "../model/document";
 import { findDependents } from "../model/dependents";
 import { defaultParams } from "../model/features";
 import type { Assembly, Feature, JuraCADDocument } from "../model/types";
+import type { AssemblyCutsResult } from "../kernel/protocol";
 import type { SketchData } from "../sketch/types";
 import type { SketchPlane } from "../sketch/planes";
 import { updateAssembly } from "./assembly";
@@ -172,7 +173,7 @@ export function assemblyExtrudeCut(a: Pick<Assembly, "features">, sketchId: stri
 }
 
 /** One line per assembly feature, for describe_assembly. */
-export function assemblyFeaturesText(asm: Assembly, nameOf: (key: string) => string): string | null {
+export function assemblyFeaturesText(asm: Assembly, nameOf: (key: string) => string, errors: Record<string, string> = {}): string | null {
   const list = assemblyFeaturesOf(asm);
   if (!list.length) return null;
   const lines = list.map((f) => {
@@ -180,7 +181,12 @@ export function assemblyFeaturesText(asm: Assembly, nameOf: (key: string) => str
     const chosen = asm.featureParts?.[f.id];
     const whom = chosen ? (chosen.length ? `cuts only ${chosen.map(nameOf).join(", ")}` : "cuts nothing (no parts chosen)") : "cuts every part it reaches";
     const sketch = list.find((x) => x.id === sketchOfCut(f))?.name ?? "its sketch";
-    return `- ${f.name} (${f.type === "hole" ? "hole" : `${f.type}, removing`}, from ${sketch}; ${whom})${f.suppressed ? " — suppressed" : ""}`;
+    return `- ${f.name} (${f.type === "hole" ? "hole" : `${f.type}, removing`}, from ${sketch}; ${whom})${f.suppressed ? " — suppressed" : ""}${errors[f.id] ? ` — PROBLEM: ${errors[f.id]}` : ""}`;
   });
   return `Assembly features (cut only in this assembly; the parts themselves are unchanged):\n${lines.join("\n")}`;
+}
+
+/** The copies the engine found cut (AssemblyCutsResult), with what's left of each (mm³), for the parts list. */
+export function modifiedCopies(result: Pick<AssemblyCutsResult, "cut" | "meshes">): Map<string, number | undefined> {
+  return new Map(result.cut.map((k) => [k, result.meshes.find((m) => m.id === k)?.volume]));
 }

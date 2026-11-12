@@ -289,6 +289,11 @@ export interface SolveOptions {
   symmetry?: (instance: Instance) => OwnPlane | null;
   /** (Inside the solver) mirrors across faces: each one's plane where the face ended up, worked out by a first pass. */
   facePlanes?: Record<string, MirrorPlane | string>;
+  /**
+   * Copies cut by the assembly's own features, by instance id (AssemblyCutsResult meshes): a mate on a face only the
+   * cut copy has (a drilled hole's wall) is found on these. Missing = none.
+   */
+  cutMeshes?: Readonly<Record<string, PartMesh>>;
   /** (Inside the solver) a flattened assembly's flexible sub-assembly parts (see flexible.ts). */
   flex?: { bodies: Record<string, FlexBody>; patternFrames: Record<string, string> };
 }
@@ -810,7 +815,7 @@ export function solveWithParts(assembly: Assembly, parts: PartMesh[], options: S
   const r =
     options.assemblies && hasFlexible(assembly)
       ? solveFlexibly(assembly, parts, options.assemblies, options, [assembly.id]).result
-      : solveAssembly(assembly, frameLookup(assembly, parts, options.assemblies), { symmetry: symmetryOn(parts, options.assemblies), ...options });
+      : solveAssembly(assembly, frameLookup(assembly, parts, options.assemblies, options.cutMeshes), { symmetry: symmetryOn(parts, options.assemblies), ...options });
   // A connector on a part inside a sub-assembly: say plainly when the way to it is switched off or gone.
   for (const m of assembly.mates ?? []) {
     if (!r.mateErrors[m.id]) continue;
@@ -966,8 +971,8 @@ const flipFrame = (f: Frame): Frame => {
  * each instance shows it (another configuration, or mirrored, or a part inside
  * a sub-assembly, where that sub-assembly's own mates put it).
  */
-export function frameLookup(assembly: Assembly, parts: PartMesh[], assemblies?: readonly Assembly[]): FrameLookup {
-  return (mate, side) => connectorFrameFor(assembly, parts, mate[side], assemblies);
+export function frameLookup(assembly: Assembly, parts: PartMesh[], assemblies?: readonly Assembly[], cutMeshes?: Readonly<Record<string, PartMesh>>): FrameLookup {
+  return (mate, side) => connectorFrameFor(assembly, parts, mate[side], assemblies, [], cutMeshes);
 }
 
 /**
@@ -977,7 +982,7 @@ export function frameLookup(assembly: Assembly, parts: PartMesh[], assemblies?: 
  * `within` lists the assemblies already being looked into (so a loop of
  * sub-assemblies can't go round for ever).
  */
-export function connectorFrameFor(assembly: Assembly, parts: PartMesh[], c: MateConnector, assemblies?: readonly Assembly[], within: readonly string[] = []): Frame | null {
+export function connectorFrameFor(assembly: Assembly, parts: PartMesh[], c: MateConnector, assemblies?: readonly Assembly[], within: readonly string[] = [], cutMeshes?: Readonly<Record<string, PartMesh>>): Frame | null {
   // The assembly's origin: one of its planes.
   if (isOrigin(c)) return originFrame(c);
   // On the part as the instance shows it (which may be another configuration).
@@ -1001,9 +1006,11 @@ export function connectorFrameFor(assembly: Assembly, parts: PartMesh[], c: Mate
   // Always on the part the instance shows now (if it was replaced, the most similar face or edge of the new one).
   const mesh = instance ? findMesh(parts, meshIdOf(instance)) : undefined;
   if (instance && !mesh) return null;
-  const f = mesh
-    ? connectorFrameOnParts([mesh], { ...c, pick: { ...c.pick, partId: mesh.id }, ...(c.pick2 ? { pick2: { ...c.pick2, partId: mesh.id } } : {}) })
-    : connectorFrameOnParts(parts, c);
+  const on = (m: PartMesh) => connectorFrameOnParts([m], { ...c, pick: { ...c.pick, partId: m.id }, ...(c.pick2 ? { pick2: { ...c.pick2, partId: m.id } } : {}) });
+  // A face or edge made by the assembly's own features (a drilled hole's wall) is found on the cut copy — only when
+  // the part itself hasn't got it, so mates on faces it always had stay exactly where they were.
+  const cut = instance ? cutMeshes?.[instance.id] : undefined;
+  const f = mesh ? on(mesh) ?? (cut ? on(cut) : null) : connectorFrameOnParts(parts, c);
   // A mirrored instance shows its part flipped across its own YZ plane: so are its connectors.
   return f && instance?.mirrored ? flipFrame(f) : f;
 }

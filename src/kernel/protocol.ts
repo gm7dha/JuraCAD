@@ -18,12 +18,21 @@ export interface InstanceInput {
   /** The part's mirror image (flipped across its own YZ plane before it's placed). */
   mirrored?: boolean;
   /**
-   * Assembly features cutting this copy (src/assembly/assemblyFeatures.ts): the sketches and the
-   * Extrude / Revolve (remove) and Hole features, in the assembly's coordinates. Missing = none.
+   * Assembly features cutting this copy (src/assembly/assemblyFeatures.ts), level by level: the sketches and the
+   * Extrude / Revolve (remove) and Hole features. Missing = none.
    */
-  cuts?: Feature[];
-  /** Where the copy sat when cut (its solved place; an exploded view moves the cut copy on). Missing = where it's placed. */
-  cutAt?: { position: [number, number, number]; rotation: [number, number, number, number] };
+  cuts?: CutStage[];
+}
+
+/**
+ * One assembly level's features cutting a copy (see InstanceInput.cuts): the assembly's own, or those of a
+ * sub-assembly it's inside — each in that level's coordinates, with where the copy sits there (its solved place;
+ * an exploded view moves the cut copy on) and whether it's the part's mirror image there.
+ */
+export interface CutStage {
+  features: Feature[];
+  at: { position: [number, number, number]; rotation: [number, number, number, number] };
+  mirrored?: boolean;
 }
 
 /** A drawing view's lines, in the view's own flat coordinates (mm; x right, y up on the paper). */
@@ -186,6 +195,8 @@ export interface RebuildResult {
   parts: PartMesh[];
   /** Edit in context: the context parts of the Part Studios rebuilt (ids "ctx:…", `studioId` the studio they're shown in). Missing = none. */
   contextParts?: PartMesh[];
+  /** The Part Studios whose context parts are all in `contextParts` (placed again, or now none); the others' are as before. */
+  contextRebuilt?: string[];
   /** Feature ID → plain-English reason it failed. */
   featureErrors: Record<string, string>;
   /** Feature ID → something to tell about a feature that was built (e.g. an extra sketch it left out). Not a failure. */
@@ -270,6 +281,8 @@ export interface ContactMeasure {
 }
 
 export interface ExportResult {
+  /** An assembly's features that couldn't be made or couldn't cut, in plain words (see InstanceInput.cuts). */
+  cutNotes?: string[];
   /** Binary STL file contents. */
   stl: ArrayBuffer;
   triangleCount: number;
@@ -286,8 +299,8 @@ export interface StepTree {
   root: string;
   /** Assemblies by key (an assembly's id): their names and what's in them. */
   assemblies: Record<string, { name: string; components: StepComponent[] }>;
-  /** Part definitions by key: the built part (its mesh id), its name, whether it's the mirror image, and (a copy cut by the assembly's own features) its cuts, made with the copy at `cutAt` (see InstanceInput). */
-  parts: Record<string, { partId: string; name: string; mirrored?: boolean; cuts?: Feature[]; cutAt?: InstanceInput["cutAt"] }>;
+  /** Part definitions by key: the built part (its mesh id), its name, whether it's the mirror image, and (a copy cut by the assembly's own features) its cuts (see InstanceInput.cuts) — when they take nothing away, the engine writes the shared plain definition `plain` (named `plainName`) instead. */
+  parts: Record<string, { partId: string; name: string; mirrored?: boolean; cuts?: CutStage[]; plain?: string; plainName?: string }>;
 }
 
 /** One instance in a STEP assembly: its name, where it sits in its assembly, and the part or sub-assembly it shows (a key). */
@@ -301,12 +314,16 @@ export interface StepComponent {
 }
 
 export interface StepResult {
+  /** An assembly's features that couldn't be made or couldn't cut, in plain words (see InstanceInput.cuts). */
+  cutNotes?: string[];
   /** STEP file contents (exact shapes, millimetres). */
   step: ArrayBuffer;
   partCount: number;
 }
 
 export interface ThreeMfResult {
+  /** An assembly's features that couldn't be made or couldn't cut, in plain words (see InstanceInput.cuts). */
+  cutNotes?: string[];
   /** .3mf file contents. */
   data: ArrayBuffer;
   triangleCount: number;

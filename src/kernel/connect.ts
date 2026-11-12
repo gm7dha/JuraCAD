@@ -87,7 +87,7 @@ export function connectKernel(): () => void {
       }
       s.setRebuildResult(result.parts, result.featureErrors, result.durationMs, result.rebuilt, result.studioOrder, result.sketchLinks, result.featureWarnings, result.featureNotes, result.followed, result.curves);
       // Edit in context: the other assembly parts shown in each Part Studio (kept apart from the studio's own parts).
-      keepContextParts(result.contextParts, result.rebuilt, result.studioOrder);
+      keepContextParts(result.contextParts, result.contextRebuilt, result.studioOrder);
       // Where each Move / copy's triad goes (kept the same object while nothing changed, so nothing redraws).
       // (Only the Part Studios rebuilt are in the result: the others' are kept.)
       const was = useStore.getState().transformCentres;
@@ -134,6 +134,7 @@ export function connectKernel(): () => void {
   let lastPartNames = useStore.getState().history.present.partNames;
   let lastStudios = useStore.getState().history.present.partStudios;
   let lastContexts = useStore.getState().history.present.contexts;
+  let lastAssemblies = useStore.getState().history.present.assemblies;
   let lastDraft = useStore.getState().editing?.draft ?? null;
   let lastDoc = useStore.getState().history.present;
   /** What this tab last wrote to browser storage (null: write the design and its versions again next time). */
@@ -160,6 +161,8 @@ export function connectKernel(): () => void {
       s.history.present.partNames !== lastPartNames ||
       s.history.present.partStudios !== lastStudios ||
       s.history.present.contexts !== lastContexts ||
+      // (A context's assembly or part deleted: its parts stop showing.)
+      (!!s.history.present.contexts?.length && s.history.present.assemblies !== lastAssemblies) ||
       configuredKey(s.history.present) !== lastConfigured ||
       s.versionCompare?.docs !== lastCompared
     ) {
@@ -167,6 +170,7 @@ export function connectKernel(): () => void {
       lastConfigured = configuredKey(s.history.present);
       lastStudios = s.history.present.partStudios;
       lastContexts = s.history.present.contexts;
+      lastAssemblies = s.history.present.assemblies;
       lastPartNames = s.history.present.partNames;
       lastFeatures = s.history.present.features;
       lastVariables = s.history.present.variables;

@@ -16,10 +16,10 @@
 import { create } from "zustand";
 import { useEffect, useMemo } from "react";
 
-import { addAssemblyFeatures, assemblyExtrudeCut, assemblyFeaturesOf, assemblyHole, assemblySketch, deleteAssemblyFeatures, setFeatureParts } from "../assembly/assemblyFeatures";
+import { addAssemblyFeatures, assemblyExtrudeCut, assemblyFeaturesOf, assemblyHole, assemblySketch, deleteAssemblyFeatures, modifiedCopies, setFeatureParts } from "../assembly/assemblyFeatures";
 import { updateAssembly } from "../assembly/assembly";
-import { contextPartOf, removeContext, setContextHidden, takeContext, updateContext } from "../assembly/inContext";
-import { instancesForKernel } from "../assembly/placed";
+import { contextGone, contextPartOf, removeContext, setContextHidden, takeContext, updateContext } from "../assembly/inContext";
+import { hasAssemblyFeatures, instancesForKernel } from "../assembly/placed";
 import type { Placement } from "../assembly/math";
 import { getKernel } from "../kernel/connect";
 import type { AssemblyCutsResult, PartMesh } from "../kernel/protocol";
@@ -62,32 +62,35 @@ export const useAsmFeatures = create<AsmFeatureState>(() => ({ cuts: null, conte
 
 const NO_MESHES: PartMesh[] = [];
 const NO_CUT_MESHES: Record<string, PartMesh> = {};
-const NO_KEYS: ReadonlySet<string> = new Set();
+const NO_KEYS: ReadonlyMap<string, number | undefined> = new Map();
 
-/** After a rebuild: the context parts of the Part Studios rebuilt, the others' kept. */
-export function keepContextParts(built: PartMesh[] | undefined, rebuilt: string[] | undefined, order: string[] | undefined): void {
+/** After a rebuild: the context parts of the Part Studios placed again (`changed`), the others' kept. */
+export function keepContextParts(built: PartMesh[] | undefined, changed: string[] | undefined, order: string[] | undefined): void {
   const was = useAsmFeatures.getState().contextParts;
+  if (!changed?.length && (!order || was.every((p) => order.includes(p.studioId ?? "")))) return;
   const fresh = built ?? NO_MESHES;
-  const next = rebuilt && order ? [...order.flatMap((id) => (rebuilt.includes(id) ? fresh.filter((p) => p.studioId === id) : was.filter((p) => p.studioId === id)))] : fresh;
+  const keep = was.filter((p) => !changed?.includes(p.studioId ?? "") && (!order || order.includes(p.studioId ?? "")));
+  const next = [...keep, ...fresh];
   if (next.length === 0 && was.length === 0) return;
-  useAsmFeatures.setState({ contextParts: next });
+  useAsmFeatures.setState({ contextParts: next.length ? next : NO_MESHES });
 }
 
 /** The context parts to draw in the Part Studio on show (those of contexts not hidden), the same array while nothing changes. */
-let shownCache: { all: PartMesh[]; contexts: EditContext[] | undefined; studio: string | null; out: PartMesh[] } | null = null;
+let shownCache: { all: PartMesh[]; contexts: EditContext[] | undefined; assemblies: Assembly[] | undefined; studio: string | null; out: PartMesh[] } | null = null;
 export function useShownContextParts(): PartMesh[] {
   const all = useAsmFeatures((s) => s.contextParts);
   const contexts = useStore((s) => s.history.present.contexts);
+  const assemblies = useStore((s) => s.history.present.assemblies);
   const studio = useStore(activeStudioId);
   const inAssembly = useStore((s) => !!activeAssembly(s));
   if (inAssembly || !all.length || !contexts?.length) return NO_MESHES;
-  if (shownCache && shownCache.all === all && shownCache.contexts === contexts && shownCache.studio === studio) return shownCache.out;
+  if (shownCache && shownCache.all === all && shownCache.contexts === contexts && shownCache.assemblies === assemblies && shownCache.studio === studio) return shownCache.out;
   const out = all.filter((p) => {
     const at = contextPartOf(p.id);
     const c = at ? contexts.find((x) => x.id === at.context) : undefined;
-    return p.studioId === studio && !!c && !c.hidden;
+    return p.studioId === studio && !!c && !c.hidden && !contextGone({ assemblies }, c);
   });
-  shownCache = { all, contexts, studio, out: out.length ? out : NO_MESHES };
+  shownCache = { all, contexts, assemblies, studio, out: out.length ? out : NO_MESHES };
   return shownCache.out;
 }
 
@@ -95,15 +98,16 @@ export function useShownContextParts(): PartMesh[] {
  * Keeps the cut copies of the assembly on show up to date (called by the 3D view):
  * asks the worker once the assembly, its parts or where they're solved change.
  */
-export function useAssemblyCuts(): { meshes: Record<string, PartMesh>; modified: ReadonlySet<string> } {
+export function useAssemblyCuts(): { meshes: Record<string, PartMesh>; modified: ReadonlyMap<string, number | undefined> } {
   const { assembly, solved } = useSolvedAssembly();
   const parts = useStore((s) => s.parts);
   const assemblies = useStore((s) => s.history.present.assemblies);
   const dragging = useStore((s) => !!s.dragPreview);
   const cuts = useAsmFeatures((s) => s.cuts);
+  const any = !!assembly && hasAssemblyFeatures(assembly, assemblies ?? []);
   useEffect(() => {
-    if (!assembly || !assembly.features?.length || !solved || dragging) {
-      if (!assembly?.features?.length && useAsmFeatures.getState().cuts) useAsmFeatures.setState({ cuts: null });
+    if (!assembly || !any || !solved || dragging) {
+      if (!any && useAsmFeatures.getState().cuts) useAsmFeatures.setState({ cuts: null });
       return;
     }
     let live = true;
@@ -114,25 +118,46 @@ export function useAssemblyCuts(): { meshes: Record<string, PartMesh>; modified:
       .then(() => kernel.assemblyCuts(inputs))
       .then(
         (result) => {
-          if (live) useAsmFeatures.setState({ cuts: { assembly, result } });
+          if (!live) return;
+          // The same cuts as before (the solve that used them ran again): kept as they were, or the view and the
+          // mate solver would keep asking for them again.
+          const was = useAsmFeatures.getState().cuts;
+          if (was && was.assembly.id === assembly.id && cutsSignature(was.result) === cutsSignature(result)) {
+            if (was.assembly !== assembly) useAsmFeatures.setState({ cuts: { assembly, result: was.result } });
+            return;
+          }
+          useAsmFeatures.setState({ cuts: { assembly, result } });
         },
         () => undefined,
       );
     return () => {
       live = false;
     };
-  }, [assembly, parts, assemblies, solved, dragging]);
+  }, [assembly, any, parts, assemblies, solved, dragging]);
   return useMemo(() => {
-    if (!assembly || !cuts || cuts.assembly.id !== assembly.id || !assembly.features?.length) return { meshes: NO_CUT_MESHES, modified: NO_KEYS };
-    return { meshes: Object.fromEntries(cuts.result.meshes.map((m) => [m.id, m])), modified: new Set(cuts.result.cut) };
-  }, [assembly, cuts]);
+    if (!assembly || !cuts || cuts.assembly.id !== assembly.id || !any) return { meshes: NO_CUT_MESHES, modified: NO_KEYS };
+    return { meshes: cutMeshMap(cuts.result), modified: modifiedCopies(cuts.result) };
+  }, [assembly, cuts, any]);
+}
+
+/** What decides whether two answers from the worker are the same cuts (which copies, how much is left, their faces). */
+function cutsSignature(r: AssemblyCutsResult): string {
+  return JSON.stringify([r.cut, r.errors, r.reached, r.meshes.map((m) => [m.id, m.volume, m.faceRefs, m.edgeRefs.length])]);
+}
+
+/** The cut copies' meshes by key (the same object for the same answer). */
+const meshMaps = new WeakMap<AssemblyCutsResult, Record<string, PartMesh>>();
+export function cutMeshMap(r: AssemblyCutsResult): Record<string, PartMesh> {
+  let m = meshMaps.get(r);
+  if (!m) meshMaps.set(r, (m = Object.fromEntries(r.meshes.map((x) => [x.id, x]))));
+  return m;
 }
 
 /** The copies the assembly on show's own features cut (for the parts list), as last worked out. */
-export function useModifiedCopies(): ReadonlySet<string> {
+export function useModifiedCopies(): ReadonlyMap<string, number | undefined> {
   const assembly = useStore(activeAssembly);
   const cuts = useAsmFeatures((s) => s.cuts);
-  return useMemo(() => (assembly?.features?.length && cuts && cuts.assembly.id === assembly.id ? new Set(cuts.result.cut) : NO_KEYS), [assembly, cuts]);
+  return useMemo(() => (cuts && assembly && cuts.assembly.id === assembly.id && cuts.result.cut.length ? modifiedCopies(cuts.result) : NO_KEYS), [assembly, cuts]);
 }
 
 /** A cut copy's mesh as shown (its faces are what a click in the view names), if it's cut. */

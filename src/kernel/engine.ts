@@ -55,7 +55,7 @@ import { measureContacts } from "./clash";
 import { biggestFlatFace, faceFrame, faceWires, flatFaceNormal, planeOutline, type FlatFrame } from "./laserFaces";
 import type { LaserOutline, LaserSource } from "../laser/sources";
 import type { FollowedFrame, PartConnector } from "./protocol";
-import type { AssemblyCutsResult, CheckResult, ContactMeasure, ExportResult, FlatPatternData, InstanceInput, PartMesh, PrintCheckPart, PrintCheckSettings, PrintExportResult, RebuildResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
+import type { AssemblyCutsResult, CutStage, CheckResult, ContactMeasure, ExportResult, FlatPatternData, InstanceInput, PartMesh, PrintCheckPart, PrintCheckSettings, PrintExportResult, RebuildResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
 import { fromRel, sectionGeometry, type BreakOutRequest, type SectionRequest } from "../drawing/sections";
 import { dropCoveredHidden } from "../drawing/hidden";
@@ -2257,8 +2257,6 @@ interface StudioBuild {
   /** Curve features (Helix, Fit spline…) built: their wires, and lines to draw (see RebuildResult.curves). */
   curves?: Map<string, BuiltCurve>;
   curveLines?: Record<string, number[][]>;
-  /** Edit in context: the other parts of an assembly shown here for reference, placed (see StudioInput.contexts). */
-  contextParts?: BuiltPart[];
 }
 
 /** A curve feature as built: its runs (usually one wire), and whether a sweep along it should follow its own bending (a helix). */
@@ -2288,6 +2286,11 @@ interface SketchSnap {
 /** What rebuildStudios hands back: the parts of the Part Studios it rebuilt, and which those were. */
 export type StudiosResult = RebuildResult & { rebuilt: string[]; studioOrder: string[] };
 
+/** Whether a Part Studio's features use parts shown in its contexts (a sketch on one's face, an edge brought in). */
+function usesContext(s: StudioInput): boolean {
+  return !!s.contexts?.length && JSON.stringify(s.features).includes('"partId":"ctx:');
+}
+
 export class GeometryEngine {
   /**
    * Keep each part's display mesh for the 3D-print check (only the app's own engine does — see kernel.worker.ts;
@@ -2308,21 +2311,31 @@ export class GeometryEngine {
   /** While a Part Studio is being built: what its sketches' part faces and edges are now (see followSketch). */
   private links: Record<string, SketchLinkInfo> = {};
   private builds = new Map<string, StudioBuild>();
-  /** While a Part Studio is being built: the context parts shown in it (Edit in context). */
+  /** While a Part Studio whose features use its context parts is being built: those parts (Edit in context). */
   private contextParts: BuiltPart[] = [];
+  /**
+   * Edit in context: each Part Studio's context parts as last placed (for showing, snapping to and Use), by studio,
+   * with what they were placed from. Kept apart from the studio's own build: a studio whose features don't use them
+   * isn't built again when they change, and two studios can each show the other's parts.
+   */
+  private contextBuilds = new Map<string, { key: string; parts: BuiltPart[] }>();
 
   /** A part by id while a Part Studio is being built: its own, or one shown there in context. */
   private partOrContext(id: string): BuiltPart | undefined {
     return this.parts.find((p) => p.id === id) ?? this.contextParts.find((p) => p.id === id);
   }
 
-  /** Copies of other Part Studios' parts (already built), placed as each context says. */
-  private placeContextParts(contexts: NonNullable<StudioInput["contexts"]>): BuiltPart[] {
+  /** Copies of other Part Studios' parts (already built), placed as each context says. `missing`: studios not built yet. */
+  private placeContextParts(contexts: NonNullable<StudioInput["contexts"]>, missing?: Set<string>): BuiltPart[] {
     const out: BuiltPart[] = [];
     for (const c of contexts) {
       for (const cp of c.parts) {
+        if (!this.studiosBuilt.has(cp.studioId)) {
+          missing?.add(cp.studioId);
+          continue;
+        }
         const source = this.builds.get(cp.studioId)?.parts.find((p) => p.id === cp.partId);
-        if (!source || !this.studiosBuilt.has(cp.studioId)) continue;
+        if (!source) continue;
         let shape = source.shape.clone();
         if (cp.mirrored) shape = shape.mirror("YZ", [0, 0, 0]);
         const [x, y, z, w] = cp.placement.rotation;
@@ -2335,6 +2348,36 @@ export class GeometryEngine {
       }
     }
     return out;
+  }
+
+  /**
+   * Every Part Studio's context parts (Edit in context), placed again where
+   * their contexts or the Part Studios they show changed (`meshes` gets those);
+   * returns the studios whose context parts are in `meshes` (also those that
+   * have none any more).
+   */
+  private placeAllContexts(studios: StudioInput[], meshes: PartMesh[]): string[] {
+    const changed: string[] = [];
+    const wanted = new Set(studios.filter((s) => !s.partSuffix && s.contexts?.length).map((s) => s.id));
+    for (const [id, c] of this.contextBuilds) {
+      if (wanted.has(id)) continue;
+      c.parts.forEach((p) => p.shape.delete());
+      this.contextBuilds.delete(id);
+      changed.push(id);
+    }
+    for (const s of studios) {
+      if (!wanted.has(s.id)) continue;
+      const sources = [...new Set(s.contexts!.flatMap((c) => c.parts.map((p) => p.studioId)))];
+      const key = JSON.stringify([s.contexts, sources.map((id) => (this.studiosBuilt.has(id) ? this.builds.get(id)?.key ?? "" : "?"))]);
+      const old = this.contextBuilds.get(s.id);
+      if (old?.key === key) continue;
+      old?.parts.forEach((p) => p.shape.delete());
+      const parts = this.placeContextParts(s.contexts!);
+      this.contextBuilds.set(s.id, { key, parts });
+      for (const p of parts) meshes.push({ ...this.meshPart(p), studioId: s.id });
+      changed.push(s.id);
+    }
+    return changed;
   }
 
   /**
@@ -2403,9 +2446,10 @@ export class GeometryEngine {
     const curves: Record<string, number[][]> = {};
     const shared = JSON.stringify([variables, partNames]);
     // Part Studios using parts from others (Derived) are built after them, and again whenever they change.
-    // (So are Part Studios showing other studios' parts in context.)
+    // (So are Part Studios whose sketches use other studios' parts shown in context — only those: just showing them
+    // doesn't need them first, so two studios can each be edited in the context of the other.)
     const sourcesOf = (s: StudioInput) =>
-      [...new Set([...s.features.filter((f) => f.type === "derived" && !f.suppressed && f.derived).map((f) => f.derived!.studioId), ...(s.contexts ?? []).flatMap((c) => c.parts.map((p) => p.studioId))])].filter((id) => id !== s.id);
+      [...new Set([...s.features.filter((f) => f.type === "derived" && !f.suppressed && f.derived).map((f) => f.derived!.studioId), ...(usesContext(s) ? (s.contexts ?? []).flatMap((c) => c.parts.map((p) => p.studioId)) : [])])].filter((id) => id !== s.id);
     const ordered: StudioInput[] = [];
     const pending = [...studios];
     while (pending.length) {
@@ -2425,7 +2469,7 @@ export class GeometryEngine {
           shared +
           (studio.partSuffix ? JSON.stringify([studio.variables, studio.partSuffix]) : "") +
           (studio.partNames ? JSON.stringify(studio.partNames) : "") +
-          (studio.contexts?.length ? JSON.stringify(studio.contexts) : "") +
+          (studio.contexts?.length && usesContext(studio) ? JSON.stringify(studio.contexts) : "") +
           (deps.length ? JSON.stringify(deps) : "");
         let b = this.builds.get(studio.id);
         if (!b || b.key !== key) {
@@ -2434,8 +2478,9 @@ export class GeometryEngine {
           this.parts = [];
           this.tools = new Map();
           this.links = {};
-          // Edit in context: other Part Studios' parts placed round the part being edited (to sketch on and use).
-          this.contextParts = studio.contexts?.length ? this.placeContextParts(studio.contexts) : [];
+          // Edit in context: other Part Studios' parts placed round the part being edited, for sketches that use them.
+          const notBuilt = new Set<string>();
+          this.contextParts = studio.contexts?.length && usesContext(studio) ? this.placeContextParts(studio.contexts, notBuilt) : [];
           setCurrentScope(studio.variables ?? variables);
           // What each sketch could snap to is kept (cheaply) for when one is opened — not for other configurations.
           this.snaps = studio.partSuffix ? null : new Map();
@@ -2451,6 +2496,18 @@ export class GeometryEngine {
             this.contextParts = [];
             throw e;
           }
+          this.contextParts.forEach((p) => p.shape.delete());
+          this.contextParts = [];
+          // Context parts from a Part Studio that itself needs this one's parts (each uses the other's in context):
+          // they can't both be built, so the sketches using them say so plainly.
+          if (notBuilt.size) {
+            for (const f of studio.features) {
+              const text = JSON.stringify(f);
+              if (!f.suppressed && (studio.contexts ?? []).some((c) => c.parts.some((cp) => notBuilt.has(cp.studioId) && text.includes(`"partId":"${cp.id}"`)))) {
+                errors[f.id] = "This uses edges or faces of parts shown in context from another Part Studio, but that Part Studio's own sketches use this one's parts in context too, so neither can be built first. Take those references out of one of them (or remove one context).";
+              }
+            }
+          }
           setCurrentScope(variables);
           // (Before the parts are renamed for another configuration: connectors are kept by the parts' own ids.)
           this.reassignOwners();
@@ -2460,8 +2517,7 @@ export class GeometryEngine {
           for (const p of this.parts) for (const m of p.members ?? []) if (names[m.id]) m.name = names[m.id];
           // Another configuration's copies of the parts (for assemblies).
           if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
-          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, centres: this.centres, links: this.links, snaps: this.snaps ?? new Map(), followed: this.followed, owned: this.owned, curves: this.curves, curveLines: this.curveLines, ...(this.contextParts.length ? { contextParts: this.contextParts } : {}) };
-          this.contextParts = [];
+          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, centres: this.centres, links: this.links, snaps: this.snaps ?? new Map(), followed: this.followed, owned: this.owned, curves: this.curves, curveLines: this.curveLines };
           this.curves = new Map();
           this.snaps = null;
           this.builds.set(studio.id, b);
@@ -2472,7 +2528,6 @@ export class GeometryEngine {
             const owned = b.owned?.[studio.partSuffix ? p.id.slice(0, -studio.partSuffix.length) : p.id];
             meshes.push({ ...this.meshPart(p), studioId: studio.id, ...(configuration ? { configuration } : {}), ...(owned?.length ? { connectors: owned } : {}) });
           }
-          for (const p of b.contextParts ?? []) contextMeshes.push({ ...this.meshPart(p), studioId: studio.id });
         }
         // Problems are shown for the configuration on show only.
         if (!studio.partSuffix) {
@@ -2489,6 +2544,8 @@ export class GeometryEngine {
     }
     this.parts = studios.flatMap((s) => this.builds.get(s.id)?.parts ?? []);
     this.tools = new Map();
+    // Edit in context: each Part Studio's context parts, placed again when they or what they show changed.
+    const contextRebuilt = this.placeAllContexts(studios, contextMeshes);
     // Every Part Studio's sketch links (in the configuration on show), whether rebuilt now or before.
     const sketchLinks: Record<string, SketchLinkInfo> = {};
     for (const s of studios) if (!s.partSuffix) Object.assign(sketchLinks, this.builds.get(s.id)?.links ?? {});
@@ -2497,6 +2554,7 @@ export class GeometryEngine {
     return {
       parts: meshes,
       ...(contextMeshes.length ? { contextParts: contextMeshes } : {}),
+      ...(contextRebuilt.length ? { contextRebuilt } : {}),
       featureErrors,
       ...(Object.keys(featureWarnings).length ? { featureWarnings } : {}),
       ...(Object.keys(featureNotes).length ? { featureNotes } : {}),
@@ -2796,7 +2854,7 @@ export class GeometryEngine {
       index: features.indexOf(feature),
       features,
       earlier: [...sketches.entries()],
-      parts: [...this.parts, ...this.contextParts].map((p) => ({ id: p.id, shape: p.shape.clone() })),
+      parts: this.parts.map((p) => ({ id: p.id, shape: p.shape.clone() })),
       faceEdges: this.links[feature.id]?.edges ?? [],
       shared: this.buildShared,
     });
@@ -2845,12 +2903,14 @@ export class GeometryEngine {
     const { features, index } = snap;
     const before = index >= 0 ? features.slice(0, index) : [];
     const later = index >= 0 ? features.slice(index + 1).filter((f) => f.type === "sketch" && !f.suppressed && f.sketch?.plane) : [];
-    const key = JSON.stringify([frame, before, later.map((f) => [f.id, f.name, f.sketch]), snap.shared, snap.faceEdges.map((e) => e.pick)]);
+    // (Parts shown in context, Edit in context, can be snapped to too.)
+    const context = this.contextBuilds.get(studioId);
+    const key = JSON.stringify([frame, before, later.map((f) => [f.id, f.name, f.sketch]), snap.shared, snap.faceEdges.map((e) => e.pick), context?.key ?? ""]);
     if (this.candidateCache?.key === key) return this.candidateCache;
     this.candidateRuns++;
     const out: RefEdge[] = [];
     const LIMIT = 20000;
-    for (const part of snap.parts) {
+    for (const part of [...snap.parts, ...(context?.parts ?? [])]) {
       if (out.length >= LIMIT) break;
       const all = edgesOf(part.shape);
       try {
@@ -6649,18 +6709,30 @@ export class GeometryEngine {
     }
   }
 
+  /**
+   * Problems met while cutting assembly copies in the last placeInstances (an
+   * assembly feature that couldn't be made or couldn't cut): plain sentences,
+   * handed back with exports so they're said, not dropped.
+   */
+  private cutNotes: string[] = [];
+
   /** A copy of each instance's part, turned and moved into its place in the assembly (caller frees them). */
   private placeInstances(instances: InstanceInput[]): { id: string; partId: string; name: string; shape: Shape3D; surface?: boolean }[] {
     const out: { id: string; partId: string; name: string; shape: Shape3D; surface?: boolean }[] = [];
+    const notes = new Set<string>();
     for (const i of instances) {
       // A part in another configuration, or (in the one on show) the ordinary part.
       const part = this.parts.find((p) => p.id === i.partId) ?? this.parts.find((p) => p.id === i.partId.split("@")[0]);
       if (!part) continue;
-      let shape = part.shape.clone();
+      let shape: Shape3D;
+      // Cut by the assembly's own features (in the part's own coordinates afterwards).
+      if (i.cuts?.length && !part.surface) {
+        const r = this.cutCopy(part, i.cuts);
+        for (const [id, text] of Object.entries(r.errors)) notes.add(`${r.names[id] ?? "An assembly feature"}: ${text}`);
+        shape = r.shape;
+      } else shape = part.shape.clone();
       // A mirrored copy: the part's mirror image, flipped across its own YZ plane.
       if (i.mirrored) shape = shape.mirror("YZ", [0, 0, 0]);
-      // Cut by the assembly's own features (in the part's own coordinates again afterwards).
-      if (i.cuts?.length && !part.surface) shape = this.cutCopy(part, i, shape).shape;
       const [x, y, z, w] = i.rotation;
       const s = Math.sqrt(Math.max(0, 1 - w * w));
       const angle = (2 * Math.acos(Math.max(-1, Math.min(1, w))) * 180) / Math.PI;
@@ -6668,95 +6740,121 @@ export class GeometryEngine {
       if (Math.abs(i.position[0]) + Math.abs(i.position[1]) + Math.abs(i.position[2]) > 0) shape = shape.translate(i.position);
       out.push({ id: i.id, partId: i.partId, name: i.name, shape, ...(part.surface ? { surface: true } : {}) });
     }
+    this.cutNotes = [...notes];
     return out;
   }
 
-  /** Copies already cut by assembly features: by part, cuts and place (see cutCopy). Bounded; the oldest is freed. */
-  private cutCopies = new Map<string, { part: BuiltPart; shape: Shape3D; cut: boolean; by: string[]; errors: Record<string, string> }>();
+  /** The problems placeInstances met cutting assembly copies, for an export's result (none for plain parts). */
+  private notesOf(instances: InstanceInput[] | undefined): { cutNotes?: string[] } {
+    return instances?.length && this.cutNotes.length ? { cutNotes: [...this.cutNotes] } : {};
+  }
+
+  /** Copies already cut by assembly features: by part and cuts (see cutCopy). At most 48, the least recently used freed first. */
+  private cutCopies = new Map<string, { part: BuiltPart; shape: Shape3D; cut: boolean; by: string[]; errors: Record<string, string>; names: Record<string, string> }>();
 
   /**
-   * One assembly copy cut by the assembly's features (`i.cuts`, in the
-   * assembly's coordinates): `local` (the part, mirrored if the copy is; this
-   * takes it over) is placed where the copy sat when cut, the tools are made
-   * and cut away, and the result is moved back into the part's own
-   * coordinates. `cut`: whether any material went. A feature that can't be
-   * made is left out (its problem in `errors`), so the rest still cut.
+   * One assembly copy cut by assembly features, in the part's own (unmirrored)
+   * coordinates. Each stage is one assembly level's features (the assembly's
+   * own, then those of each sub-assembly it's inside), with where the copy sits
+   * in that level's coordinates (`at`) and whether it's the mirror image there:
+   * the part is placed so, the tools are made and cut away (only where a tool's
+   * box meets the copy's), and it's moved back. `by`: features that took
+   * material. A feature that can't be made, or can't cut, is left out (its
+   * problem in `errors`), so the rest still cut. The caller frees the shape.
    */
-  private cutCopy(part: BuiltPart, i: InstanceInput, local: Shape3D): { shape: Shape3D; cut: boolean; by: string[]; errors: Record<string, string> } {
-    const at = i.cutAt ?? { position: i.position, rotation: i.rotation };
-    const key = JSON.stringify([part.id, !!i.mirrored, at, i.cuts]);
+  private cutCopy(part: BuiltPart, stages: CutStage[]): { shape: Shape3D; cut: boolean; by: string[]; errors: Record<string, string>; names: Record<string, string> } {
+    const key = JSON.stringify([part.id, stages]);
     const kept = this.cutCopies.get(key);
     if (kept && kept.part === part) {
-      local.delete();
-      return { shape: kept.shape.clone(), cut: kept.cut, by: kept.by, errors: kept.errors };
+      // Used again: it's the most recent now.
+      this.cutCopies.delete(key);
+      this.cutCopies.set(key, kept);
+      return { shape: kept.shape.clone(), cut: kept.cut, by: kept.by, errors: kept.errors, names: kept.names };
     }
     if (kept) {
       kept.shape.delete();
       this.cutCopies.delete(key);
     }
-    const [x, y, z, w] = at.rotation;
-    const s = Math.sqrt(Math.max(0, 1 - w * w));
-    const angle = (2 * Math.acos(Math.max(-1, Math.min(1, w))) * 180) / Math.PI;
-    const turns = s > 1e-9 && Math.abs(angle) > 1e-9;
-    const axis: Vec3 = turns ? [x / s, y / s, z / s] : [0, 0, 1];
-    const moves = Math.abs(at.position[0]) + Math.abs(at.position[1]) + Math.abs(at.position[2]) > 0;
-    let shape: Shape3D = local;
-    if (turns) shape = shape.rotate(angle, [0, 0, 0], axis);
-    if (moves) shape = shape.translate(at.position);
-    const before = measureVolume(shape);
-    const list = i.cuts ?? [];
-    const sketches: SketchMap = new Map();
-    for (const f of list) if (f.type === "sketch" && !f.suppressed && f.sketch?.plane) sketches.set(f.id, f);
     const errors: Record<string, string> = {};
+    const names: Record<string, string> = {};
     const by: string[] = [];
-    let volume = before;
-    for (const f of list) {
-      if (f.type === "sketch" || f.suppressed) continue;
-      const { values, errors: bad } = resolveParams(f);
-      const def = FEATURE_DEFS[f.type];
-      const wrong = def?.params.find((p) => bad[p.key] && visibleParamKeys(f).has(p.key));
-      if (wrong) {
-        errors[f.id] = `${wrong.label}: ${bad[wrong.key]}`;
-        continue;
+    let shape: Shape3D = part.shape.clone();
+    for (const stage of stages) {
+      const [x, y, z, w] = stage.at.rotation;
+      const s = Math.sqrt(Math.max(0, 1 - w * w));
+      const angle = (2 * Math.acos(Math.max(-1, Math.min(1, w))) * 180) / Math.PI;
+      const turns = s > 1e-9 && Math.abs(angle) > 1e-9;
+      const axis: Vec3 = turns ? [x / s, y / s, z / s] : [0, 0, 1];
+      const at = stage.at.position;
+      const moves = Math.abs(at[0]) + Math.abs(at[1]) + Math.abs(at[2]) > 0;
+      if (stage.mirrored) shape = shape.mirror("YZ", [0, 0, 0]);
+      if (turns) shape = shape.rotate(angle, [0, 0, 0], axis);
+      if (moves) shape = shape.translate(at);
+      const list = stage.features;
+      const sketches: SketchMap = new Map();
+      for (const f of list) if (f.type === "sketch" && !f.suppressed && f.sketch?.plane) sketches.set(f.id, f);
+      let volume = measureVolume(shape);
+      for (const f of list) {
+        if (f.type === "sketch" || f.suppressed) continue;
+        names[f.id] = f.name;
+        const { values, errors: bad } = resolveParams(f);
+        const def = FEATURE_DEFS[f.type];
+        const wrong = def?.params.find((p) => bad[p.key] && visibleParamKeys(f).has(p.key));
+        if (wrong) {
+          errors[f.id] = `${wrong.label}: ${bad[wrong.key]}`;
+          continue;
+        }
+        const here: BuiltPart = { id: part.id, name: part.name, featureIds: [], shape };
+        let tool: Shape3D;
+        try {
+          // (Always a cut, whatever the record says: assemblies only take material away.)
+          tool = buildSolid({ ...f, operation: "remove", moreAreas: undefined }, values, sketches, list, [here], this.threadedHoles);
+        } catch (e) {
+          errors[f.id] = describeError(e, `Couldn't make ${f.name}.`);
+          continue;
+        }
+        try {
+          // Quick test first: a tool whose box doesn't meet the copy's can't cut it.
+          const [ta, tb] = boundsOf(tool);
+          const [sa, sb] = boundsOf(shape);
+          if ([0, 1, 2].some((k) => ta[k] > sb[k] + 1e-6 || tb[k] < sa[k] - 1e-6)) continue;
+          const next: Shape3D = shape.cut(tool);
+          const now = measureVolume(next);
+          // (Nothing left, or a cut OpenCascade got wrong: kept as it was, and said.)
+          if (!(now > 1e-6) || !Number.isFinite(now)) {
+            next.delete();
+            errors[f.id] = `${f.name} would cut ${part.name} away completely, so it's left uncut. Choose the parts it cuts ("Parts…").`;
+            continue;
+          }
+          shape.delete();
+          shape = next;
+          if (volume - now > 1e-6) by.push(f.id);
+          volume = now;
+        } catch (e) {
+          errors[f.id] = describeError(e, `${f.name} couldn't cut ${part.name}.`);
+        } finally {
+          tool.delete();
+        }
       }
-      const here: BuiltPart = { id: part.id, name: part.name, featureIds: [], shape };
-      let tool: Shape3D;
-      try {
-        // (Always a cut, whatever the record says: assemblies only take material away.)
-        tool = buildSolid({ ...f, operation: "remove", moreAreas: undefined }, values, sketches, list, [here], this.threadedHoles);
-      } catch (e) {
-        errors[f.id] = describeError(e, `Couldn't make ${f.name}.`);
-        continue;
-      }
-      try {
-        const next: Shape3D = shape.cut(tool);
-        shape.delete();
-        shape = next;
-        const now = measureVolume(shape);
-        if (volume - now > 1e-6) by.push(f.id);
-        volume = now;
-      } catch (e) {
-        errors[f.id] = describeError(e, `${f.name} couldn't cut ${part.name}.`);
-      } finally {
-        tool.delete();
-      }
+      if (moves) shape = shape.translate([-at[0], -at[1], -at[2]]);
+      if (turns) shape = shape.rotate(-angle, [0, 0, 0], axis);
+      if (stage.mirrored) shape = shape.mirror("YZ", [0, 0, 0]);
     }
     const cut = by.length > 0;
-    if (moves) shape = shape.translate([-at.position[0], -at.position[1], -at.position[2]]);
-    if (turns) shape = shape.rotate(-angle, [0, 0, 0], axis);
-    this.cutCopies.set(key, { part, shape: shape.clone(), cut, by, errors });
+    this.cutCopies.set(key, { part, shape: shape.clone(), cut, by, errors, names });
     while (this.cutCopies.size > 48) {
       const [oldest, entry] = this.cutCopies.entries().next().value as [string, { shape: Shape3D }];
       entry.shape.delete();
       this.cutCopies.delete(oldest);
     }
-    return { shape, cut, by, errors };
+    return { shape, cut, by, errors, names };
   }
 
   /**
-   * The assembly copies its own features cut, for the 3D view: each one's
-   * mesh in its part's own coordinates (moved into place as any copy is),
-   * which copies lost material, and each feature's problem.
+   * The assembly copies its own features (and its sub-assemblies' features)
+   * cut, for the 3D view and the mate solver: each one's mesh in its part's own
+   * coordinates (moved into place as any copy is), which copies lost material,
+   * which feature reached which copy, and each feature's problem.
    */
   assemblyCuts(instances: InstanceInput[]): AssemblyCutsResult {
     const meshes: PartMesh[] = [];
@@ -6767,21 +6865,20 @@ export class GeometryEngine {
       if (!i.cuts?.length) continue;
       const part = this.parts.find((p) => p.id === i.partId) ?? this.parts.find((p) => p.id === i.partId.split("@")[0]);
       if (!part || part.surface) continue;
-      let local = part.shape.clone();
-      if (i.mirrored) local = local.mirror("YZ", [0, 0, 0]);
-      const r = this.cutCopy(part, i, local);
+      const r = this.cutCopy(part, i.cuts);
       try {
         Object.assign(errors, r.errors);
-        for (const f of r.by) (reached[f] ??= []).push(i.id);
         if (!r.cut) continue;
-        cut.push(i.id);
-        // (Mirrored copies are shown as the part flipped by the view, so the mesh is flipped back here.)
-        const shown: Shape3D = i.mirrored ? r.shape.mirror("YZ", [0, 0, 0]) : r.shape;
+        let mesh: PartMesh;
         try {
-          meshes.push({ ...this.meshPart({ id: i.id, name: i.name, featureIds: [], shape: shown }), id: i.id, name: i.name, featureIds: [] });
-        } finally {
-          if (shown !== r.shape) shown.delete();
+          mesh = { ...this.meshPart({ id: i.id, name: i.name, featureIds: [], shape: r.shape }), id: i.id, name: i.name, featureIds: [] };
+        } catch (e) {
+          for (const f of r.by) errors[f] = describeError(e, `${r.names[f] ?? "An assembly feature"} left ${part.name} in a shape that can't be shown.`);
+          continue;
         }
+        for (const f of r.by) (reached[f] ??= []).push(i.id);
+        cut.push(i.id);
+        meshes.push(mesh);
       } finally {
         r.shape.delete();
       }
@@ -7000,7 +7097,7 @@ export class GeometryEngine {
     });
     const triangleCount = meshes.reduce((n, m) => n + m.triangles.length / 3, 0);
     const names = chosen.map((p) => p.name).join(", ");
-    return { stl: writeBinaryStl(meshes, `JuraCAD export: ${names}`), triangleCount };
+    return { stl: writeBinaryStl(meshes, `JuraCAD export: ${names}`), triangleCount, ...this.notesOf(instances) };
     });
   }
 
@@ -7026,7 +7123,7 @@ export class GeometryEngine {
    */
   useEdge(partId: string, ref: EdgeRef, plane: SketchPlane): { edge: RefEdge } | { error: string } {
     // (A part shown in context lives in the build of the Part Studio it's shown in.)
-    const part = this.parts.find((p) => p.id === partId) ?? [...this.builds.values()].flatMap((b) => b.contextParts ?? []).find((p) => p.id === partId);
+    const part = this.parts.find((p) => p.id === partId) ?? [...this.contextBuilds.values()].flatMap((b) => b.parts).find((p) => p.id === partId);
     if (!part) return { error: "That part isn't there any more. Click another edge." };
     const frame = planeFrame(plane);
     const all = edgesOf(part.shape);
@@ -7283,7 +7380,7 @@ export class GeometryEngine {
     });
     const bytes = write3mf(meshes, title);
     const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-    return { data, triangleCount: meshes.reduce((n, m) => n + m.triangles.length / 3, 0) };
+    return { data, triangleCount: meshes.reduce((n, m) => n + m.triangles.length / 3, 0), ...this.notesOf(instances) };
     });
   }
 
@@ -7355,32 +7452,62 @@ export class GeometryEngine {
     // A whole assembly: its structure kept (sub-assemblies, each part once, every copy a placed reference to it).
     if (tree) {
       const made: Shape3D[] = [];
+      const notes = new Set<string>();
       try {
-        const bytes = writeStepAssembly(tree, (key) => {
-          const def = tree.parts[key];
+        const written = this.withPlainUncut(tree, notes);
+        const bytes = writeStepAssembly(written, (key) => {
+          const def = written.parts[key];
           const part = def && (this.parts.find((p) => p.id === def.partId) ?? this.parts.find((p) => p.id === def.partId.split("@")[0]));
           if (!part) return null;
           // The mirror image is a part of its own: the part flipped across its own YZ plane (as the 3D view shows it).
           let shape = def.mirrored ? part.shape.clone().mirror("YZ", [0, 0, 0]) : part.shape;
           if (def.mirrored) made.push(shape);
-          // A copy cut by the assembly's own features: cut where it sits, in the part's own coordinates again.
-          if (def.cuts?.length && def.cutAt && !part.surface) {
-            const pos = def.cutAt.position;
-            const rot = def.cutAt.rotation;
-            shape = this.cutCopy(part, { id: key, partId: def.partId, name: def.name, position: pos, rotation: rot, cuts: def.cuts, ...(def.mirrored ? { mirrored: true } : {}) }, shape.clone()).shape;
+          // A copy cut by the assembly's own features: cut where it sits, in the part's own coordinates.
+          if (def.cuts?.length && !part.surface) {
+            const r = this.cutCopy(part, def.cuts);
+            for (const [id, text] of Object.entries(r.errors)) notes.add(`${r.names[id] ?? "An assembly feature"}: ${text}`);
+            shape = def.mirrored ? r.shape.mirror("YZ", [0, 0, 0]) : r.shape;
             made.push(shape);
           }
           return { shape, colour: colours[def.partId] ?? colours[def.partId.split("@")[0]] ?? DEFAULT_PART_COLOUR };
         });
-        return { step: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, partCount: stepPartCount(tree) };
+        return { step: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, partCount: stepPartCount(written), ...(notes.size ? { cutNotes: [...notes] } : {}) };
       } finally {
         made.forEach((m) => m.delete());
       }
     }
     return this.withChosen(partIds, instances, (chosen) => {
       const bytes = writeStep(chosen.map((p) => ({ shape: p.shape, name: p.name, colour: colours[p.id] ?? DEFAULT_PART_COLOUR })));
-      return { step: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, partCount: chosen.length };
+      return { step: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, partCount: chosen.length, ...this.notesOf(instances) };
     });
+  }
+
+  /**
+   * A STEP structure with every copy the assembly's features didn't actually
+   * cut pointed back at its shared plain definition (so untouched copies stay
+   * one part, and aren't called "modified").
+   */
+  private withPlainUncut(tree: StepTree, notes: Set<string>): StepTree {
+    const gone = new Map<string, string>();
+    const parts = { ...tree.parts };
+    for (const [k, def] of Object.entries(tree.parts)) {
+      if (!def.cuts?.length) continue;
+      const part = this.parts.find((p) => p.id === def.partId) ?? this.parts.find((p) => p.id === def.partId.split("@")[0]);
+      if (!part) continue;
+      const r = this.cutCopy(part, def.cuts);
+      for (const [id, text] of Object.entries(r.errors)) notes.add(`${r.names[id] ?? "An assembly feature"}: ${text}`);
+      r.shape.delete();
+      if (r.cut || part.surface) continue;
+      const plain = def.plain ?? `${k}~plain`;
+      parts[plain] ??= { partId: def.partId, name: def.plainName ?? def.name, ...(def.mirrored ? { mirrored: true } : {}) };
+      delete parts[k];
+      gone.set(k, plain);
+    }
+    if (!gone.size) return tree;
+    const assemblies = Object.fromEntries(
+      Object.entries(tree.assemblies).map(([k, a]) => [k, { ...a, components: a.components.map((c) => (c.part && gone.has(c.part) ? { ...c, part: gone.get(c.part)! } : c)) }]),
+    );
+    return { ...tree, parts, assemblies };
   }
 
   /**
@@ -8102,14 +8229,6 @@ export class GeometryEngine {
         // already freed
       }
     }
-    for (const p of b.contextParts ?? []) {
-      try {
-        p.shape.delete();
-      } catch {
-        // already freed
-      }
-    }
-    b.contextParts = [];
     b.parts = [];
     b.tools.clear();
     this.disposeSnaps(b.snaps);
@@ -8119,6 +8238,8 @@ export class GeometryEngine {
 
   private disposeParts(): void {
     for (const b of this.builds.values()) this.disposeBuild(b);
+    for (const c of this.contextBuilds.values()) c.parts.forEach((p) => p.shape.delete());
+    this.contextBuilds.clear();
     this.builds.clear();
     this.parts = [];
     this.tools = new Map();
