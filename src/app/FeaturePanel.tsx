@@ -39,6 +39,7 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   text: Icons.Text,
   plane: Icons.Plane,
   mateConnector: Icons.MateConnector,
+  curve: Icons.Curve,
   boolean: Icons.Boolean,
   deletePart: Icons.Trash,
   simplify: Icons.Simplify,
@@ -66,6 +67,7 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   bend: Icons.Bend,
   jog: Icons.Jog,
   deleteFace: Icons.DeleteFace,
+  modifyFillet: Icons.ModifyFillet,
   thread: Icons.Thread,
 };
 

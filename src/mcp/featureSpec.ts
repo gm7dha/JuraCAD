@@ -7,7 +7,8 @@
  * (changing only what's given).
  */
 import { setMirrorReference, setPatternDirection } from "../model/patternRefs";
-import type { Feature, FeatureType, JuraCADDocument, Operation } from "../model/types";
+import type { Feature, FeatureType, JuraCADDocument, LoftDef, LoftProfile, Operation } from "../model/types";
+import { endChoices, loftProfiles, profilesProblem, tidyEnds, withEndPoint, withLoftDef, withProfiles } from "../model/loft";
 import type { PartMesh } from "../kernel/protocol";
 import { SCREW_SIZES, standardParams } from "../model/holes";
 import { planeFrame, planeOnFace, type SketchPlane, type Vec3 } from "../sketch/planes";
@@ -19,6 +20,7 @@ import { pickEdges, pickFace, pickFaces, facing } from "./picks";
 import type { Session } from "./session";
 import { buildSketch } from "./sketchShapes";
 import { applyConnector, applyPlane, basePlane, CONNECTOR_KEYS, PLANE_KEYS } from "./planeSpec";
+import { applyCurve, CURVE_KEYS } from "./curveSpec";
 import type { SketchData, SketchLine } from "../sketch/types";
 
 /** The feature kinds Claude can add, by the name used in the tools. */
@@ -26,6 +28,7 @@ export const FEATURE_KINDS = {
   extrude: "extrude",
   revolve: "revolve",
   sweep: "sweep",
+  loft: "loft",
   hole: "hole",
   fillet: "fillet",
   chamfer: "chamfer",
@@ -40,6 +43,9 @@ export const FEATURE_KINDS = {
   sphere: "sphere",
   plane: "plane",
   mate_connector: "mateConnector",
+  curve: "curve",
+  modify_fillet: "modifyFillet",
+  split_face: "split",
 } as const satisfies Record<string, FeatureType>;
 export type FeatureKind = keyof typeof FEATURE_KINDS;
 export const KIND_OF: Partial<Record<FeatureType, FeatureKind>> = Object.fromEntries(Object.entries(FEATURE_KINDS).map(([k, v]) => [v, k as FeatureKind]));
@@ -50,10 +56,11 @@ const OPERATIONS = ["new", "add", "remove", "intersect"] as const;
 export const KIND_KEYS: Record<FeatureKind, string[]> = {
   extrude: ["sketch", "depth", "end", "up_to_face", "up_to_part", "flip", "second_depth", "draft", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   revolve: ["sketch", "axis", "angle", "symmetric", "second_angle", "flip", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
-  sweep: ["sketch", "path", "twist", "keep_orientation", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
+  sweep: ["sketch", "path", "path_edges", "path_part", "twist", "keep_orientation", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
+  loft: ["sections", "start_point", "end_point", "start", "end", "start_magnitude", "end_magnitude", "guide", "path", "straight", "match_corners", "turns", "closed_loop"],
   hole: ["sketch", "size", "fit", "style", "end", "depth", "diameter", "counterbore_diameter", "counterbore_depth", "countersink_diameter", "countersink_angle", "flip"],
-  fillet: ["part", "edges", "radius", "end_radius"],
-  chamfer: ["part", "edges", "distance", "second_distance", "angle", "flip_side"],
+  fillet: ["part", "edges", "radius", "end_radius", "all_edges"],
+  chamfer: ["part", "edges", "distance", "second_distance", "angle", "flip_side", "all_edges"],
   shell: ["part", "faces", "thickness", "outside"],
   linear_pattern: ["features", "parts", "faces", "part", "direction", "count", "spacing", "flip", "direction2", "count2", "spacing2", "flip2", "skip"],
   circular_pattern: ["features", "parts", "faces", "part", "axis", "count", "angle", "center", "skip"],
@@ -65,6 +72,9 @@ export const KIND_KEYS: Record<FeatureKind, string[]> = {
   sphere: ["diameter", "x", "y", "z"],
   plane: PLANE_KEYS,
   mate_connector: CONNECTOR_KEYS,
+  curve: CURVE_KEYS,
+  modify_fillet: ["part", "faces", "radius", "remove", "propagate"],
+  split_face: ["part", "faces", "plane", "offset", "sketch"],
 };
 
 /** Most copies in one direction of a pattern, and in all (bigger takes minutes to build). */
@@ -72,7 +82,7 @@ export const MAX_PATTERN = 100;
 export const MAX_PATTERN_TOTAL = 400;
 
 /** Which kinds have New / Add / Remove / Intersect. */
-const HAS_OPERATION: FeatureKind[] = ["extrude", "revolve", "sweep", "box", "cylinder", "sphere"];
+const HAS_OPERATION: FeatureKind[] = ["extrude", "revolve", "sweep", "loft", "box", "cylinder", "sphere"];
 
 export interface SpecContext {
   session: Session;
@@ -153,6 +163,78 @@ function moreSketches(f: Feature, a: Obj, ctx: SpecContext) {
       }),
     };
   });
+}
+
+const LOFT_ENDS = { none: undefined, normal: "normal", rounded: "tangent", match_tangent: "matchTangent", match_curvature: "matchCurvature" } as const;
+
+/**
+ * Loft (Onshape's): "sections" in order — sketch names, or {"part", "face"} for a flat face — "start_point"/"end_point"
+ * ([x, y, z] mm, a tip), "start"/"end" (none, normal, rounded — a point's tip —, match_tangent / match_curvature — a
+ * face's neighbours), their magnitudes, a "guide" or "path" sketch, "straight", "match_corners" with "turns" (one whole
+ * number per section), "closed_loop". The same records the dialog makes (src/model/loft.ts).
+ */
+function applyLoft(f: Feature, a: Obj, ctx: SpecContext) {
+  let profiles = loftProfiles(f);
+  if (has(a, "sections")) {
+    const items = list(a.sections, "sections");
+    profiles = items.map((x, i): LoftProfile => {
+      const where = `sections[${i}]`;
+      if (typeof x === "string") return { sketch: ctx.session.feature(x, where, ["sketch"], ctx.doc).id };
+      if (!x || typeof x !== "object" || Array.isArray(x)) throw new InputError(`${where} must be a sketch's name, or {"part": "<name>", "face": "F3"} for a flat face.`);
+      const o = x as Obj;
+      noExtras(o, ["part", "face"], where);
+      const part = ctx.session.part(ctx.parts, o.part, `${where}.part`);
+      const face = pickFace(part, o.face, `${where}.face`);
+      if (face.ref.surface !== "PLANE") throw new InputError(`${where}: ${face.id} isn't flat. A loft section must be a flat face.`);
+      return { face: { partId: part.id, ref: face.ref } };
+    });
+  }
+  for (const which of ["start", "end"] as const) {
+    const key = `${which}_point`;
+    if (!(key in a)) continue;
+    const point = a[key] === null ? null : { p: xyz(a[key], key, ctx.scope).map((v) => v.value) as [number, number, number] };
+    profiles = withEndPoint(profiles, which, point);
+  }
+  if (has(a, "turns")) {
+    const turns = list(a.turns, "turns").map((t, i) => {
+      if (typeof t !== "number" || !Number.isInteger(t)) throw new InputError(`turns[${i}] must be a whole number (how many corners to turn that section's start on).`);
+      return t;
+    });
+    let k = 0;
+    profiles = profiles.map((p) => ("point" in p ? p : { ...p, turn: turns[k++] ?? 0 }));
+  }
+  const problem = profilesProblem(profiles);
+  if (problem) throw new InputError(problem);
+  Object.assign(f, withProfiles(f, profiles));
+  // Ends that no longer suit their section (it was changed) are dropped, as the app's dialog does.
+  Object.assign(f, withLoftDef(f, tidyEnds(f.loft, profiles)));
+  const def: Partial<LoftDef> = {};
+  for (const which of ["start", "end"] as const) {
+    if (has(a, which)) {
+      const kind = LOFT_ENDS[oneOf(a[which], Object.keys(LOFT_ENDS) as (keyof typeof LOFT_ENDS)[], which)];
+      const p = which === "start" ? profiles[0] : profiles[profiles.length - 1];
+      if (kind && !endChoices(p).includes(kind)) throw new InputError(`"${which}": ${a[which]} doesn't suit that section. A point takes "rounded"; a sketch "normal"; a face "normal", "match_tangent" or "match_curvature".`);
+      def[which] = kind ? { kind } : undefined;
+    }
+    const mk = `${which}_magnitude`;
+    if (has(a, mk)) {
+      const m = amount(a[mk], mk, ctx.scope, { positive: true, unit: "" }).value;
+      if (m > 4) throw new InputError(`${mk} can be at most 4.`);
+      const cur = def[which] ?? f.loft?.[which];
+      if (!cur) throw new InputError(`"${mk}" needs "${which}" set too.`);
+      def[which] = { ...cur, ...(m === 1 ? { magnitude: undefined } : { magnitude: m }) };
+    }
+  }
+  for (const which of ["guide", "path"] as const) {
+    if (!(which in a)) continue;
+    def[which] = a[which] === null ? undefined : { sketch: ctx.session.feature(a[which], which, ["sketch"], ctx.doc).id };
+  }
+  if (has(a, "match_corners")) def.matchCorners = bool(a.match_corners, "match_corners") || undefined;
+  if (has(a, "closed_loop")) def.periodic = bool(a.closed_loop, "closed_loop") || undefined;
+  if (has(a, "straight")) f.loftRuled = bool(a.straight, "straight") || undefined;
+  Object.assign(f, withLoftDef(f, def));
+  if (!f.loft) delete f.loft;
+  if (!f.loftRuled) delete f.loftRuled;
 }
 
 /** A default plane by name, optionally moved along its normal. */
@@ -368,11 +450,20 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
 
     case "sweep": {
       const oldSketch = f.sketchRef;
-      if (!ctx.editing && (!has(a, "sketch") || !has(a, "path"))) {
-        throw new InputError('A sweep needs "sketch" (the one with the closed shape to carry) and "path" (another sketch with the lines and arcs to follow). Draw the shape on a plane across the start of the path.');
+      if (!ctx.editing && (!has(a, "sketch") || (!has(a, "path") && !has(a, "path_edges")))) {
+        throw new InputError('A sweep needs "sketch" (the one with the closed shape to carry) and "path" (another sketch, or a curve such as a helix) or "path_edges" (part edges joined end to end, on "path_part"). Draw the shape on a plane across the start of the path.');
       }
       if (has(a, "sketch")) f.sketchRef = ctx.session.feature(a.sketch, "sketch", ["sketch"], ctx.doc).id;
-      if (has(a, "path")) f.pathRef = ctx.session.feature(a.path, "path", ["sketch"], ctx.doc).id;
+      if (has(a, "path")) {
+        f.pathRef = ctx.session.feature(a.path, "path", ["sketch", "curve"], ctx.doc).id;
+        delete f.pathEdges;
+      }
+      if (has(a, "path_edges")) {
+        const part = ctx.session.part(ctx.parts, a.path_part, "path_part");
+        f.pathEdges = pickEdges(part, list(a.path_edges, "path_edges"), "path_edges").filter((p) => p.ref.kind === "edge");
+        if (!f.pathEdges.length) throw new InputError("path_edges: give edges (E-numbers from list_edges), not faces.");
+        delete f.pathRef;
+      }
       if (f.sketchRef === f.pathRef) throw new InputError("The shape and the path must be different sketches.");
       if (oldSketch && f.sketchRef !== oldSketch) {
         delete f.areas;
@@ -396,6 +487,10 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
       thinWall(f, a, ctx);
       break;
     }
+
+    case "loft":
+      applyLoft(f, a, ctx);
+      break;
 
     case "hole": {
       const h = { ...f.hole! };
@@ -432,10 +527,18 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
 
     case "fillet":
     case "chamfer": {
-      if (has(a, "edges") || !ctx.editing) {
+      if (has(a, "all_edges")) f.allEdges = bool(a.all_edges, "all_edges") || undefined;
+      if (f.allEdges && !has(a, "edges")) {
+        // Every edge of the part: one pick says which part.
+        if (!ctx.editing || has(a, "part")) {
+          const part = ctx.session.part(ctx.parts, has(a, "part") ? a.part : (f.picks?.[0]?.partId ?? undefined), "part");
+          f.picks = pickFaces(part, ["F1"], "faces");
+        }
+      } else if (has(a, "edges") || !ctx.editing) {
         const part = ctx.session.part(ctx.parts, has(a, "part") ? a.part : (f.picks?.[0]?.partId ?? undefined), "part");
         f.picks = pickEdges(part, list(a.edges, "edges"), "edges");
       }
+      if (f.allEdges && f.chamferType) throw new InputError('"all_edges" works with an equal chamfer only (no second_distance or angle).');
       if (kind === "fillet") {
         param(f, a, "radius", "radius", ctx, { positive: true, required: true });
         param(f, a, "end_radius", "endRadius", ctx, { min: 0 });
@@ -451,6 +554,45 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
         }
         if (has(a, "flip_side")) f.flipSide = bool(a.flip_side, "flip_side") || undefined;
       }
+      break;
+    }
+
+    case "modify_fillet": {
+      if (has(a, "faces") || !ctx.editing) {
+        const part = ctx.session.part(ctx.parts, has(a, "part") ? a.part : (f.picks?.[0]?.partId ?? undefined), "part");
+        f.picks = pickFaces(part, list(a.faces, "faces"), "faces");
+        const flat = f.picks.find((p) => p.ref.kind === "face" && p.ref.surface === "PLANE");
+        if (flat) throw new InputError("faces: pick the rounded faces of fillets (list_faces shows them as cylinder or torus pieces), not flat ones.");
+      }
+      const mf = { ...(f.modifyFillet ?? {}) };
+      if (has(a, "remove")) mf.remove = bool(a.remove, "remove") || undefined;
+      if (has(a, "propagate")) mf.noPropagate = !bool(a.propagate, "propagate") || undefined;
+      if (mf.remove && has(a, "radius")) throw new InputError('"radius" isn\'t used with "remove": true (the fillets are taken off); leave one out.');
+      if (!mf.remove) param(f, a, "radius", "radius", ctx, { positive: true, required: !ctx.editing });
+      const tidied = { ...(mf.remove ? { remove: true } : {}), ...(mf.noPropagate ? { noPropagate: true } : {}) };
+      if (Object.keys(tidied).length) f.modifyFillet = tidied;
+      else delete f.modifyFillet;
+      break;
+    }
+
+    case "split_face": {
+      if (ctx.editing && f.splitDef?.mode !== "face") throw new InputError("This Split cuts a part in two (it was made in the app); split_face can't change it. Edit it in the app instead.");
+      if (has(a, "sketch") && (has(a, "plane") || has(a, "offset"))) throw new InputError('Split along either a "plane" (with "offset") or a "sketch" (its lines, pushed square to the sketch) — not both.');
+      if (has(a, "faces") || !ctx.editing) {
+        const part = ctx.session.part(ctx.parts, has(a, "part") ? a.part : (f.picks?.[0]?.partId ?? undefined), "part");
+        f.picks = pickFaces(part, list(a.faces, "faces"), "faces");
+      }
+      const sp = { ...(f.splitDef ?? { plane: { kind: "default", name: "Right" } as SketchPlane, keep: "both" as const }), mode: "face" as const, picking: "faces" as const };
+      if (has(a, "sketch")) {
+        f.sketchRef = sketchRef(a, ctx, f.sketchRef);
+        sp.tool = "sketch";
+      } else if (has(a, "plane") || has(a, "offset") || !ctx.editing) {
+        if (!has(a, "plane") && !ctx.editing) throw new InputError('Give "plane": "Top", "Front" or "Right" (with "offset" to move it along its normal), or "sketch", to split the faces along.');
+        sp.plane = namedPlane(has(a, "plane") ? a.plane : "Top", a.offset, ctx);
+        delete sp.tool;
+        delete f.sketchRef;
+      }
+      f.splitDef = sp;
       break;
     }
 
@@ -567,6 +709,9 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
       break;
     case "mate_connector":
       applyConnector(f, a, ctx);
+      break;
+    case "curve":
+      applyCurve(f, a, ctx);
       break;
     case "composite_part": {
       if (has(a, "parts") || !ctx.editing) {

@@ -367,6 +367,33 @@
   BSplines that break round corners — and the pieces, which only touch end to end, are fused with `JOIN_FUZZ`. Kept facing one way,
   a closed loop is its smooth runs moved along (a smooth loop is refused: it always goes edge-on somewhere). Surfaces still refuse
   twist round corners and loops.
+- Loft (Onshape's): plain lofts (no `Feature.loft`) take the old `loftSketches`/`loftSurface` path untouched. `Feature.loft`
+  (`LoftDef`, types.ts; pure helpers `src/model/loft.ts`, parsed by `parseLoftDef`): `profiles` (sections in order — `{sketch,
+  areas?, turn?}` (one picked area), `{face}` (a flat face, its outer wire), `{point}` (a `GeomPick`: sketch point, part corner or
+  plain p; first/last only, `profilesProblem`); `sections` is kept = the sketches among them and `profiles` dropped when all are
+  whole sketches, `withProfiles`), `start`/`end` (`LoftEnd`: normal | tangent (a point's rounded tip) | matchTangent/matchCurvature
+  (a face's neighbours), `magnitude` ≤ 4; `endChoices`), `guide`/`path` (`LoftCurve`: a sketch's one run or part edges),
+  `matchCorners` (+ each section's `turn`; sketch sections with equal piece counts; ThruSections' CheckCompatibility off),
+  `periodic` (the first wire added again: OCCT closes the ring), `picking` (what a view click chooses: `loftClick`, via geomPick).
+  Engine: `src/kernel/loft.ts` `buildLoft` (resolves through a `LoftContext` from buildSolid). OCCT's loft has no end
+  conditions. Between two parallel outlines (no guide/path/matchCorners/ruled) they're `easedStations`: the plain loft cut
+  across at h(t) and moved square to the shapes to t, `easing` h = t − t(1 − t)^k (k = 4/m, curvature 2/m; the end's the
+  mirror image, both composed) — flat at the end, about as full as a plain loft at magnitude 1, never past either outline;
+  cut edges rebuilt light (`lighter`, else the loft through them takes minutes); a face's neighbours' slope (`faceSpread`)
+  grows the cuts. Otherwise helper copies of the end wire 0.01·D and ≤ 0.3·D out (shrinking capped at diag/8; inward =
+  flipped, `helpers`). A rounded tip = the neighbour scaled cos θ, moved sin θ square to it and 1 − cos θ across (θ 25…82°),
+  so an off-centre tip isn't passed. Faces with holes refused. Guide (one): the unguided loft cut at `STATIONS` planes,
+  each outline stretched along the guide's direction only, from its far side (`guidedStation`: lines exact, curves as
+  B-splines), lofted again. Path: BRepOffsetAPI_MakePipeShell (RightCorner transitions) with every section; each must sit
+  on the path (`offPath`, else refused) and starts where the first one's start is carried along the path
+  (`alignAlongPath`: a rotation-minimising reference), else the pipe twists between them. `loft.picking` is stripped by
+  `withoutPicking` and `featureForEngine`. Dependents: `loftUses`/`loftWithoutGone` (sections a list of ≥ 2, guide/path
+  needed); `loftSketches` for the eyes and partLinks. Claude: add_feature "loft" (sections, start_point/end_point, start/end,
+  magnitudes, guide, path, straight, match_corners + turns, closed_loop; `applyLoft`). UI `src/app/LoftOptions.tsx`. Not done: more
+  than one guide (OCCT has nothing for it), corner matching across different piece counts, end conditions eased only between parallel outlines.
+  Tests: tests/loft (pure; picking stripped, ends tidied), engineLoft (exact pyramid/cone, dome, off-centre tip, upright
+  sides at a normal start and on a box's top face, no lip at any magnitude, into-the-part refused, holed face refused, guide
+  moving one side only, arc and L paths' volumes and ends, a shape off the path refused, twist, ring), mcpLoft.
 - Thin (Onshape's "Thin" on Extrude/Revolve/Sweep, solids): `Feature.thin` (`midPlane`: the whole `thickness` centred; else
   `thickness` on the first side + `thickness2` (default 0) on the other; `flip` swaps; missing = solid, old files unchanged;
   params in group "thin", shown by `ThinOptions` in FeatureDialog.tsx, hidden by `visibleParamKeys` unless thin; draft hidden).
@@ -546,6 +573,62 @@
   `compositeParts` (least 2, as a union; `withoutGone` drops gone ones). Claude: linear/circular_pattern `parts` | `faces` (+ `part`) | `features`,
   `skip`; mirror `faces` (+ `part`); `composite_part` `parts`. Tests: tests/patternTypes (pure), enginePartPattern (counts,
   ids, names, skip, boss/hole/pocket by faces, face mirror, composite export/assembly), mcpPatternTypes.
+- Curve features (Onshape's Helix, Projected curve, Bridging curve, Composite curve, Fit spline, Intersection curve): ONE
+  feature type "curve" with `Feature.curve` (`CurveDef`, types.ts: `kind` + its picks; sizes in params height/turns/pitch/
+  diameter/startAngle/taper/bulge, shown by `curveParamKeys`); missing everywhere else, so old files are unchanged. Pure in
+  `src/model/curves.ts` (`CURVE_KINDS` names/descriptions, `curveName` "Helix 1", `newCurveDef`, `helixSizes`, `bridgePoints` —
+  a line, a cubic matching directions, or a quintic matching curvature vectors too (P2 = 2P1 − P0 + 25h²K/20), `bulge` scales the
+  handles — `fitSplineProblem`, `curveUses` for dependents, `parseCurveDef`). Clicks: `src/model/curveClicks.ts` (`curveClick`,
+  `curvePoint`, `pathClick`), glue at the top of geomPick.ts. Engine (`buildCurve`/`makeCurve` in engine.ts, OCC in
+  `src/kernel/curves.ts`): helix = a straight line on an unrolled cylinder, or a cone when tapered (`helixWire`, exact; round a
+  face from its circles, `roundOfFace`; frenet sweeps), fit spline = GeomAPI_Interpolate, bridge = a Bézier edge (ends from
+  `endFrame`: finite differences), projected = the sketch's runs pushed out ±5 m along its normal (`sheetAlong`) cut by the faces
+  or the other sketch's sheets (`sectionEdges`), intersection = faces against faces or a big square on `plane`; every result
+  chained into wires (`chainEdges`). Wires live per build (`StudioBuild.curves`, freed in `disposeBuild`); drawn lines go out as
+  `RebuildResult.curves` → `store.builtCurves` → `SceneManager.setCurves` (PickTarget "curve"; shown with the eye like planes,
+  `hasEye`). Used by: Sweep/Curve pattern `pathRef` = a curve feature, or `pathEdges` (TopoPicks of part edges, chained) —
+  engine `sweepSpine` (open paths start at the end nearest the profile as built; `sweepAlongSpine` in sweep.ts), handed to
+  buildSolid as its `paths` argument; a twist round a curve's/edges' sharp corners is refused (a sketch path does it), and kept
+  facing one way a result under 5% of the profile's real area (holes out) × ∫|t·n| ds along the path (`pathCrossing`) —
+  a flattened, edge-on sweep — is refused (`refuseFlattened`, sketch paths too; edge-on only at an end is fine); curve patterns walk its polyline (`walkPoints` in pathSample.ts). Drawn lines
+  are one per wire in the wire's own order and direction (`wirePolyline`: BRepAdaptor_CompCurve by C0 intervals), so their ends
+  are the wire's; GeomPick `curve` (+ end a/b/mid): an end is the wire end nearest `p` across all pieces (`curveEndNear`), mid
+  and Curve point `position` are by length (`paramAtLength` on the wire). Helix axes from faces/edges point one fixed way
+  (`canonicalAxis`); projected sheets reach 2 × the size of the sketches and faces.
+  Dialog `src/app/CurveOptions.tsx` (`CurveOptions`, `PathChoice`: sketch / curve / "Part edges (click them)"); Toolbar group
+  "curves" (`startCurve`). Claude: add_feature "curve" with `curve_type` (`src/mcp/curveSpec.ts`), sweep `path` (sketch or
+  curve) / `path_edges` + `path_part`; points may be {"curve", "end"}. Not done: isocline, offset and trim curves; sketches can't
+  Use/project or pierce a curve feature yet; surface sweeps along curves. Tests: tests/curves, curveClicks (pure), engineCurves
+  (helix length/pitch/taper/face, spring volume, ellipse of a slanted cut, projected onto a ball, fit spline, bridge, sweep along
+  an edge, composite, curve pattern on a helix), mcpCurves.
+- Split face and Modify fillet (Onshape's). Split face = a "split" with `splitDef.mode: "face"` (missing = Split part, exactly as
+  before): `picks` = faces of one part (+ edges when `splitDef.tool` is "edges"); `tool` missing = `splitDef.plane` (its section with
+  each face, `planeCutEdges`), "sketch" = the feature's `sketchRef` (its curves as an `extrudeSurface` symmetric past the parts, sectioned
+  with each face), "edges" = picked edges lying on the faces. `src/kernel/splitFace.ts` `splitFaces`: BRepAlgoAPI_Splitter with the
+  section edges as tools; refused when nothing crosses, no face is added or the volume changes; one part, more faces, so Draft /
+  Move face / colour etc. can take half a face (the halves are ordinary face picks). Dialog: Part / Faces segmented choice in
+  `SplitOptionsField` → `SplitFaceFields`; view clicks by `splitDef.picking` ("faces"/"plane"/"edges"). Modify fillet = feature
+  "modifyFillet": `picks` = rounded faces, `radius` param, `modifyFillet.remove` (take off), `noPropagate` (Onshape's Propagate is on
+  unless set). `src/kernel/modifyFillet.ts` `modifyFillets`: faces' adjacency by edge hash; every piece must blend SMOOTHLY
+  (normals within 1°) into the faces along its long sides (`onSide`: a cylinder's sides run along it, a torus's round it; else
+  `NotAFillet` "…meets the face beside it at a corner") and its ends may meet flat faces or other chain pieces only (a smooth
+  round end → "Tick Propagate", a mitre → "pick the pieces meeting it too"). Propagate follows ends only, to tangent pieces of
+  the same tube radius or to corner blends (balls), never sideways or across mitres. Only what the fillets took away goes back
+  (never a region round them — that filled holes, grooves, pockets and chamfers beside them): each cylinder/torus piece's wedge
+  (its cross-section, arc + tangent lines to their corner, pushed along / spun round; cylinders carried 4 r past ends cut by flat
+  faces — a box end, a slanted end, a chamfer — and trimmed back to them, `within`; tori must end square), fused (outside) or cut
+  (inside corner), plus each corner ball's corner block (within r of each of the three flat faces its neighbours blend into;
+  outside corners only, exactly three faces, else refused). Refused if unsound or a round face is
+  left where a picked one was (`leftovers`). Change radius fillets the recovered edges (on the wedges' corner lines/circles, carried past their ends by
+  the balls' radius, `recoveredEdges`) — refused if OpenCascade's check rejects the result (an r that ends exactly on a hole's rim).
+  Propagate's note names what it also took (`describeExtra`: "4 upright edges and 8 corner pieces where edges meet"). Works on imported STEP/simplified parts (no history).
+  Not BRepAlgoAPI_Defeaturing (missing from this OCCT build — Delete face can't remove blended fillets). Fillet/Chamfer `allEdges`: every edge of the picked parts (equal
+  chamfers only). Not done (OCCT can't): conic/curvature fillet sections, partial fillets, turning tangent propagation off.
+  Dependents: split face needs its sketch (tool sketch only — the plane only for tool plane) and its picks' parts, makes no part.
+  Claude: `modify_fillet` (faces, radius | remove, propagate), `split_face` (faces, plane + offset | sketch), fillet/chamfer `all_edges`.
+  Tests: tests/splitFaceModel (pure), engineSplitFillet (split counts/volume, draft on the top half, radius 2 → 4, removed, hole rim,
+  rounded-rectangle chain, a sharp scoop refused, slanted ends, a fully rounded box off/resized vs direct, mitres, inside corner
+  resized vs direct, holes/grooves/pockets/a chamfer beside fillets left alone (exact volumes), imported STEP, all edges), mcpSplitFillet.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.

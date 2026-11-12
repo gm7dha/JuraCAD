@@ -40,6 +40,8 @@ const COLOURS = {
   planeSelectedBorder: "#1f6fd1",
   /** A sketch area another feature already uses. */
   areaTaken: "#8a8f96",
+  /** A curve feature (Helix, Fit spline…). */
+  curve: "#c2410c",
   /** Inside of a part when it's cut open by a section view. */
   sectionCut: "#d9774f",
 };
@@ -100,6 +102,8 @@ export type PickTarget =
   | { kind: "customPlane"; id: string }
   /** A mate connector drawn by `setConnectorMarks` (by the key it was given). */
   | { kind: "connector"; key: string }
+  /** A curve feature (Helix, Fit spline…) drawn by `setCurves` (`id` its feature id), where it was clicked. */
+  | { kind: "curve"; id: string; point: [number, number, number] }
   /** A straight line in a finished sketch (`id` is the sketch feature's id), clickable while a mirror or pattern wants one. */
   | { kind: "sketchLine"; id: string; line: string }
   /** An area of a sketch (`sketch`: its feature id; `index` into `sketchAreas(sketch).areas`): see `setPickAreas`. */
@@ -110,6 +114,13 @@ export type PickTarget =
       /** With nothing open: a part's face right there too (the area lies on it), so a second click can pick the face. */
       under?: { item: SelectionItem; point: [number, number, number]; local: [number, number, number] };
     };
+
+/** A curve feature drawn in the 3D view (see `setCurves`). */
+export interface CurveDraw {
+  id: string;
+  lines: number[][];
+  lit?: boolean;
+}
 
 /** A mate connector drawn in the 3D view (see `setConnectorMarks`). */
 export interface ConnectorMark {
@@ -1637,6 +1648,11 @@ export class SceneManager {
       return areaTarget;
     }
 
+    // A curve feature, unless it's hidden behind a face.
+    if (this.curveGroup.children.length) {
+      const hit = this.raycaster.intersectObjects(this.curveGroup.children, false)[0];
+      if (hit && (!faceHit || hit.distance <= faceHit.distance + threshold * 2)) return { kind: "curve", id: hit.object.userData.curve as string, point: hit.point.toArray() as [number, number, number] };
+    }
     // A sketch line (while a mirror or pattern wants one), unless it's hidden behind a face.
     const line = this.nearestPickLine(threshold);
     if (line && (!faceHit || line.distance <= faceHit.distance + threshold * 2)) return { kind: "sketchLine", id: line.line.sketch, line: line.line.line };
@@ -2017,6 +2033,47 @@ export class SceneManager {
     for (const [key, { mats, colour }] of this.triadMaterials) {
       const c = lit && handleKey(lit) === key ? TRIAD_COLOURS.active : colour;
       for (const m of mats) (m as THREE.MeshBasicMaterial).color.set(c);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Curve features (Helix, Fit spline…): drawn as lines, clickable.
+
+  private readonly curveGroup = new THREE.Group();
+  private curveData: CurveDraw[] = [];
+  private hoverCurve: string | null = null;
+
+  /** The curve features to draw (each its lines, flat x, y, z…), and which are lit (selected or used by what's open). */
+  setCurves(curves: CurveDraw[]): void {
+    this.curveData = curves;
+    const g = this.curveGroup;
+    for (const child of [...g.children]) {
+      g.remove(child);
+      const o = child as THREE.Line;
+      o.geometry.dispose();
+      (o.material as THREE.Material).dispose();
+    }
+    if (!g.parent) this.scene.add(g);
+    for (const c of curves) {
+      for (const line of c.lines) {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.Float32BufferAttribute(line, 3));
+        const l = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: COLOURS.curve, transparent: true }));
+        l.userData.curve = c.id;
+        l.renderOrder = 5;
+        g.add(l);
+      }
+    }
+    if (this.hoverCurve && !curves.some((c) => c.id === this.hoverCurve)) this.hoverCurve = null;
+    this.colourCurves();
+  }
+
+  private colourCurves(): void {
+    const lit = new Set(this.curveData.filter((c) => c.lit).map((c) => c.id));
+    for (const child of this.curveGroup.children) {
+      const id = child.userData.curve as string;
+      const m = (child as THREE.Line).material as THREE.LineBasicMaterial;
+      m.color.set(id === this.hoverCurve ? COLOURS.edgeHover : lit.has(id) ? COLOURS.edgeSelected : COLOURS.curve);
     }
   }
 
@@ -2597,6 +2654,11 @@ export class SceneManager {
     if (lineHit !== this.hoverLine) {
       this.hoverLine = lineHit;
       this.drawReference();
+    }
+    const curveHit = hit?.kind === "curve" ? hit.id : null;
+    if (curveHit !== this.hoverCurve) {
+      this.hoverCurve = curveHit;
+      this.colourCurves();
     }
     if (customHit !== this.hoverCustomPlane) {
       this.hoverCustomPlane = customHit;

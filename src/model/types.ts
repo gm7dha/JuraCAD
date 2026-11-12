@@ -13,7 +13,7 @@ import type { FinishId } from "./finishes";
 import type { LibraryInsert } from "../library/types";
 
 /** The kinds of feature JuraCAD can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog" | "simplify" | "mateConnector" | "composite";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog" | "simplify" | "mateConnector" | "composite" | "modifyFillet" | "curve";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -68,7 +68,47 @@ export interface GeomPick {
   connector?: string;
   /** The X, Y or Z axis through the origin. */
   axis?: "x" | "y" | "z";
+  /** A curve feature (Helix, Fit spline…): with `end` "a"/"b" one of its ends, else a point or place along it. */
+  curve?: string;
 }
+
+/**
+ * A loft's further choices, as Onshape's Loft. `profiles` is the sections in order when any isn't a whole sketch (a
+ * picked area of a sketch, a flat face of a part, a point as the first or last); `sections` then still lists the
+ * sketches among them, so code that only reads `sections` sees every sketch used. Missing = each of `sections`.
+ */
+export interface LoftDef {
+  profiles?: LoftProfile[];
+  /** How the loft leaves its first section and arrives at its last (missing = free). */
+  start?: LoftEnd;
+  end?: LoftEnd;
+  /** A curve the sections' outlines touch, which the loft follows (scaling the shapes to keep touching it). */
+  guide?: LoftCurve;
+  /** A curve the loft runs along between its sections. */
+  path?: LoftCurve;
+  /** Line up the corners as set by each section's `turn` (Onshape's Match connections), instead of automatically. */
+  matchCorners?: boolean;
+  /** Back round to the first section (a closed ring of sections). */
+  periodic?: boolean;
+  /** What a click in the 3D view chooses while the dialog is open (missing = a flat face, as a section; "start"/"end" a corner as the first/last section). */
+  picking?: "profile" | "start" | "end" | "guide" | "path";
+}
+
+/** One section of a loft: a sketch (or one picked area of it), a flat face of a part, or a point. */
+export type LoftProfile =
+  | { sketch: string; areas?: AreaPick[]; turn?: number }
+  | { face: TopoPick; turn?: number }
+  | { point: GeomPick };
+
+/** How a loft meets an end: square to the section, a rounded tip (a point), or carrying on from a face's neighbours. */
+export interface LoftEnd {
+  kind: "normal" | "tangent" | "matchTangent" | "matchCurvature";
+  /** How far the condition reaches (Onshape's magnitude; missing = 1). */
+  magnitude?: number;
+}
+
+/** A guide or path: one run of curves in a sketch, or edges of parts. */
+export type LoftCurve = { sketch: string } | { edges: TopoPick[] };
 
 /** Where a Part Studio mate connector sits and which part it belongs to (Onshape's Mate connector feature). */
 export interface MateConnectorDef {
@@ -153,8 +193,16 @@ export interface SplitOptions {
   toolPartId?: string;
   /** Keep both pieces as separate parts, or only the piece on the plane's front (normal) or back side. */
   keep: "both" | "front" | "back";
-  /** What a click in the 3D view picks. */
-  picking?: "part" | "plane";
+  /** What a click in the 3D view picks ("faces"/"edges": Split face's faces to split, or the edges to split them along). */
+  picking?: "part" | "plane" | "faces" | "edges";
+  /**
+   * Onshape's Split type "Face": divide faces of a part (`Feature.picks`, kind face) instead of cutting the part,
+   * along `plane`, the curves of the feature's `sketchRef` (pushed along the sketch's normal) or edges lying on
+   * them (`Feature.picks`, kind edge) — `tool`, missing = the plane. The part keeps its shape and gets more faces.
+   * Missing = Split part, as before (then `tool` is ignored).
+   */
+  mode?: "face";
+  tool?: "plane" | "sketch" | "edges";
 }
 
 export interface HoleOptions {
@@ -266,8 +314,12 @@ export interface Feature {
    * Missing: just `sketchRef`.
    */
   moreAreas?: { sketch: string; areas: AreaPick[] }[];
-  /** Sweep: the sketch whose lines and arcs make the path. */
+  /** Sweep and Curve pattern: the sketch whose lines and arcs make the path, or a curve feature (Helix, Fit spline…). */
   pathRef?: string;
+  /** Sweep and Curve pattern: part edges picked as the path instead (joined end to end), as Onshape lets you. */
+  pathEdges?: TopoPick[];
+  /** Curve features (Onshape's Helix, Projected, Bridging, Composite, Fit spline and Intersection curves): what kind and what they're made from. */
+  curve?: CurveDef;
   /**
    * Sweep: how the profile is carried. `lockOrientation` keeps it facing the
    * same way all along, like Onshape's "Keep profile orientation" (then any
@@ -282,6 +334,8 @@ export interface Feature {
    * them all — so stacked outlines make sharp steps and exact 45° slopes (the Gridfinity profiles). Missing = smooth.
    */
   loftRuled?: boolean;
+  /** Loft: Onshape's further choices (sections of other kinds, end conditions, a guide or path…). Missing = a plain loft through `sections`. */
+  loft?: LoftDef;
   /** Text: what it says, where it goes, and how. */
   text?: {
     value: string;
@@ -353,6 +407,14 @@ export interface Feature {
   splitDef?: SplitOptions;
   /** Thicken, Rib and Draft: which way. */
   flipSide?: boolean;
+  /**
+   * Modify fillet (Onshape's): the rounded faces picked (`picks`) are taken off, putting the sharp edge back
+   * (`remove`), or given the new `radius` (missing `remove`). `noPropagate`: only the picked faces, not the
+   * rounded faces of the same radius running on from them (Onshape's "Propagate", on unless this is set).
+   */
+  modifyFillet?: { remove?: boolean; noPropagate?: boolean };
+  /** Fillet and Chamfer: round (bevel) every edge of the parts the picks are on, whatever was picked on them (Onshape's picking a whole part). */
+  allEdges?: boolean;
   /** Delete face: leave the hole open instead of healing it (a solid part becomes a surface). */
   leaveOpen?: boolean;
   /** Corner break: round the corners off (missing) or cut them off straight. */
@@ -1169,3 +1231,51 @@ export const MESH_TOLERANCES: Record<MeshQuality | "display", { tolerance: numbe
   normal: { tolerance: 0.02, angularTolerance: 0.2 },
   fine: { tolerance: 0.005, angularTolerance: 0.1 },
 };
+
+/** Onshape's curve features: each makes a curve (not a part) — a line in the view that sweeps and patterns can follow. */
+export type CurveKind = "helix" | "projected" | "bridge" | "composite" | "fitSpline" | "intersection";
+
+/**
+ * A curve feature's settings (sizes are in the feature's params). Followed as the model changes: part faces and edges
+ * by TopoPick (`on`, Feature.picks), points by GeomPick.
+ */
+export interface CurveDef {
+  kind: CurveKind;
+  /** Helix: round an axis ("axis": `axis` and an optional `start` point, else the diameter box), or a round face or edge (`on`). */
+  around?: "axis" | "face";
+  axis?: GeomPick;
+  start?: GeomPick;
+  /** Helix: a round (cylinder or cone) face, or a round edge, to wind round. Fill spline / bridge use GeomPicks instead. */
+  on?: TopoPick;
+  /** Helix: which two of height, turns and pitch are typed (missing = height and turns). */
+  helixBy?: "heightTurns" | "heightPitch" | "turnsPitch";
+  /** Helix: turns clockwise as it rises (seen from above). Missing = anticlockwise (a right-hand thread). */
+  clockwise?: boolean;
+  /** Helix: rise the other way along its axis (round a face: start from its other end). */
+  flip?: boolean;
+  /** Projected curve: onto picked faces (`Feature.picks`, missing = this) or where two sketches' curves meet ("sketches"; the second is `sketch2`). */
+  project?: "faces" | "sketches";
+  sketch2?: string;
+  /** Bridging curve: the two points it joins (edge ends, curve ends, corners, sketch points). */
+  from?: GeomPick;
+  to?: GeomPick;
+  /** Bridging curve: how smoothly it meets at each end (missing = tangent). */
+  matchFrom?: BridgeMatch;
+  matchTo?: BridgeMatch;
+  /** Bridging curve: set off the other way at an end. */
+  flipFrom?: boolean;
+  flipTo?: boolean;
+  /** Composite curve: other curve features joined in (part edges are in `Feature.picks`). */
+  curves?: string[];
+  /** Fit spline: the points it goes through, in order. */
+  points?: GeomPick[];
+  /** Fit spline: back round to the first point. */
+  closed?: boolean;
+  /** Intersection curve: a plane the picked faces are cut by (missing = the first picked face against the others). */
+  plane?: SketchPlane;
+  /** While editing: what a click picks (bridging "from"/"to", helix "axis"/"start"). Not saved. */
+  picking?: "from" | "to" | "axis" | "start" | "plane";
+}
+
+/** How a bridging curve meets what it joins: just touching, in the same direction, or bending the same too. */
+export type BridgeMatch = "position" | "tangent" | "curvature";

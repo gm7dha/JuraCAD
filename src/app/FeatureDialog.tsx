@@ -4,6 +4,7 @@ import { evaluate } from "../model/expr";
 import { formatLength, lengthNumber, showLength, storeLength } from "../model/units";
 import { describeRef } from "../geometry/topoRef";
 import { AreaPicker } from "./AreaPicker";
+import { LoftOptions } from "./LoftOptions";
 import { areasTaken, followedSketch, pathChange, sketchesOffered, takesSeveral } from "../sketch/areaClicks";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, revolveWay, visibleParamKeys, type ParamDef } from "../model/features";
 import { describeHole, SCREW_SIZES, standardParams } from "../model/holes";
@@ -16,6 +17,8 @@ import { mirrorReferenceText, patternReferenceText, setMirrorReference, setPatte
 import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 import { isMorePlaneMode } from "../sketch/planeTypes";
 import { MateConnectorOptions, MorePlaneFields, PlaneKindSelect } from "./PlaneMoreOptions";
+import { CurveOptions, PathChoice } from "./CurveOptions";
+import { curveKindInfo } from "../model/curves";
 import type { Axis, ExtrudeEnd, Feature } from "../model/types";
 import { axisLabel, defaultAxis } from "../sketch/axis";
 import { activeFeatures, activeStudioId, studioParts, useLengthUnit, useStore } from "../model/store";
@@ -98,8 +101,37 @@ function SplitOptionsField() {
   const frames = framesOf(features, undefined, built);
   const surfaces = parts.filter((p) => p.surface && p.id !== sp.partId);
   const planeValue = sp.toolPartId ? `surface:${sp.toolPartId}` : sp.plane.kind === "default" ? sp.plane.name : sp.plane.planeRef ? `plane:${sp.plane.planeRef}` : "face";
+  // Onshape's Split type: the part, or faces of it.
+  const kindChoice = (
+    <div className="segmented two" role="radiogroup" aria-label="What to split">
+      {(
+        [
+          [undefined, "Part", "Cut the part in two"],
+          ["face", "Faces", "Divide faces of a part into smaller faces (the part keeps its shape), so you can pick part of a face"],
+        ] as const
+      ).map(([mode, label, hint]) => (
+        <button
+          type="button"
+          key={label}
+          role="radio"
+          aria-checked={sp.mode === mode}
+          className={sp.mode === mode ? "selected" : ""}
+          title={hint}
+          onClick={() =>
+            mode === "face"
+              ? setDraftField({ splitDef: { ...sp, mode: "face", picking: "faces", toolPartId: undefined }, picks: draft.picks ?? [] })
+              : setDraftField({ splitDef: { ...sp, mode: undefined, tool: undefined, picking: "part" }, picks: undefined, sketchRef: undefined })
+          }
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+  if (sp.mode === "face") return <SplitFaceFields kindChoice={kindChoice} />;
   return (
     <>
+      {kindChoice}
       <fieldset className={`param-group pick-slot${sp.picking !== "plane" ? " active" : ""}`} onClick={() => sp.picking === "plane" && update({ picking: "part" })}>
         <legend>Part to split</legend>
         <p className={sp.partId ? "field-hint" : "dialog-hint field-hint"}>{sp.partId ? parts.find((p) => p.id === sp.partId)?.name ?? "(missing part)" : "Click the part to split."}</p>
@@ -152,6 +184,92 @@ function SplitOptionsField() {
           </button>
         ))}
       </div>
+    </>
+  );
+}
+
+/** Split face: the faces to divide, and what to divide them along (a plane, a sketch's lines, or edges). */
+function SplitFaceFields({ kindChoice }: { kindChoice: ReactNode }) {
+  const draft = useStore((s) => s.editing?.draft);
+  const mode = useStore((s) => s.editing?.mode);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const toggleDraftPick = useStore((s) => s.toggleDraftPick);
+  const features = useStore(activeFeatures);
+  const built = useStore((s) => s.builtFrames);
+  const rollbackTo = useStore((s) => s.rollbackTo);
+  if (draft?.type !== "split" || !draft.splitDef) return null;
+  const sp = draft.splitDef;
+  const update = (patch: Partial<typeof sp>) => setDraftField({ splitDef: { ...sp, ...patch } });
+  const planes = features.filter((f) => f.type === "plane");
+  const frames = framesOf(features, undefined, built);
+  const sketches = sketchesOffered(features, draft.id, mode === "edit", rollbackTo);
+  const tool = sp.tool ?? "plane";
+  const picks = draft.picks ?? [];
+  const facePicks = picks.filter((p) => p.ref.kind === "face");
+  const edgePicks = picks.filter((p) => p.ref.kind === "edge");
+  const value = tool === "sketch" ? `sketch:${draft.sketchRef ?? ""}` : tool === "edges" ? "edges" : sp.plane.kind === "default" ? sp.plane.name : sp.plane.planeRef ? `plane:${sp.plane.planeRef}` : "face";
+  const pickList = (list: typeof picks) => (
+    <ul className="pick-list" aria-label="Picked">
+      {list.map((p, i) => (
+        <li key={i}>
+          <span>{describeRef(p.ref, p.ref.kind === "face")}</span>
+          <button type="button" className="icon-button small" onClick={(e) => (e.stopPropagation(), toggleDraftPick(p))} title="Remove from this feature" aria-label="Remove">
+            <Icons.Cross size={14} />
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+  return (
+    <>
+      {kindChoice}
+      <fieldset className={`param-group pick-slot${sp.picking !== "plane" && sp.picking !== "edges" ? " active" : ""}`} onClick={() => sp.picking !== "faces" && update({ picking: "faces" })}>
+        <legend>Faces to split</legend>
+        {facePicks.length ? pickList(facePicks) : <p className="dialog-hint field-hint">Click the faces to divide (all on one part).</p>}
+      </fieldset>
+      <fieldset className={`param-group pick-slot${sp.picking === "plane" || sp.picking === "edges" ? " active" : ""}`} onClick={() => update({ picking: tool === "edges" ? "edges" : "plane" })}>
+        <legend>Split along</legend>
+        <select
+          className="full-select"
+          aria-label="What to split the faces along"
+          value={value}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === "Top" || v === "Front" || v === "Right") setDraftField({ splitDef: { ...sp, tool: undefined, plane: { kind: "default", name: v }, picking: "faces" }, sketchRef: undefined, picks: facePicks });
+            else if (v.startsWith("plane:")) {
+              const f = planes.find((x) => `plane:${x.id}` === v);
+              const frame = f && frames.get(f.id);
+              if (f && frame) setDraftField({ splitDef: { ...sp, tool: undefined, plane: planeAsSketchPlane(f, frame), picking: "faces" }, sketchRef: undefined, picks: facePicks });
+            } else if (v.startsWith("sketch:")) setDraftField({ splitDef: { ...sp, tool: "sketch", picking: "faces" }, sketchRef: v.slice("sketch:".length) || undefined, picks: facePicks });
+            else if (v === "edges") setDraftField({ splitDef: { ...sp, tool: "edges", picking: "edges" }, sketchRef: undefined });
+          }}
+        >
+          <option value="Top">Top plane</option>
+          <option value="Front">Front plane</option>
+          <option value="Right">Right plane</option>
+          {planes.map((f) => (
+            <option key={f.id} value={`plane:${f.id}`}>
+              {f.name}
+            </option>
+          ))}
+          {value === "face" && <option value="face">{planeLabel(sp.plane)}</option>}
+          {sketches.map((f) => (
+            <option key={f.id} value={`sketch:${f.id}`}>
+              The lines of {f.name}
+            </option>
+          ))}
+          {tool === "sketch" && !sketches.some((f) => f.id === draft.sketchRef) && <option value={`sketch:${draft.sketchRef ?? ""}`}>(choose a sketch)</option>}
+          <option value="edges">Edges I click</option>
+        </select>
+        {tool === "edges" ? (
+          edgePicks.length ? pickList(edgePicks) : <p className="dialog-hint field-hint">Click edges lying on the faces (on another part or surface touching them).</p>
+        ) : (
+          <p className="dialog-hint field-hint">
+            {tool === "sketch" ? "The sketch's lines and curves are pushed straight through, square to the sketch, and divide the faces where they cross." : "Or click a plane or flat face in the 3D view. The faces are divided where it crosses them."}
+          </p>
+        )}
+      </fieldset>
     </>
   );
 }
@@ -456,6 +574,41 @@ function ConvertPicks() {
 function SurfaceOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const setDraftField = useStore((s) => s.setDraftField);
+  if (draft?.type === "modifyFillet") {
+    const mf = draft.modifyFillet ?? {};
+    return (
+      <>
+        <div className="segmented two" role="radiogroup" aria-label="Change or remove">
+          {(
+            [
+              [false, "Change radius", "Give the fillets a new radius"],
+              [true, "Remove fillets", "Take the fillets off and put the sharp edges back"],
+            ] as const
+          ).map(([remove, label, hint]) => (
+            <button
+              type="button"
+              key={label}
+              role="radio"
+              aria-checked={!!mf.remove === remove}
+              className={!!mf.remove === remove ? "selected" : ""}
+              title={hint}
+              onClick={() => setDraftField({ modifyFillet: remove || mf.noPropagate ? { ...(remove ? { remove: true } : {}), ...(mf.noPropagate ? { noPropagate: true } : {}) } : undefined })}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <label className="check-row" title="Also change the rounded faces of the same size that carry on smoothly from the ones you click (round a corner, along an edge)">
+          <input
+            type="checkbox"
+            checked={!mf.noPropagate}
+            onChange={(e) => setDraftField({ modifyFillet: mf.remove || !e.target.checked ? { ...(mf.remove ? { remove: true } : {}), ...(!e.target.checked ? { noPropagate: true } : {}) } : undefined })}
+          />
+          Propagate (follow on round the fillet)
+        </label>
+      </>
+    );
+  }
   if (draft?.type === "deleteFace") {
     return (
       <label className="check-row" title="Take the faces away without closing the gap: the part becomes a surface (a skin), to reshape and Enclose or Thicken again">
@@ -1007,7 +1160,7 @@ function SweepLoftOptions() {
           />
         )}
         {!draft.surface && <MoreAreasNote />}
-        {select("Path to follow", draft.pathRef, (v) => setDraftField(pathChange(draft, v)))}
+        <PathChoice label="Path to follow" onSketch={(v) => setDraftField(pathChange(draft, v))} />
         <p className="dialog-hint field-hint">Draw the shape on a plane across the start of the path, e.g. a circle on Front for a path drawn on Top.</p>
         <label className="check-row" title="The shape doesn't tilt to follow the path's bends: it stays parallel to the plane it was drawn on all the way along">
           <input
@@ -1022,33 +1175,7 @@ function SweepLoftOptions() {
       </fieldset>
     );
   }
-  const sections = draft.sections ?? [];
-  return (
-    <fieldset className="param-group">
-      <legend>Shapes to join, in order</legend>
-      {sketches.map((f) => {
-        const at = sections.indexOf(f.id);
-        return (
-          <label key={f.id} className="check-row">
-            <input
-              type="checkbox"
-              checked={at >= 0}
-              onChange={() => setDraftField({ sections: at >= 0 ? sections.filter((x) => x !== f.id) : [...sections, f.id] })}
-            />
-            {at >= 0 ? `${at + 1}. ` : ""}
-            {f.name}
-          </label>
-        );
-      })}
-      <p className="dialog-hint field-hint">Tick the sketches in the order the solid should pass through them. Each needs one closed shape.</p>
-      {!draft.surface && (
-        <label className="check-row" title="Straight sides from each shape to the next, so the steps stay sharp, instead of one smooth curve through them all">
-          <input type="checkbox" aria-label="Straight between shapes" checked={!!draft.loftRuled} onChange={(e) => setDraftField({ loftRuled: e.target.checked || undefined })} />
-          Straight between shapes (sharp steps)
-        </label>
-      )}
-    </fieldset>
-  );
+  return <LoftOptions sketches={sketches} />;
 }
 
 /** What an Extrude, Revolve, Sweep or Hole does to which parts, from its preview (those parts are lit up in the view too). */
@@ -1608,16 +1735,7 @@ function PatternOptions() {
       {draft.type === "curvePattern" ? (
         <fieldset className="param-group">
           <legend>Along the path</legend>
-          <select className="full-select" aria-label="Path sketch" value={draft.pathRef ?? ""} onChange={(e) => setDraftField({ pathRef: e.target.value || undefined })}>
-            <option value="">Choose a sketch…</option>
-            {features
-              .filter((f) => f.type === "sketch" && f.id !== draft.id)
-              .map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name}
-                </option>
-              ))}
-          </select>
+          <PathChoice label="Path sketch" onSketch={(v) => setDraftField({ pathRef: v })} />
           <label className="check-row">
             <input type="checkbox" checked={!!pattern.follow} onChange={(e) => setDraftField({ pattern: { ...pattern, follow: e.target.checked } })} />
             Turn the copies to follow the path
@@ -2012,7 +2130,7 @@ function PicksField() {
   const parts = useStore(studioParts);
   const toggleDraftPick = useStore((s) => s.toggleDraftPick);
   const setDraftField = useStore((s) => s.setDraftField);
-  const faceTypes = ["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "fullRound", "wrap", "enclose", "offsetSurface"];
+  const faceTypes = ["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "modifyFillet", "thread", "fullRound", "wrap", "enclose", "offsetSurface"];
   const flange = draft?.type === "flange" || draft?.type === "hem" || draft?.type === "cornerBreak" || draft?.type === "fill" || draft?.type === "extendSurface" || draft?.type === "ruled";
   if (!draft || !(isPickFeature(draft.type) || faceTypes.includes(draft.type) || flange)) return null;
   const picks = draft.picks ?? [];
@@ -2075,7 +2193,15 @@ function PicksField() {
       </>
     );
   }
+  const wholePart = (draft.type === "fillet" || (draft.type === "chamfer" && !draft.chamferType)) && (
+    <label className="check-row" title="Like clicking the whole part in Onshape: every edge of the parts you've clicked on is done">
+      <input type="checkbox" checked={!!draft.allEdges} onChange={(e) => setDraftField({ allEdges: e.target.checked || undefined })} />
+      Every edge of the part
+    </label>
+  );
   return (
+    <>
+    {wholePart}
     <fieldset
       className={replacing ? `param-group pick-slot${replacing.picking !== "target" ? " active" : ""}` : "param-group"}
       onClick={() => replacing && replacing.picking === "target" && setDraftField({ replaceDef: { ...replacing, picking: "faces" } })}
@@ -2105,6 +2231,8 @@ function PicksField() {
           ? "Round face to wrap round"
           : draft.type === "thicken"
           ? "Faces to thicken"
+          : draft.type === "modifyFillet"
+          ? "Rounded faces to change"
           : draft.type === "draft"
             ? "Faces to taper"
             : draft.type === "moveFace" || draft.type === "replaceFace"
@@ -2141,6 +2269,8 @@ function PicksField() {
             ? "Click the side of a rod or boss (or the inside of a hole). The sketch's shapes are wrapped round it, centred where you click."
             : draft.type === "thicken"
             ? "Click the flat faces to grow into a solid."
+            : draft.type === "modifyFillet"
+            ? "Click the rounded faces of fillets (on any part, imported ones too)."
             : draft.type === "draft"
             ? "Click the side faces to taper."
             : draft.type === "moveFace"
@@ -2177,6 +2307,7 @@ function PicksField() {
         </div>
       )}
     </fieldset>
+    </>
   );
 }
 
@@ -2399,7 +2530,7 @@ export function FeatureDialog() {
       }}
     >
       <header className="feature-dialog-header">
-        <span className="feature-dialog-title">{def.label}</span>
+        <span className="feature-dialog-title">{draft.type === "curve" ? curveKindInfo(draft.curve?.kind).label : def.label}</span>
         <span className="feature-dialog-actions">
           <button
             type="submit"
@@ -2424,7 +2555,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "mateConnector" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "composite" && draft.type !== "simplify" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "cornerBreak" && draft.type !== "tab" && draft.type !== "bend" && draft.type !== "jog" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && draft.type !== "extendSurface" && draft.type !== "ruled" && !draft.surface && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "mateConnector" && draft.type !== "curve" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "composite" && draft.type !== "simplify" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "modifyFillet" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "cornerBreak" && draft.type !== "tab" && draft.type !== "bend" && draft.type !== "jog" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && draft.type !== "extendSurface" && draft.type !== "ruled" && !draft.surface && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -2455,6 +2586,7 @@ export function FeatureDialog() {
         <ThinOptions />
         <PlaneDefOptions />
         <MateConnectorOptions />
+        <CurveOptions />
         <BooleanOptionsField />
         <DeletePartOptions />
         <CompositeOptions />

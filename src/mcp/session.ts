@@ -53,6 +53,8 @@ export interface Build {
   links?: Record<string, SketchLinkInfo>;
   /** Planes that follow the model and mate connectors, where they are as built (see RebuildResult.followed). */
   followed?: Record<string, FollowedFrame>;
+  /** Curve features (Helix, Fit spline…) as lines (see RebuildResult.curves). */
+  curves?: Record<string, number[][]>;
 }
 
 /**
@@ -200,7 +202,7 @@ export class Session {
   }
 
   private keepBuild(key: string, r: RebuildResult): Build {
-    this.built = { parts: r.parts.filter((p) => !p.configuration), errors: r.featureErrors, warnings: r.featureWarnings ?? {}, notes: r.featureNotes ?? {}, links: r.sketchLinks ?? {}, ...(r.followed ? { followed: r.followed } : {}) };
+    this.built = { parts: r.parts.filter((p) => !p.configuration), errors: r.featureErrors, warnings: r.featureWarnings ?? {}, notes: r.featureNotes ?? {}, links: r.sketchLinks ?? {}, ...(r.followed ? { followed: r.followed } : {}), ...(r.curves ? { curves: r.curves } : {}) };
     this.builtKey = key;
     return this.built;
   }

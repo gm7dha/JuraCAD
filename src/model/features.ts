@@ -2,6 +2,7 @@ import { hasLength } from "./fasteners";
 import { transformKeys } from "./transformMath";
 import { evaluate, type Scope } from "./expr";
 import type { Feature, FeatureType, Operation } from "./types";
+import { curveParamKeys } from "./curves";
 
 export interface ParamDef {
   key: string;
@@ -322,11 +323,18 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "Removes faces and closes the gap — takes away fillets, chamfers, holes and bosses.",
     params: [],
   },
+  modifyFillet: {
+    type: "modifyFillet",
+    label: "Modify fillet",
+    namePrefix: "Modify fillet",
+    description: "Click rounded edges (fillets) to give them a new radius, or to take them off and put the sharp edge back — on any part, imported ones too.",
+    params: [{ key: "radius", label: "New radius", defaultValue: "2", positive: true, group: "size" }],
+  },
   split: {
     type: "split",
     label: "Split",
     namePrefix: "Split",
-    description: "Cuts a part in two along a plane or flat face, making two parts (or keeping one side).",
+    description: "Cuts a part in two along a plane or flat face, making two parts (or keeping one side) — or divides faces of a part along a plane, a sketch or edges, so you can pick part of a face.",
     params: [],
   },
   sheetMetal: {
@@ -491,6 +499,21 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "rz", label: "Turn about Z", defaultValue: "0", group: "position", unit: "°" },
     ],
   },
+  curve: {
+    type: "curve",
+    label: "Curve",
+    namePrefix: "Curve",
+    description: "A curve (not a part): a helix, a projected, bridging or composite curve, a spline through points, or where faces meet. Sweeps and patterns can follow it.",
+    params: [
+      { key: "height", label: "Height", defaultValue: "30", positive: true, group: "size" },
+      { key: "turns", label: "Turns", defaultValue: "5", positive: true, group: "size", unit: "" },
+      { key: "pitch", label: "Pitch (rise per turn)", defaultValue: "6", positive: true, group: "size" },
+      { key: "diameter", label: "Diameter", defaultValue: "20", positive: true, group: "size" },
+      { key: "startAngle", label: "Start angle", defaultValue: "0", group: "position", unit: "°" },
+      { key: "taper", label: "Taper (widening as it rises)", defaultValue: "0", group: "size", unit: "°" },
+      { key: "bulge", label: "Bulge", defaultValue: "1", positive: true, group: "size", unit: "" },
+    ],
+  },
   coil: {
     type: "coil",
     label: "Coil",
@@ -559,8 +582,10 @@ export function isSolidFeature(type: FeatureType): boolean {
 }
 
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */
-export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo" | "sweepControl" | "sheetConvert" | "transform" | "thin" | "revolve">>): Set<string> {
+export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo" | "sweepControl" | "sheetConvert" | "transform" | "thin" | "revolve" | "modifyFillet" | "curve">>): Set<string> {
   const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
+  // Curves: only the boxes their kind uses.
+  if (f.type === "curve") return new Set(curveParamKeys(f.curve));
   // Sheet metal from a part's faces has rips but no depth; from a sketch, the other way round.
   if (f.type === "sheetMetal") keys.delete(f.sheetConvert ? "depth" : "ripGap");
   // A profile kept facing one way can't also twist.
@@ -573,6 +598,7 @@ export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | 
   if (f.type === "revolve" && !(f.revolve?.second && !f.revolve.symmetric)) keys.delete("angle2");
   if ((f.type === "flange" || f.type === "hem") && !f.mitreCorners) keys.delete("cornerGap");
   if (f.type === "extendSurface" && f.extendTo) keys.delete("distance");
+  if (f.type === "modifyFillet" && f.modifyFillet?.remove) keys.delete("radius");
   const end = f.extrude?.end ?? "blind";
   if (f.type === "extrude" && end !== "blind" && end !== "symmetric") keys.delete("depth");
   if (f.type === "extrude" && !(end === "blind" && f.extrude?.second && !f.surface)) keys.delete("depth2");

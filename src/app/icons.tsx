@@ -141,6 +141,13 @@ export const Icons = {
       <path d="M4 20V10a6 6 0 0 1 6-6h10" />
     </Svg>
   ),
+  ModifyFillet: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 20V12a4 4 0 0 1 4-4h12" />
+      <path d="M4 8V4h4" strokeDasharray="2 2" />
+      <path d="M13 13l6 6m0-4v4h-4" />
+    </Svg>
+  ),
   Chamfer: (p: IconProps) => (
     <Svg {...p}>
       <path d="M4 20V10l6-6h10" />
@@ -734,6 +741,13 @@ export const Icons = {
       <circle cx="3" cy="17" r="1.4" fill="currentColor" />
       <circle cx="12" cy="12" r="1.4" fill="currentColor" />
       <circle cx="21" cy="7" r="1.4" fill="currentColor" />
+    </Svg>
+  ),
+  Curve: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M3 18c3-9 6-12 9-6s6 3 9-6" />
+      <circle cx="3" cy="18" r="1.2" />
+      <circle cx="21" cy="6" r="1.2" />
     </Svg>
   ),
   Coil: (p: IconProps) => (

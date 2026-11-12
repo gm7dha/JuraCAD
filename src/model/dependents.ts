@@ -20,6 +20,8 @@
  * deleted *Add* feature changed (the part is older, so it stays). Those show
  * as errors afterwards, as a plain Delete leaves them.
  */
+import { curveUses } from "./curves";
+import { loftUses, loftWithoutGone } from "./loft";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 import { partCopiesPlan } from "../assembly/assembly";
@@ -57,7 +59,8 @@ function planesOf(f: Feature): SketchPlane[] {
     f.planeDef?.ref,
     f.planeDef?.ref2,
     // Split by a surface part ignores the plane.
-    f.splitDef && !f.splitDef.toolPartId ? f.splitDef.plane : undefined,
+    // (Split face along a sketch or edges ignores it too.)
+    f.splitDef && !f.splitDef.toolPartId && !(f.splitDef.mode === "face" && (f.splitDef.tool ?? "plane") !== "plane") ? f.splitDef.plane : undefined,
     f.mirror && !f.mirror.unset && !f.mirror.planePick && !f.mirror.line ? f.mirror.plane : undefined,
     f.replaceDef?.target,
     f.neutral,
@@ -128,7 +131,16 @@ function usesOf(f: Feature): Uses {
     need(g.sketchPoint?.sketch);
     need(g.sketchLine?.sketch);
     need(g.connector);
+    need(g.curve);
   }
+  // Curve features (Helix, Fit spline…): what they're made from; a sweep's or pattern's path picked as edges.
+  if (f.curve) {
+    const c = curveUses(f);
+    c.features.forEach(need);
+    c.parts.forEach(needPart);
+    if (c.curveList) lists.push({ what: "curve it joins", many: "curves it joins", features: c.curveList, ...(f.picks?.length ? { least: 0 } : {}) });
+  }
+  for (const e of f.pathEdges ?? []) needPart(e.partId);
   if (f.connector?.plane?.kind === "face") need(f.connector.plane.planeRef);
   needPart(f.connector?.owner);
   need(f.transform?.fromConnector);
@@ -136,8 +148,11 @@ function usesOf(f: Feature): Uses {
   if (UP_TO_PICK.has(f.extrude?.end ?? "")) needPart(f.extrude?.upTo?.partId);
   needPart(f.extendTo?.target?.partId);
   needPart(f.transform?.partId);
-  needPart(f.splitDef?.partId);
-  needPart(f.splitDef?.toolPartId);
+  // Split face's parts are its picks' (a list below).
+  if (f.splitDef?.mode !== "face") {
+    needPart(f.splitDef?.partId);
+    needPart(f.splitDef?.toolPartId);
+  }
   if (f.mirror) {
     needPart(f.mirror.part);
     if (!f.mirror.unset) {
@@ -157,7 +172,13 @@ function usesOf(f: Feature): Uses {
       if (f.pattern.parts?.length) lists.push({ what: "part it repeats", many: "parts it repeats", parts: f.pattern.parts });
     } else if (!f.pattern.of && f.pattern.sources.length) lists.push({ what: "feature it repeats", many: "features it repeats", features: f.pattern.sources });
   }
-  if (f.sections?.length) lists.push({ what: "loft section", many: "loft sections", features: f.sections, least: 2 });
+  if (f.loft) {
+    // A loft's sections may be sketches, faces or points; its guide and path it can't do without.
+    const lu = loftUses(f);
+    if (lu.sectionFeatures.length + lu.sectionParts.length) lists.push({ what: "loft section", many: "loft sections", features: lu.sectionFeatures, parts: lu.sectionParts, least: 2 });
+    features.push(...lu.features);
+    parts.push(...lu.parts);
+  } else if (f.sections?.length) lists.push({ what: "loft section", many: "loft sections", features: f.sections, least: 2 });
   if (f.picks?.length) lists.push({ what: "picked edge or face", many: "picked edges and faces", parts: f.picks.map((p) => p.partId) });
   if (f.booleanDef) {
     const sub = f.booleanDef.op === "subtract";
@@ -194,7 +215,7 @@ function makesSolidPart(f: Feature, makers: Set<string>): boolean {
   if (f.type === "enclose") return true;
   if (isSurfaceFeature(f)) return false;
   // Keeping both pieces adds the front one as a part under the split's id.
-  if (f.type === "split") return f.splitDef?.keep === "both";
+  if (f.type === "split") return f.splitDef?.mode !== "face" && f.splitDef?.keep === "both";
   if (f.type === "mirror" && f.mirror?.part !== undefined) return !f.mirror.join;
   if (f.type === "transform") return !!f.transform?.copy;
   // A part pattern's copies are new parts; a face pattern or mirror changes the part its faces are on.
@@ -296,7 +317,9 @@ export function withoutGone(f: Feature, gone: Set<string>): Feature {
   if (f.picks?.some((p) => partGone(p.partId))) set({ picks: f.picks.filter((p) => !partGone(p.partId)) });
   if (f.pattern?.sources.some(featureGone)) set({ pattern: { ...f.pattern, sources: f.pattern.sources.filter((id) => !featureGone(id)) } });
   if (f.mirror?.sources.some(featureGone)) set({ mirror: { ...f.mirror, sources: f.mirror.sources.filter((id) => !featureGone(id)) } });
-  if (f.sections?.some(featureGone)) set({ sections: f.sections.filter((id) => !featureGone(id)) });
+  if (f.loft?.profiles) out = loftWithoutGone(out, featureGone, partGone);
+  else if (f.sections?.some(featureGone)) set({ sections: f.sections.filter((id) => !featureGone(id)) });
+  if (f.curve?.curves?.some(featureGone)) set({ curve: { ...f.curve, curves: f.curve.curves.filter((id) => !featureGone(id)) } });
   if (f.moreAreas?.some((m) => featureGone(m.sketch))) {
     const more = f.moreAreas.filter((m) => !featureGone(m.sketch));
     if (more.length) set({ moreAreas: more });

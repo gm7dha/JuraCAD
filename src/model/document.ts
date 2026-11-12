@@ -15,7 +15,8 @@ import { parseMaterials } from "./materials";
 import { parsePartProperties } from "../assembly/properties";
 import { parseAssemblies } from "../assembly/assembly";
 import { parseDrawings } from "../drawing/drawing";
-import type { Feature, FeatureType, GeomPick, ImportedFile, MateConnectorDef, Operation, JuraCADDocument, PartStudio, PlaneOptions } from "./types";
+import { newCurveDef, parseCurveDef } from "./curves";
+import type { Feature, FeatureType, GeomPick, ImportedFile, LoftCurve, LoftDef, LoftEnd, LoftProfile, MateConnectorDef, Operation, JuraCADDocument, PartStudio, PlaneOptions } from "./types";
 import { MAIN_STUDIO } from "./studios";
 import { parseHiddenDatums } from "./visibility";
 import { parseVersions } from "./versions";
@@ -87,7 +88,7 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     if (type === "extrude") feature.extrude = { end: "blind", flip: false };
     else feature.revolve = { axis: sketch?.sketch ? defaultAxis(sketch.sketch.data) : "vertical", flip: false };
     // Like Onshape: the first solid is a new part, later extrudes add to it.
-    const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
+    const hasSolid = doc.features.some((f) => f.type !== "sketch" && f.type !== "curve" && !f.suppressed);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
     // Pieces that don't touch become separate parts (as in Onshape); Intersect works on every part it reaches.
     feature.apart = true;
@@ -95,7 +96,7 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
   }
   if (type === "sweep" || type === "loft") {
     const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
-    const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
+    const hasSolid = doc.features.some((f) => f.type !== "sketch" && f.type !== "curve" && !f.suppressed);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
     if (type === "sweep") {
       feature.apart = true;
@@ -105,7 +106,7 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     } else feature.sections = sketches.slice(-2).map((f) => f.id);
   }
   if (type === "text") {
-    const hasSolid = doc.features.some((f) => f.type !== "sketch" && !f.suppressed);
+    const hasSolid = doc.features.some((f) => f.type !== "sketch" && f.type !== "curve" && !f.suppressed);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
     feature.text = { value: "JuraCAD", plane: { kind: "default", name: "Top" }, bold: false, flip: false };
   }
@@ -131,7 +132,7 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     feature.sketchRef = sketches[sketches.length - 1]?.id;
     feature.operation = "add";
   }
-  if (type === "thicken" || type === "moveFace" || type === "deleteFace" || type === "thread" || type === "fullRound" || type === "wrap" || type === "fill" || type === "enclose" || type === "offsetSurface") feature.picks = [];
+  if (type === "thicken" || type === "moveFace" || type === "deleteFace" || type === "modifyFillet" || type === "thread" || type === "fullRound" || type === "wrap" || type === "fill" || type === "enclose" || type === "offsetSurface") feature.picks = [];
   if (type === "extendSurface") feature.picks = [];
   if (type === "ruled") {
     feature.picks = [];
@@ -161,6 +162,7 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
   if (type === "boolean") feature.booleanDef = { op: "union", targets: [], tools: [], keepTools: false, picking: "targets" };
   if (type === "plane") feature.planeDef = { mode: "offset", ref: { kind: "default", name: "Top" }, axis: "u" };
   // A mate connector starts at the origin, on Top, until something is clicked.
+  if (type === "curve") feature.curve = newCurveDef("helix");
   if (type === "mateConnector") feature.connector = { at: { p: [0, 0, 0] }, plane: { kind: "default", name: "Top" }, base: { origin: [0, 0, 0], x: [1, 0, 0], z: [0, 0, 1] } };
   if (type === "transform") {
     feature.operation = "add";
@@ -328,6 +330,23 @@ export function withoutPicking(f: Feature): Feature {
     const { picking: _p, ...mirror } = out.mirror;
     out = { ...out, mirror };
   }
+  if (out.curve?.picking !== undefined) {
+    const { picking: _p, ...curve } = out.curve;
+    out = { ...out, curve };
+  }
+  // A sweep's "part edges" chosen with none clicked: no path yet.
+  if (out.pathEdges && !out.pathEdges.length) {
+    const { pathEdges: _e, ...rest } = out;
+    out = rest;
+  }
+  if (out.loft?.picking !== undefined) {
+    const { picking: _p, ...loft } = out.loft;
+    if (Object.keys(loft).length) out = { ...out, loft };
+    else {
+      const { loft: _l, ...rest } = out;
+      out = rest;
+    }
+  }
   return out;
 }
 
@@ -469,6 +488,7 @@ export function parseGeomPick(raw: unknown): GeomPick | null {
   if (sl) out.sketchLine = sl;
   if (typeof g.connector === "string") out.connector = g.connector;
   if (g.axis === "x" || g.axis === "y" || g.axis === "z") out.axis = g.axis;
+  if (typeof g.curve === "string") out.curve = g.curve;
   return out;
 }
 
@@ -484,6 +504,65 @@ function parsePlaneExtras(pd: Record<string, unknown>): Partial<PlaneOptions> {
   if (typeof pd.position === "number" && Number.isFinite(pd.position)) out.position = Math.min(1, Math.max(0, pd.position));
   if (pd.flip === true) out.flip = true;
   return out;
+}
+
+const LOFT_ENDS = new Set(["normal", "tangent", "matchTangent", "matchCurvature"]);
+
+function parseLoftEnd(raw: unknown): LoftEnd | null {
+  if (!raw || typeof raw !== "object") return null;
+  const e = raw as Record<string, unknown>;
+  if (typeof e.kind !== "string" || !LOFT_ENDS.has(e.kind)) return null;
+  const out: LoftEnd = { kind: e.kind as LoftEnd["kind"] };
+  if (typeof e.magnitude === "number" && Number.isFinite(e.magnitude) && e.magnitude > 0) out.magnitude = Math.min(10, e.magnitude);
+  return out;
+}
+
+function parseLoftCurve(raw: unknown): LoftCurve | null {
+  if (!raw || typeof raw !== "object") return null;
+  const c = raw as Record<string, unknown>;
+  if (typeof c.sketch === "string") return { sketch: c.sketch };
+  if (Array.isArray(c.edges)) {
+    const edges = c.edges.map(parsePick).filter((x): x is NonNullable<ReturnType<typeof parsePick>> => !!x && x.ref.kind === "edge");
+    return edges.length ? { edges } : null;
+  }
+  return null;
+}
+
+/** A loft's further choices (Onshape's Loft), or null when there are none to read. */
+export function parseLoftDef(raw: unknown): LoftDef | null {
+  if (!raw || typeof raw !== "object") return null;
+  const d = raw as Record<string, unknown>;
+  const out: LoftDef = {};
+  if (Array.isArray(d.profiles)) {
+    const profiles: LoftProfile[] = [];
+    for (const r of d.profiles) {
+      if (!r || typeof r !== "object") continue;
+      const p = r as Record<string, unknown>;
+      const turn = typeof p.turn === "number" && Number.isInteger(p.turn) ? { turn: p.turn } : {};
+      if (typeof p.sketch === "string") {
+        const areas = parseAreaPicks(p.areas);
+        profiles.push({ sketch: p.sketch, ...(areas.length ? { areas } : {}), ...turn });
+      } else if (p.face) {
+        const face = parsePick(p.face);
+        if (face && face.ref.kind === "face") profiles.push({ face, ...turn });
+      } else if (p.point) {
+        const point = parseGeomPick(p.point);
+        if (point) profiles.push({ point });
+      }
+    }
+    out.profiles = profiles;
+  }
+  const start = parseLoftEnd(d.start);
+  if (start) out.start = start;
+  const end = parseLoftEnd(d.end);
+  if (end) out.end = end;
+  const guide = parseLoftCurve(d.guide);
+  if (guide) out.guide = guide;
+  const path = parseLoftCurve(d.path);
+  if (path) out.path = path;
+  if (d.matchCorners === true) out.matchCorners = true;
+  if (d.periodic === true) out.periodic = true;
+  return Object.keys(out).length ? out : null;
 }
 
 const CONNECTOR_SPOTS = new Set(["start", "end", "middle", "clicked"]);
@@ -560,7 +639,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       params: { ...defaultParams(f.type as FeatureType), ...params },
       ...(typeof f.folder === "string" && f.folder.trim() ? { folder: f.folder.trim().slice(0, 60) } : {}),
       // Shown or hidden with the eye (sketches and planes only; missing = automatic).
-      ...((f.type === "sketch" || f.type === "plane") && typeof f.visible === "boolean" ? { visible: f.visible } : {}),
+      ...((f.type === "sketch" || f.type === "plane" || f.type === "curve") && typeof f.visible === "boolean" ? { visible: f.visible } : {}),
     };
     if (feature.type === "sketch") {
       const sk = f.sketch as Record<string, unknown> | undefined;
@@ -670,9 +749,21 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         plane: parsePlane(sp.plane) ?? { kind: "default", name: "Right" },
         ...(typeof sp.toolPartId === "string" ? { toolPartId: sp.toolPartId } : {}),
         keep: sp.keep === "front" || sp.keep === "back" ? sp.keep : "both",
-        picking: sp.picking === "plane" ? "plane" : "part",
+        picking: sp.picking === "plane" ? "plane" : sp.mode === "face" && (sp.picking === "faces" || sp.picking === "edges") ? sp.picking : "part",
+        ...(sp.mode === "face" ? { mode: "face" as const } : {}),
+        ...(sp.mode === "face" && (sp.tool === "sketch" || sp.tool === "edges") ? { tool: sp.tool } : {}),
       };
+      if (feature.splitDef.mode === "face") {
+        if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
+        feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
+      }
     }
+    if (feature.type === "modifyFillet") {
+      const mf = (f.modifyFillet ?? {}) as Record<string, unknown>;
+      const def = { ...(mf.remove === true ? { remove: true } : {}), ...(mf.noPropagate === true ? { noPropagate: true } : {}) };
+      if (Object.keys(def).length) feature.modifyFillet = def;
+    }
+    if ((feature.type === "fillet" || feature.type === "chamfer") && f.allEdges === true) feature.allEdges = true;
     if (feature.type === "replaceFace") {
       const rd = (f.replaceDef ?? {}) as Record<string, unknown>;
       feature.replaceDef = { target: rd.target ? parsePlane(rd.target) ?? null : null, picking: rd.picking === "target" ? "target" : "faces" };
@@ -742,8 +833,22 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       const c = parseConnectorDef(f.connector);
       if (c) feature.connector = c;
     }
+    if (feature.type === "curve") {
+      feature.curve = parseCurveDef(f.curve, { geom: parseGeomPick, pick: parsePick, plane: parsePlane }) ?? newCurveDef("helix");
+      if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
+      if (Array.isArray(f.picks)) feature.picks = f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null);
+    }
+    // A sweep's or curve pattern's path picked as part edges.
+    if ((feature.type === "sweep" || feature.type === "curvePattern") && Array.isArray(f.pathEdges)) {
+      const edges = f.pathEdges.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null && p.ref.kind === "edge");
+      if (edges.length) feature.pathEdges = edges;
+    }
     if (feature.type === "loft") feature.sections = Array.isArray(f.sections) ? f.sections.filter((x): x is string => typeof x === "string") : [];
     if (feature.type === "loft" && f.loftRuled === true) feature.loftRuled = true;
+    if (feature.type === "loft") {
+      const def = parseLoftDef(f.loft);
+      if (def) feature.loft = def;
+    }
     if (feature.type === "revolve") {
       if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
       const rv = f.revolve as Record<string, unknown> | undefined;
@@ -781,7 +886,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       });
       if (more.length) feature.moreAreas = more;
     }
-    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled", "cornerBreak"].includes(feature.type) || (feature.type === "sheetMetal" && feature.sheetConvert) || feature.pattern?.of === "face" || feature.mirror?.of === "face") {
+    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "modifyFillet", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled", "cornerBreak"].includes(feature.type) || (feature.type === "sheetMetal" && feature.sheetConvert) || feature.pattern?.of === "face" || feature.mirror?.of === "face") {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }
     features.push(feature);

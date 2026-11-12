@@ -205,7 +205,7 @@ export function viewNormalToPlaneFeature(id: string): boolean {
 
 const NO_IDS: string[] = [];
 const NO_LINES: PickableLine[] = [];
-const FACE_TOOLS = new Set(["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "fullRound", "wrap", "enclose", "offsetSurface"]);
+const FACE_TOOLS = new Set(["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "modifyFillet", "thread", "fullRound", "wrap", "enclose", "offsetSurface"]);
 
 /** Apply a click in the viewport to the selection, like Onshape. */
 function handlePick(target: PickTarget | null, additive: boolean) {
@@ -253,6 +253,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     else if (d?.type === "text" && d.text) s.setDraftField({ text: { ...d.text, plane } });
     else if (d?.type === "mirror") s.setDraftMirrorPlane(plane);
     else if (d?.type === "plane" && d.planeDef && d.id !== target.id) s.setDraftField({ planeDef: { ...d.planeDef, ref: plane } });
+    else if (d?.type === "split" && d.splitDef?.mode === "face") s.setDraftField({ splitDef: { ...d.splitDef, plane, tool: undefined, picking: "faces" }, sketchRef: undefined, picks: (d.picks ?? []).filter((p) => p.ref.kind === "face") });
     else if (d?.type === "split" && d.splitDef) s.setDraftField({ splitDef: { ...d.splitDef, plane, toolPartId: undefined } });
     else if (d?.type === "draft" || d?.type === "ruled") s.setDraftField({ neutral: plane });
     else if (d?.type === "replaceFace") s.setDraftField({ replaceDef: { target: plane, picking: "faces" } });
@@ -336,6 +337,36 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       else if (pick?.ref.kind === "face" && pick.ref.surface === "CYLINDRE") s.setDraftField({ text: { ...flat, plane: null, face: pick } });
       else s.showToast("Text can go on a flat face, a round (cylinder) face, or one of the planes.");
     }
+    return;
+  }
+  // Split face: faces to divide; then a plane or flat face to divide them along, or the edges.
+  if (s.editing?.draft.type === "split" && s.editing.draft.splitDef?.mode === "face") {
+    const d = s.editing.draft;
+    const sp = d.splitDef!;
+    const faceOnly = (d.picks ?? []).filter((p) => p.ref.kind === "face");
+    if (target?.kind === "plane") {
+      s.setDraftField({ splitDef: { ...sp, plane: { kind: "default", name: target.plane }, tool: undefined, picking: "faces" }, sketchRef: undefined, picks: faceOnly });
+      return;
+    }
+    if (target?.kind !== "part") return;
+    const pick = pickFor(s.parts, target.item);
+    if (!pick) return;
+    if (sp.picking === "edges") {
+      if (pick.ref.kind !== "edge") s.showToast("Click edges to split along (or click “Faces to split” to pick faces).");
+      else s.toggleDraftPick(pick);
+      return;
+    }
+    if (sp.picking === "plane" && target.item.kind === "face") {
+      const plane = planeForFace(target.item);
+      if (plane) s.setDraftField({ splitDef: { ...sp, plane, tool: undefined, picking: "faces" }, sketchRef: undefined, picks: faceOnly });
+      else s.showToast("That face is curved. Split along a flat face, a plane, a sketch or edges.");
+      return;
+    }
+    if (pick.ref.kind !== "face") {
+      s.showToast("Click a face to split.");
+      return;
+    }
+    s.toggleDraftPick(pick);
     return;
   }
   // Split: the part, then the plane (a default plane, a Plane feature, or a flat face).
@@ -438,7 +469,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   }
   // Thicken, Draft, Move face, Replace face, Delete face: faces.
   const faceFeature = s.editing?.draft.type;
-  if (faceFeature === "thicken" || faceFeature === "draft" || faceFeature === "moveFace" || faceFeature === "replaceFace" || faceFeature === "deleteFace" || faceFeature === "fullRound" || faceFeature === "thread" || faceFeature === "wrap" || faceFeature === "enclose" || faceFeature === "offsetSurface") {
+  if (faceFeature === "thicken" || faceFeature === "draft" || faceFeature === "moveFace" || faceFeature === "replaceFace" || faceFeature === "deleteFace" || faceFeature === "modifyFillet" || faceFeature === "fullRound" || faceFeature === "thread" || faceFeature === "wrap" || faceFeature === "enclose" || faceFeature === "offsetSurface") {
     if (target?.kind !== "part") return;
     if (target.item.kind !== "face") {
       s.showToast("Click a face rather than an edge.");
@@ -573,7 +604,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     }
     return;
   }
-  if (target.kind === "sketchLine" || target.kind === "connector") return;
+  if (target.kind === "sketchLine" || target.kind === "connector" || target.kind === "curve") return;
   if (target.kind === "plane") {
     // Clicking the selected plane again deselects it.
     selectPlane(selectedPlane === target.plane ? null : target.plane);
@@ -810,7 +841,7 @@ export function Viewport() {
   const facesOnly = useStore((s) => {
     const d = s.editing?.draft;
     // A face pattern or face mirror picking its faces takes only faces too.
-    return FACE_TOOLS.has(d?.type ?? "") || (d?.pattern?.of === "face" && d.pattern.picking === "items") || (d?.mirror?.of === "face" && d.mirror.picking === "faces");
+    return FACE_TOOLS.has(d?.type ?? "") || (d?.splitDef?.mode === "face" && d.splitDef.picking !== "edges") || (d?.pattern?.of === "face" && d.pattern.picking === "items") || (d?.mirror?.of === "face" && d.mirror.picking === "faces");
   });
   useEffect(() => viewportApi.current?.setFacesOnly(facesOnly), [facesOnly]);
   useEffect(() => viewportApi.current?.setBoxSelectEnabled(!assembly && !editingAnything), [assembly, editingAnything]);
@@ -886,6 +917,23 @@ export function Viewport() {
     return out;
   }, [assembly, mateDraft, listFeatures, parts, connectorDraft, pickedFeatureForPlanes, leaves, placements, builtFrames]);
   useEffect(() => viewportApi.current?.setConnectorMarks(connectorMarks), [connectorMarks]);
+  // Curve features (Helix, Fit spline…): drawn as lines (shown with the eye), lit when selected or used by what's open.
+  const builtCurves = useStore((s) => s.builtCurves);
+  const openDraft = useStore((s) => s.editing?.draft ?? null);
+  useEffect(() => {
+    const manager = viewportApi.current;
+    if (!manager) return;
+    if (assembly) {
+      manager.setCurves([]);
+      return;
+    }
+    const lit = new Set<string>([pickedFeatureForPlanes ?? "", openDraft?.id ?? "", openDraft?.pathRef ?? "", ...(openDraft?.curve?.curves ?? [])]);
+    manager.setCurves(
+      listFeatures
+        .filter((f) => f.type === "curve" && !f.suppressed && builtCurves[f.id] && (planeVisible(f) || lit.has(f.id)))
+        .map((f) => ({ id: f.id, lines: builtCurves[f.id], lit: lit.has(f.id) })),
+    );
+  }, [assembly, listFeatures, builtCurves, pickedFeatureForPlanes, openDraft]);
   const wantsConnector = useStore((s) => connectorWanted(s, !!activeAssembly(s)));
   useEffect(() => viewportApi.current?.setConnectorPicking(wantsConnector), [wantsConnector]);
   const selectedParts = useStore((s) => s.selectedParts);

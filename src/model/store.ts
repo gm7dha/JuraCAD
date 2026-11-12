@@ -91,6 +91,7 @@ function samePlace(a: SketchPlane, b: SketchPlane): boolean {
 /** No sketch links (one shared object, so selectors stay stable). */
 const NO_LINKS: Record<string, SketchLinkInfo> = {};
 const NO_FRAMES: Record<string, FollowedFrame> = {};
+const NO_CURVES: Record<string, number[][]> = {};
 const NO_WARNINGS: Record<string, string> = {};
 const NO_CENTRES: Record<string, [number, number, number]> = {};
 
@@ -376,7 +377,7 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert" | "connector" | "thin">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert" | "connector" | "thin" | "loft" | "modifyFillet" | "allEdges" | "curve" | "pathEdges">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Part pattern / Composite part: add a part to the open feature's parts, or take it out. */
@@ -628,7 +629,10 @@ export interface AppState {
     featureWarnings?: Record<string, string>,
     featureNotes?: Record<string, string>,
     followed?: Record<string, FollowedFrame>,
+    curves?: Record<string, number[][]>,
   ) => void;
+  /** Curve features (Helix, Fit spline…) as the engine built them: lines to draw (RebuildResult.curves, every Part Studio). */
+  builtCurves: Record<string, number[][]>;
   /**
    * Where Plane features that follow the model and mate connectors are, as the engine built them (RebuildResult.followed,
    * every Part Studio). Shown and used instead of what the design's numbers give; the design stays as clicked.
@@ -895,6 +899,7 @@ export const useStore = create<AppState>((set, get) => {
     },
     sketchLinks: NO_LINKS,
     builtFrames: NO_FRAMES,
+    builtCurves: NO_CURVES,
     sketchCandidates: null,
     setSketchCandidates: (sketchCandidates) => set({ sketchCandidates }),
     lastRebuildMs: null,
@@ -979,7 +984,7 @@ export const useStore = create<AppState>((set, get) => {
         if (s.selectedPlane) draft.splitDef = { ...draft.splitDef, plane: { kind: "default", name: s.selectedPlane } };
       }
       // Face features start with the faces selected.
-      if (type === "thicken" || type === "draft" || type === "moveFace" || type === "replaceFace" || type === "deleteFace" || type === "thread" || type === "fullRound" || type === "wrap" || type === "enclose" || type === "offsetSurface") {
+      if (type === "thicken" || type === "draft" || type === "moveFace" || type === "replaceFace" || type === "deleteFace" || type === "modifyFillet" || type === "thread" || type === "fullRound" || type === "wrap" || type === "enclose" || type === "offsetSurface") {
         draft.picks = s.selection
           .filter((item) => item.kind === "face")
           .map((item) => pickFor(s.parts, item))
@@ -2154,7 +2159,7 @@ export const useStore = create<AppState>((set, get) => {
 
     setKernelStatus: (kernelStatus, error) => set({ kernelStatus, kernelError: error ?? null }),
     setRebuildBusy: (rebuildBusy) => set({ rebuildBusy }),
-    setRebuildResult: (built, featureErrors, ms, rebuilt, studioOrder, sketchLinks, featureWarnings, featureNotes, followed) =>
+    setRebuildResult: (built, featureErrors, ms, rebuilt, studioOrder, sketchLinks, featureWarnings, featureNotes, followed, curves) =>
       set((s) => {
         // The sketch open for editing follows its part's face and edges, as the engine found them.
         const links = sketchLinks && Object.keys(sketchLinks).length ? sketchLinks : NO_LINKS;
@@ -2187,6 +2192,7 @@ export const useStore = create<AppState>((set, get) => {
           sketchLinks: links,
           // (Kept the same object while nothing moved, so nothing redraws.)
           builtFrames: !followed || !Object.keys(followed).length ? NO_FRAMES : JSON.stringify(followed) === JSON.stringify(s.builtFrames) ? s.builtFrames : followed,
+          builtCurves: !curves || !Object.keys(curves).length ? NO_CURVES : JSON.stringify(curves) === JSON.stringify(s.builtCurves) ? s.builtCurves : curves,
           ...(editing !== s.editing ? { editing } : {}),
           lastRebuildMs: ms,
           rebuildBusy: false,

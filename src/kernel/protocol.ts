@@ -177,6 +177,8 @@ export interface RebuildResult {
    * what the design's numbers alone give (see framesOf's `built`); the design itself is never changed by a rebuild.
    */
   followed?: Record<string, FollowedFrame>;
+  /** Curve features (Helix, Fit spline…) in every Part Studio (configuration on show): each as lines to draw (flat x, y, z…). */
+  curves?: Record<string, number[][]>;
 }
 
 export interface PartCheck {
