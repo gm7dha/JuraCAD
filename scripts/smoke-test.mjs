@@ -274,7 +274,7 @@ try {
     const saved = await st(() => window.juracadViewport.current.cameraState());
     await st(() => window.juracadViewport.current.setView("top", false));
     await page.getByRole("button", { name: "Named views" }).click();
-    await views.getByRole("button", { name: "Smoke view" }).click();
+    await views.getByRole("button", { name: "Smoke view", exact: true }).click();
     await page.waitForFunction(() => !window.juracadViewport.current.cameraMoving());
     const back = await st(() => window.juracadViewport.current.cameraState());
     if (Math.hypot(...back.dir.map((d, i) => d - saved.dir[i])) > 1e-3) throw new Error(`the named view came back looking along ${back.dir} (saved ${saved.dir})`);
