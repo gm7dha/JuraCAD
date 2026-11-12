@@ -15,8 +15,14 @@ import { studiosOf } from "../model/studios";
 
 /** One feature without the parts the engine doesn't need (the same object when there are none). */
 export function featureForEngine<T extends Feature | null>(f: T): T {
-  if (!f || (f.folder === undefined && f.visible === undefined && !f.sketch?.data.images)) return f;
+  if (!f || (f.folder === undefined && f.visible === undefined && !f.sketch?.data.images && f.loft?.picking === undefined)) return f;
   const { folder: _f, visible: _v, ...rest } = f;
+  // What a click in the view chooses while the Loft dialog is open isn't geometry.
+  if (rest.loft?.picking !== undefined) {
+    const { picking: _p, ...loft } = rest.loft;
+    if (Object.keys(loft).length) rest.loft = loft;
+    else delete rest.loft;
+  }
   if (!rest.sketch?.data.images) return rest as T;
   const { images: _i, ...data } = rest.sketch.data;
   return { ...rest, sketch: { ...rest.sketch, data } } as T;
@@ -25,7 +31,7 @@ export function featureForEngine<T extends Feature | null>(f: T): T {
 const cache = new WeakMap<Feature[], Feature[]>();
 /** A Part Studio's features for the engine (the same array each time for the same list). */
 export function featuresForEngine(list: Feature[]): Feature[] {
-  if (!list.some((f) => f.folder !== undefined || f.visible !== undefined || f.sketch?.data.images)) return list;
+  if (!list.some((f) => f.folder !== undefined || f.visible !== undefined || f.sketch?.data.images || f.loft?.picking !== undefined)) return list;
   let out = cache.get(list);
   if (!out) {
     out = list.map(featureForEngine);

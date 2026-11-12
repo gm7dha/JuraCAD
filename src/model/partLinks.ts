@@ -4,10 +4,11 @@
  * Sketches count too, through the extrudes, holes and sweeps that use them.
  */
 import type { Feature } from "./types";
+import { loftSketches } from "./loft";
 
 /** The sketches a feature uses. */
 export function sketchesUsedBy(f: Feature): string[] {
-  return [f.sketchRef, f.hole?.sketchRef, f.pathRef, ...(f.sections ?? []), ...(f.moreAreas ?? []).map((m) => m.sketch)].filter((x): x is string => !!x);
+  return [f.sketchRef, f.hole?.sketchRef, f.pathRef, ...(f.loft ? loftSketches(f) : (f.sections ?? [])), ...(f.moreAreas ?? []).map((m) => m.sketch)].filter((x): x is string => !!x);
 }
 
 /** Plane features a feature is placed on or based on. */

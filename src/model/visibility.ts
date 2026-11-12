@@ -8,6 +8,7 @@
  * a sweep's profile or path, a loft, a hole's points…); the eye in the feature
  * list shows or hides it for good. Planes are shown until hidden.
  */
+import { loftSketches } from "./loft";
 import { firstStudioId, inStudio, studioFeatures } from "./studios";
 import type { DatumName, Feature, JuraCADDocument } from "./types";
 
@@ -30,6 +31,7 @@ export function usedSketches(features: Feature[]): Set<string> {
     if (f.hole?.sketchRef) used.add(f.hole.sketchRef);
     for (const id of f.sections ?? []) used.add(id);
     if (f.curve?.project === "sketches" && f.curve.sketch2) used.add(f.curve.sketch2);
+    if (f.loft) for (const id of loftSketches(f)) used.add(id);
   }
   return used;
 }

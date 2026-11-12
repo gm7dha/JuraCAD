@@ -10,6 +10,7 @@ import { planeFrame, type PlaneFrame } from "../sketch/planes";
 import { connectorFromClick, fractionAlong, planeClick, type GeomClick } from "../model/geomClicks";
 import { curveClick, curvePoint, pathClick, type CurveClick } from "../model/curveClicks";
 import { isMorePlaneMode } from "../sketch/planeTypes";
+import { loftClick } from "../model/loft";
 import { sketchLine3D } from "../model/patternRefs";
 import type { Feature } from "../model/types";
 import type { PartMesh } from "../kernel/protocol";
@@ -142,6 +143,15 @@ export function geomPick(manager: SceneManager | null, target: PickTarget | null
     const next = planeClick(d.planeDef, c);
     if (typeof next === "string") s.showToast(next);
     else s.setDraftField({ planeDef: next });
+    return true;
+  }
+  // Loft: a flat face as a section, a corner as its start/end point, edges as the guide or path.
+  if (d?.type === "loft" && target?.kind === "part") {
+    const c = geomClickOf(manager, target);
+    if (!c) return true;
+    const next = loftClick(d, c);
+    if (typeof next === "string") s.showToast(next);
+    else s.setDraftField(next);
     return true;
   }
   if (d?.type === "mateConnector" && d.connector) {
