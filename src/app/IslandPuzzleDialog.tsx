@@ -12,7 +12,7 @@ import { IN_PLACE_FIT, ISLAND_DEFAULTS, islandChecks, type IslandBuilt, type Isl
 import { BOUNDARY_LEVELS, boundaryQuery, ISLANDS, MARKS_MOST, marksQuery, OVERPASS_URL } from "../terrain/islands";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
 import { boundariesOnGrid, boundaryLevels, featuresOnGrid, featureSummary, levelName, NO_FEATURES, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
-import { allPlatesZip, IN_PLACE_SETTINGS, plate3mf, platesByLevel, platesFor, platesInPlace, TOWER_ROOM, TOWER_SIDE, type BedRect } from "../terrain/puzzle3mf";
+import { allPlatesZip, IN_PLACE_SETTINGS, plate3mf, platesByLevel, platesFor, platesInPlace, TOWER_ROOM, towerWhere, type BedRect } from "../terrain/puzzle3mf";
 import { islandBands, mapOnPuzzle, mapRaster, NO_MAP, PLAIN_COLOUR, SEA_BLUE, type ColourSpec, type HeightScale } from "../terrain/colour";
 import { ColourDownloads, ColourPanel, useColoured } from "./PuzzleColour";
 import { downloadFile, safeFileName } from "./download";
@@ -101,6 +101,8 @@ export function IslandPuzzleDialog() {
   const [buildError, setBuildError] = useState<string | null>(null);
   const [explode, setExplode] = useState(0);
   const [colour, setColour] = useState<ColourSpec>(PLAIN_COLOUR);
+  // Put together in colour: the prime tower will be turned off in Bambu Studio, so no room is kept for it.
+  const [towerOff, setTowerOff] = useState(false);
   const colourOn = colour.mode !== "plain";
 
   const area = areaFrom(source, islandId, ref, km);
@@ -216,7 +218,7 @@ export function IslandPuzzleDialog() {
   const printerInfo = printerOf(printer.printer);
   const placeBed: [number, number, number] = spec.inPlace ? (printerInfo?.slicerBed ?? bed) : bed;
   const keepOut: BedRect[] = [...(printerInfo?.bedExclude ?? []), ...(printerInfo?.oneNozzleOnly ?? [])];
-  const fullSpec: IslandSpec = spec.inPlace ? { ...spec, bed: placeBed, keepOut, tower: colourOn } : { ...spec, bed };
+  const fullSpec: IslandSpec = spec.inPlace ? { ...spec, bed: placeBed, keepOut, tower: colourOn && !towerOff } : { ...spec, bed };
   const problems = islandChecks(fullSpec);
   const specKey = JSON.stringify(fullSpec);
   useEffect(() => {
@@ -257,6 +259,18 @@ export function IslandPuzzleDialog() {
     [puzzle, placed, bed[0], bed[1], bed[2], byLevel],
   );
   const settings = inPlace ? IN_PLACE_SETTINGS : undefined;
+  // Where the prime tower goes, in plain words (Bambu Studio's tower can be dragged, not typed in).
+  const towerAt = puzzle?.tower?.at ?? null;
+  const where = towerAt ? towerWhere(towerAt, placeBed) : null;
+  const towerText = towerOff
+    ? " Turn the prime tower off in Bambu Studio (Others › Prime tower) before slicing."
+    : !where
+      ? ""
+      : where.usual
+        ? " For several filaments Bambu Studio adds a prime tower. It should already sit in the free space at the back left; if it lands on the island, drag it into that free space."
+        : ` For several filaments Bambu Studio adds a prime tower at the back left, which is on the island here: drag it to the free space ${where.words} of the bed.`;
+  // Offered when room for the tower would cost the island size (or there's no room at all).
+  const offerTowerOff = inPlace && colourOn && (towerOff || !!puzzle?.tower?.shrunk || (!!puzzle?.tower && !puzzle.tower.at));
   const chooseInPlace = (on: boolean) => {
     setSpec((s) => ({ ...s, inPlace: on, scale: on ? Math.min(s.scale, 1) : s.scale }));
     if (on) setExplode(0);
@@ -551,15 +565,25 @@ export function IslandPuzzleDialog() {
                   {" "}Bambu Studio puts the island in the middle of the bed when it opens the file; it's sized to fit there.
                   {printerInfo?.bedExclude?.length ? " It keeps clear of the front-left corner, where this printer wipes its nozzle." : ""}
                   {printerInfo?.oneNozzleOnly?.length ? " It stays within what one nozzle reaches." : ""}
-                  {colourOn && puzzle?.tower?.at
-                    ? ` For several filaments Bambu Studio adds a prime tower (${TOWER_SIDE} mm wide). Drag it to about x ${Math.round(puzzle.tower.at[0])}, y ${Math.round(puzzle.tower.at[1])} — there's room there beside the island.`
-                    : ""}
+                  {colourOn ? towerText : ""}
                   {colourOn && puzzle?.tower?.shrunk
                     ? ` The island is a little smaller than the bed allows, so the back-left corner (${TOWER_ROOM} × ${TOWER_ROOM} mm) stays free for the prime tower.`
                     : ""}
                   {colourOn && puzzle?.tower && !puzzle.tower.at ? " There's no free spot for the prime tower: lower the scale to make room for it." : ""}
                   {colour.mode === "full" ? " The full-colour files can't carry those settings: turn the brim off and elephant-foot compensation on yourself." : ""}
                 </p>
+              )}
+              {offerTowerOff && (
+                <div className="small">
+                  <label>
+                    <input type="checkbox" checked={towerOff} onChange={(e) => setTowerOff(e.target.checked)} /> I'll turn the prime tower off in Bambu Studio — keep the
+                    island full size
+                  </label>
+                  <p className="muted">
+                    The prime tower can be turned off in Bambu Studio (Others › Prime tower). Colour changes then flush only into the chute at the back, which can
+                    leave a little more colour bleed where colours change.
+                  </p>
+                </div>
               )}
               {colourOn && colouring && <p className="muted small">Colouring the pieces…</p>}
               {colourOn && colourError && <p className="error-text small">{colourError}</p>}

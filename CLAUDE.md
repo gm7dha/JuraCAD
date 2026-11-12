@@ -1263,7 +1263,9 @@
   In colour, `IslandSpec.tower`: after centring, `towerSpot` (1 mm raster of the pieces' undersides + keep-outs, summed
   table) finds a `TOWER_SIDE` 35 + `TOWER_CLEAR` 5 square nearest Bambu's back-left default (x 15, y bed − 36) →
   `IslandPuzzle.tower.at` (the window says where to drag the tower); none = rebuilt for rooms clear of `towerCorner` too
-  (`TOWER_ROOM` 55, `tower.shrunk`). `IN_PLACE_FIT` 0.1 (the usual): the narrowest mesh gap is then ~0.3 mm (0.4 at 0.15).
+  (`TOWER_ROOM` 55, `tower.shrunk`); the window then offers "I'll turn the prime tower off" (state `towerOff` → `tower`
+  false, full size). Tower x/y can't be typed in Bambu Studio, so the window says where in words (`towerWhere`: "at the back
+  left" = its usual place). `IN_PLACE_FIT` 0.1 (the usual): the narrowest mesh gap is then ~0.3 mm (0.4 at 0.15).
   3MF objects get `IN_PLACE_SETTINGS` (BambuStudio PrintObjectConfig keys, read per object from model_settings.config even
   for a non-Bambu 3MF: `brim_type` no_brim, `elefant_foot_compensation` 0.15 = BBL's 0.20 mm profiles) via the optional
   `settings` of plateFiles/plate3mf/allPlatesZip/bandPlateFiles/bandPlateFile (none = unchanged bytes); no negative parts —

@@ -82,6 +82,18 @@ export const TOWER_ROOM = 55;
 export const towerCorner = (bed: [number, number, number]): BedRect => [0, bed[1] - TOWER_ROOM, TOWER_ROOM, bed[1]];
 
 /**
+ * Where a prime tower spot (`towerSpot`'s corner) is on the bed, in plain words — "at the back left", "on the right",
+ * "at the front" — and whether that's Bambu Studio's usual back-left place (where the tower already goes).
+ */
+export function towerWhere(at: [number, number], bed: [number, number, number]): { words: string; usual: boolean } {
+  const [x, y] = [at[0] + TOWER_SIDE / 2, at[1] + TOWER_SIDE / 2];
+  const across = x < bed[0] / 3 ? "left" : x > (2 * bed[0]) / 3 ? "right" : "";
+  const deep = y > (2 * bed[1]) / 3 ? "back" : y < bed[1] / 3 ? "front" : "";
+  const words = deep && across ? `at the ${deep} ${across}` : deep ? `at the ${deep}` : across ? `on the ${across}` : "in the middle";
+  return { words, usual: deep === "back" && across === "left" };
+}
+
+/**
  * Rectangles centred on the bed that keep clear of every `keepOut` — the biggest for each width. Centred, because Bambu
  * Studio moves a 3MF that isn't one of its own projects to the middle of the bed when it opens it (Plater's load_files:
  * `center_instances_around_point(bed_center)`), so a puzzle placed anywhere else would be moved back over the corners

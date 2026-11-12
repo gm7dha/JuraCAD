@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { gridFrom } from "../src/terrain/elevation";
 import { IN_PLACE_FIT, ISLAND_DEFAULTS, islandChecks, makeIslandPuzzle, MIN_JOINTS, type IslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
 import { PRINTERS } from "../src/model/printBed";
-import { allPlatesZip, BED_MARGIN, bestRoom, centredRooms, type BedRect, type Plate, IN_PLACE_SETTINGS, plateFiles, platesFor, platesInPlace, TOWER_CLEAR, TOWER_ROOM, TOWER_SIDE, towerSpot } from "../src/terrain/puzzle3mf";
+import { allPlatesZip, BED_MARGIN, bestRoom, centredRooms, type BedRect, type Plate, IN_PLACE_SETTINGS, plateFiles, platesFor, platesInPlace, TOWER_CLEAR, TOWER_ROOM, TOWER_SIDE, towerSpot, towerWhere } from "../src/terrain/puzzle3mf";
 import { islandBands, LAYER_DEFAULT, mapRaster, NO_MAP, SEA_BLUE } from "../src/terrain/colour";
 import { bandPlateFile, bandPuzzle, plateSwaps } from "../src/terrain/colourFiles";
 import { box, collides, outlineSegs, SegGrid, segSegDist, segsCross } from "./support/outlineGeom";
@@ -266,6 +266,12 @@ describe("the prime tower, put together in colour", () => {
     expect(p.tower?.at).not.toBeNull();
     expect(p.k).toBe(plain.k);
     towerClear(p, BED);
+  });
+  it("says where the spot is in plain words", () => {
+    expect(towerWhere([15, 220], BED)).toEqual({ words: "at the back left", usual: true });
+    expect(towerWhere([200, 10], BED)).toEqual({ words: "at the front right", usual: false });
+    expect(towerWhere([5, 110], BED)).toEqual({ words: "on the left", usual: false });
+    expect(towerWhere([110, 210], BED)).toEqual({ words: "at the back", usual: false });
   });
   it("makes an island that fills its room smaller, leaving the back-left corner for the tower", () => {
     // A block of land that fills its rectangle: nowhere beside it for a 45 mm square.
