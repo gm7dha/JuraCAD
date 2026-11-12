@@ -28,7 +28,7 @@ export function LoftOptions({ sketches }: { sketches: Feature[] }) {
   };
   const setDef = (patch: Partial<LoftDef>) => setDraftField(withLoftDef(draft, patch));
   const pickButton = (mode: Picking, label: string) => (
-    <button type="button" className={picking === mode ? "small-button selected" : "small-button"} aria-pressed={picking === mode} onClick={() => setDef({ picking: picking === mode ? undefined : mode })}>
+    <button type="button" className="link-button" aria-pressed={picking === mode} onClick={() => setDef({ picking: picking === mode ? undefined : mode })}>
       {label}
     </button>
   );
@@ -207,7 +207,12 @@ export function LoftOptions({ sketches }: { sketches: Feature[] }) {
         </label>
       )}
       <p className="dialog-hint field-hint">
-        Each sketch needs one closed shape (or pick one of its areas). Click flat faces of parts in the view to use them too. {pickButton("profile", "Click faces")}
+        Each sketch needs one closed shape (or pick one of its areas). Click flat faces of parts in the view to use them too.{" "}
+        {picking !== "profile" && (
+          <button type="button" className="link-button" onClick={() => setDef({ picking: undefined })}>
+            Back to clicking faces
+          </button>
+        )}
       </p>
       {pointSelect("start")}
       {pointSelect("end")}
