@@ -148,6 +148,10 @@ export function summarize(f: Feature, doc: JuraCADDocument, built?: Record<strin
       const h = f.hole!;
       return `${describeHole(h)}${h.standard === "Custom" ? ` ⌀${p.diameter}` : ""}, ${h.end === "throughAll" ? "through all" : `${mm(p.depth)} deep`}, at the points of ${nameOf(h.sketchRef)}`;
     }
+    case "boundary":
+      return `boundary surface through ${(f.boundary?.u.length ?? 0) + (f.boundary?.v.length ?? 0)} curve(s) (${f.boundary?.u.length ?? 0} U, ${f.boundary?.v.length ?? 0} V), a new surface`;
+    case "faceBlend":
+      return `face blend radius ${mm(p.radius)} between ${f.picks?.length ?? 0} and ${f.blend?.side2.length ?? 0} face(s)${f.blend?.noTrim ? ", not trimmed" : ""}`;
     case "fillet":
       return `fillet radius ${mm(p.radius)} on ${f.picks?.length ?? 0} edge/face pick(s)`;
     case "modifyFillet":
@@ -393,6 +397,8 @@ const KIND_HELP: Record<FeatureKind, string> = {
   split_face: 'split_face (Onshape\'s Split, type Face: the part keeps its shape, the faces are divided so part of a face can be picked — e.g. Draft only the top half): faces (of one part), plane ("Top"|"Front"|"Right") with offset, or sketch (its lines and curves pushed straight through, square to the sketch), part',
   mate_connector: 'mate_connector (a point with its own X/Y/Z that belongs to a part: mate to it in assemblies with add_mate\'s "connector", sketch on it with add_sketch "plane", move parts by it): at (a point — see plane; or {"edge": "E3", "part": name}: an edge\'s middle with Z along it, a round edge\'s centre with Z along its axis; or {"face": "F2", "part": name}: a flat face\'s centre, Z out of it), or on_plane ("Top"|"Front"|"Right" or a Plane name: at its origin), spot ("start"|"end"|"middle" on an edge), owner (the part it belongs to; default the part it\'s on), flip_z, move ([x, y, z] mm along its own axes), turn ([x, y, z]° about its own axes)',
   curve: CURVE_HELP,
+  boundary_surface: 'boundary_surface (Onshape\'s Boundary surface — a new surface part through curves round its edges): u (two opposite sides) and optionally v (the two sides joining their ends; leave it out and straight lines join them), each a list of {"part": name, "edge": "E3", "match": "none"|"tangent"|"curvature"} (a part\'s edge; match = meet the face beside it smoothly, or bending the same too), {"curve": name} (a curve feature) or {"sketch": name} (its curves, one run). At most two each way',
+  face_blend: 'face_blend (Onshape\'s Face blend — a rounded blend rolled between two sets of faces, as by a ball of that radius touching both): faces (side 1, of "part") and faces2 (side 2, of "part2", default the same part), radius, flip1 / flip2 (roll on the other side of that side\'s faces; the side is found by itself otherwise), trim (default true: surfaces are cut back and joined to it as one surface; faces of one solid that meet along an edge are rounded there like a fillet; false: the blend is a surface of its own). Works between planes, cylinders and other faces; refused plainly when a ball that size can\'t touch both',
 };
 
 /** A part (list_faces / list_edges), or with "assembly" and "instance", a copy of one as it sits in an assembly. */

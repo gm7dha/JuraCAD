@@ -377,7 +377,7 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert" | "connector" | "thin" | "loft" | "modifyFillet" | "allEdges" | "curve" | "pathEdges">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert" | "connector" | "thin" | "loft" | "modifyFillet" | "allEdges" | "curve" | "pathEdges" | "boundary" | "blend">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Part pattern / Composite part: add a part to the open feature's parts, or take it out. */
@@ -989,6 +989,23 @@ export const useStore = create<AppState>((set, get) => {
           .filter((item) => item.kind === "face")
           .map((item) => pickFor(s.parts, item))
           .filter((p): p is TopoPick => p !== null);
+      }
+      // A Face blend starts with the faces selected as side 1; a Boundary surface with the edges selected as U curves.
+      if (type === "faceBlend") {
+        const faces = s.selection
+          .filter((item) => item.kind === "face")
+          .map((item) => pickFor(s.parts, item))
+          .filter((p): p is TopoPick => p !== null);
+        draft.picks = faces;
+        if (faces.length && draft.blend) draft.blend = { ...draft.blend, picking: "side2" };
+      }
+      if (type === "boundary" && draft.boundary) {
+        const edges = s.selection
+          .filter((item) => item.kind === "edge")
+          .map((item) => pickFor(s.parts, item))
+          .filter((p): p is TopoPick => p !== null)
+          .slice(0, 2);
+        if (edges.length) draft.boundary = { ...draft.boundary, u: edges.map((edge) => ({ edge })) };
       }
       // A flange (or Fill) starts with the edges selected.
       if (type === "flange" || type === "hem" || type === "cornerBreak" || type === "fill" || type === "extendSurface" || type === "ruled") {

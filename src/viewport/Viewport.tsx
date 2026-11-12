@@ -1,4 +1,5 @@
 import { bedSize } from "../model/printBed";
+import { blendClick, boundaryClick } from "../model/surfaceClicks";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { findMesh, meshIdOf } from "../assembly/configured";
@@ -408,6 +409,25 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       return;
     }
   }
+  // Boundary surface: part edges go to the U or V curves; Face blend: faces to side 1 or 2.
+  if (s.editing?.draft.type === "boundary" && s.editing.draft.boundary) {
+    if (target?.kind !== "part") return;
+    const pick = pickFor(s.parts, target.item);
+    if (!pick) return;
+    const next = boundaryClick(s.editing.draft.boundary, { kind: "edge", pick });
+    if (typeof next === "string") s.showToast(next);
+    else s.setDraftField({ boundary: next });
+    return;
+  }
+  if (s.editing?.draft.type === "faceBlend") {
+    if (target?.kind !== "part") return;
+    const pick = pickFor(s.parts, target.item);
+    if (!pick) return;
+    const next = blendClick(s.editing.draft, pick);
+    if (typeof next === "string") s.showToast(next);
+    else s.setDraftField(next);
+    return;
+  }
   // Fill: the edges round an opening; Extend surface: the edges to push out.
   if (s.editing?.draft.type === "fill" || s.editing?.draft.type === "extendSurface" || s.editing?.draft.type === "ruled") {
     if (target?.kind !== "part") return;
@@ -708,10 +728,14 @@ export function Viewport() {
   const reference = useStore(
     (s) => s.editing?.draft.mirror?.planePick ?? (s.editing?.draft.pattern?.picking === "along2" ? s.editing.draft.pattern.along2 : s.editing?.draft.pattern?.along) ?? null,
   );
+  // A Face blend's side 2 and a Boundary surface's part edges are lit too.
+  const blendSide2 = useStore((s) => s.editing?.draft.blend?.side2 ?? null);
+  const boundaryDef = useStore((s) => s.editing?.draft.boundary ?? null);
   const pickList = useMemo(() => {
-    const list = [...(draftPicks ?? []), ...(draftPicks ? [] : upTo ? [upTo] : []), ...(reference ? [reference] : [])];
+    const boundaryEdges = boundaryDef ? [...boundaryDef.u, ...boundaryDef.v].flatMap((c) => (c.edge ? [c.edge] : [])) : [];
+    const list = [...(draftPicks ?? []), ...(draftPicks ? [] : upTo ? [upTo] : []), ...(reference ? [reference] : []), ...(blendSide2 ?? []), ...boundaryEdges];
     return draftPicks || list.length ? list : null;
-  }, [draftPicks, upTo, reference]);
+  }, [draftPicks, upTo, reference, blendSide2, boundaryDef]);
   const hiddenParts = useStore((s) => s.hiddenParts);
   const selectedPlane = useStore((s) => s.selectedPlane);
   const listHoverPlane = useStore((s) => s.listHoverPlane);

@@ -431,6 +431,25 @@
   `leaveOpen` turns a solid into a surface; Extend surface samples curved edges and fills corners, or goes up to a face (a flat one as its whole plane) or
   part (`extendTo`: long strips split by the target, keeping the pieces touching the surface); Enclose failures name
   the open edges (`gapReport`).
+  Boundary surface (Onshape's): feature "boundary", `Feature.boundary` (`BoundaryDef` u/v lists of `BoundaryCurve` — a part
+  `edge` TopoPick (+ `match` tangent/curvature: the face beside it), a `curve` feature or a `sketch`'s one run; ≤ 2 each way,
+  `picking` not saved/not sent to the engine). Engine `boundaryShape` → `src/kernel/boundary.ts` `boundarySurface`: edges chained,
+  an open outline closed by straight lines (one open run: one line; two runs: two lines, the uncrossed pairing), then
+  BRepOffsetAPI_MakeFilling with the curves as its edges (exact through them); matched sides get G1/G2 plus a row (two for
+  curvature) of points 0.08 × the outline's size carried on past the edge along the face (`acrossEdge`) — the filling alone stays
+  flat on a flat outline; G2 that won't build falls back to G1. Always a new surface part. Face blend (Onshape's): feature
+  "faceBlend", side 1 = `picks` (faces), `Feature.blend` (`FaceBlendDef`: `side2`, `flip1`/`flip2`, `noTrim`, `picking`), param
+  `radius`. `src/kernel/faceBlend.ts` `faceBlend`: per pair of faces the spine = section of the two faces moved out by r
+  (MakeOffsetShape skin) to the ball's side — tried (+,+), (−,−), (+,−), (−,+), flips relative to the side found; arcs from the
+  nearest points on each face lofted (ThruSections; 2 sections on a straight spine, a closed spine re-adds its first). Engine
+  `applyFaceBlend`: trimmed + all faces on one solid that share edges → those edges filleted (= the rolling ball; flips refused);
+  trimmed surfaces: each cut where the blend touches it (`trimUnder`: a thin strip square to the face through the touching points,
+  BRepAlgoAPI_Splitter, the piece just past the touch on the blend's side dropped) and everything sewn (`sewnLoosely`, 0.01) into one
+  surface part replacing them; solids' faces otherwise left alone with a `featureWarnings` note. Dependents: boundary curves are
+  needed; side 2 a list (`withoutGone`). Clicks: `src/model/surfaceClicks.ts` (Viewport handlePick; curve features via geomPick).
+  UI `src/app/BoundaryBlendOptions.tsx`. Claude: `boundary_surface` (u/v), `face_blend` (faces/faces2, flip1/2, trim). Not done:
+  Onshape's constant-width blend, more than two curves each way, a solid boundary, trimming a solid's faces that don't meet,
+  Constrained surface. Tests: tests/boundaryBlendModel (pure), engineBoundaryBlend, mcpBoundaryBlend.
 - Simplify (tidy triangles into real faces): an Import's `Feature.simplify` (`SimplifyLevel` fine/normal/coarse; missing = as
   before) or a "simplify" feature (`simplifyParts` + `simplify`; Toolbar next to Delete part, Parts list right-click, Claude's
   `simplify_part`). Levels/tolerances and the summary text (`simplifyReport`: "4,812 faces → 38 faces: 22 flat, 12 round

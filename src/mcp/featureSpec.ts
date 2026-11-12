@@ -7,7 +7,7 @@
  * (changing only what's given).
  */
 import { setMirrorReference, setPatternDirection } from "../model/patternRefs";
-import type { Feature, FeatureType, JuraCADDocument, LoftDef, LoftProfile, Operation } from "../model/types";
+import type { BoundaryCurve, Feature, FeatureType, JuraCADDocument, LoftDef, LoftProfile, Operation } from "../model/types";
 import { endChoices, loftProfiles, profilesProblem, tidyEnds, withEndPoint, withLoftDef, withProfiles } from "../model/loft";
 import type { PartMesh } from "../kernel/protocol";
 import { SCREW_SIZES, standardParams } from "../model/holes";
@@ -46,6 +46,8 @@ export const FEATURE_KINDS = {
   curve: "curve",
   modify_fillet: "modifyFillet",
   split_face: "split",
+  boundary_surface: "boundary",
+  face_blend: "faceBlend",
 } as const satisfies Record<string, FeatureType>;
 export type FeatureKind = keyof typeof FEATURE_KINDS;
 export const KIND_OF: Partial<Record<FeatureType, FeatureKind>> = Object.fromEntries(Object.entries(FEATURE_KINDS).map(([k, v]) => [v, k as FeatureKind]));
@@ -75,6 +77,8 @@ export const KIND_KEYS: Record<FeatureKind, string[]> = {
   curve: CURVE_KEYS,
   modify_fillet: ["part", "faces", "radius", "remove", "propagate"],
   split_face: ["part", "faces", "plane", "offset", "sketch"],
+  boundary_surface: ["u", "v"],
+  face_blend: ["part", "faces", "part2", "faces2", "radius", "flip1", "flip2", "trim"],
 };
 
 /** Most copies in one direction of a pattern, and in all (bigger takes minutes to build). */
@@ -572,6 +576,53 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
       const tidied = { ...(mf.remove ? { remove: true } : {}), ...(mf.noPropagate ? { noPropagate: true } : {}) };
       if (Object.keys(tidied).length) f.modifyFillet = tidied;
       else delete f.modifyFillet;
+      break;
+    }
+
+    case "boundary_surface": {
+      // Each curve: {"part", "edge", "match"?} (a part's edge), {"curve"} (a curve feature) or {"sketch"} (its curves).
+      const curves = (v: unknown, where: string): BoundaryCurve[] =>
+        list(v, where, { allowEmpty: true }).map((c, i) => {
+          if (!c || typeof c !== "object") throw new InputError(`${where}[${i}]: give {"part": name, "edge": "E3"} for a part's edge, {"curve": name} or {"sketch": name}.`);
+          const o = c as Obj;
+          const match = has(o, "match") ? o.match : undefined;
+          if (match !== undefined && match !== "tangent" && match !== "curvature" && match !== "none") throw new InputError(`${where}[${i}].match: "none", "tangent" or "curvature".`);
+          if (has(o, "edge")) {
+            const part = ctx.session.part(ctx.parts, has(o, "part") ? o.part : undefined, `${where}[${i}].part`);
+            const [edge] = pickEdges(part, [o.edge], `${where}[${i}].edge`);
+            if (!edge || edge.ref.kind !== "edge") throw new InputError(`${where}[${i}].edge: give one edge (an E-number from list_edges).`);
+            return { edge, ...(match === "tangent" || match === "curvature" ? { match } : {}) };
+          }
+          if (match === "tangent" || match === "curvature") throw new InputError(`${where}[${i}]: "match" is only for part edges (it meets the face beside the edge).`);
+          if (has(o, "curve")) return { curve: ctx.session.feature(o.curve, `${where}[${i}].curve`, ["curve"], ctx.doc).id };
+          if (has(o, "sketch")) return { sketch: ctx.session.feature(o.sketch, `${where}[${i}].sketch`, ["sketch"], ctx.doc).id };
+          throw new InputError(`${where}[${i}]: give {"part": name, "edge": "E3"}, {"curve": name} or {"sketch": name}.`);
+        });
+      const prev = f.boundary ?? { u: [], v: [] };
+      const next = { u: has(a, "u") ? curves(a.u, "u") : prev.u, v: has(a, "v") ? curves(a.v, "v") : prev.v };
+      if (next.u.length > 2 || next.v.length > 2) throw new InputError("u, v: at most two curves each way (the patch's opposite sides).");
+      if (next.u.length + next.v.length < 2) throw new InputError('u: give at least two curves — two opposite sides (joined by straight lines), plus "v" for the other two sides if you like.');
+      f.boundary = next;
+      f.operation = "new";
+      break;
+    }
+
+    case "face_blend": {
+      if (has(a, "faces") || !ctx.editing) {
+        const part = ctx.session.part(ctx.parts, has(a, "part") ? a.part : (f.picks?.[0]?.partId ?? undefined), "part");
+        f.picks = pickFaces(part, list(a.faces, "faces"), "faces");
+      }
+      const blend = { ...(f.blend ?? { side2: [] }) };
+      if (has(a, "faces2") || !ctx.editing) {
+        const part2 = ctx.session.part(ctx.parts, has(a, "part2") ? a.part2 : has(a, "part") ? a.part : (blend.side2[0]?.partId ?? undefined), "part2");
+        blend.side2 = pickFaces(part2, list(a.faces2, "faces2"), "faces2");
+      }
+      if (has(a, "flip1")) blend.flip1 = bool(a.flip1, "flip1") || undefined;
+      if (has(a, "flip2")) blend.flip2 = bool(a.flip2, "flip2") || undefined;
+      if (has(a, "trim")) blend.noTrim = !bool(a.trim, "trim") || undefined;
+      f.blend = Object.fromEntries(Object.entries(blend).filter(([, v]) => v !== undefined)) as typeof blend;
+      param(f, a, "radius", "radius", ctx, { positive: true, required: !ctx.editing });
+      f.operation = "new";
       break;
     }
 
