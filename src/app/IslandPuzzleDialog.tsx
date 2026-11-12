@@ -6,13 +6,13 @@
  * in src/terrain/islandPuzzle.ts.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CUSTOM_PRINTER, PRINTERS } from "../model/printBed";
+import { CUSTOM_PRINTER, printerOf, PRINTERS } from "../model/printBed";
 import { areaProblem, readHeights, zoomFor, type HeightGrid } from "../terrain/elevation";
-import { ISLAND_DEFAULTS, islandChecks, type IslandBuilt, type IslandCuts, type IslandLand, type IslandSpec } from "../terrain/islandPuzzle";
+import { IN_PLACE_FIT, ISLAND_DEFAULTS, islandChecks, type IslandBuilt, type IslandCuts, type IslandLand, type IslandSpec } from "../terrain/islandPuzzle";
 import { BOUNDARY_LEVELS, boundaryQuery, ISLANDS, MARKS_MOST, marksQuery, OVERPASS_URL } from "../terrain/islands";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
 import { boundariesOnGrid, boundaryLevels, featuresOnGrid, featureSummary, levelName, NO_FEATURES, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
-import { allPlatesZip, plate3mf, platesByLevel, platesFor } from "../terrain/puzzle3mf";
+import { allPlatesZip, IN_PLACE_SETTINGS, plate3mf, platesByLevel, platesFor, platesInPlace, TOWER_ROOM, towerWhere, type BedRect } from "../terrain/puzzle3mf";
 import { islandBands, mapOnPuzzle, mapRaster, NO_MAP, PLAIN_COLOUR, SEA_BLUE, type ColourSpec, type HeightScale } from "../terrain/colour";
 import { ColourDownloads, ColourPanel, useColoured } from "./PuzzleColour";
 import { downloadFile, safeFileName } from "./download";
@@ -101,6 +101,8 @@ export function IslandPuzzleDialog() {
   const [buildError, setBuildError] = useState<string | null>(null);
   const [explode, setExplode] = useState(0);
   const [colour, setColour] = useState<ColourSpec>(PLAIN_COLOUR);
+  // Put together in colour: the prime tower will be turned off in Bambu Studio, so no room is kept for it.
+  const [towerOff, setTowerOff] = useState(false);
   const colourOn = colour.mode !== "plain";
 
   const area = areaFrom(source, islandId, ref, km);
@@ -210,7 +212,13 @@ export function IslandPuzzleDialog() {
   const needsFetch = detail !== "area" && (!marksMap || (marksMap.fetched === "water" && detail === "all"));
   const canFetch = !!loaded && fresh && Math.max(loaded.area.width, loaded.area.height) <= MARKS_MOST;
 
-  const fullSpec: IslandSpec = { ...spec, bed };
+  // Put together, the island is sized on Bambu Studio's own bed (it centres the file there) and keeps out of the printer's
+  // no-print corner (and, on the H2D, of what only the other nozzle reaches); in several filaments it leaves a spot for the
+  // prime tower.
+  const printerInfo = printerOf(printer.printer);
+  const placeBed: [number, number, number] = spec.inPlace ? (printerInfo?.slicerBed ?? bed) : bed;
+  const keepOut: BedRect[] = [...(printerInfo?.bedExclude ?? []), ...(printerInfo?.oneNozzleOnly ?? [])];
+  const fullSpec: IslandSpec = spec.inPlace ? { ...spec, bed: placeBed, keepOut, tower: colourOn && !towerOff } : { ...spec, bed };
   const problems = islandChecks(fullSpec);
   const specKey = JSON.stringify(fullSpec);
   useEffect(() => {
@@ -243,12 +251,35 @@ export function IslandPuzzleDialog() {
 
   // Colour bands: pieces at different heights get plates of their own, so a plate changes colour on the same layers.
   const byLevel = colourOn && colour.mode === "bands";
-  const plates = useMemo(() => (puzzle ? (byLevel ? platesByLevel : platesFor)(puzzle.pieces, bed) : []), [puzzle, bed[0], bed[1], bed[2], byLevel]);
+  const inPlace = !!spec.inPlace;
+  // Put together: one plate, every piece where it sits in the finished puzzle (it must fit the bed less its margins).
+  const placed = useMemo(() => (puzzle && inPlace ? platesInPlace(puzzle.pieces, placeBed, puzzle.room) : null), [puzzle, placeBed[0], placeBed[1], placeBed[2], inPlace]);
+  const plates = useMemo(
+    () => (!puzzle ? [] : placed ? (placed.fits ? placed.plates : []) : (byLevel ? platesByLevel : platesFor)(puzzle.pieces, bed)),
+    [puzzle, placed, bed[0], bed[1], bed[2], byLevel],
+  );
+  const settings = inPlace ? IN_PLACE_SETTINGS : undefined;
+  // Where the prime tower goes, in plain words (Bambu Studio's tower can be dragged, not typed in).
+  const towerAt = puzzle?.tower?.at ?? null;
+  const where = towerAt ? towerWhere(towerAt, placeBed) : null;
+  const towerText = towerOff
+    ? " Turn the prime tower off in Bambu Studio (Others › Prime tower) before slicing."
+    : !where
+      ? ""
+      : where.usual
+        ? " For several filaments Bambu Studio adds a prime tower. It should already sit in the free space at the back left; if it lands on the island, drag it into that free space."
+        : ` For several filaments Bambu Studio adds a prime tower at the back left, which is on the island here: drag it to the free space ${where.words} of the bed.`;
+  // Offered when room for the tower would cost the island size (or there's no room at all).
+  const offerTowerOff = inPlace && colourOn && (towerOff || !!puzzle?.tower?.shrunk || (!!puzzle?.tower && !puzzle.tower.at));
+  const chooseInPlace = (on: boolean) => {
+    setSpec((s) => ({ ...s, inPlace: on, scale: on ? Math.min(s.scale, 1) : s.scale }));
+    if (on) setExplode(0);
+  };
   const fileName = safeFileName(`${loaded?.area.name ?? "Island"} puzzle`, "Island puzzle");
   // How ground heights sit in the puzzle (base + height × relief / highest), and the map over it, for colouring.
   const scaleKey = puzzle ? [spec.base, spec.relief, puzzle.high].join(",") : "";
   const scale: HeightScale | null = useMemo(() => (puzzle ? { z0: spec.base, h0: 0, mmPerM: spec.relief / Math.max(puzzle.high, 1) } : null), [scaleKey]);
-  const puzzleMap = useMemo(() => (puzzle && loaded ? mapOnPuzzle(features, loaded.area.sw.e, loaded.area.sw.n, puzzle.k) : NO_MAP), [puzzle, features]);
+  const puzzleMap = useMemo(() => (puzzle && loaded ? mapOnPuzzle(features, (puzzle.origin ?? loaded.area.sw).e, (puzzle.origin ?? loaded.area.sw).n, puzzle.k) : NO_MAP), [puzzle, features]);
   const mapSize: [number, number] = puzzle ? [puzzle.width, puzzle.height] : [1, 1];
   const paintMap = useMemo(() => mapRaster(puzzleMap, mapSize[0], mapSize[1]), [puzzleMap]);
   const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap);
@@ -409,11 +440,26 @@ export function IslandPuzzleDialog() {
               {printer.printer === CUSTOM_PRINTER && <option value={CUSTOM_PRINTER}>My own size</option>}
             </select>
           </label>
+          <label className="mountain-row">
+            <span>Print</span>
+            <span>
+              <input type="checkbox" checked={inPlace} onChange={(e) => chooseInPlace(e.target.checked)} /> Print it put together (in place)
+            </span>
+          </label>
+          <p className="muted small">
+            {inPlace
+              ? `The whole island prints on one plate with every piece where it sits in the finished puzzle, so it can be as big as the bed. The gap between pieces is what keeps them apart — nothing is printed there. At a fit gap of ${IN_PLACE_FIT} mm the narrowest gap between pieces comes out about 0.3 mm, the room print-in-place parts need with a 0.4 mm nozzle. Print a small test first.`
+              : "Pieces are laid out apart on as many plates as they need. Tick this to print the island put together on one plate instead."}
+          </p>
           <div className="mountain-row">
             <span>Scale</span>
             <span>
-              {numberBox(Math.round(spec.scale * 100), (v) => set("scale", v / 100), 10, 20, 1000, "%")}
-              <span className="muted small"> 100% = the finished puzzle covers the bed ({bed[0]} × {bed[1]} mm)</span>
+              {numberBox(Math.round(spec.scale * 100), (v) => set("scale", v / 100), 10, 20, inPlace ? 100 : 1000, "%")}
+              <span className="muted small">
+                {inPlace
+                  ? ` 100% = the island fills the bed (${placeBed[0]} × ${placeBed[1]} mm, less 5 mm round the edge${keepOut.length ? " and the parts kept free" : ""}), in the middle, where Bambu Studio puts it; it can't be bigger`
+                  : ` 100% = the finished puzzle covers the bed (${bed[0]} × ${bed[1]} mm)`}
+              </span>
             </span>
           </div>
           <div className="mountain-row">
@@ -434,7 +480,11 @@ export function IslandPuzzleDialog() {
             <span>Fit gap</span>
             <span>
               {numberBox(spec.fit, (v) => set("fit", v), 0.01, 0, 0.5, "mm each side")}
-              <span className="muted small"> Too loose? Lower it by 0.02–0.05 mm. Too tight? Raise it.</span>
+              <span className="muted small">
+                {inPlace
+                  ? " Printed put together: pieces that come off stuck together need a wider gap (0.15 makes about 0.4 mm between them); keep it at 0.1 or more."
+                  : " Too loose? Lower it by 0.02–0.05 mm. Too tight? Raise it."}
+              </span>
             </span>
           </div>
           <div className="mountain-row">
@@ -487,7 +537,7 @@ export function IslandPuzzleDialog() {
                   <p>
                     <strong>{puzzle.pieces.length} pieces</strong>
                     {puzzle.alongBoundaries ? ` cut along ${levelName(usedLevel).toLowerCase()}${named ? ` (${named} named)` : ""}` : ""} — finished{" "}
-                    {Math.round(puzzle.width)} × {Math.round(puzzle.height)} mm, {spec.base} mm thick at the coast and {Math.round(spec.base + spec.relief)} mm
+                    {placed ? `${Math.round(placed.size[0])} × ${Math.round(placed.size[1])}` : `${Math.round(puzzle.width)} × ${Math.round(puzzle.height)}`} mm, {spec.base} mm thick at the coast and {Math.round(spec.base + spec.relief)} mm
                     on the highest ground ({Math.round(puzzle.high)} m). 1 mm is {formatDistance(1 / puzzle.k)} across.
                   </p>
                   <p className="muted">
@@ -502,10 +552,43 @@ export function IslandPuzzleDialog() {
                   ))}
                 </div>
               )}
+              {placed && !placed.fits && (
+                <p className="error-text small">
+                  Put together, the island is {Math.round(placed.size[0])} × {Math.round(placed.size[1])} mm — too big for the free part of the bed. Lower the scale,
+                  or untick “Print it put together”.
+                </p>
+              )}
+              {placed?.fits && (
+                <p className="muted small">
+                  One plate, the pieces put together as above. In Bambu Studio don't use Arrange (it would spread the pieces out); each piece comes in with
+                  no brim and elephant-foot compensation on, so the first layer doesn't join them.
+                  {" "}Bambu Studio puts the island in the middle of the bed when it opens the file; it's sized to fit there.
+                  {printerInfo?.bedExclude?.length ? " It keeps clear of the front-left corner, where this printer wipes its nozzle." : ""}
+                  {printerInfo?.oneNozzleOnly?.length ? " It stays within what one nozzle reaches." : ""}
+                  {colourOn ? towerText : ""}
+                  {colourOn && puzzle?.tower?.shrunk
+                    ? ` The island is a little smaller than the bed allows, so the back-left corner (${TOWER_ROOM} × ${TOWER_ROOM} mm) stays free for the prime tower.`
+                    : ""}
+                  {colourOn && puzzle?.tower && !puzzle.tower.at ? " There's no free spot for the prime tower: lower the scale to make room for it." : ""}
+                  {colour.mode === "full" ? " The full-colour files can't carry those settings: turn the brim off and elephant-foot compensation on yourself." : ""}
+                </p>
+              )}
+              {offerTowerOff && (
+                <div className="small">
+                  <label>
+                    <input type="checkbox" checked={towerOff} onChange={(e) => setTowerOff(e.target.checked)} /> I'll turn the prime tower off in Bambu Studio — keep the
+                    island full size
+                  </label>
+                  <p className="muted">
+                    The prime tower can be turned off in Bambu Studio (Others › Prime tower). Colour changes then flush only into the chute at the back, which can
+                    leave a little more colour bleed where colours change.
+                  </p>
+                </div>
+              )}
               {colourOn && colouring && <p className="muted small">Colouring the pieces…</p>}
               {colourOn && colourError && <p className="error-text small">{colourError}</p>}
               {colourOn && puzzle && coloured && scale && plates.length > 0 && (
-                <ColourDownloads spec={colour} coloured={coloured} plates={plates} scale={scale} map={paintMap} fileName={fileName} bedWidth={bed[0]} />
+                <ColourDownloads spec={colour} coloured={coloured} plates={plates} scale={scale} map={paintMap} fileName={fileName} bedWidth={bed[0]} settings={settings} inPlace={inPlace} />
               )}
               {!colourOn && puzzle && plates.length > 0 && (
                 <div className="mountain-downloads">
@@ -516,13 +599,13 @@ export function IslandPuzzleDialog() {
                     <button
                       key={i}
                       className="text-button"
-                      onClick={() => downloadFile(blobOf(plate3mf(p, `${fileName} - plate ${i + 1}`), "model/3mf"), `${fileName} - plate ${i + 1} of ${plates.length}.3mf`)}
+                      onClick={() => downloadFile(blobOf(plate3mf(p, `${fileName} - plate ${i + 1}`, settings), "model/3mf"), `${fileName} - plate ${i + 1} of ${plates.length}.3mf`)}
                       title={p.pieces.map((x) => x.piece.name).join(", ")}
                     >
                       Plate {i + 1} ({p.pieces.length})
                     </button>
                   ))}
-                  <button className="primary-button" onClick={() => downloadFile(blobOf(allPlatesZip(plates, fileName), "application/zip"), `${fileName}.zip`)}>
+                  <button className="primary-button" onClick={() => downloadFile(blobOf(allPlatesZip(plates, fileName, settings), "application/zip"), `${fileName}.zip`)}>
                     All plates (.zip)
                   </button>
                 </div>

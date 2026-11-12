@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.64 — Island puzzle: print it put together
+
+- The Island puzzle can be printed put together on one plate ("Print it put together (in place)"), so the island can be as big as the bed.
+- Each piece comes into Bambu Studio with no brim and elephant-foot compensation on, so the pieces don't fuse. The gap between pieces is about 0.3 mm.
+- It's sized for the middle of the bed (where Bambu Studio puts it), clear of the X1/P1's no-print corner and within one nozzle's reach on the H2D.
+- In colour, the window says where the prime tower goes; if there's no room for it, you can turn the tower off in Bambu Studio and keep the island full size.
+- Colour bands and full colour work in this mode too; bands are counted as one plate.
+
 ## v0.63 — 3D curves; sweep along curves and edges
 
 - New Curves tools, like Onshape's: Helix, Projected curve, Bridging curve, Composite curve, Fit spline and Intersection curve. They show as lines you can hide with the eye.
