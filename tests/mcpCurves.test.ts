@@ -11,7 +11,6 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DesignFolder } from "../src/mcp/files";
 import { Session } from "../src/mcp/session";
 import { callTool, type ToolResult } from "../src/mcp/tools";
-import { framesOf } from "../src/sketch/planeFeature";
 
 beforeAll(async () => {
   setOC(await opencascade());
