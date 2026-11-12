@@ -16,6 +16,7 @@ import { parsePartProperties } from "../assembly/properties";
 import { parseAssemblies } from "../assembly/assembly";
 import { parseDrawings } from "../drawing/drawing";
 import { newCurveDef, parseCurveDef } from "./curves";
+import { parseFrameDef, parseGusset, parseTrimFrame } from "./frame";
 import type { BoundaryCurve, Feature, FeatureType, GeomPick, ImportedFile, LoftCurve, LoftDef, LoftEnd, LoftProfile, MateConnectorDef, Operation, JuraCADDocument, PartStudio, PlaneOptions } from "./types";
 import { MAIN_STUDIO } from "./studios";
 import { parseHiddenDatums } from "./visibility";
@@ -154,6 +155,17 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
   }
   if (type === "deletePart") feature.deleteParts = [];
   if (type === "composite") feature.compositeParts = [];
+  if (type === "frame") {
+    const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
+    const last = sketches[sketches.length - 1];
+    feature.operation = "new";
+    feature.frame = { paths: last ? [{ sketch: last.id }] : [], profile: { kind: "extrusion", size: "2020" } };
+  }
+  if (type === "trimFrame") feature.trimFrame = { parts: [], picking: "members" };
+  if (type === "gusset") {
+    feature.operation = "new";
+    feature.gusset = { parts: [] };
+  }
   if (type === "simplify") {
     feature.simplifyParts = [];
     feature.simplify = "normal";
@@ -842,6 +854,9 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     }
     if (feature.type === "import" && isSimplifyLevel(f.simplify)) feature.simplify = f.simplify;
     if (feature.type === "composite") feature.compositeParts = ids(f.compositeParts);
+    if (feature.type === "frame") feature.frame = parseFrameDef(f.frame) ?? { paths: [], profile: { kind: "extrusion", size: "2020" } };
+    if (feature.type === "trimFrame") feature.trimFrame = parseTrimFrame(f.trimFrame, parsePlane);
+    if (feature.type === "gusset") feature.gusset = parseGusset(f.gusset);
     if (feature.type === "deletePart") {
       feature.deleteParts = Array.isArray(f.deleteParts) ? (f.deleteParts as unknown[]).filter((x): x is string => typeof x === "string") : [];
     }

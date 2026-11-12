@@ -41,6 +41,7 @@ import { sketchAreas } from "../sketch/areas";
 import { planDrag, type DragPlan } from "../assembly/drag";
 import { connectorFrameFor, frameLookup, solveWithParts } from "../assembly/mates";
 import { sectionPlane } from "./section";
+import { togglePathLine } from "../model/frame";
 import { linePlane, pickableSketchLines, referenceShape, setMirrorReference, setPatternDirection, sketchLine3D, type DirectionChoice, type PickableLine } from "../model/patternRefs";
 import { guardViewportZoom } from "./zoomGuard";
 import { finishesByKey, type FinishId } from "../model/finishes";
@@ -499,6 +500,40 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     // Wrap goes round one face, Offset surface works on one surface: a new click replaces the last.
     if (pick && (faceFeature === "wrap" || faceFeature === "offsetSurface")) s.setDraftField({ picks: [pick] });
     else if (pick) s.toggleDraftPick(pick);
+    return;
+  }
+  // Frames: a sketch line clicked is left out of the path (or put back); Trim frame and Gusset pick members, a plane or a part.
+  if (s.editing?.draft.type === "frame" && s.editing.draft.frame) {
+    if (target?.kind === "sketchLine") s.setDraftField({ frame: togglePathLine(s.editing.draft.frame, activeFeatures(s), target.id, target.line) });
+    return;
+  }
+  if (s.editing?.draft.type === "trimFrame" && s.editing.draft.trimFrame) {
+    const t = s.editing.draft.trimFrame;
+    const picking = t.picking ?? "members";
+    if (picking === "members") {
+      if (target?.kind !== "part") return;
+      const id = target.item.partId;
+      if (id === t.to) return s.showToast("That's the part they're trimmed to. Click the members to trim.");
+      s.setDraftField({ trimFrame: { ...t, parts: t.parts.includes(id) ? t.parts.filter((x) => x !== id) : [...t.parts, id] } });
+    } else if (picking === "target") {
+      if (target?.kind === "plane") s.setDraftField({ trimFrame: { ...t, plane: { kind: "default", name: target.plane }, to: undefined } });
+      else if (target?.kind === "part" && target.item.kind === "face") {
+        const plane = planeForFace(target.item);
+        if (plane) s.setDraftField({ trimFrame: { ...t, plane, to: undefined } });
+        else s.showToast("That face is curved. Click a flat face or a plane — or choose “To a part”.");
+      }
+    } else if (target?.kind === "part") {
+      if (t.parts.includes(target.item.partId)) return s.showToast("That member is being trimmed. Click another part to trim it to.");
+      s.setDraftField({ trimFrame: { ...t, to: target.item.partId, plane: undefined } });
+    }
+    return;
+  }
+  if (s.editing?.draft.type === "gusset" && s.editing.draft.gusset) {
+    if (target?.kind !== "part") return;
+    const g = s.editing.draft.gusset;
+    const id = target.item.partId;
+    const parts = g.parts.includes(id) ? g.parts.filter((x) => x !== id) : [...g.parts, id].slice(-2);
+    s.setDraftField({ gusset: { ...g, parts } });
     return;
   }
   // Picking parts to simplify (click again to leave one out).
@@ -1102,7 +1137,7 @@ export function Viewport() {
     return d && (d.type === "mirror" || d.type === "linearPattern" || d.type === "circularPattern") ? d : null;
   });
   // A newer Plane type open: sketch lines can be clicked too (as its line, or a point on one).
-  const lineDraftId = useStore((s) => (s.editing?.draft.type === "plane" && s.editing.draft.planeDef && isMorePlaneMode(s.editing.draft.planeDef.mode) && s.editing.draft.planeDef.mode !== "curvePoint" ? s.editing.draft.id : null));
+  const lineDraftId = useStore((s) => (s.editing?.draft.type === "frame" ? s.editing.draft.id : s.editing?.draft.type === "plane" && s.editing.draft.planeDef && isMorePlaneMode(s.editing.draft.planeDef.mode) && s.editing.draft.planeDef.mode !== "curvePoint" ? s.editing.draft.id : null));
   const pickLines = useMemo(() => (refDraft && !inAssembly ? pickableSketchLines(features, refDraft.id) : lineDraftId && !inAssembly ? pickableSketchLines(features, lineDraftId) : NO_LINES), [refDraft, lineDraftId, features, inAssembly]);
   useEffect(() => viewportApi.current?.setPickLines(pickLines), [pickLines]);
   useEffect(() => {

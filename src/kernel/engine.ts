@@ -9,7 +9,7 @@ import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../g
 import { writeBinaryStl } from "../geometry/stl";
 import { matchRefs, refDistance, relativeTo, roundVec, sameRef, strictMatch, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
 import { applyPoint, applyVec, isClassicTransform, isStill, toAxisAngle, transformMotion, type Rigid } from "../model/transformMath";
-import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams } from "../model/features";
+import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams, visibleParamKeys } from "../model/features";
 import { planeFrame, toSketch, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
 import { planeAsSketchPlane, planeFeatureFrame, repointFeature } from "../sketch/planeFeature";
 import { asTransformFrame, connectorFrame, connectorPlane, isMorePlaneMode, type FullFrame } from "../sketch/planeTypes";
@@ -70,6 +70,10 @@ import { importCacheKey, importKey, importReport, importSolids, isImportedSurfac
 import { simplifyShape } from "./simplify";
 import { regionOfFaces } from "./facePattern";
 import { modifyFillets, NotAFillet } from "./modifyFillet";
+import { memberSolid, keepSide } from "./frame";
+import { angleFromSquare, centreLine, clipPolyline, cutLength, envelopeOf, gussetOutline, memberInfo, memberRange, planFrame, polylineLength, sketchPathSegments, straightMember, trimmedInfo, usualMaterial, type MemberPlan, type PathSeg, type StraightMember } from "../model/frame";
+import { builtInProfile, placedProfile, type ProfileShape } from "../model/frameProfiles";
+import type { FrameMemberInfo } from "../model/frameTypes";
 import { splitFaces } from "./splitFace";
 import { simplifyReport, type SimplifyLevel, type SimplifySummary } from "../model/simplify";
 import { edgesOf, facesOf, shellsOf, solidsOf } from "./topology";
@@ -79,6 +83,8 @@ import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredIt
 const MAIN_STUDIO_ID = "main";
 
 interface BuiltPart {
+  /** A frame member: what the cut list says about it. */
+  frame?: FrameMemberInfo;
   /** A composite part: the parts grouped in it (they stay separate solids in its shape). */
   members?: { id: string; name: string }[];
   /** Parts a feature merged into this one, by the feature's id: their names (for the dialog's "joining Part 2 into it"). */
@@ -441,6 +447,39 @@ function membersNow(p: BuiltPart): { id: string; name: string }[] {
   pieces.forEach((x) => x.delete());
   if (n === members.length) return members.map((m) => ({ ...m }));
   return Array.from({ length: n }, (_, i) => ({ id: `${p.id}#piece${i + 1}`, name: `${p.name} piece ${i + 1}` }));
+}
+
+/** The biggest solid of a shape (frees the rest and the shape). */
+function biggestSolid(shape: Shape3D): Shape3D {
+  const solids = solidsOf(shape);
+  if (solids.length <= 1) {
+    solids.forEach((x) => x.delete());
+    return shape;
+  }
+  let best = 0;
+  const vols = solids.map((x) => measureVolume(x));
+  vols.forEach((v, i) => {
+    if (v > vols[best]) best = i;
+  });
+  solids.forEach((x, i) => i !== best && x.delete());
+  shape.delete();
+  return solids[best];
+}
+
+/** Where a solid reaches along a straight frame member's axis, measured from the member's start: [from, to]. */
+function alongRange(shape: Shape3D, member: StraightMember): [number, number] | null {
+  const d = member.dir;
+  const axis = cross3(d, [0, 0, 1]);
+  const s = Math.hypot(axis[0], axis[1], axis[2]);
+  const angle = (Math.atan2(s, d[2]) * 180) / Math.PI;
+  const turned = s > 1e-9 ? shape.clone().rotate(angle, [0, 0, 0], [axis[0] / s, axis[1] / s, axis[2] / s]) : d[2] < 0 ? shape.clone().rotate(180, [0, 0, 0], [1, 0, 0]) : shape.clone();
+  try {
+    const [lo, hi] = boundsOf(turned);
+    const s0 = dot3(member.start, d);
+    return [lo[2] - s0, hi[2] - s0];
+  } finally {
+    turned.delete();
+  }
 }
 
 function boundsOf(shape: Shape3D): Bounds {
@@ -2857,6 +2896,7 @@ export class GeometryEngine {
     this.owned = {};
     this.lastBuiltName = "";
     this.mergedInto = new Map();
+    this.frameMembers = new Map();
     const moved = new Map<string, SketchPlane>();
     const listed = features;
 
@@ -3005,6 +3045,11 @@ export class GeometryEngine {
       }
       if (feature.type === "composite") {
         const err = this.applyComposite(feature);
+        if (err) featureErrors[feature.id] = err;
+        continue;
+      }
+      if (feature.type === "frame" || feature.type === "trimFrame" || feature.type === "gusset") {
+        const err = feature.type === "frame" ? this.applyFrame(feature, sketches, features) : feature.type === "trimFrame" ? this.applyTrimFrame(feature) : this.applyGusset(feature);
         if (err) featureErrors[feature.id] = err;
         continue;
       }
@@ -5475,6 +5520,217 @@ export class GeometryEngine {
     return {};
   }
 
+  // -------------------------------------------------------------------------
+  // Frames (Onshape's Frame, Trim frame and Gusset): see model/frame.ts (the plan) and kernel/frame.ts (the solids).
+
+  /** Frame members built so far this build: the cut list line, the plan, (straight ones) where they run, the centre line. */
+  private frameMembers = new Map<string, { info: FrameMemberInfo; member: StraightMember | null; shape: ProfileShape; plan: MemberPlan; line: Vec3[] }>();
+
+  /** The frame's profile, placed as it sits on the path, or a plain message. */
+  private frameProfile(feature: Feature, sketches: SketchMap, features: Feature[], values: Record<string, number>): ProfileShape | string {
+    const def = feature.frame!;
+    let base: ProfileShape | string;
+    if (def.profile.kind === "sketch") {
+      const id = def.profile.sketch;
+      const sk = sketches.get(id);
+      if (!sk?.sketch?.plane) {
+        const f = features.find((x) => x.id === id);
+        return f ? `${f.name} (the profile) can't be used — it's suppressed, comes after this frame, or isn't on a plane.` : "The profile's sketch has been deleted. Pick another profile.";
+      }
+      const { regions } = findRegions(sk.sketch.data);
+      if (!regions.length) return `${sk.name} has no closed shapes to use as the profile. Draw the frame's cross-section as a closed shape.`;
+      base = {
+        label: `${sk.name} profile`,
+        regions: regions.map((r) => ({ outer: { kind: "poly" as const, pts: r.outer.polygon.map((p) => [p[0], p[1]] as [number, number]) }, holes: r.holes.map((h) => ({ kind: "poly" as const, pts: h.polygon.map((p) => [p[0], p[1]] as [number, number]) })) })),
+      };
+    } else base = builtInProfile(def.profile.kind, def.profile.size, { width: values.width ?? 40, height: values.height ?? 40, wall: values.wall ?? 2 });
+    if (typeof base === "string") return base;
+    return placedProfile(base, def.anchor, !!def.mirror, values.angle ?? 0);
+  }
+
+  private applyFrame(feature: Feature, sketches: SketchMap, features: Feature[]): string | null {
+    const def = feature.frame;
+    if (!def) return "Choose the sketch lines for the frame and a profile.";
+    const { values, errors } = resolveParams(feature);
+    const shown = visibleParamKeys(feature);
+    const bad = FEATURE_DEFS.frame.params.find((p) => errors[p.key] && shown.has(p.key));
+    if (bad) return `${bad.label}: ${errors[bad.key]}`;
+    const shape = this.frameProfile(feature, sketches, features, values);
+    if (typeof shape === "string") return shape;
+    const segs: PathSeg[] = [];
+    let skipped = 0;
+    for (const p of def.paths) {
+      const sk = sketches.get(p.sketch);
+      if (!sk?.sketch?.plane) {
+        const f = features.find((x) => x.id === p.sketch);
+        return f ? `${f.name} can't be used for the path — it's suppressed or comes after this frame.` : "A sketch of the frame's path has been deleted. Edit the frame and pick its lines again.";
+      }
+      const r = sketchPathSegments(p.sketch, sk.sketch.plane, sk.sketch.data, p.items);
+      segs.push(...r.segs);
+      skipped += r.skipped;
+    }
+    // The same curve picked twice is used once.
+    const unique = segs.filter((s, i) => segs.findIndex((x) => x.id === s.id) === i);
+    const plan = planFrame(unique, def, shape, Math.max(0, values.gap ?? 0));
+    if (typeof plan === "string") return plan;
+    const solids: Shape3D[] = [];
+    const envelopes = new Map<number, Shape3D>();
+    const env = envelopeOf(shape);
+    try {
+      for (const m of plan.members) solids.push(memberSolid(m, shape));
+      // Coped ends: cut to the outside of the member(s) running through (no slots or holes), keeping the biggest piece.
+      plan.members.forEach((m, i) => {
+        for (const end of [0, 1] as const) {
+          for (const t of m.ends[end].cope ?? []) {
+            let tool = envelopes.get(t);
+            if (!tool) {
+              tool = memberSolid(plan.members[t], env);
+              envelopes.set(t, tool);
+            }
+            const cut = solids[i].cut(tool) as Shape3D;
+            solids[i].delete();
+            solids[i] = biggestSolid(cut);
+          }
+        }
+      });
+    } catch (e) {
+      solids.forEach((x) => x.delete());
+      return describeError(e, "Couldn't make this frame.");
+    } finally {
+      envelopes.forEach((x) => x.delete());
+    }
+    plan.members.forEach((m, i) => {
+      // Named by the member's first curve, so ids stay put when other lines are added or taken away.
+      const id = `${feature.id}~${m.member.key.replace(/[^A-Za-z0-9_.-]/g, "_")}`;
+      const info = memberInfo(plan, i, shape, feature.id, usualMaterial(def.profile.kind));
+      this.frameMembers.set(id, { info, member: straightMember(plan, i, shape), shape, plan: m, line: centreLine(m) });
+      this.parts.push({ id, name: `${feature.name} member ${i + 1}`, featureIds: [feature.id], shape: solids[i], frame: info });
+    });
+    const notes: string[] = [...plan.notes];
+    if (skipped) notes.push(`${skipped === 1 ? "One curve was" : `${skipped} curves were`} left out: frames follow lines, arcs and circles (not splines or ellipses).`);
+    if (plan.corners.some((c) => c.ends.length > 3 && c.type !== "none")) notes.push("Where more than three members meet, check the corners don't overlap (Trim frame can tidy them).");
+    if (notes.length) this.warnings[feature.id] = notes.join(" ");
+    return null;
+  }
+
+  private applyTrimFrame(feature: Feature): string | null {
+    const def = feature.trimFrame;
+    if (!def?.parts.length) return "Click the frame members to trim.";
+    if (!def.plane && !def.to) return "Choose what to trim them to: a plane, a flat face or another part.";
+    const target = def.to ? this.parts.find((p) => p.id === def.to) : undefined;
+    if (def.to && !target) return "The part to trim to no longer exists. Edit this and pick another.";
+    // A frame member is met by its outside only (not into its slots or holes).
+    const targetMember = def.to ? this.frameMembers.get(def.to) : undefined;
+    let tool: Shape3D | null = null;
+    try {
+      if (target) tool = targetMember ? memberSolid(targetMember.plan, envelopeOf(targetMember.shape)) : target.shape.clone();
+      for (const id of def.parts) {
+        const part = this.parts.find((p) => p.id === id);
+        if (!part) return "One of the members to trim no longer exists. Edit this and pick them again.";
+        if (id === def.to) return `${part.name} can't be trimmed to itself.`;
+        const fm = this.frameMembers.get(id);
+        if (!fm || !part.frame) return `${part.name} isn't a frame member. Trim frame trims parts made by a Frame.`;
+        const before = measureVolume(part.shape);
+        let next: Shape3D;
+        let info: FrameMemberInfo = part.frame;
+        try {
+          if (tool) {
+            next = biggestSolid(part.shape.cut(tool) as Shape3D);
+            if (fm.member) {
+              const was = memberRange(fm.member, fm.shape);
+              const now = alongRange(next, fm.member);
+              if (was && now) {
+                const end: 0 | 1 = Math.abs(now[0] - was[0]) > Math.abs(now[1] - was[1]) ? 0 : 1;
+                // Measured from the cut solid: its longest point at the trimmed end.
+                const m = fm.member;
+                const member: StraightMember = { ...m, cuts: [...m.cuts, end === 0 ? { n: m.dir, o: add3(m.start, scale3(m.dir, now[0])) } : { n: scale3(m.dir, -1), o: add3(m.start, scale3(m.dir, now[1])) }] };
+                const ends: FrameMemberInfo["ends"] = [...info.ends];
+                ends[end] = "coped";
+                info = { ...info, length: Math.round(cutLength(member, fm.shape) * 100) / 100, ends };
+                fm.member = member;
+              }
+            }
+          } else {
+            const f = planeFrame(def.plane!);
+            const [lo, hi] = boundsOf(part.shape);
+            const size = 4 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 100;
+            const front = keepSide(part.shape, f.n, f.origin, size);
+            const back = keepSide(part.shape, [-f.n[0], -f.n[1], -f.n[2]], f.origin, size);
+            const keepFront = measureVolume(front) >= measureVolume(back) !== !!def.flip;
+            next = keepFront ? front : back;
+            (keepFront ? back : front).delete();
+            const n: Vec3 = keepFront ? f.n : [-f.n[0], -f.n[1], -f.n[2]];
+            if (fm.member) {
+              const t = trimmedInfo(info, fm.member, fm.shape, { n, o: f.origin });
+              info = t.info;
+              fm.member = t.member;
+            } else {
+              // Curved: measured along its middle, what's left of it.
+              const side = (p: Vec3) => dot3(n, [p[0] - f.origin[0], p[1] - f.origin[1], p[2] - f.origin[2]]);
+              const kept = clipPolyline(fm.line, n, f.origin);
+              if (kept.length > 1) {
+                const end: 0 | 1 = side(fm.line[0]) < 0 ? 0 : 1;
+                const a = end === 0 ? kept[0] : kept[kept.length - 1];
+                const b = end === 0 ? kept[1] : kept[kept.length - 2];
+                const ends: FrameMemberInfo["ends"] = [...info.ends];
+                ends[end] = angleFromSquare(n, [b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
+                info = { ...info, length: Math.round(polylineLength(kept) * 100) / 100, ends };
+                fm.line = kept;
+              }
+            }
+          }
+        } catch (e) {
+          return describeError(e, `Couldn't trim ${part.name}.`);
+        }
+        const after = measureVolume(next);
+        if (!(after > 1e-6)) {
+          next.delete();
+          return `Trimming would leave nothing of ${part.name}. Try Flip, or another plane.`;
+        }
+        if (Math.abs(after - before) < 1e-6 * Math.max(1, before)) {
+          next.delete();
+          return `${part.name} doesn't reach ${target ? target.name : "the plane"}, so there's nothing to trim.`;
+        }
+        part.frame = info;
+        fm.info = info;
+        part.shape.delete();
+        part.shape = next;
+        part.featureIds.push(feature.id);
+      }
+    } finally {
+      tool?.delete();
+    }
+    return null;
+  }
+
+  private applyGusset(feature: Feature): string | null {
+    const ids = feature.gusset?.parts ?? [];
+    if (ids.length < 2) return "Click the two frame members that meet at the corner.";
+    const [a, b] = ids.map((id) => this.frameMembers.get(id));
+    const names = ids.map((id) => this.parts.find((p) => p.id === id)?.name ?? "A member");
+    if (!a || !b) return `${!a ? names[0] : names[1]} isn't a frame member (or no longer exists). Pick two members of a frame.`;
+    if (!a.member || !b.member) return "Gussets go between straight members. Pick two straight ones.";
+    const { values, errors } = resolveParams(feature);
+    const shown = visibleParamKeys(feature);
+    const bad = FEATURE_DEFS.gusset.params.find((p) => errors[p.key] && shown.has(p.key));
+    if (bad) return `${bad.label}: ${errors[bad.key]}`;
+    const g = gussetOutline(a.member, b.member, a.shape, b.shape, values.size, feature.gusset?.chamfer ? values.chamfer : 0, !!feature.gusset?.flip);
+    if (typeof g === "string") return g;
+    const t = values.thickness;
+    try {
+      const pts = g.pts.map((p) => [p[0] - (g.n[0] * t) / 2, p[1] - (g.n[1] * t) / 2, p[2] - (g.n[2] * t) / 2] as Vec3);
+      const face = makePolygon(pts);
+      const v = new Vector([g.n[0] * t, g.n[1] * t, g.n[2] * t]);
+      const solid = basicFaceExtrusion(face, v) as Shape3D;
+      face.delete();
+      v.delete();
+      this.parts.push({ id: feature.id, name: feature.name, featureIds: [feature.id], shape: solid });
+    } catch (e) {
+      return describeError(e, "Couldn't make this gusset.");
+    }
+    return null;
+  }
+
   /**
    * Composite part (Onshape's, "closed"): the picked parts become one part — its
    * shape a compound of theirs, so they stay separate solids inside — picked,
@@ -6926,7 +7182,7 @@ export class GeometryEngine {
         volume = null;
       }
     }
-    return { ...mesh, ...(flat ? { flat } : {}), ...(p.surface ? { surface: true } : {}), ...(p.members?.length ? { members: membersNow(p) } : {}), ...(volume !== null && Number.isFinite(volume) && volume > 0 ? { volume } : {}) };
+    return { ...mesh, ...(flat ? { flat } : {}), ...(p.surface ? { surface: true } : {}), ...(p.members?.length ? { members: membersNow(p) } : {}), ...(p.frame ? { frame: p.frame } : {}), ...(volume !== null && Number.isFinite(volume) && volume > 0 ? { volume } : {}) };
   }
 
   /** A sheet metal part's flat pattern (null for other parts, or if it can't be unfolded). */

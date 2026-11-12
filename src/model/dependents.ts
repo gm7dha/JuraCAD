@@ -22,6 +22,7 @@
  */
 import { curveUses } from "./curves";
 import { loftUses, loftWithoutGone } from "./loft";
+import { frameUses } from "./frame";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 import { partCopiesPlan } from "../assembly/assembly";
@@ -64,6 +65,7 @@ function planesOf(f: Feature): SketchPlane[] {
     f.mirror && !f.mirror.unset && !f.mirror.planePick && !f.mirror.line ? f.mirror.plane : undefined,
     f.replaceDef?.target,
     f.neutral,
+    f.trimFrame?.plane,
   ];
   return out.filter((p): p is SketchPlane => !!p);
 }
@@ -197,6 +199,14 @@ function usesOf(f: Feature): Uses {
   if (f.deleteParts?.length) lists.push({ what: "part it deletes", many: "parts it deletes", parts: f.deleteParts });
   if (f.simplifyParts?.length) lists.push({ what: "part it tidies", many: "parts it tidies", parts: f.simplifyParts });
   if (f.compositeParts?.length) lists.push({ what: "part it groups", many: "parts it groups", parts: f.compositeParts, least: 2 });
+  if (f.frame || f.trimFrame || f.gusset) {
+    // Frames: the path's sketches (a list), the profile's sketch; Trim frame's members (a list) and target; a gusset's two members.
+    const fu = frameUses(f);
+    if (fu.pathSketches.length) lists.push({ what: "path sketch", many: "path sketches", features: fu.pathSketches });
+    features.push(...fu.sketches);
+    parts.push(...fu.parts);
+    if (fu.trimParts.length) lists.push({ what: "member it trims", many: "members it trims", parts: fu.trimParts });
+  }
   if (f.moreAreas?.length) optional.push({ what: "extra sketch it takes areas from", many: "extra sketches it takes areas from", features: f.moreAreas.map((m) => m.sketch) });
   if (f.sketch) {
     const links = sketchLinks(f.sketch.data);
@@ -231,6 +241,8 @@ function makesSolidPart(f: Feature, makers: Set<string>): boolean {
   if (f.pattern?.of === "face" || f.mirror?.of === "face") return false;
   // A composite part is the latest part once made (it's put at the end of the parts).
   if (f.type === "composite") return !!f.compositeParts?.length;
+  // A frame's members and a gusset are new parts.
+  if (f.type === "frame" || f.type === "gusset") return true;
   if (isPatternFeature(f.type)) return (f.pattern?.sources ?? f.mirror?.sources ?? []).some((id) => makers.has(id));
   if (f.type === "sheetMetal" && f.sheetConvert) return false;
   return f.operation === "new" && (isSolidFeature(f.type) || SOLID_MAKERS.has(f.type));
@@ -343,6 +355,8 @@ export function withoutGone(f: Feature, gone: Set<string>): Feature {
   if (f.simplifyParts?.some(partGone)) set({ simplifyParts: f.simplifyParts.filter((p) => !partGone(p)) });
   if (f.pattern?.parts?.some(partGone)) set({ pattern: { ...out.pattern!, parts: f.pattern.parts.filter((p) => !partGone(p)) } });
   if (f.compositeParts?.some(partGone)) set({ compositeParts: f.compositeParts.filter((p) => !partGone(p)) });
+  if (f.frame?.paths.some((p) => featureGone(p.sketch))) set({ frame: { ...f.frame, paths: f.frame.paths.filter((p) => !featureGone(p.sketch)) } });
+  if (f.trimFrame?.parts.some(partGone)) set({ trimFrame: { ...f.trimFrame, parts: f.trimFrame.parts.filter((p) => !partGone(p)) } });
   if (f.sketch) {
     const lost = (l: unknown) => linkGone(l, featureGone, partGone);
     const data = f.sketch.data;

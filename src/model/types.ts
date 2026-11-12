@@ -13,7 +13,7 @@ import type { FinishId } from "./finishes";
 import type { LibraryInsert } from "../library/types";
 
 /** The kinds of feature JuraCAD can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog" | "simplify" | "mateConnector" | "composite" | "modifyFillet" | "curve" | "boundary" | "faceBlend";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog" | "simplify" | "mateConnector" | "composite" | "modifyFillet" | "frame" | "trimFrame" | "gusset" | "curve" | "boundary" | "faceBlend";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -531,6 +531,12 @@ export interface Feature {
   compositeParts?: string[];
   /** Import: the file, stored in the design. */
   import?: ImportedFile;
+  /** Frame (Onshape's): profiles along sketch lines and arcs, one part per member (see model/frame.ts). */
+  frame?: import("./frameTypes").FrameDef;
+  /** Trim frame: frame members cut back to a plane, face or part. */
+  trimFrame?: import("./frameTypes").TrimFrameDef;
+  /** Gusset: a plate in the corner between two frame members. */
+  gusset?: import("./frameTypes").GussetDef;
   /** Fillet and chamfer: the edges (or faces, meaning all their edges) to round or bevel. Shell: the faces to remove. */
   picks?: TopoPick[];
 }

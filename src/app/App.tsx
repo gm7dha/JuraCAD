@@ -23,6 +23,7 @@ import { IslandPuzzleDialog } from "./IslandPuzzleDialog";
 import { MountainPuzzleDialog } from "./MountainPuzzleDialog";
 import { useMountain } from "./mountainState";
 import { ConfigurationsDialog } from "./ConfigurationsDialog";
+import { CutListDialog } from "./CutListDialog";
 import { ComparePanel, VersionBanner, VersionsDialog } from "./VersionsDialog";
 import { MeasurePanel } from "./MeasurePanel";
 import { SectionPanel } from "./SectionPanel";
@@ -342,6 +343,7 @@ export function App() {
       {dialog === "variables" && <VariablesDialog />}
       {dialog === "configurations" && <ConfigurationsDialog />}
       {dialog === "versions" && <VersionsDialog />}
+      {dialog === "cutList" && <CutListDialog />}
       {deleteAsk && <DeleteDialog />}
       {libraryOpen && <LibraryDialog />}
       {mountainOpen && (puzzleKind === "island" ? <IslandPuzzleDialog /> : <MountainPuzzleDialog />)}

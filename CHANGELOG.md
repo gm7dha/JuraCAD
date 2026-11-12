@@ -8,6 +8,16 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.65 — Frames
+
+- New **Frame** tool, like Onshape's: aluminium extrusion (2020, 2040, 3030, 4040), box section, angle, round tube, flat bar,
+  timber or your own profile along sketch lines — one part per length. Lines that carry on straight through a joint stay one
+  length, and rails ending on a post stop at its side.
+- Corners mitred, butted (the longer length runs through, or choose) or coped, with an optional gap.
+- **Trim frame** cuts lengths back to a plane, face or part; **Gusset** adds a corner plate, at corners and T joints.
+- **Cut list**: lengths, end angles, quantities, weights and totals to buy — save it as a spreadsheet (CSV).
+- Claude can make frames and read the cut list.
+
 ## v0.64 — Island puzzle: print it put together
 
 - The Island puzzle can be printed put together on one plate ("Print it put together (in place)"), so the island can be as big as the bed.
