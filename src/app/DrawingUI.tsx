@@ -26,6 +26,9 @@ import type { InstanceInput, PartMesh, ViewProjection } from "../kernel/protocol
 import { activeDrawing, partsInStudio, useLengthUnit, useStore } from "../model/store";
 import { fromUnit, lengthNumber } from "../model/units";
 import { studiosOf } from "../model/studios";
+import { cropRel, MAX_CROP_POINTS } from "../drawing/crop";
+import { CropsList, DrawingStyleFields, pickCsvTable, TemplatesSection, TitleFieldsEditor } from "./DrawingExtrasPanel";
+import type { ViewCrop } from "../model/types";
 import type { Shortening, BreakOut, DetailView, Dimension, Drawing, DrawingRevision, DrawingSymbol, GdtCharacteristic, JuraCADDocument, SectionCut, ViewHost } from "../model/types";
 import { addSection, breakOutRequests, hostKindOf, missedSections, viewKey, putBreakOut, removeBreakOut, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
 import { addDetail, DETAIL_ZOOMS, removeDetail, updateDetail, withDetails } from "../drawing/details";
@@ -428,6 +431,7 @@ export function DrawingToolbar() {
             onClick: () => useStore.getState().setDrawingTool(tool === t ? "select" : t),
           }))}
         />
+        <ToolButton label="Table" icon={<Icons.Table />} onClick={() => pickCsvTable(changeShownPage)} title="Table from a CSV file — put a table (a parts list, a cut list, sizes…) saved from a spreadsheet on the sheet. Drag it to move it; Delete removes it" />
         <ToolGroupButton
           id="drawing-views"
           name="section"
@@ -438,6 +442,8 @@ export function DrawingToolbar() {
               ["breakout", "Broken-out", <Icons.BreakOut key="b" />, "Broken-out — click two corners of an area on the front, top or a side view: the part is cut away there to show what's inside (set the depth in the panel)"],
               ["shorten", "Shortened view", <Icons.Shorten key="sh" />, "Shortened view — click two points along a long view (front, top or a side): the stretch between them is taken out so it fits the sheet. Dimensions still show the real length"],
               ["detail", "Detail", <Icons.Detail key="d" />, "Detail — click the middle of a small area on a view, then the circle's size: it's shown again bigger"],
+              ["crop", "Crop view", <Icons.Crop key="cr" />, "Crop view — click two corners of a rectangle on a view: only what's inside is drawn (dimensions outside it are hidden). Remove a crop in the panel"],
+              ["cropShape", "Crop to a shape", <Icons.CropShape key="cs" />, "Crop to a shape — click points round the part of a view to keep, then click the first point again to close it (make it smooth in the panel)"],
             ] as const
           ).map(([t, label, icon, title]) => ({
             key: t,
@@ -471,6 +477,18 @@ function NoteProperties({ drawing, change }: { drawing: Drawing; change: (fn: (d
   const selected = useStore((s) => s.selectedDim);
   const note = drawing.notes?.find((n) => n.id === selected);
   if (!note) return null;
+  if (note.table) {
+    const rows = note.table.length;
+    const cols = Math.max(0, ...note.table.map((r) => r.length));
+    return (
+      <section className="panel-section">
+        <h3>Table</h3>
+        <p className="panel-hint">
+          {rows} row{rows === 1 ? "" : "s"} × {cols} column{cols === 1 ? "" : "s"}, from a CSV file. Drag it to move it; Delete removes it. To change it, edit the file and put it on again.
+        </p>
+      </section>
+    );
+  }
   if (note.symbol) {
     const sym = note.symbol;
     const set = (s: DrawingSymbol) => change((d) => putNote(d, { ...note, symbol: s }));
@@ -903,6 +921,7 @@ export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
               ))}
             </select>
           </div>
+          <DrawingStyleFields drawing={drawing} change={(fn) => change((d) => withFit(fn(d), projections ?? undefined, info))} part="standard" />
           <div className="drawing-field">
             <label htmlFor="drawing-sheet">Paper size</label>
             <select id="drawing-sheet" value={drawing.sheet} onChange={(e) => change((d) => withFit({ ...arrangeViews(d), sheet: e.target.value as Drawing["sheet"] }, projections ?? undefined, info))}>
@@ -994,6 +1013,7 @@ export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
             />
             Sizes in {unit === "in" ? "millimetres" : "inches"} too
           </label>
+          <DrawingStyleFields drawing={drawing} change={change} part="numbers" />
           <div className="drawing-field">
             <label htmlFor="drawing-arrows">Dimension arrows</label>
             <select
@@ -1146,6 +1166,7 @@ export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
       <DetailsList drawing={drawing} change={change} />
       <BreakOutsList drawing={drawing} change={change} />
       <ShortenedList drawing={drawing} change={change} />
+      <CropsList drawing={drawing} change={change} name={(key, kind) => viewName(drawing, { key, kind })} />
       <RevisionsList drawing={drawing} change={change} />
       <section className="panel-section">
         <h3>Title block</h3>
@@ -1157,7 +1178,9 @@ export function DrawingPanel({ drawing: whole }: { drawing: Drawing }) {
           <TitleField label="Material" value={drawing.title.material ?? ""} placeholder="e.g. Nylon PA12, Stainless 316" onCommit={(v) => change((d) => ({ ...d, title: { ...d.title, material: v.trim() || undefined } }))} />
           <TitleField label="Notes" multiline value={drawing.title.notes ?? ""} placeholder="One note per line" onCommit={(v) => change((d) => ({ ...d, title: { ...d.title, notes: v.trim() || undefined } }))} />
         </div>
+        <TitleFieldsEditor drawing={drawing} change={change} />
       </section>
+      <TemplatesSection drawing={drawing} change={change} />
     </aside>
   );
 }
@@ -1345,6 +1368,8 @@ function RevisionsList({ drawing, change }: { drawing: Drawing; change: (fn: (d:
               <input className="revision-rev" value={r.rev} aria-label="Revision" onChange={(e) => edit(r.id, { rev: e.target.value.slice(0, 8) })} />
               <input value={r.description} aria-label={`Revision ${r.rev} description`} placeholder="What changed" onChange={(e) => edit(r.id, { description: e.target.value.slice(0, 200) })} />
               <input className="revision-date" value={r.date} aria-label={`Revision ${r.rev} date`} onChange={(e) => edit(r.id, { date: e.target.value.slice(0, 20) })} />
+              <input className="revision-who" value={r.by ?? ""} placeholder="By" aria-label={`Revision ${r.rev} made by`} title="Who made the change (optional)" onChange={(e) => edit(r.id, { by: e.target.value.slice(0, 40) || undefined })} />
+              <input className="revision-who" value={r.approved ?? ""} placeholder="Approved" aria-label={`Revision ${r.rev} approved by`} title="Who approved it (optional)" onChange={(e) => edit(r.id, { approved: e.target.value.slice(0, 40) || undefined })} />
               <button type="button" className="icon-button small" onClick={() => put(revs.filter((x) => x.id !== r.id))} aria-label={`Remove revision ${r.rev}`} title="Remove">
                 <Icons.Cross size={14} />
               </button>
@@ -1644,6 +1669,8 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
   const [breakStart, setBreakStart] = useState<{ view: string; at: P2 } | null>(null);
   /** Shortened view tool: the first edge clicked. */
   const [shortStart, setShortStart] = useState<{ view: string; at: P2 } | null>(null);
+  /** Crop tools: the view and the points clicked on it so far (view mm). */
+  const [cropPts, setCropPts] = useState<{ view: string; pts: P2[] } | null>(null);
   const [cursor, setCursor] = useState<P2 | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [W, H] = SHEETS[drawing.sheet];
@@ -1660,6 +1687,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     setDetailStart(null);
     setBreakStart(null);
     setShortStart(null);
+    setCropPts(null);
     setRun(null);
     setSelView(null);
   }, [tool, drawing.id, pageId]);
@@ -1710,6 +1738,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
         else if (detailStart) setDetailStart(null);
         else if (breakStart) setBreakStart(null);
         else if (shortStart) setShortStart(null);
+        else if (cropPts) setCropPts(null);
         else if (pending) setPending(null);
         else if (run) setRun(null);
         else if (selView) setSelView(null);
@@ -1721,7 +1750,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pending, cutStart, run, detailStart, breakStart, shortStart, symbolStart, selView]);
+  }, [pending, cutStart, run, detailStart, breakStart, shortStart, symbolStart, selView, cropPts]);
 
   const toSheet = (e: { clientX: number; clientY: number }): P2 => {
     const svg = svgRef.current;
@@ -2036,6 +2065,46 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     useStore.getState().setDrawingTool("select");
   };
 
+  /** Crop tools: the view under a point (any view) and the point in its own mm. */
+  const cropPoint = (here: P2, onView?: string): { view: string; at: P2 } | null => {
+    if (!layout || !projections) return null;
+    const v = layout.views.find((x) => (onView ? x.key === onView : true) && here[0] > x.box[0] - (onView ? 1e9 : 4) && here[0] < x.box[2] + (onView ? 1e9 : 4) && here[1] > x.box[1] - (onView ? 1e9 : 4) && here[1] < x.box[3] + (onView ? 1e9 : 4));
+    const p = v && projections[v.key];
+    if (!v || !p?.bounds) return null;
+    return { view: v.key, at: fromSheetPoint(v, p, v.scale, here[0], here[1]) };
+  };
+  /** Crop view: two corners of a rectangle; Crop to a shape: points round it, closed by clicking the first again. */
+  const cropClick = (here: P2) => {
+    const shape = tool === "cropShape";
+    if (!cropPts) {
+      const p = cropPoint(here);
+      if (p) setCropPts({ view: p.view, pts: [p.at] });
+      return;
+    }
+    const at = viewAt(cropPts.view);
+    const p = projections?.[cropPts.view];
+    const hit = cropPoint(here, cropPts.view);
+    if (!at || !p?.bounds || !hit) return;
+    const put = (crop: ViewCrop) => {
+      change((d) => ({ ...d, views: d.views.map((v) => (viewKey(v) === cropPts.view ? { ...v, crop } : v)) }));
+      setCropPts(null);
+      useStore.getState().setDrawingTool("select");
+    };
+    if (!shape) {
+      const a = at(cropPts.pts[0]);
+      if (Math.abs(here[0] - a[0]) < 2 || Math.abs(here[1] - a[1]) < 2) return;
+      put({ a: cropRel(p.bounds, cropPts.pts[0]), b: cropRel(p.bounds, hit.at) });
+      return;
+    }
+    const first = at(cropPts.pts[0]);
+    if (cropPts.pts.length >= 3 && Math.hypot(here[0] - first[0], here[1] - first[1]) < 3) {
+      put({ points: cropPts.pts.map((q) => cropRel(p.bounds!, q)) });
+      return;
+    }
+    if (cropPts.pts.length >= MAX_CROP_POINTS) return;
+    setCropPts({ ...cropPts, pts: [...cropPts.pts, hit.at] });
+  };
+
   /** Shortened view: the two edges of the stretch to take out, along whichever way they're further apart. */
   const shortenClick = (here: P2) => {
     if (!shortStart) {
@@ -2258,6 +2327,7 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     else if (tool === "detail") detailClick(toSheet(e));
     else if (tool === "breakout") breakClick(toSheet(e));
     else if (tool === "shorten") shortenClick(toSheet(e));
+    else if (tool === "crop" || tool === "cropShape") cropClick(toSheet(e));
     else {
       // Empty paper: drag out a box to select dimensions and notes (Shift or Ctrl adds to what's selected).
       setSelView(null);
@@ -2378,6 +2448,14 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
     message = shortStart
       ? "Click the other end of the stretch to take out (along the view, or up and down it). Esc to start again."
       : "Click one end of the stretch to take out of a long view (front, top or a side view).";
+  else if (tool === "crop")
+    message = cropPts ? "Click the opposite corner of the rectangle to keep. Esc to start again." : "Click one corner of the part of a view to keep (any view).";
+  else if (tool === "cropShape")
+    message = cropPts
+      ? cropPts.pts.length >= 3
+        ? "Click the next point, or the first point again to close the shape. Esc to start again."
+        : "Click the next point round the part to keep."
+      : "Click the first point round the part of a view to keep (any view).";
   else if (tool === "breakout")
     message = breakStart
       ? "Click the opposite corner of the area to cut away. Set how deep it goes in the panel. Esc to start again."
@@ -2441,7 +2519,19 @@ export function DrawingSheet({ drawing: whole }: { drawing: Drawing }) {
   }
   const cutFrom = cutStart ? viewAt(cutStart.view)?.(cutStart.at) : null;
   const preview = previewDim();
-  const previewPrims = (() => {
+  const previewPrims = ((): Prim[] => {
+    if ((tool === "crop" || tool === "cropShape") && cropPts) {
+      const at = viewAt(cropPts.view);
+      if (!at) return [];
+      const pts = cropPts.pts.map((q) => at(q));
+      if (tool === "crop") {
+        const a = pts[0];
+        const b = cursor ?? a;
+        return [{ kind: "path", points: [a[0], a[1], b[0], a[1], b[0], b[1], a[0], b[1]], closed: true, style: "centre" }];
+      }
+      const flat = [...pts, ...(cursor ? [cursor] : [])].flat();
+      return [{ kind: "path", points: flat, style: "centre" }];
+    }
     if (symbolStart && cursor && (tool === "datum" || tool === "fcf" || tool === "finish")) return symbolPrims({ at: cursor, leader: symbolStart }, newSymbol()).prims;
     if (linear && projections) {
       const at = run && viewAt(run.view);

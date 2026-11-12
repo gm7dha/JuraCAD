@@ -324,6 +324,19 @@
   Safari gesture listeners on the sheet and on the 3D view's area (canvas + `.sketch-overlay` labels, whose wheels are passed
   on to the canvas) always `preventDefault`, so pinch / Ctrl+wheel never zooms the page there (React's onWheel is passive and can't). The engine's `project()` runs OpenCascade's hidden-line removal per view.
   UI in `src/app/DrawingUI.tsx` (the sheet is an SVG drawn over the 3D view, which stays mounted).
+  Crop view (`DrawingView.crop`: `{a, b}` rectangle or `{points, smooth?}` outline, fractions of the view's bounds; pure
+  `src/drawing/crop.ts`: `cropOutline` (smooth = closed Catmull–Rom), `clipToOutline` every drawn line in layoutSheet's `draw`,
+  the view's box shrinks to the crop, dimensions/hole tags whose points are all outside are skipped, `cropKeeps`); tools "crop" /
+  "cropShape" (click the first point again to close), panel `CropsList`. Revisions may carry `by`/`approved` (BY and APPROVED
+  columns only when any row has them; `addRevision`). `Drawing.standard` "ansi" (`setStandard`: ANSI → third-angle, ISO → first;
+  `DimStyle.unidirectional`: lengths' numbers read across in a gap in the line), `decimalComma` (`withComma` on dimension text),
+  `inspection` (`inspectionBalloon` numbers each dimension), `fields` (≤ `MAX_TITLE_FIELDS` 6 entries of the user's own in a
+  `FIELDS_H` row on top of the title block, counted in `bottomReserve`). Templates (`src/drawing/templates.ts`: sheet, standard,
+  projection, company/drawn by/material, fields, number style; `templateFrom`/`applyTemplate`/`parseTemplates`) kept in
+  localStorage by `templateStorage.ts` (`juracad.drawingTemplates`, `juracad.drawingTemplate.default` = new drawings start from it,
+  store `addDrawing`). Tables from CSV: a note with `table` (rows; `tables.ts` `parseCsv` — commas, `;` or tabs, quotes; ≤ 60 × 12),
+  drawn by `tablePrims`, toolbar "Table". Panel parts in `src/app/DrawingExtrasPanel.tsx`. All missing = drawn exactly as before.
+  Claude: `add_revision`, `crop_view`, `set_drawing_style` (drawingExtras.ts). Tests: tests/drawingExtras (pure), mcpDrawingStyle.
 - Sheet metal: `src/sheetmetal/sheet.ts` keeps a sheet as walls joined by bends (base from a sketch, flanges off
   straight edges, flanges on flanges) and works out both the folded walls/bends and the flat pattern from that;
   `src/sheetmetal/profile.ts` turns an open chain of sketch lines into a sheet (first line the base, later lines flanges with a set straight length). `src/kernel/sheetMetal.ts` makes them into solids. The engine stores the sheet on the part (`BuiltPart.sheet`);

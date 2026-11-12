@@ -22,6 +22,7 @@ import { calloutText, threadSymbols, type TapSize } from "./holeCallouts";
 import { symbolPrims } from "./symbols";
 import { clipToCircle } from "./details";
 import { textWidth } from "./export";
+import { clipToOutline, cropKeeps, cropOutline, outlineBox } from "./crop";
 
 /** "centre" is the long-and-short dashed line for centre lines and cutting planes. */
 export type LineStyle = "border" | "visible" | "hidden" | "thin" | "centre";
@@ -233,6 +234,12 @@ function breakSymbols(p: ViewProjection, scale: number, at: (x: number, y: numbe
 const BOM_ROW = 6;
 const NOTE_LINE = 4.5;
 
+/** Height of the row of the user's own title block entries (Drawing.fields), when there are any. */
+export const FIELDS_H = 12;
+/** Most entries of their own a title block takes. */
+export const MAX_TITLE_FIELDS = 6;
+const titleH = (d: Partial<Pick<Drawing, "fields">> | null) => TITLE_H + (d?.fields?.length ? FIELDS_H : 0);
+
 function notesOf(drawing: Drawing): string[] {
   return (drawing.title.notes ?? "").split("\n").filter((l) => l.trim()).slice(0, 8);
 }
@@ -243,7 +250,7 @@ function notesOf(drawing: Drawing): string[] {
  * on a sheet of `size` a long one wraps into columns — see holeTableShape).
  */
 export function bottomReserve(
-  drawing: (Pick<Drawing, "title"> & Partial<Pick<Drawing, "revisions" | "holeTableAt">>) | null,
+  drawing: (Pick<Drawing, "title"> & Partial<Pick<Drawing, "revisions" | "holeTableAt" | "fields">>) | null,
   bom: BomLine[] | undefined,
   holes = 0,
   size?: [number, number],
@@ -252,7 +259,7 @@ export function bottomReserve(
   const revs = drawing?.revisions?.length ?? 0;
   const table = holes && !drawing?.holeTableAt ? holeTableShape(holes, size).h + 3 : 0;
   return (
-    TITLE_H +
+    titleH(drawing) +
     (bom?.length ? (bom.length + 1) * BOM_ROW + 3 : 0) +
     table +
     (revs ? (revs + 1) * BOM_ROW + 3 : 0) +
@@ -691,6 +698,8 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
 
   const prims: Prim[] = [];
   const views: PlacedView[] = [];
+  /** Cropped views' outlines (view mm), by key. */
+  const crops: Record<string, [number, number][]> = {};
   for (const v of drawing.views) {
     const key = viewKey(v);
     const p = projections[key];
@@ -705,9 +714,11 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
       for (let i = 0; i + 1 < line.length; i += 2) out.push(...at(line[i], line[i + 1]));
       return out;
     };
-    // Shortened views: the bands taken out aren't drawn.
+    // Shortened views: the bands taken out aren't drawn. Cropped views: only what's inside the crop.
+    const crop = v.crop ? cropOutline(v.crop, p.bounds) : null;
+    if (crop) crops[key] = crop;
     const draw = (line: number[], style: LineStyle) => {
-      for (const piece of clipped(p, line)) prims.push({ kind: "path", points: map(piece), style });
+      for (const piece of clipped(p, line)) for (const kept of crop ? clipToOutline(piece, crop) : [piece]) prims.push({ kind: "path", points: map(kept), style });
     };
     if (p.cutFaces) {
       // (Spaced evenly on paper, so a detail view drawn bigger isn't hatched more coarsely.)
@@ -732,7 +743,9 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
       if (drawing.hiddenLines) for (const seg of t.side) draw(seg, "hidden");
     }
     const [w, h] = paperSize(p, sc);
-    const box: PlacedView["box"] = [centre[0] - w / 2, centre[1] - h / 2, centre[0] + w / 2, centre[1] + h / 2];
+    const whole: PlacedView["box"] = [centre[0] - w / 2, centre[1] - h / 2, centre[0] + w / 2, centre[1] + h / 2];
+    // (A cropped view takes up only its crop, within the view.)
+    const box: PlacedView["box"] = crop ? croppedBox(whole, outlineBox(crop), at) : whole;
     if (p.shorten?.length) prims.push(...breakSymbols(p, sc, at, box));
     // A view at its own scale says so underneath (in its name, for views that have one).
     const ownNote = differs(key) ? `SCALE ${scaleLabel(sc)}` : null;
@@ -801,6 +814,7 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
   const holeHost = holeKey ? views.find((v) => v.key === holeKey) : undefined;
   if (holeHost) {
     for (const h of holes) {
+      if (!cropKeeps([h.at], crops[holeKey!] ?? null)) continue;
       const [x, y] = toSheet(holeHost, projections[holeKey!]!, holeHost.scale, h.at[0], h.at[1]);
       const r = (h.diameter / 2) * holeHost.scale;
       prims.push({ kind: "text", x: x + r * 0.7 + 0.8, y: y + r * 0.7 + 0.8, text: h.tag, size: 2.5, anchor: "start" });
@@ -814,10 +828,14 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
     const p = projections[dim.view];
     if (!view || !p) continue;
     const resolved = resolveDim(dim, p);
+    // (On a cropped view, a dimension of what's all outside the crop isn't shown.)
+    if (!cropKeeps([resolved.a, resolved.b, resolved.c, resolved.d].filter((q): q is [number, number] => !!q), crops[dim.view] ?? null)) continue;
     const at = ([x, y]: [number, number]) => toSheet(view, p, view.scale, x, y);
     const drawn = drawDimension(dim, resolved, at, measureDim(dim, resolved), dim.callout ? calloutText(p, resolved.a, tapsFor(dim.view) ?? [], { ...dimStyle(drawing), ...(dim.places !== undefined ? { places: dim.places } : {}) }) : null, dimStyle(drawing));
     const from = prims.length;
-    prims.push(...drawn.prims);
+    prims.push(...(drawing.decimalComma ? drawn.prims.map(withComma) : drawn.prims));
+    // Inspection balloons: each dimension numbered, beside its number.
+    if (drawing.inspection) prims.push(...inspectionBalloon(dims.length + 1, drawn.label, drawn.prims));
     dims.push({
       id: dim.id,
       label: drawn.label,
@@ -837,6 +855,12 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
   // Notes: lines of text from their top-left corner.
   const notes: SheetLayout["notes"] = [];
   for (const note of drawing.notes ?? []) {
+    if (note.table) {
+      const drawn = tablePrims(note.at, note.table);
+      prims.push(...drawn.prims);
+      notes.push({ id: note.id, box: drawn.box });
+      continue;
+    }
     if (note.symbol) {
       const drawn = symbolPrims(note, note.symbol);
       prims.push(...drawn.prims);
@@ -943,8 +967,76 @@ function balloonPrims(host: PlacedView, p: ViewProjection, scale: number, balloo
 }
 
 /** How a drawing's dimensions read (decimal places, both units). */
-export function dimStyle(d: Pick<Drawing, "places" | "dualUnits" | "dimArrows">): DimStyle {
-  return { ...(d.places !== undefined ? { places: d.places } : {}), ...(d.dualUnits ? { dual: true } : {}), ...(d.dimArrows ? { arrows: d.dimArrows } : {}) };
+export function dimStyle(d: Pick<Drawing, "places" | "dualUnits" | "dimArrows"> & Partial<Pick<Drawing, "standard">>): DimStyle {
+  return { ...(d.places !== undefined ? { places: d.places } : {}), ...(d.dualUnits ? { dual: true } : {}), ...(d.dimArrows ? { arrows: d.dimArrows } : {}), ...(d.standard === "ansi" ? { unidirectional: true } : {}) };
+}
+
+/** A shape's text with a comma for the decimal point ("12.5" → "12,5"); other shapes as they are. */
+export function withComma(p: Prim): Prim {
+  return p.kind === "text" && /\d\.\d/.test(p.text) ? { ...p, text: p.text.replace(/(\d)\.(?=\d)/g, "$1,") } : p;
+}
+
+/** Size of an inspection balloon (paper mm). */
+export const INSPECTION_RADIUS = 2.6;
+
+/**
+ * An inspection balloon: the dimension's number `n` in a small circle just
+ * past the right end of its text (the text nearest its label), for checking
+ * reports.
+ */
+export function inspectionBalloon(n: number, label: [number, number], drawn: Prim[]): Prim[] {
+  const texts = drawn.filter((q): q is Extract<Prim, { kind: "text" }> => q.kind === "text");
+  const near = texts.reduce<Extract<Prim, { kind: "text" }> | null>((best, t) => (!best || Math.hypot(t.x - label[0], t.y - label[1]) < Math.hypot(best.x - label[0], best.y - label[1]) ? t : best), null);
+  let cx = label[0] + 3;
+  let cy = label[1] + 1.2;
+  if (near) {
+    const w = textWidth(near.text, near.size);
+    const a = ((near.rotate ?? 0) * Math.PI) / 180;
+    const right = near.anchor === "start" ? w : near.anchor === "middle" ? w / 2 : 0;
+    const d = right + INSPECTION_RADIUS + 1;
+    const lift = near.size * 0.375;
+    cx = near.x + d * Math.cos(a) - lift * Math.sin(a);
+    cy = near.y + d * Math.sin(a) + lift * Math.cos(a);
+  }
+  return [circle(cx, cy, INSPECTION_RADIUS, "thin"), { kind: "text", x: cx, y: cy - 0.9, text: String(n), size: 2.5, anchor: "middle" }];
+}
+
+/** Paper mm of a table's rows, and the room either side of a cell's text. */
+export const TABLE_ROW = 6;
+const TABLE_PAD = 2;
+const TABLE_TEXT = 3;
+
+/** A table from its top-left corner (sheet mm): rows of cells, the first row bold, columns as wide as their widest text. */
+export function tablePrims(at: [number, number], rows: string[][]): { prims: Prim[]; box: [number, number, number, number] } {
+  const cols = Math.max(1, ...rows.map((r) => r.length));
+  const widths = Array.from({ length: cols }, (_, c) => Math.max(8, ...rows.map((r, i) => textWidth(r[c] ?? "", TABLE_TEXT) * (i === 0 ? 1.08 : 1) + 2 * TABLE_PAD)));
+  const W = widths.reduce((a, b) => a + b, 0);
+  const H = Math.max(1, rows.length) * TABLE_ROW;
+  const [x0, y1] = at;
+  const y0 = y1 - H;
+  const out: Prim[] = [rect(x0, y0, x0 + W, y1, "border")];
+  for (let i = 1; i < rows.length; i++) out.push(line(x0, y1 - i * TABLE_ROW, x0 + W, y1 - i * TABLE_ROW));
+  let x = x0;
+  for (let c = 0; c < cols; c++) {
+    if (c > 0) out.push(line(x, y0, x, y1));
+    rows.forEach((r, i) => {
+      const t = r[c] ?? "";
+      if (t) out.push({ kind: "text", x: x + TABLE_PAD, y: y1 - (i + 1) * TABLE_ROW + 1.8, text: t, size: TABLE_TEXT, anchor: "start", ...(i === 0 ? { bold: true } : {}) });
+    });
+    x += widths[c];
+  }
+  return { prims: out, box: [x0, y0, x0 + W, y1] };
+}
+
+/** A cropped view's outline on the sheet: the crop's box (view mm) mapped there, kept within the whole view's. */
+function croppedBox(whole: [number, number, number, number], crop: [number, number, number, number], at: (x: number, y: number) => [number, number]): [number, number, number, number] {
+  const a = at(crop[0], crop[1]);
+  const b = at(crop[2], crop[3]);
+  const x0 = Math.max(whole[0], Math.min(a[0], b[0]));
+  const y0 = Math.max(whole[1], Math.min(a[1], b[1]));
+  const x1 = Math.min(whole[2], Math.max(a[0], b[0]));
+  const y1 = Math.min(whole[3], Math.max(a[1], b[1]));
+  return x1 > x0 && y1 > y0 ? [x0, y0, x1, y1] : whole;
 }
 
 /** Where a point of a view (in its own mm) lands on the sheet. */
@@ -1041,10 +1133,23 @@ function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, 
   ], 3.2);
   out.push(...projectionSymbol(x0 + 145, y0 + 5, drawing.projection === "third"));
 
+  // The user's own entries (finish, checked by…), in a row of equal cells on top of the title block.
+  const fields = (drawing.fields ?? []).slice(0, MAX_TITLE_FIELDS);
+  if (fields.length) {
+    const fy = y0 + TITLE_H;
+    const cw = TITLE_W / fields.length;
+    out.push(rect(x0, fy, x1, fy + FIELDS_H, "border"));
+    fields.forEach((f, i) => {
+      const cx = x0 + i * cw;
+      if (i > 0) out.push(line(cx, fy, cx, fy + FIELDS_H));
+      out.push(label(cx, fy + FIELDS_H, f.label.toUpperCase(), cw), value(cx, fy + 1.5, f.value, cw, 3.2));
+    });
+  }
+
   // Notes, just above the title block.
   // Parts list (assemblies), just above the title block: item, part, quantity — and part number,
   // description and weight each when any part has them.
-  let top = y0 + TITLE_H;
+  let top = y0 + titleH(drawing);
   const bom = info.bom ?? [];
   if (bom.length) {
     const rows = [...bom].reverse();
@@ -1098,7 +1203,28 @@ function frameAndTitle(size: [number, number], drawing: Drawing, scale: number, 
 
   // Revisions, above that: letter, what changed, date (newest at the top).
   const revs = drawing.revisions ?? [];
-  if (revs.length) {
+  // (With who made and approved them when any revision says: columns of their own, so older tables are unchanged.)
+  const who = revs.some((r) => r.by || r.approved);
+  if (revs.length && who) {
+    const h = (revs.length + 1) * BOM_ROW;
+    const edges = [x0, x0 + 15, x1 - 75, x1 - 50, x1 - 25, x1];
+    out.push(rect(x0, top, x1, top + h, "border"));
+    for (let i = 1; i <= revs.length; i++) out.push(line(x0, top + i * BOM_ROW, x1, top + i * BOM_ROW));
+    for (const cx of edges.slice(1, -1)) out.push(line(cx, top, cx, top + h));
+    const mid = (c: number) => (edges[c] + edges[c + 1]) / 2;
+    const room = (c: number) => edges[c + 1] - edges[c] - 3;
+    revs.forEach((r, i) => {
+      const y = top + i * BOM_ROW + 1.8;
+      out.push({ kind: "text", x: mid(0), y, text: r.rev, size: 3, anchor: "middle" });
+      out.push({ kind: "text", x: edges[1] + 2, y, text: r.description, size: fitSize(r.description, room(1), 3), anchor: "start" });
+      for (const [c, t] of [[2, r.date], [3, r.by ?? ""], [4, r.approved ?? ""]] as const) if (t) out.push({ kind: "text", x: mid(c), y, text: t, size: fitSize(t, room(c), 3), anchor: "middle" });
+    });
+    const hy = top + revs.length * BOM_ROW + 1.8;
+    out.push({ kind: "text", x: mid(0), y: hy, text: "REV", size: 2.5, anchor: "middle", bold: true });
+    out.push({ kind: "text", x: edges[1] + 2, y: hy, text: "DESCRIPTION", size: 2.5, anchor: "start", bold: true });
+    for (const [c, t] of [[2, "DATE"], [3, "BY"], [4, "APPROVED"]] as const) out.push({ kind: "text", x: mid(c), y: hy, text: t, size: 2.5, anchor: "middle", bold: true });
+    top += h;
+  } else if (revs.length) {
     const h = (revs.length + 1) * BOM_ROW;
     const cols = [x0 + 15, x1 - 25];
     out.push(rect(x0, top, x1, top + h, "border"));

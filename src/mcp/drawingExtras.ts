@@ -5,7 +5,11 @@
  * dimension or a note. The same pure drawing edits as the app's drawing tab
  * (src/drawing), so what Claude makes opens there just the same.
  */
-import { putNote, removeDimension, removeNote, updateDrawing } from "../drawing/drawing";
+import { addRevision, parseFields, putNote, removeDimension, removeNote, setStandard, updateDrawing } from "../drawing/drawing";
+import { cropRel, MAX_CROP_POINTS, withoutCrop } from "../drawing/crop";
+import { viewKey } from "../drawing/sections";
+import { drawingDate } from "../drawing/sheetSource";
+import type { ViewCrop } from "../model/types";
 import { addPage, addedSheetMessage, changePage, pageIds, pageOf, removePage } from "../drawing/pages";
 import { SHEETS, toSheet } from "../drawing/sheet";
 import { GDT_CHARACTERISTICS, nextDatumLetter } from "../drawing/symbols";
@@ -178,6 +182,104 @@ export const DRAWING_EXTRA_TOOLS: ToolDef[] = [
       const sh = await commitDrawing(s, updateDrawing(s.doc, d.id, () => changed), changed, pageId, "delete them");
       const parts = [dims.length && `${dims.length} dimension${dims.length === 1 ? "" : "s"}`, notes.length && `${notes.length} note${notes.length === 1 ? "" : "s"}`].filter(Boolean);
       return say(`Deleted ${parts.join(" and ")} from ${d.name}${pageIds(d).length > 1 ? `, sheet ${pageIds(d).indexOf(pageId) + 1}` : ""}.`, ...sheetLines(s, changed, sh));
+    },
+  },
+  {
+    name: "add_revision",
+    title: "Add a revision to a drawing",
+    description:
+      'Add a row to the drawing\'s revision table (above the title block; the title block\'s REV then shows it). "description": what changed. Optional "rev" (default the next letter: A, B…), "date" (default today), "by" (who made the change) and "approved" (who approved it) — the table gets BY and APPROVED columns once any revision has them.',
+    inputSchema: { type: "object", properties: { drawing: DRAWING_REF, description: { type: "string" }, rev: { type: "string" }, date: { type: "string" }, by: { type: "string" }, approved: { type: "string" } }, required: ["description"] },
+    run: async (s, a) => {
+      noExtras(a, ["drawing", "description", "rev", "date", "by", "approved"], "add_revision");
+      const d = findDrawing(s, a.drawing);
+      const opt = (v: unknown, where: string) => (v === undefined ? undefined : text(v, where));
+      const changed = addRevision(d, newId("rv"), { description: text(a.description, "description"), date: opt(a.date, "date") ?? drawingDate(), rev: opt(a.rev, "rev"), by: opt(a.by, "by"), approved: opt(a.approved, "approved") });
+      const sh = await commitDrawing(s, updateDrawing(s.doc, d.id, () => changed), changed, pageIds(changed)[0], "add it");
+      const r = changed.revisions![changed.revisions!.length - 1];
+      return say(`Added revision ${r.rev} (${r.date}) to ${d.name}: "${r.description}". The title block's REV now shows ${r.rev}.`, ...sheetLines(s, changed, sh));
+    },
+  },
+  {
+    name: "crop_view",
+    title: "Crop a drawing view",
+    description:
+      'Crop a view so only part of it is drawn (Onshape\'s Crop view): "corners": two opposite corners of a rectangle, or "outline": three or more points round a closed shape ("smooth": true for a smooth curve through them). Each point is a model point [x, y, z] (mm) or [across, up] in the view\'s own mm, as describe_drawing gives the view\'s extent. Dimensions of what\'s all outside the crop are hidden. "remove": true takes the crop off.',
+    inputSchema: { type: "object", properties: { drawing: DRAWING_REF, sheet: SHEET_REF, view: { type: "string" }, corners: { type: "array", items: {} }, outline: { type: "array", items: {} }, smooth: { type: "boolean" }, remove: { type: "boolean" } }, required: ["view"] },
+    run: async (s, a) => {
+      noExtras(a, ["drawing", "sheet", "view", "corners", "outline", "smooth", "remove"], "crop_view");
+      const d = findDrawing(s, a.drawing);
+      const pageId = pageIdFor(d, a.sheet);
+      const sh = await sheetOf(s, d, pageId);
+      const key = viewKeyFor(sh.page, a.view, "view");
+      const view = sh.page.views.find((v) => viewKey(v) === key);
+      const p = sh.projections[key];
+      if (!view || !p?.bounds) throw new InputError(`${viewName(sh.page, key)} has nothing drawn on it to crop.`);
+      let crop: ViewCrop | null = null;
+      const remove = bool(a.remove, "remove");
+      if (remove) {
+        if (a.corners !== undefined || a.outline !== undefined) throw new InputError('Give "remove": true on its own, or "corners"/"outline" to crop.');
+        if (!view.crop) throw new InputError(`${viewName(sh.page, key)} isn't cropped.`);
+      } else {
+        if ((a.corners === undefined) === (a.outline === undefined)) throw new InputError('Give "corners" (two opposite corners) or "outline" (three or more points), or "remove": true.');
+        const pts = (raw: unknown, where: string) => list(raw, where).map((q, i) => cropRel(p.bounds!, viewPoint(sh.page, key, sh.projections, q, s, `${where}[${i}]`)));
+        if (a.corners !== undefined) {
+          const c = pts(a.corners, "corners");
+          if (c.length !== 2) throw new InputError("corners: give exactly two opposite corners.");
+          if (Math.abs(c[0][0] - c[1][0]) < 1e-4 || Math.abs(c[0][1] - c[1][1]) < 1e-4) throw new InputError("corners: the two corners must be apart both across and up.");
+          crop = { a: c[0], b: c[1] };
+        } else {
+          const o = pts(a.outline, "outline");
+          if (o.length < 3 || o.length > MAX_CROP_POINTS) throw new InputError(`outline: give 3 to ${MAX_CROP_POINTS} points.`);
+          crop = { points: o, ...(bool(a.smooth, "smooth") ? { smooth: true as const } : {}) };
+        }
+      }
+      const changed = changePage(d, pageId, (pg) => ({ ...pg, views: pg.views.map((v) => (v.id !== view.id ? v : crop ? { ...v, crop } : withoutCrop(v))) }));
+      const after = await commitDrawing(s, updateDrawing(s.doc, d.id, () => changed), changed, pageId, remove ? "remove the crop" : "crop it");
+      return say(remove ? `Took the crop off ${viewName(sh.page, key)}.` : `Cropped ${viewName(sh.page, key)}: only what's inside is drawn now.`, ...sheetLines(s, changed, after));
+    },
+  },
+  {
+    name: "set_drawing_style",
+    title: "Set a drawing's standard and title block entries",
+    description:
+      'Drawing-wide settings: "standard": "iso" (first-angle, numbers along dimension lines) or "ansi" (third-angle, numbers always read across); "decimal_comma": true for 12,5; "inspection_balloons": true numbers every dimension in a small balloon for a checking report; "title_fields": up to 6 entries of your own for a row on top of the title block, e.g. [{"label": "Finish", "value": "Anodised"}, {"label": "Checked by", "value": "JS"}] ([] removes them).',
+    inputSchema: { type: "object", properties: { drawing: DRAWING_REF, standard: { type: "string", enum: ["iso", "ansi"] }, decimal_comma: { type: "boolean" }, inspection_balloons: { type: "boolean" }, title_fields: { type: "array", items: { type: "object" } } } },
+    run: async (s, a) => {
+      noExtras(a, ["drawing", "standard", "decimal_comma", "inspection_balloons", "title_fields"], "set_drawing_style");
+      const d = findDrawing(s, a.drawing);
+      let next: Drawing = d;
+      const said: string[] = [];
+      if (a.standard !== undefined) {
+        const std = oneOf(a.standard, ["iso", "ansi"] as const, "standard");
+        next = setStandard(next, std);
+        said.push(std === "ansi" ? "ANSI (third-angle)" : "ISO (first-angle)");
+      }
+      const flag = (raw: unknown, key: "decimalComma" | "inspection", where: string, words: string) => {
+        if (raw === undefined) return;
+        const on = bool(raw, where);
+        const { [key]: _old, ...rest } = next;
+        next = on ? { ...rest, [key]: true } : (rest as Drawing);
+        said.push(`${words} ${on ? "on" : "off"}`);
+      };
+      flag(a.decimal_comma, "decimalComma", "decimal_comma", "decimal comma");
+      flag(a.inspection_balloons, "inspection", "inspection_balloons", "inspection balloons");
+      if (a.title_fields !== undefined) {
+        const raw = list(a.title_fields, "title_fields", { allowEmpty: true });
+        raw.forEach((f, i) => {
+          const o = object(f, `title_fields[${i}]`);
+          noExtras(o, ["label", "value"], `title_fields[${i}]`);
+          text(o.label, `title_fields[${i}].label`);
+        });
+        if (raw.length > 6) throw new InputError("title_fields: at most 6 entries.");
+        const { fields: _old, ...rest } = next;
+        next = { ...rest, ...parseFields(raw.map((f) => ({ ...(f as object), value: (f as Record<string, unknown>).value ?? "" }))) };
+        said.push(raw.length ? `${raw.length} title block entr${raw.length === 1 ? "y" : "ies"} of your own` : "no title block entries of your own");
+      }
+      if (!said.length) throw new InputError('Give at least one of "standard", "decimal_comma", "inspection_balloons", "title_fields".');
+      const changed = next;
+      const sh = await commitDrawing(s, updateDrawing(s.doc, d.id, () => changed), changed, pageIds(changed)[0], "change it");
+      return say(`${d.name}: ${said.join(", ")}.`, ...sheetLines(s, changed, sh));
     },
   },
 ];

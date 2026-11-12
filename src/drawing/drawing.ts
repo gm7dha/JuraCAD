@@ -6,6 +6,9 @@ import type { Shortening, BreakOut, DetailView, Dimension, DimPoint, Drawing, Dr
 import { hostKindOf, SECTION_HOSTS, viewKey } from "./sections";
 import { FIRST_PAGE, PAGE_FIELDS } from "./pages";
 import { ARROWABLE, FITTABLE } from "./dimensions";
+import { parseCrop } from "./crop";
+import { parseTable } from "./tables";
+import type { TitleField } from "../model/types";
 
 const drawingsOf = (doc: JuraCADDocument) => doc.drawings ?? [];
 
@@ -148,6 +151,30 @@ export function nextRevision(d: Pick<Drawing, "revisions">): string {
   return chars.join("");
 }
 
+/** Add a revision (the next letter and today's date unless given) — the title block's REV then shows it. */
+export function addRevision(d: Drawing, id: string, r: { description: string; date: string; rev?: string; by?: string; approved?: string }): Drawing {
+  const row: DrawingRevision = {
+    id,
+    rev: (r.rev?.trim() || nextRevision(d)).slice(0, 8),
+    description: r.description.slice(0, 200),
+    date: r.date.slice(0, 20),
+    ...(r.by?.trim() ? { by: r.by.trim().slice(0, 40) } : {}),
+    ...(r.approved?.trim() ? { approved: r.approved.trim().slice(0, 40) } : {}),
+  };
+  return { ...d, revisions: [...(d.revisions ?? []), row].slice(-20) };
+}
+
+/**
+ * Choose the drawing standard: ISO (missing) or ANSI. The projection follows
+ * (ISO first-angle, ANSI third-angle, as Onshape's templates do) and the
+ * lined-up views go back to their places for it.
+ */
+export function setStandard(d: Drawing, standard: "iso" | "ansi"): Drawing {
+  const { standard: _s, projection: _p, ...rest } = d;
+  const next: Drawing = standard === "ansi" ? { ...rest, standard: "ansi", projection: "third" } : rest;
+  return (next.projection === "third") === (d.projection === "third") ? next : arrangeLinedUp(next);
+}
+
 export function removeNote(d: Drawing, id: string): Drawing {
   const left = (d.notes ?? []).filter((x) => x.id !== id);
   const { notes: _old, ...rest } = d;
@@ -262,13 +289,13 @@ export function parseDrawings(raw: unknown): Drawing[] {
           id = "A";
         }
         if (!id || !sections.some((s) => s.id === id) || views.some((x) => x.kind === "section" && x.section === id)) continue;
-        views.push({ id: rv.id, kind: "section", section: id, ...(at ? { at } : {}), ...own });
+        views.push({ id: rv.id, kind: "section", section: id, ...(at ? { at } : {}), ...own, ...cropOf(rv) });
         continue;
       }
       if (rv.kind === "detail") {
         const id = typeof rv.detail === "string" ? rv.detail : null;
         if (!id || !details.some((x) => x.id === id) || views.some((x) => x.kind === "detail" && x.detail === id)) continue;
-        views.push({ id: rv.id, kind: "detail", detail: id, ...(at ? { at } : {}) });
+        views.push({ id: rv.id, kind: "detail", detail: id, ...(at ? { at } : {}), ...cropOf(rv) });
         continue;
       }
       if (!VIEW_KINDS.includes(rv.kind as ViewKind)) continue;
@@ -277,7 +304,7 @@ export function parseDrawings(raw: unknown): Drawing[] {
       // (One projected from a view that isn't there is dropped, not read as the sheet's own view.)
       if (!of && rv.parent !== undefined && !(typeof rv.parent === "string" && bases.has(rv.parent) && rv.parent !== rv.id)) continue;
       const part = of ? { source: of } : typeof rv.parent === "string" ? { parent: rv.parent } : {};
-      const view: DrawingView = { id: rv.id, kind: rv.kind as ViewKind, ...(at ? { at } : {}), ...own, ...part };
+      const view: DrawingView = { id: rv.id, kind: rv.kind as ViewKind, ...(at ? { at } : {}), ...own, ...part, ...cropOf(rv) };
       if (views.some((x) => viewKey(x) === viewKey(view) || (part.source && x.id === rv.id))) continue;
       views.push(view);
     }
@@ -309,7 +336,8 @@ export function parseDrawings(raw: unknown): Drawing[] {
         if (typeof n.id !== "string" || !at || typeof n.text !== "string") return null;
         const leader = Array.isArray(n.leader) && n.leader.length === 2 && n.leader.every(num) ? (n.leader as [number, number]) : null;
         const symbol = parseSymbol(n.symbol);
-        return { id: n.id, at, text: n.text.slice(0, 2000), ...(symbol ? { symbol } : {}), ...(leader ? { leader } : {}) };
+        const table = symbol ? null : parseTable(n.table);
+        return { id: n.id, at, text: n.text.slice(0, 2000), ...(symbol ? { symbol } : {}), ...(leader ? { leader } : {}), ...(table ? { table } : {}) };
       })
       .filter((x): x is DrawingNote => x !== null);
     const revisions = (Array.isArray(r.revisions) ? r.revisions : [])
@@ -317,7 +345,9 @@ export function parseDrawings(raw: unknown): Drawing[] {
         const v = (raw ?? {}) as Record<string, unknown>;
         if (typeof v.id !== "string") return null;
         const str = (x: unknown, n: number) => (typeof x === "string" ? x.slice(0, n) : "");
-        return { id: v.id, rev: str(v.rev, 8), description: str(v.description, 200), date: str(v.date, 20) };
+        const by = str(v.by, 40);
+        const approved = str(v.approved, 40);
+        return { id: v.id, rev: str(v.rev, 8), description: str(v.description, 200), date: str(v.date, 20), ...(by ? { by } : {}), ...(approved ? { approved } : {}) };
       })
       .filter((x): x is DrawingRevision => x !== null)
       .slice(0, 20);
@@ -352,6 +382,10 @@ export function parseDrawings(raw: unknown): Drawing[] {
       ...(r.tangentEdges === false ? { tangentEdges: false } : {}),
       ...parseFit(r.fit),
       ...(Array.isArray(r.holeTableAt) && r.holeTableAt.length === 2 && r.holeTableAt.every(num) ? { holeTableAt: r.holeTableAt as [number, number] } : {}),
+      ...(r.standard === "ansi" ? { standard: "ansi" as const } : {}),
+      ...(r.decimalComma === true ? { decimalComma: true as const } : {}),
+      ...parseFields(r.fields),
+      ...(r.inspection === true ? { inspection: true as const } : {}),
       ...parsePages(r),
     });
   }
@@ -389,6 +423,25 @@ function parsePages(r: Record<string, unknown>): Pick<Drawing, "pages"> {
     pages.push(page as DrawingPage);
   }
   return pages.length ? { pages } : {};
+}
+
+/** A view's saved crop, as a field to spread into it. */
+function cropOf(rv: Record<string, unknown>): Pick<DrawingView, "crop"> {
+  const crop = parseCrop(rv.crop);
+  return crop ? { crop } : {};
+}
+
+/** The user's own title block entries (see Drawing.fields), at most 6. */
+export function parseFields(raw: unknown): Pick<Drawing, "fields"> {
+  if (!Array.isArray(raw)) return {};
+  const fields: TitleField[] = [];
+  for (const f of raw.slice(0, 6)) {
+    const r = (f ?? {}) as Record<string, unknown>;
+    const label = typeof r.label === "string" ? r.label.trim().slice(0, 30) : "";
+    const value = typeof r.value === "string" ? r.value.slice(0, 80) : "";
+    if (label) fields.push({ label, value });
+  }
+  return fields.length ? { fields } : {};
 }
 
 /** A saved part or assembly to draw: undefined when there's none saved (or it's not one), null when saved as none. */

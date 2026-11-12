@@ -3165,6 +3165,10 @@ kbd {
   flex: 0 0 74px;
 }
 
+.revision-row .revision-who {
+  flex: 0 0 52px;
+}
+
 /* Toolbar buttons standing for a family of tools, with a ▾ list of the others */
 .tool-split {
   display: flex;

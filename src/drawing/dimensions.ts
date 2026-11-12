@@ -260,6 +260,8 @@ export interface DimStyle {
   dual?: boolean;
   /** The drawing's arrows (Drawing.dimArrows); missing = automatic. */
   arrows?: "inside" | "outside";
+  /** ANSI: lengths' numbers always read across the sheet, in a gap in the dimension line; missing = ISO (along the line). */
+  unidirectional?: boolean;
 }
 
 /** A number with exactly `places` decimals (no "-0"). */
@@ -984,6 +986,7 @@ function drawPlain(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: num
     const e: P2 = [q[0] + across[0] * sign * OVERSHOOT, q[1] + across[1] * sign * OVERSHOOT];
     prims.push({ kind: "path", points: [s[0], s[1], e[0], e[1]], style: "thin" });
   }
+  const lineAt = prims.length;
   prims.push({ kind: "path", points: [la[0], la[1], lb[0], lb[1]], style: "thin" });
   const dir: P2 = [lb[0] - la[0], lb[1] - la[1]];
   const dirLen = Math.hypot(dir[0], dir[1]);
@@ -1030,6 +1033,23 @@ function drawPlain(dim: Dimension, r: ResolvedDim, at: (p: P2) => P2, value: num
       const [p, q] = [at(edge), at(from)];
       prims.push({ kind: "path", points: [p[0], p[1], q[0], q[1]], style: "thin" });
     }
+  }
+  if (style.unidirectional && angle !== 0 && !offLine) {
+    // ANSI: the number reads across the sheet, in a gap left in the dimension line.
+    const w = textWidth(text, TEXT_SIZE) + stackWidth(fit?.stack ?? null);
+    const label: P2 = [mid[0], mid[1] - TEXT_SIZE * 0.35];
+    const L = Math.hypot(lb[0] - la[0], lb[1] - la[1]);
+    if (L > EPS) {
+      const u: P2 = [(lb[0] - la[0]) / L, (lb[1] - la[1]) / L];
+      const half = Math.min(Math.abs(u[0]) > 1e-9 ? (w / 2 + 1) / Math.abs(u[0]) : Infinity, Math.abs(u[1]) > 1e-9 ? (TEXT_SIZE * 0.75) / 2 / Math.abs(u[1]) + 1 : Infinity);
+      const tm = (mid[0] - la[0]) * u[0] + (mid[1] - la[1]) * u[1];
+      const pieces: Prim[] = [];
+      if (tm - half > 0) pieces.push({ kind: "path", points: [la[0], la[1], la[0] + u[0] * (tm - half), la[1] + u[1] * (tm - half)], style: "thin" });
+      if (tm + half < L) pieces.push({ kind: "path", points: [la[0] + u[0] * (tm + half), la[1] + u[1] * (tm + half), lb[0], lb[1]], style: "thin" });
+      prims.splice(lineAt, 1, ...pieces);
+    }
+    prims.push(...number({ kind: "text", x: label[0] - (fit?.stack ? stackWidth(fit.stack) / 2 : 0), y: label[1], text, size: TEXT_SIZE, anchor: "middle" }));
+    return { prims, label, arrows: inside ? "inside" : "outside" };
   }
   const raise = 1.2 + (offLine ? lift : 0);
   const label: P2 = [mid[0] + up[0] * raise, mid[1] + up[1] * raise];
