@@ -14,7 +14,7 @@
  * spine with contact, so the sections are scaled to keep touching it — it
  * takes one guide only (OpenCascade has nothing for several).
  */
-import { Vertex, cast, downcast, getOC, iterTopo, isShape3D, makePolygon, makeVertex, measureDistanceBetween, assembleWire, type Edge, type Face, type Shape3D, type Wire } from "replicad";
+import { Vertex, cast, downcast, getOC, iterTopo, isShape3D, makeBSplineApproximation, makeLine, makePolygon, makeVertex, measureDistanceBetween, assembleWire, type Edge, type Face, type Shape3D, type Wire } from "replicad";
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import { findChains, type Segment } from "../sketch/regions";
 import { chosenRegions } from "../sketch/areas";
@@ -73,7 +73,7 @@ type Section =
 
 /** How far each helper section goes, as a share of the distance to the neighbouring section. */
 const CLOSE = 0.01;
-const REACH = 0.1;
+const REACH = 0.05;
 /** A rounded tip: the angles round the quarter ellipse the neighbour is shrunk along. */
 const TIP_ANGLES = [25, 50, 70, 82];
 /** Magnitudes kept so helpers never pass halfway to the next section. */
@@ -117,6 +117,10 @@ function sectionOf(p: LoftProfile, ctx: LoftContext, surface: boolean, start: { 
     const face = ctx.face(shape, p.face);
     try {
       if (face.geomType !== "PLANE") throw new Error("A loft section must be a flat face; the picked one is curved now. Edit the loft.");
+      const loops = face.wires;
+      const holes = loops.length;
+      loops.forEach((w) => w.delete());
+      if (holes > 1) throw new Error("The picked face has a hole in it — lofts can only join plain outlines. Pick a face without holes, or draw the outline in a sketch.");
       const wire = face.clone().outerWire();
       const c = tuple(face.center);
       const normal = unit(tuple(face.normalAt(c)));
@@ -194,6 +198,90 @@ function lineUpCorners(sections: Section[]): void {
   }
 }
 
+/**
+ * Every section must sit on the path: the path passes through each outline's plane inside the outline's reach (a
+ * point: within a little of it). Refused plainly otherwise (OpenCascade would move the shapes onto the path).
+ */
+function offPath(sections: Section[], path: Wire): void {
+  const N = 512;
+  const pts = Array.from({ length: N + 1 }, (_, i) => tuple(path.pointAt(i / N)));
+  for (const s of sections) {
+    if (s.kind === "point") {
+      const gap = Math.min(...pts.map((p) => len(sub(p, s.at))));
+      if (gap > 0.05) throw new Error("The loft's point must lie on the path (at one of its ends).");
+      continue;
+    }
+    const reach = diag(s.wire) / 2 + 1e-3;
+    const side = pts.map((p) => dot(sub(p, s.centre), s.normal));
+    let ok = false;
+    for (let i = 0; i <= N && !ok; i++) {
+      const here = Math.abs(side[i]) < 1e-6 ? pts[i] : i < N && side[i] * side[i + 1] < 0 ? add(pts[i], mul(sub(pts[i + 1], pts[i]), side[i] / (side[i] - side[i + 1]))) : null;
+      if (here && len(sub(here, s.centre)) <= reach) ok = true;
+    }
+    if (!ok) throw new Error(`${s.name} doesn't sit on the path. Draw each shape on a plane the path passes through, round the place where it crosses.`);
+  }
+}
+
+/**
+ * Along a path: a reference direction carried from the first outline's start along the path without turning about it
+ * (projected step by step, a rotation-minimising frame), and each sketch outline restarted there — a circle or ellipse
+ * from that direction, a polygon at its corner nearest it, walked the same way round the path as the first. The new
+ * wires replace the old (which are freed) and are returned.
+ */
+function alignAlongPath(sections: Section[], path: Wire): Wire[] {
+  const N = 256;
+  const pts: Vec3[] = [];
+  const tans: Vec3[] = [];
+  for (let i = 0; i <= N; i++) {
+    pts.push(tuple(path.pointAt(i / N)));
+    tans.push(unit(tuple(path.tangentAt(i / N))));
+  }
+  const nearest = (q: Vec3) => {
+    let best = 0;
+    for (let i = 1; i <= N; i++) if (len(sub(pts[i], q)) < len(sub(pts[best], q))) best = i;
+    return best;
+  };
+  const first = sections.find((s): s is Extract<Section, { kind: "wire" }> => s.kind === "wire");
+  if (!first) return [];
+  const flat = (v: Vec3, n: Vec3) => unit(sub(v, mul(n, dot(v, n))));
+  const i0 = nearest(first.centre);
+  let r = flat(sub(tuple(first.wire.startPoint), first.centre), tans[i0]);
+  if (len(r) < 0.5) r = flat(Math.abs(tans[i0][2]) < 0.9 ? [0, 0, 1] : [1, 0, 0], tans[i0]);
+  // Carried both ways from the first outline's place.
+  const refs: Vec3[] = new Array(N + 1);
+  refs[i0] = r;
+  for (let i = i0 + 1; i <= N; i++) refs[i] = flat(refs[i - 1], tans[i]);
+  for (let i = i0 - 1; i >= 0; i--) refs[i] = flat(refs[i + 1], tans[i]);
+  const out: Wire[] = [];
+  for (const s of sections) {
+    if (s.kind !== "wire" || !s.pieces || s === first) continue;
+    const k = nearest(s.centre);
+    const frame = planeFrame(s.pieces.plane);
+    const d = flat(refs[k], s.normal);
+    let segs = s.pieces.segments;
+    if (segs.length > 1) {
+      if (turning(segs, s.pieces.plane, tans[k]) !== turning(first.pieces?.segments ?? segs, first.pieces?.plane ?? s.pieces.plane, tans[i0])) segs = reversedPieces(segs);
+      let best = 0;
+      let bestDot = -Infinity;
+      segs.forEach((sg, j) => {
+        if (!("from" in sg)) return;
+        const q = toWorld(frame, sg.from[0], sg.from[1]);
+        const k2 = dot(unit(sub(q, s.centre)), d);
+        if (k2 > bestDot) {
+          bestDot = k2;
+          best = j;
+        }
+      });
+      segs = [...segs.slice(best), ...segs.slice(0, best)];
+    }
+    const w = segmentsWire(segs, frame, 0, d);
+    s.wire.delete();
+    s.wire = w;
+    out.push(w);
+  }
+  return out;
+}
+
 /** A copy of a wire moved and (in its plane) made `grow` mm bigger all round. */
 function movedCopy(wire: Wire, by: Vec3, grow: number): Wire {
   let w = wire.clone().translate(by) as Wire;
@@ -258,13 +346,17 @@ function helpers(end: Section, next: Section, cond: LoftEnd, which: string): (Wi
     if (next.kind !== "wire") throw new Error(`A rounded tip needs a shape next to the point.`);
     const C = next.centre;
     const T = end.at;
-    // Along a quarter ellipse from the neighbour (angle 0) to the tip (90°): shrunk by cos, moved on by sin.
+    // Along a quarter ellipse from the neighbour (angle 0) to the tip (90°): shrunk by cos θ, moved on towards the tip
+    // by sin θ square to the shape and by 1 − cos θ across it — so an off-centre tip is never passed.
+    const n = next.normal;
+    const axial = mul(n, dot(sub(T, C), n));
+    const across = sub(sub(T, C), axial);
     return [...TIP_ANGLES]
       .reverse()
       .map((deg) => {
         const a = (deg * Math.PI) / 180;
         const w = next.wire.clone().scale(Math.cos(a), C) as Wire;
-        return w.translate(mul(sub(T, C), Math.sin(a))) as Wire;
+        return w.translate(add(mul(axial, Math.sin(a)), mul(across, 1 - Math.cos(a)))) as Wire;
       });
   }
   const m = Math.min(MOST_MAGNITUDE, Math.max(0.1, cond.magnitude ?? 1));
@@ -274,11 +366,83 @@ function helpers(end: Section, next: Section, cond: LoftEnd, which: string): (Wi
     dir = dot(sub(centreOf(next), end.centre), end.normal) >= 0 ? end.normal : mul(end.normal, -1);
   } else if (cond.kind === "matchTangent" || cond.kind === "matchCurvature") {
     if (!end.isFace) throw new Error(`“Carry on from the faces” is for a face of a part at the ${which}. Choose “Square to the shape” for a sketch.`);
-    dir = end.normal;
-    spread = end.spread ?? 0;
+    // Into the part (a pocket cut from the face): the neighbours carried on the other way.
+    const inward = dot(sub(centreOf(next), end.centre), end.normal) < 0;
+    dir = inward ? mul(end.normal, -1) : end.normal;
+    spread = (end.spread ?? 0) * (inward ? -1 : 1);
   } else throw new Error(`A rounded tip is for a point at the ${which}. Choose “Square to the shape” for a shape.`);
-  const steps = cond.kind === "matchCurvature" ? [CLOSE, REACH * m, Math.min(0.45, 2 * REACH * m)] : [CLOSE, Math.min(0.45, REACH * m)];
-  return steps.map((h) => movedCopy(end.wire, mul(dir, h * D), spread * h * D));
+  const far = Math.min(0.3, Math.max(3 * CLOSE, REACH * m));
+  const steps = cond.kind === "matchCurvature" ? [CLOSE, far / 2, far] : [CLOSE, far];
+  // Never shrunk past a quarter of the outline's size (it would turn inside out).
+  const most = diag(end.wire) / 8;
+  return steps.map((h) => movedCopy(end.wire, mul(dir, h * D), Math.sign(spread) * Math.min(Math.abs(spread * h * D), most)));
+}
+
+/**
+ * How fast the shape changes across a gap, 0 → 1: t − t(1 − t)^k at a conditioned start (flat there, so the sides leave
+ * square to the shape, then soon as a plain loft), its mirror image at a conditioned end. A bigger magnitude is a smaller
+ * k (fuller; k = 1 is t²); "very smoothly" is fuller still.
+ */
+function easing(start: LoftEnd | undefined, end: LoftEnd | undefined): (t: number) => number {
+  const k = (c: LoftEnd | undefined) => {
+    if (!c) return 0;
+    const m = Math.min(MOST_MAGNITUDE, Math.max(0.1, c.magnitude ?? 1));
+    return Math.min(40, Math.max(1, (c.kind === "matchCurvature" ? 2 : 4) / m));
+  };
+  const a = k(start);
+  const b = k(end);
+  const flat = (x: number, k: number) => (k ? x - x * (1 - x) ** k : x);
+  return (t) => (t <= 0 ? 0 : t >= 1 ? 1 : 1 - flat(1 - flat(t, a), b));
+}
+
+/** An edge as a line, or a cubic curve through 17 of its points. */
+function lighter(e: Edge): Edge {
+  const a = tuple(e.startPoint);
+  const b = tuple(e.endPoint);
+  const pts = Array.from({ length: 17 }, (_, i) => tuple(e.pointAt(i / 16)));
+  const chord = len(sub(b, a));
+  const straight = chord > 1e-9 && pts.every((p) => len(cross(sub(p, a), unit(sub(b, a)))) < 1e-6);
+  return straight ? makeLine(a, b) : makeBSplineApproximation(pts, { tolerance: 1e-4, degMax: 3, degMin: 3 });
+}
+
+/** Cut outlines across a gap between two parallel shapes. */
+const EASED_STATIONS = 6;
+
+/**
+ * End conditions between two parallel outlines, Onshape-like: the plain loft between them is cut across at eased
+ * places h(t) and each cut moved square to the shapes to t, so near a conditioned end the outline barely changes —
+ * the sides leave square to it (or, for a face, carrying on its neighbours' slope by growing as they do). The cuts
+ * are the plain loft's own outlines, so nothing reaches past either shape.
+ */
+function easedStations(plain: Shape3D, a: Extract<Section, { kind: "wire" }>, b: Extract<Section, { kind: "wire" }>, start: LoftEnd | undefined, end: LoftEnd | undefined): Wire[] {
+  const n = dot(sub(b.centre, a.centre), a.normal) >= 0 ? a.normal : mul(a.normal, -1);
+  const D = dot(sub(b.centre, a.centre), n);
+  const h = easing(start, end);
+  const size = diagOf(plain) * 2 + 10;
+  const slope = (sec: typeof a, c: LoftEnd | undefined, sign: number) => (c && (c.kind === "matchTangent" || c.kind === "matchCurvature") ? (sec.spread ?? 0) * sign : 0);
+  // Carrying on a face's neighbours: grown by (slope) × the extra distance the outline is held back by.
+  const sa = slope(a, start, dot(n, a.normal) >= 0 ? 1 : -1);
+  const sb = slope(b, end, dot(n, b.normal) <= 0 ? 1 : -1);
+  const out: Wire[] = [];
+  for (let k = 1; k <= EASED_STATIONS; k++) {
+    const t = k / (EASED_STATIONS + 1);
+    const s = h(t);
+    const cut = cutBy(plain, add(a.centre, mul(n, D * s)), n, size);
+    if (!Array.isArray(cut) || !cut.length) continue;
+    let w: Wire;
+    try {
+      // Each cut edge as a light curve (the cuts of OpenCascade's own lofts carry hundreds of poles, which makes the
+      // loft through them very slow); straight ones stay straight.
+      w = assembleWire(cut.map((e) => lighter(e)));
+    } catch {
+      continue;
+    }
+    w = w.translate(mul(n, D * (t - s))) as Wire;
+    const grow = sa * D * Math.max(0, t - s) * (1 - t) + sb * D * Math.max(0, s - t) * t;
+    if (Math.abs(grow) > 1e-6) w = movedCopy(w, [0, 0, 0], grow);
+    out.push(w);
+  }
+  return out;
 }
 
 /** A guide or path as one wire: a sketch's one run of curves, or picked part edges joined end to end. */
@@ -382,19 +546,27 @@ function guidedStation(base: Shape3D, guide: Wire, at: Vec3, n: Vec3): Wire | nu
   const samples = Array.from({ length: 240 }, (_, i) => tuple(wire.pointAt(i / 240)));
   const g = points.reduce((best, p) => (len(sub(p, c)) > 0 && minDist(samples, p) < minDist(samples, best) ? p : best), points[0]);
   const dir = unit(sub(g, c));
-  let reach = 0;
-  let bestDot = -2;
-  for (const q of samples) {
-    const d = sub(q, c);
-    const k = dot(unit(d), dir);
-    if (k > bestDot) {
-      bestDot = k;
-      reach = len(d);
-    }
+  // Stretched along the guide's direction only, from the outline's far side (which stays where it is): the side
+  // nearest the guide moves out (or in) to it, the rest by less and less.
+  const along = (q: Vec3) => dot(sub(q, c), dir);
+  const proj = samples.map(along);
+  const lo = Math.min(...proj);
+  const hi = Math.max(...proj);
+  const want = along(g);
+  if (hi - lo < 1e-9 || Math.abs(want - hi) < 1e-9) return wire;
+  const k = (want - lo) / (hi - lo);
+  const map = (q: Vec3): Vec3 => add(q, mul(dir, (along(q) - lo) * (k - 1)));
+  const edges = wire.edges.map((e) => {
+    if (e.geomType === "LINE") return makeLine(map(tuple(e.startPoint)), map(tuple(e.endPoint)));
+    const pts = Array.from({ length: 33 }, (_, i) => map(tuple(e.pointAt(i / 32))));
+    return makeBSplineApproximation(pts, { tolerance: 1e-5, degMax: 5, degMin: 3 });
+  });
+  wire.delete();
+  try {
+    return assembleWire(edges);
+  } catch {
+    return null;
   }
-  const want = len(sub(g, c));
-  if (reach < 1e-9 || want < 1e-9) return wire;
-  return wire.scale(want / reach, c) as Wire;
 }
 const minDist = (pts: Vec3[], p: Vec3) => pts.reduce((m, q) => Math.min(m, len(sub(q, p))), Infinity);
 const diagOf = (s: Shape3D) => {
@@ -419,6 +591,13 @@ export function buildLoft(feature: Pick<Feature, "sections" | "loft" | "loftRule
       lineUpCorners(sections);
       made.length = 0;
       for (const s of sections) if (s.kind === "wire") made.push(s.wire);
+    }
+    // Along a path, every outline starts where the first one's start is carried to (else the pipe twists between them).
+    const pathW = def.path ? curveWire(def.path, ctx, "path", centreOf(sections[0])) : null;
+    if (pathW) {
+      made.push(pathW);
+      offPath(sections, pathW);
+      if (!def.matchCorners) for (const w of alignAlongPath(sections, pathW)) made.push(w);
     }
     // Faces that must carry on from their neighbours.
     const wantsSpread = (cond: LoftEnd | undefined) => cond?.kind === "matchTangent" || cond?.kind === "matchCurvature";
@@ -447,13 +626,48 @@ export function buildLoft(feature: Pick<Feature, "sections" | "loft" | "loftRule
     if (guided && ruled) throw new Error("“Straight between shapes” can't follow a guide or path. Untick one of them.");
     // The order the loft goes through, with helper sections at its ends.
     const seq: (Wire | Vec3)[] = sections.map((s) => (s.kind === "wire" ? s.wire : s.at));
+    // Conditions that don't suit their section, refused in plain words.
+    for (const [cond, i, which] of [[def.start, 0, "start"], [def.end, sections.length - 1, "end"]] as const) {
+      if (!cond) continue;
+      const sec = sections[i];
+      if (cond.kind === "tangent" && sec.kind !== "point") throw new Error(`A rounded tip is for a point at the ${which}. Choose “Square to the shape” for a shape.`);
+      if (cond.kind !== "tangent" && sec.kind === "point") throw new Error(`A point at the ${which} can only have a rounded tip (or nothing).`);
+      if ((cond.kind === "matchTangent" || cond.kind === "matchCurvature") && !(sec.kind === "wire" && sec.isFace))
+        throw new Error(`“Carry on from the faces” is for a face of a part at the ${which}. Choose “Square to the shape” for a sketch.`);
+      // From a part's face back into the part, a shaped end would run along the part's own sides (nothing sensible to
+      // cut or add), so it's refused plainly.
+      const nb = sections[i === 0 ? 1 : sections.length - 2];
+      if (sec.kind === "wire" && sec.isFace && nb && dot(sub(centreOf(nb), sec.centre), sec.normal) < 0)
+        throw new Error(`The loft goes from the picked face into its part, so its ${which} can't be shaped there (it would run along the part's own sides). Leave the ${which} free, or draw the outline in a sketch on the face, a little inside its edges.`);
+    }
+    // End conditions between two parallel shapes (no guide, path or hand-lined corners): eased cuts of the plain loft.
+    const easable = (i: number, j: number, cond: LoftEnd | undefined) => {
+      const x = sections[i];
+      const y = sections[j];
+      return !!cond && cond.kind !== "tangent" && !def.guide && !def.path && !def.matchCorners && !ruled && x?.kind === "wire" && y?.kind === "wire" && Math.abs(dot(x.normal, y.normal)) > 0.9999 && Math.abs(dot(unit(sub(y.centre, x.centre)), x.normal)) > 0.05;
+    };
+    const last = sections.length - 1;
+    const easeStart = sections.length >= 2 && easable(0, 1, def.start);
+    const easeEnd = sections.length >= 2 && easable(last, last - 1, def.end);
+    if (easeStart || easeEnd) {
+      const plain = thruSections(seq, false, false, true, made);
+      made.push(plain);
+      const gaps = last === 1 ? [0] : [...(easeStart ? [0] : []), ...(easeEnd ? [last - 1] : [])];
+      for (const g of [...gaps].sort((x, y) => y - x)) {
+        const st = easeStart && g === 0 ? def.start : undefined;
+        const en = easeEnd && g === last - 1 ? def.end : undefined;
+        const ws = easedStations(plain, sections[g] as Extract<Section, { kind: "wire" }>, sections[g + 1] as Extract<Section, { kind: "wire" }>, st, en);
+        made.push(...ws);
+        seq.splice(g + 1, 0, ...ws);
+      }
+    }
     if (sections.length >= 2) {
-      if (def.end) {
+      if (def.end && !easeEnd) {
         const h = helpers(sections[sections.length - 1], sections[sections.length - 2], def.end, "end");
         for (const w of h) if (!Array.isArray(w)) made.push(w);
         seq.splice(seq.length - 1, 0, ...[...h].reverse());
       }
-      if (def.start) {
+      if (def.start && !easeStart) {
         const h = helpers(sections[0], sections[1], def.start, "start");
         for (const w of h) if (!Array.isArray(w)) made.push(w);
         seq.splice(1, 0, ...h);
@@ -499,11 +713,12 @@ export function buildLoft(feature: Pick<Feature, "sections" | "loft" | "loftRule
     }
     if (def.path) {
       const oc = getOC();
-      const path = curveWire(def.path, ctx, "path", centreOf(sections[0]));
-      made.push(path);
+      const path = pathW!;
       const builder = new oc.BRepOffsetAPI_MakePipeShell(path.wrapped);
       try {
         builder.SetMode(false);
+        // Sharp corners of the path: the pieces meet in a mitre, as Onshape's.
+        builder.SetTransitionMode(oc.BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RightCorner);
         for (const s of seq) {
           if (Array.isArray(s)) {
             const v = makeVertex(s);

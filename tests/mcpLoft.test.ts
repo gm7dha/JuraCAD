@@ -69,5 +69,9 @@ describe("loft from Claude", () => {
     await ok(s, "edit_feature", { feature: "Loft 1", end_point: null, sections: ["Base", "Cap"], end: "none", start: "normal", start_magnitude: 2 });
     expect(total(s)).toBeGreaterThan((10 / 3) * 700);
     expect(await fails(s, "edit_feature", { feature: "Loft 1", sections: ["Base"] })).toMatch(/at least two/);
+    // A start point put in front: the square start no longer suits the first section, so it's dropped.
+    await ok(s, "edit_feature", { feature: "Loft 1", start_point: [0, 0, -20] });
+    const lo = s.doc.features.find((f) => f.name === "Loft 1")!;
+    expect(lo.loft?.start).toBeUndefined();
   });
 });

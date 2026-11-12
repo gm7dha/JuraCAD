@@ -328,6 +328,14 @@ export function withoutPicking(f: Feature): Feature {
     const { picking: _p, ...mirror } = out.mirror;
     out = { ...out, mirror };
   }
+  if (out.loft?.picking !== undefined) {
+    const { picking: _p, ...loft } = out.loft;
+    if (Object.keys(loft).length) out = { ...out, loft };
+    else {
+      const { loft: _l, ...rest } = out;
+      out = rest;
+    }
+  }
   return out;
 }
 

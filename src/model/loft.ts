@@ -198,5 +198,8 @@ export function loftWithoutGone<F extends Pick<Feature, "sections" | "loft">>(f:
   const gone = (p: LoftProfile) =>
     "sketch" in p ? featureGone(p.sketch) : "face" in p ? partGone(p.face.partId) : p.point.sketchPoint ? featureGone(p.point.sketchPoint.sketch) : p.point.pick ? partGone(p.point.pick.partId) : false;
   if (!f.loft.profiles.some(gone)) return f;
-  return { ...f, ...withProfiles(f, f.loft.profiles.filter((p) => !gone(p))) };
+  const left = f.loft.profiles.filter((p) => !gone(p));
+  const patch = withProfiles(f, left);
+  // An end condition that no longer suits the section now at that end goes too.
+  return { ...f, ...patch, ...withLoftDef({ loft: patch.loft ?? undefined }, tidyEnds(patch.loft ?? undefined, left)) };
 }

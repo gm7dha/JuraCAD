@@ -2,7 +2,8 @@
 import { describe, expect, it } from "vitest";
 import { endChoices, loftClick, loftProfiles, loftSketches, profilesProblem, tidyEnds, toggleFace, withEndPoint, withProfiles } from "../src/model/loft";
 import { findDependents, withoutGone } from "../src/model/dependents";
-import { emptyDocument } from "../src/model/document";
+import { emptyDocument, withoutPicking } from "../src/model/document";
+import { featureForEngine } from "../src/kernel/buildInput";
 import { readDocumentFile, serializeDocument } from "../src/model/fileFormat";
 import { usedSketches } from "../src/model/visibility";
 import type { Feature, JuraCADDocument } from "../src/model/types";
@@ -59,6 +60,20 @@ describe("loft sections", () => {
   });
 });
 
+describe("what a click picks", () => {
+  it("is never saved or sent to the engine", () => {
+    const f = loft({ sections: ["a", "b"], loft: { picking: "guide" } });
+    expect(withoutPicking(f).loft).toBeUndefined();
+    expect("loft" in withoutPicking(f)).toBe(false);
+    expect(featureForEngine(f).loft).toBeUndefined();
+    const g = loft({ sections: ["a", "b"], loft: { picking: "end", periodic: true } });
+    expect(withoutPicking(g).loft).toEqual({ periodic: true });
+    expect(featureForEngine(g).loft).toEqual({ periodic: true });
+    // Switching what a click picks doesn't change what the engine is given (so nothing is rebuilt).
+    expect(JSON.stringify(featureForEngine(loft({ sections: ["a", "b"], loft: { picking: "path", periodic: true } })))).toBe(JSON.stringify(featureForEngine(g)));
+  });
+});
+
 describe("what a loft uses", () => {
   it("knows faces, points, guides and paths for Delete with dependents and the eyes", () => {
     const f = loft({ sections: ["a"], loft: { profiles: [{ sketch: "a" }, { point: { p: [0, 0, 5], sketchPoint: { sketch: "t", point: "p1" } } }], guide: { sketch: "g" } } });
@@ -76,6 +91,9 @@ describe("what a loft uses", () => {
     const tidied = withoutGone(three, new Set(["box"]));
     expect(tidied.loft?.profiles).toBeUndefined();
     expect(tidied.sections).toEqual(["a", "b"]);
+    // A face's "carry on" end left on a sketch section is dropped too.
+    const carried = withoutGone({ ...three, loft: { ...three.loft, start: { kind: "matchTangent" } } }, new Set(["box"]));
+    expect(carried.loft).toBeUndefined();
   });
 
   it("saves and reads the choices, and old lofts are unchanged", () => {

@@ -8,7 +8,7 @@
  */
 import { setMirrorReference, setPatternDirection } from "../model/patternRefs";
 import type { Feature, FeatureType, JuraCADDocument, LoftDef, LoftProfile, Operation } from "../model/types";
-import { endChoices, loftProfiles, profilesProblem, withEndPoint, withLoftDef, withProfiles } from "../model/loft";
+import { endChoices, loftProfiles, profilesProblem, tidyEnds, withEndPoint, withLoftDef, withProfiles } from "../model/loft";
 import type { PartMesh } from "../kernel/protocol";
 import { SCREW_SIZES, standardParams } from "../model/holes";
 import { planeFrame, planeOnFace, type SketchPlane, type Vec3 } from "../sketch/planes";
@@ -199,6 +199,8 @@ function applyLoft(f: Feature, a: Obj, ctx: SpecContext) {
   const problem = profilesProblem(profiles);
   if (problem) throw new InputError(problem);
   Object.assign(f, withProfiles(f, profiles));
+  // Ends that no longer suit their section (it was changed) are dropped, as the app's dialog does.
+  Object.assign(f, withLoftDef(f, tidyEnds(f.loft, profiles)));
   const def: Partial<LoftDef> = {};
   for (const which of ["start", "end"] as const) {
     if (has(a, which)) {
