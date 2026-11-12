@@ -222,6 +222,7 @@ describe("modify fillet", () => {
     expect(off.featureErrors).toEqual({});
     expect(volume()).toBeCloseTo(4000, 6);
     expect(faceCount(off)).toBe(6);
+    expect(off.featureNotes?.[Object.keys(off.featureNotes ?? {})[0]]).toMatch(/corner pieces where edges meet/);
     const three = build([box, all2, { ...feature("modifyFillet", { radius: 3 }), picks: strip }]);
     expect(three.featureErrors).toEqual({});
     const resized = volume();
@@ -264,6 +265,88 @@ describe("modify fillet", () => {
     build([base, wall, { ...feature("fillet", { radius: 3 }), picks: inner }]);
     expect(resized).toBeCloseTo(volume(), 6);
     expect(resized).toBeCloseTo(3500 + 20 * (9 - (9 * Math.PI) / 4), 6);
+  });
+
+  describe("puts back only what the fillets took away (holes and cuts next to them stay)", () => {
+    const HOLE = Math.PI * 1.5 * 1.5 * 10;
+    const topEdgeAt = (r: Built, y: number) => edgeWhere(r, (m) => near(m[1], y) && near(m[2], 10));
+    const offAndResized = (features: Feature[], filletAt: number, picksOf: (r: Built) => TopoPick[], resize: number) => {
+      const r = build(features);
+      expect(r.featureErrors).toEqual({});
+      const round = picksOf(r);
+      expect(round.length).toBeGreaterThan(0);
+      const off = build([...features, { ...feature("modifyFillet", {}), picks: round, modifyFillet: { remove: true } }]);
+      expect(off.featureErrors).toEqual({});
+      const removed = volume();
+      const big = build([...features, { ...feature("modifyFillet", { radius: resize }), picks: round }]);
+      expect(big.featureErrors).toEqual({});
+      return { removed, resized: volume(), filletAt };
+    };
+
+    it("a hole through a fully rounded block isn't filled", () => {
+      const box = feature("box", { width: 30, depth: 30, height: 10 });
+      const r0 = build([box]);
+      const all2 = { ...feature("fillet", { radius: 2 }), picks: faces(r0, frontFace), allEdges: true };
+      for (const [hx, hy] of [[15, 15], [26.5, 15]]) {
+        const hole = feature("cylinder", { diameter: 3, height: 10, x: hx, y: hy }, "remove");
+        const { removed, resized } = offAndResized([box, all2, hole], 0, (r) => faces(r, (f) => f.surface.startsWith("CYLIND") && f.center[2] > 9 && Math.abs(f.center[1] - 15) < 1e-6 && f.center[0] > 29).slice(0, 1), 3);
+        expect(removed).toBeCloseTo(9000 - HOLE, 3);
+        // (At 26.5 the hole cuts into where an r3 fillet would be, so rounding before or after it differs.)
+        if (hx === 15) {
+          build([box, { ...feature("fillet", { radius: 3 }), picks: faces(r0, frontFace), allEdges: true }, hole]);
+          expect(resized).toBeCloseTo(volume(), 3);
+        }
+      }
+    });
+
+    it("a hole 2 mm from a fillet isn't filled", () => {
+      const box = feature("box", { width: 20, depth: 20, height: 10 });
+      const r0 = build([box]);
+      const hole = feature("cylinder", { diameter: 3, height: 10, x: 10, y: 14.5 }, "remove");
+      const f2 = { ...feature("fillet", { radius: 2 }), picks: topEdgeAt(r0, 20) };
+      // Re-sized to 3.5 (an r4 fillet would end exactly on the hole's rim, which OpenCascade's check rejects).
+      const { removed, resized } = offAndResized([box, f2, hole], 0, (r) => faces(r, (f) => f.surface.startsWith("CYLIND") && f.center[1] > 18), 3.5);
+      expect(removed).toBeCloseTo(4000 - HOLE, 4);
+      build([box, { ...f2, params: { ...f2.params, radius: "3.5" } }, hole]);
+      expect(resized).toBeCloseTo(volume(), 4);
+    });
+
+    it("a groove beside a fillet (on the top or the side) isn't filled", () => {
+      for (const at of [{ y: 16, z: 9 }, { y: 19, z: 6 }]) {
+        const box = feature("box", { width: 20, depth: 20, height: 10 });
+        const r0 = build([box]);
+        const f2 = { ...feature("fillet", { radius: 2 }), picks: topEdgeAt(r0, 20) };
+        const groove = feature("box", { width: 20, depth: 1, height: 1, x: 0, ...at }, "remove");
+        const { removed, resized } = offAndResized([box, f2, groove], 0, (r) => faces(r, (f) => f.surface.startsWith("CYLIND")), 2.5);
+        expect(removed).toBeCloseTo(3980, 4);
+        build([box, { ...f2, params: { ...f2.params, radius: "2.5" } }, groove]);
+        expect(resized).toBeCloseTo(volume(), 4);
+      }
+    });
+
+    it("a pocket near a rounded upright corner isn't filled", () => {
+      const box = feature("box", { width: 30, depth: 30, height: 10 });
+      const r0 = build([box]);
+      const upright = edgeWhere(r0, (m) => near(m[0], 30) && near(m[1], 30));
+      const f3 = { ...feature("fillet", { radius: 3 }), picks: upright };
+      const pocket = feature("box", { width: 2, depth: 2, height: 3, x: 24, y: 26, z: 7 }, "remove");
+      const { removed, resized } = offAndResized([box, f3, pocket], 0, (r) => faces(r, (f) => f.surface.startsWith("CYLIND")), 4);
+      expect(removed).toBeCloseTo(8988, 4);
+      build([box, { ...f3, params: { ...f3.params, radius: "4" } }, pocket]);
+      expect(resized).toBeCloseTo(volume(), 4);
+    });
+
+    it("a chamfer the fillet runs into isn't filled", () => {
+      const box = feature("box", { width: 20, depth: 20, height: 10 });
+      const r0 = build([box]);
+      const chamfer = { ...feature("chamfer", { distance: 2 }), picks: edgeWhere(r0, (m) => near(m[0], 20) && near(m[2], 10)) };
+      const r1 = build([box, chamfer]);
+      const f2 = { ...feature("fillet", { radius: 2 }), picks: topEdgeAt(r1, 20) };
+      const { removed, resized } = offAndResized([box, chamfer, f2], 0, (r) => faces(r, (f) => f.surface.startsWith("CYLIND")), 4);
+      expect(removed).toBeCloseTo(3960, 4);
+      build([box, chamfer, { ...f2, params: { ...f2.params, radius: "4" } }]);
+      expect(resized).toBeCloseTo(volume(), 4);
+    });
   });
 
   it("re-sizes a fillet on an imported STEP part", async () => {

@@ -3421,7 +3421,7 @@ export class GeometryEngine {
       part.featureIds.push(feature.id);
       if (r.faces > faces.length) {
         const more = r.faces - faces.length;
-        this.notes[feature.id] = `Also ${remove ? "took off" : "changed"} ${more} rounded face${more === 1 ? "" : "s"} running on from the ${faces.length === 1 ? "one" : "ones"} picked (untick “Propagate” to change only those).`;
+        this.notes[feature.id] = `Also ${remove ? "took off" : "changed"} ${more} rounded face${more === 1 ? "" : "s"} running on smoothly from the ${faces.length === 1 ? "one" : "ones"} picked${r.also ? `: ${r.also}` : ""}. Untick “Propagate” to change only those picked.`;
       }
       return null;
     } catch (e) {

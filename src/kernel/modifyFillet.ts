@@ -253,7 +253,7 @@ function propagate(t: Topology, picked: number[]): number[] {
 const NOT_TANGENT = "This round face isn't a fillet — it meets the face beside it at a corner, not smoothly.";
 
 /** Edges of the part lying on the wedges' corner lines or circles: the sharp edges put back. */
-export function recoveredEdges(shape: Shape3D, wedges: FilletWedge[]): Edge[] {
+export function recoveredEdges(shape: Shape3D, wedges: FilletWedge[], beyond = 0): Edge[] {
   const tol = Math.max(1e-4, sizeOf(shape) * 1e-6);
   const onCorner = (p: Vec3) =>
     wedges.some((w) => {
@@ -261,7 +261,8 @@ export function recoveredEdges(shape: Shape3D, wedges: FilletWedge[]): Edge[] {
         const L = len(w.along);
         const d = unit(w.along);
         const t = dot(sub(p, w.corner), d);
-        if (t < -tol || t > L + tol) return false;
+        // (Past its ends by `beyond`: where a corner ball was, the sharp edge carries on to the corner.)
+        if (t < -tol - beyond || t > L + tol + beyond) return false;
         return len(sub(sub(p, w.corner), scale(d, t))) < tol * 10;
       }
       const a = w.axis!;
@@ -353,6 +354,34 @@ export interface ModifyResult {
   shape: Shape3D;
   /** How many rounded faces were taken off (with Propagate, more than were picked). */
   faces: number;
+  /** The ones taken with them by Propagate, in words ("4 upright edges, 8 corner pieces"); empty when none. */
+  also: string;
+}
+
+/** Propagate's extra pieces in words, by kind: straight fillets by direction, round ones, corner pieces. */
+function describeExtra(kinds: string[], along: (Vec3 | undefined)[]): string {
+  const counts = new Map<string, number>();
+  const bump = (k: string) => counts.set(k, (counts.get(k) ?? 0) + 1);
+  kinds.forEach((kind, i) => {
+    if (kind === "TORUS") return bump("round");
+    if (kind !== "CYLINDRE") return bump("corner");
+    const d = along[i] ? unit(along[i]!) : null;
+    if (!d) return bump("straight");
+    if (Math.abs(d[2]) > 0.999) return bump("upright");
+    if (Math.abs(d[0]) > 0.999) return bump("x");
+    if (Math.abs(d[1]) > 0.999) return bump("y");
+    bump("straight");
+  });
+  const words: Record<string, [string, string]> = {
+    x: ["edge along X", "edges along X"],
+    y: ["edge along Y", "edges along Y"],
+    upright: ["upright edge", "upright edges"],
+    straight: ["slanted straight edge", "slanted straight edges"],
+    round: ["round edge piece", "round edge pieces"],
+    corner: ["corner piece where edges meet", "corner pieces where edges meet"],
+  };
+  const parts = ["x", "y", "upright", "straight", "round", "corner"].filter((k) => counts.has(k)).map((k) => `${counts.get(k)} ${counts.get(k) === 1 ? words[k][0] : words[k][1]}`);
+  return parts.length <= 1 ? parts.join("") : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }
 
 /**
@@ -361,12 +390,10 @@ export interface ModifyResult {
  * errors (NotAFillet for faces that aren't fillets it can take apart); the
  * input shape is left alone.
  *
- * When every face round the fillets is flat and every piece is on an outside
- * edge (a block's rounded edges, corner balls and all), the sharp shape is
- * the part filled out to those flat faces near the fillets ("by planes").
- * Otherwise (a fillet into a hole or round a boss, or in an inside corner)
- * each round piece's own wedge is added or cut, carried past ends cut by a
- * flat face and trimmed back to it.
+ * Only what the fillets took away goes back: each round piece's own wedge
+ * (added on an outside edge, cut in an inside corner), carried past ends cut
+ * by a flat face and trimmed back to it, and each corner ball's corner block.
+ * Holes, grooves and chamfers next to the fillets are left alone.
  */
 export function modifyFillets(shape: Shape3D, picked: Face[], opts: { radius?: number; propagate: boolean }): ModifyResult {
   const all = facesOf(shape);
@@ -382,8 +409,7 @@ export function modifyFillets(shape: Shape3D, picked: Face[], opts: { radius?: n
     const inChain = new Set(chain);
     // Every piece must blend smoothly into the faces along its sides; its ends may meet flat faces at any angle,
     // or other pieces of the chain. Anything else round at an end can't be put back sharp on its own.
-    const supports = new Set<number>();
-    const sidePairs: [number, number][] = [];
+    const sidesOf = new Map<number, number[]>();
     for (const i of chain) {
       const round = ROUND_KINDS.has(t.kinds[i]);
       const sides: number[] = [];
@@ -402,12 +428,11 @@ export function modifyFillets(shape: Shape3D, picked: Face[], opts: { radius?: n
                 : "This fillet meets another rounded face at its end (a mitred corner). Pick the rounded faces meeting it too, so they're changed together.",
             );
           }
-          supports.add(j);
         }
       }
+      sidesOf.set(i, sides);
       if (round) {
         if (sides.length === 0) throw new NotAFillet("This rounded face doesn't blend into any face beside it, so it isn't a fillet.");
-        if (sides.length === 2) sidePairs.push([sides[0], sides[1]]);
       } else if (sides.some((j) => t.kinds[j] !== "PLANE")) {
         throw new NotAFillet("These rounded faces include a corner piece that blends into a curved face. They can't be put back sharp here.");
       }
@@ -452,61 +477,68 @@ export function modifyFillets(shape: Shape3D, picked: Face[], opts: { radius?: n
       pieces.push(piece);
       trims.push([...ends[0], ...ends[1]]);
     }
-    const allOutside = pieces.every((p) => p.wedge.outside);
-    const flatAround = [...supports].every((j) => t.kinds[j] === "PLANE");
-    let result: Shape3D;
-    let edgesFor: (r: Shape3D) => Edge[];
-    if (flatAround && allOutside) {
-      // By planes: the part filled out to every flat face round the fillets, near them.
-      const planes = [...supports].map((j) => planeOf(all[j]));
-      const box = boxOf(chainFaces, 1.5 * Math.max(1, ...tubes));
-      const lo = box[0];
-      const hi = box[1];
-      const block = within(makeBox(lo, hi), planes, box);
-      try {
-        result = shape.fuse(block);
-      } finally {
-        block.delete();
-      }
-      const tol = Math.max(1e-4, sizeOf(shape) * 1e-6) * 10;
-      const pairPlanes = sidePairs.map(([a, b]) => [planeOf(all[a]), planeOf(all[b])] as const);
-      const inBox = (p: Vec3) => [0, 1, 2].every((k) => p[k] >= lo[k] - tol && p[k] <= hi[k] + tol);
-      edgesFor = (r) => pickEdges(r, (p) => inBox(p) && pairPlanes.some(([a, b]) => Math.abs(offPlane(p, a)) < tol && Math.abs(offPlane(p, b)) < tol));
-    } else {
-      if (rounds.length !== chain.length) throw new NotAFillet("These rounded faces include corner pieces next to curved faces or inside corners. They can't be put back sharp here.");
-      const join = (list: Shape3D[]): Shape3D | null => {
-        let acc: Shape3D | null = null;
-        for (const s of list) {
-          if (!acc) {
-            acc = s.clone();
-            continue;
-          }
-          const next: Shape3D = acc.fuse(s, { simplify: false });
-          acc.delete();
-          acc = next;
+    // Corner pieces (a ball where three fillets on outside edges meet): the corner block they rounded off — the
+    // material within a radius of each of the three flat faces the fillets beside them blend into.
+    const blends = chain.filter((i) => !ROUND_KINDS.has(t.kinds[i]));
+    const blocks: Shape3D[] = [];
+    let ballReach = 0;
+    try {
+      for (const b of blends) {
+        const nextTo = around(t, b).map(({ j }) => j).filter((j) => inChain.has(j) && ROUND_KINDS.has(t.kinds[j]));
+        const k = nextTo.map((j) => rounds.indexOf(j));
+        if (!nextTo.length || k.some((x) => x < 0 || !pieces[x].wedge.outside)) {
+          throw new NotAFillet("These rounded faces include a corner piece in an inside corner. It can't be put back sharp here.");
         }
-        return acc;
-      };
-      const box = boxOf(chainFaces, reach + 1);
-      const trimmed = pieces.map((p, k) => (trims[k].length ? within(p.solid.clone(), trims[k], box) : p.solid.clone()));
-      const grow = join(trimmed.filter((_, k) => pieces[k].wedge.outside));
-      const shrink = join(trimmed.filter((_, k) => !pieces[k].wedge.outside));
-      trimmed.forEach((x) => x.delete());
-      result = shape;
-      try {
-        if (grow) result = result.fuse(grow);
-        if (shrink) {
-          const cut: Shape3D = result.cut(shrink);
-          if (result !== shape) result.delete();
-          result = cut;
-        }
-      } finally {
-        grow?.delete();
-        shrink?.delete();
+        const faceIds = [...new Set(nextTo.flatMap((j) => (sidesOf.get(j) ?? []).filter((x) => t.kinds[x] === "PLANE")))];
+        if (faceIds.length !== 3) throw new NotAFillet("These rounded faces include a corner piece that isn't where three flat faces meet. It can't be put back sharp here.");
+        const d = Math.max(...nextTo.map((j) => tubeRadius(all[j]) ?? 0));
+        ballReach = Math.max(ballReach, d);
+        const planes = faceIds.map((x) => planeOf(all[x]));
+        const box = boxOf([all[b]], 2 * d + 1);
+        const slabs = planes.flatMap((pl) => [pl, { p: sub(pl.p, scale(pl.n, d)), n: scale(pl.n, -1) }]);
+        blocks.push(within(makeBox(box[0], box[1]), slabs, box));
       }
-      if (result === shape) result = shape.clone();
-      edgesFor = (r) => recoveredEdges(r, pieces.map((p) => p.wedge));
+    } catch (e) {
+      blocks.forEach((x) => x.delete());
+      throw e;
     }
+    const join = (list: Shape3D[]): Shape3D | null => {
+      let acc: Shape3D | null = null;
+      for (const sh of list) {
+        if (!acc) {
+          acc = sh.clone();
+          continue;
+        }
+        const next: Shape3D = acc.fuse(sh, { simplify: false });
+        acc.delete();
+        acc = next;
+      }
+      return acc;
+    };
+    // Only what the fillets took away goes back: each piece's own wedge (trimmed to the flat faces its ends meet) and
+    // each corner block — never a region round them, which would fill holes and cuts next to the fillets.
+    const box = boxOf(chainFaces, reach + 1);
+    const trimmed = pieces.map((p, k) => (trims[k].length ? within(p.solid.clone(), trims[k], box) : p.solid.clone()));
+    const grow = join([...trimmed.filter((_, k) => pieces[k].wedge.outside), ...blocks]);
+    const shrink = join(trimmed.filter((_, k) => !pieces[k].wedge.outside));
+    trimmed.forEach((x) => x.delete());
+    blocks.forEach((x) => x.delete());
+    let result: Shape3D = shape;
+    try {
+      if (grow) result = result.fuse(grow);
+      if (shrink) {
+        const cut: Shape3D = result.cut(shrink);
+        if (result !== shape) result.delete();
+        result = cut;
+      }
+    } finally {
+      grow?.delete();
+      shrink?.delete();
+    }
+    if (result === shape) result = shape.clone();
+    const edgesFor = (r: Shape3D) => recoveredEdges(r, pieces.map((p) => p.wedge), ballReach * 1.01);
+    const extra = chain.filter((i) => !pickedIdx.includes(i));
+    const also = describeExtra(extra.map((i) => t.kinds[i]), extra.map((i) => pieces[rounds.indexOf(i)]?.wedge.along));
     if (!soundSolid(result)) {
       result.delete();
       throw new Error("Couldn't take these fillets off cleanly — the faces either side don't meet in a sharp edge.");
@@ -516,7 +548,7 @@ export function modifyFillets(shape: Shape3D, picked: Face[], opts: { radius?: n
       result.delete();
       throw new Error("Couldn't take these fillets off cleanly — part of a rounded face was left behind.");
     }
-    if (opts.radius === undefined) return { shape: result, faces: chain.length };
+    if (opts.radius === undefined) return { shape: result, faces: chain.length, also };
     const edges = edgesFor(result);
     if (edges.length === 0) {
       result.delete();
@@ -536,7 +568,7 @@ export function modifyFillets(shape: Shape3D, picked: Face[], opts: { radius?: n
       throw new Error(`Couldn't round these edges at ${round3(opts.radius)} mm. Try a smaller radius — it has to fit on the faces next to each edge.`);
     }
     result.delete();
-    return { shape: rounded, faces: chain.length };
+    return { shape: rounded, faces: chain.length, also };
   } finally {
     pieces.forEach((p) => p.solid.delete());
     t.adj.edges.forEach((e) => e.delete());

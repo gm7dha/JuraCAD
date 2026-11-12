@@ -558,20 +558,22 @@
   (normals within 1°) into the faces along its long sides (`onSide`: a cylinder's sides run along it, a torus's round it; else
   `NotAFillet` "…meets the face beside it at a corner") and its ends may meet flat faces or other chain pieces only (a smooth
   round end → "Tick Propagate", a mitre → "pick the pieces meeting it too"). Propagate follows ends only, to tangent pieces of
-  the same tube radius or to corner blends (balls), never sideways or across mitres. Then: all faces round the chain flat and
-  every piece on an outside edge → "by planes": the part ∪ (the chain's box grown 1.5 r ∩ the inner side of every flat face
-  round it) — corners, slanted ends and fully rounded blocks; else per-piece wedges (each cylinder/torus piece's cross-section,
-  arc + tangent lines to their corner, pushed along / spun round; cylinders carried 4 r past ends cut by flat faces and trimmed
-  back to them, `within`; tori must end square), fused (outside) or cut (inside corner). Refused if unsound or a round face is
-  left where a picked one was (`leftovers`). Change radius fillets the recovered edges (by planes: on both side planes of a
-  piece, in the box; wedges: on the corner lines/circles, `recoveredEdges`). Works on imported STEP/simplified parts (no history).
+  the same tube radius or to corner blends (balls), never sideways or across mitres. Only what the fillets took away goes back
+  (never a region round them — that filled holes, grooves, pockets and chamfers beside them): each cylinder/torus piece's wedge
+  (its cross-section, arc + tangent lines to their corner, pushed along / spun round; cylinders carried 4 r past ends cut by flat
+  faces — a box end, a slanted end, a chamfer — and trimmed back to them, `within`; tori must end square), fused (outside) or cut
+  (inside corner), plus each corner ball's corner block (within r of each of the three flat faces its neighbours blend into;
+  outside corners only, exactly three faces, else refused). Refused if unsound or a round face is
+  left where a picked one was (`leftovers`). Change radius fillets the recovered edges (on the wedges' corner lines/circles, carried past their ends by
+  the balls' radius, `recoveredEdges`) — refused if OpenCascade's check rejects the result (an r that ends exactly on a hole's rim).
+  Propagate's note names what it also took (`describeExtra`: "4 upright edges and 8 corner pieces where edges meet"). Works on imported STEP/simplified parts (no history).
   Not BRepAlgoAPI_Defeaturing (missing from this OCCT build — Delete face can't remove blended fillets). Fillet/Chamfer `allEdges`: every edge of the picked parts (equal
   chamfers only). Not done (OCCT can't): conic/curvature fillet sections, partial fillets, turning tangent propagation off.
   Dependents: split face needs its sketch (tool sketch only — the plane only for tool plane) and its picks' parts, makes no part.
   Claude: `modify_fillet` (faces, radius | remove, propagate), `split_face` (faces, plane + offset | sketch), fillet/chamfer `all_edges`.
   Tests: tests/splitFaceModel (pure), engineSplitFillet (split counts/volume, draft on the top half, radius 2 → 4, removed, hole rim,
   rounded-rectangle chain, a sharp scoop refused, slanted ends, a fully rounded box off/resized vs direct, mitres, inside corner
-  resized vs direct, imported STEP, all edges), mcpSplitFillet.
+  resized vs direct, holes/grooves/pockets/a chamfer beside fillets left alone (exact volumes), imported STEP, all edges), mcpSplitFillet.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.
