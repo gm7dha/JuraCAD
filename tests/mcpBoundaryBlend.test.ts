@@ -40,7 +40,6 @@ async function fails(s: Session, name: string, args: unknown = {}) {
   return textOf(r);
 }
 const volume = (s: Session) => s.withEngine((e) => e.check("normal").parts[0].exactVolume!);
-const faceCount = (s: Session) => s.build().parts[0].faceRefs.filter((f) => f.kind === "face").length;
 
 
 describe("boundary surface and face blend, from Claude", () => {
