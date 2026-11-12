@@ -5,7 +5,7 @@
 import type { Feature } from "../model/types";
 import type { FrameCornerChoice, FrameDef, FrameProfileKind } from "../model/frameTypes";
 import { PROFILE_KINDS, ANCHORS } from "../model/frameProfiles";
-import { buildMembers, findCorners, frameCutList, cutListCsv, cutListLines, sketchPathSegments, type PathSeg } from "../model/frame";
+import { frameLayout, frameCutList, cutListCsv, cutListLines, sketchPathSegments, type PathSeg } from "../model/frame";
 import { amount, bool, InputError, list, noExtras, oneOf, text, xyz, type Obj } from "./args";
 import { basePlane } from "./planeSpec";
 import type { SpecContext } from "./featureSpec";
@@ -15,13 +15,13 @@ const has = (a: Obj, k: string) => a[k] !== undefined && a[k] !== null;
 
 export const FRAME_KEYS = ["sketches", "profile", "size", "width", "height", "wall", "profile_sketch", "anchor", "mirror", "angle", "gap", "merge_tangent", "corners"];
 export const TRIM_KEYS = ["members", "plane", "to_part", "flip"];
-export const GUSSET_KEYS = ["members", "size", "thickness", "chamfer"];
+export const GUSSET_KEYS = ["members", "size", "thickness", "chamfer", "other_side"];
 
 const KINDS = PROFILE_KINDS.map((k) => k.kind);
 
 export const FRAME_HELP = `frame (Onshape's Frame: a profile along sketch lines and arcs, each length its own part, corners mitred where two meet and butted where three meet or one ends on another's side): sketches (the sketches whose lines/arcs/circles make the path; construction lines left out), profile (${KINDS.map((k) => `"${k}"`).join(" | ")}, or "sketch" with profile_sketch: a sketch with the closed cross-section), size (${PROFILE_KINDS.map((k) => `${k.kind}: ${k.sizes.map((s) => s.key).join(", ")}${k.custom ? ', or "custom" with width/height/wall' : ""}`).join("; ")}), anchor (which point of the profile sits on the path: ${ANCHORS.map((a) => a.key).join(", ")}), mirror, angle (° turned about the path), gap (mm left at mitres and butt joints), merge_tangent (default true: lines and arcs carrying on smoothly are one member), corners ([{"at":[x,y,z], "type":"mitre"|"butt"|"coped"|"none", "through": member number that runs through for butt/coped}]). Profiles stand with their height along the sketch's normal. describe_cut_list lists the lengths to cut`;
 export const TRIM_HELP = 'trim_frame (Onshape\'s Trim frame): members (frame member part names), and plane ("Top"|"Front"|"Right", a Plane name, or {"point":[x,y,z],"normal":[x,y,z]}) — keeps the side with more of each member, or the other with flip — or to_part (cut where each member meets that part, keeping the biggest piece)';
-export const GUSSET_HELP = "gusset (Onshape's Gusset): members (two frame member parts meeting at a corner), size (mm along each, default 60), thickness (default 5), chamfer (mm: cut the inside corner off; 0 = none)";
+export const GUSSET_HELP = "gusset (Onshape's Gusset): members (two frame member parts meeting at a corner), size (mm along each, default 60), thickness (default 5), chamfer (mm: cut the inside corner off; 0 = none), other_side (where one member ends on the other's side: the plate goes the other way along it)";
 
 /** The path's segments, as the dialog sees them (sketch planes as saved). */
 function pathSegments(def: FrameDef, ctx: SpecContext): PathSeg[] {
@@ -72,8 +72,7 @@ export function applyFrame(f: Feature, a: Obj, ctx: SpecContext): void {
   }
   if (has(a, "corners")) {
     const segs = pathSegments(def, ctx);
-    const members = buildMembers(segs, !def.noMerge);
-    const corners = findCorners(members);
+    const { members, corners } = frameLayout(segs, { noMerge: def.noMerge });
     const chosen: FrameCornerChoice[] = list(a.corners, "corners", { allowEmpty: true }).map((raw, i) => {
       if (!raw || typeof raw !== "object") throw new InputError(`corners[${i}] should be {"at":[x,y,z],"type":…}.`);
       const c = raw as Obj;
@@ -148,6 +147,10 @@ export function applyGusset(f: Feature, a: Obj, ctx: SpecContext): void {
       def.chamfer = true;
       f.params = { ...f.params, chamfer: c.text };
     } else delete def.chamfer;
+  }
+  if (has(a, "other_side")) {
+    if (bool(a.other_side, "other_side")) def.flip = true;
+    else delete def.flip;
   }
   f.gusset = def;
   f.operation = "new";

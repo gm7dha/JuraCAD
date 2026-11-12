@@ -101,73 +101,309 @@ export function sketchPathSegments(sketchId: string, plane: SketchPlane, data: S
   return { segs, skipped };
 }
 
-/** A frame member: path segments in order, end to end. */
+/** A profile frame: across (x) and up (y), square to the path. */
+export interface Axes {
+  x: V3;
+  y: V3;
+}
+
+/** A frame member: path segments in order, end to end, and how its profile stands at its start. */
 export interface Member {
   segs: PathSeg[];
   closed: boolean;
+  /** The profile's axes at the start (carried along the path: unchanged along lines, turned with arcs). */
+  start: Axes;
+  /** Its curve that comes first in the path (names the part, so ids stay put when other lines change). */
+  key: string;
+  /** Where that curve is in the path (members are listed in this order). */
+  order: number;
 }
 
-/** Join the path's segments into members (each segment its own, or runs carrying on smoothly when `merge`). */
-export function buildMembers(segs: PathSeg[], merge: boolean): Member[] {
-  if (!merge) return segs.map((s) => ({ segs: [s], closed: s.kind === "arc" && s.angle >= 2 * Math.PI - 1e-9 }));
-  const used = new Set<number>();
-  const ends = (i: number) => [segs[i].a, segs[i].b];
-  // Ends of other segments at a point.
-  const at = (p: V3) => {
-    const out: { i: number; end: 0 | 1 }[] = [];
-    segs.forEach((s, i) => {
-      if (dist(s.a, p) < JOIN_TOL) out.push({ i, end: 0 });
-      if (dist(s.b, p) < JOIN_TOL) out.push({ i, end: 1 });
-    });
-    return out;
-  };
-  const smoothWith = (s: PathSeg, atEnd: boolean, o: PathSeg, oEnd: 0 | 1) => {
-    const t = segTangent(s, atEnd);
-    const to = segTangent(o, oEnd === 1);
-    const along = oEnd === 0 ? to : mul(to, -1);
-    const turn = (Math.acos(Math.max(-1, Math.min(1, dot(atEnd ? t : mul(t, -1), atEnd ? along : mul(along, -1))))) * 180) / Math.PI;
-    return turn < STRAIGHT_DEG && dot(s.n, o.n) > 0.9999;
-  };
-  const members: Member[] = [];
-  for (let start = 0; start < segs.length; start++) {
-    if (used.has(start)) continue;
-    used.add(start);
-    const chain: PathSeg[] = [segs[start]];
-    const self = segs[start];
-    if (self.kind === "arc" && self.angle >= 2 * Math.PI - 1e-9) {
-      members.push({ segs: chain, closed: true });
-      continue;
-    }
-    // Grow forwards from the last end, then backwards from the first.
-    for (const forward of [true, false]) {
-      for (;;) {
-        const tip = forward ? chain[chain.length - 1] : chain[0];
-        const p = forward ? tip.b : tip.a;
-        const there = at(p);
-        if (there.length !== 2) break;
-        const next = there.find((e) => !(segs[e.i] === tip && e.end === (forward ? 1 : 0)));
-        if (!next || used.has(next.i)) break;
-        const o = segs[next.i];
-        if (!smoothWith(tip, forward, o, next.end)) break;
-        used.add(next.i);
-        // Turned to run the chain's way.
-        const turned = forward ? (next.end === 0 ? o : reversedSeg(o)) : next.end === 1 ? o : reversedSeg(o);
-        if (forward) chain.push(turned);
-        else chain.unshift(turned);
-      }
-    }
-    void ends;
-    const closed = chain.length > 1 && dist(chain[0].a, chain[chain.length - 1].b) < JOIN_TOL;
-    members.push({ segs: chain, closed });
+/** Turn v about the unit axis k by `angle` radians. */
+function rotate(v: V3, k: V3, angle: number): V3 {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const kv = cross(k, v);
+  const d = dot(k, v) * (1 - c);
+  return [v[0] * c + kv[0] * s + k[0] * d, v[1] * c + kv[1] * s + k[1] * d, v[2] * c + kv[2] * s + k[2] * d];
+}
+
+/** The profile's axes at the start of each segment, then at the member's end. */
+export function segFrames(m: Member): Axes[] {
+  const out: Axes[] = [m.start];
+  let f = m.start;
+  for (const s of m.segs) {
+    if (s.kind === "arc") f = { x: rotate(f.x, s.axis, s.angle), y: rotate(f.y, s.axis, s.angle) };
+    out.push(f);
   }
-  return members;
+  return out;
 }
 
-/** The profile's axes at a place where the path goes along `t` in a sketch with normal `n`: across (x) and up (y). */
-export function profileAxes(t: V3, n: V3): { x: V3; y: V3 } {
+/** The axes at the member's start that give `at` at its end (carried back along it). */
+function startFromEnd(m: Member, at: Axes): Axes {
+  let f = at;
+  for (let i = m.segs.length - 1; i >= 0; i--) {
+    const s = m.segs[i];
+    if (s.kind === "arc") f = { x: rotate(f.x, s.axis, -s.angle), y: rotate(f.y, s.axis, -s.angle) };
+  }
+  return f;
+}
+
+/** The axes carried round a corner from going along t1 to going along t2 (the least turn; a U-turn turns about up). */
+function carryRound(f: Axes, t1: V3, t2: V3): Axes {
+  const c = dot(t1, t2);
+  if (c > 1 - 1e-12) return f;
+  if (c < -1 + 1e-9) return { x: mul(f.x, -1), y: f.y };
+  const k = unit(cross(t1, t2));
+  const ang = Math.acos(Math.max(-1, Math.min(1, c)));
+  return { x: rotate(f.x, k, ang), y: rotate(f.y, k, ang) };
+}
+
+/** The profile's axes where the path goes along `t` in a sketch with normal `n`: across in the sketch's plane, up along its normal. */
+export function profileAxes(t: V3, n: V3): Axes {
   let x = unit(cross(n, t));
   if (len(x) < 0.5) x = unit(cross(Math.abs(t[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0], t));
   return { x, y: cross(t, x) };
+}
+
+export const memberStart = (m: Member) => m.segs[0].a;
+export const memberEnd = (m: Member) => m.segs[m.segs.length - 1].b;
+const endPoint = (m: Member, end: 0 | 1) => (end === 0 ? memberStart(m) : memberEnd(m));
+/** The direction out of a member's end, away from its corner. */
+export function outOf(m: Member, end: 0 | 1): V3 {
+  return end === 0 ? segTangent(m.segs[0], false) : mul(segTangent(m.segs[m.segs.length - 1], true), -1);
+}
+/** The curve id ("sketch/curve") at a member's end, as Butt / Coped's `through` names it. */
+export function endCurveId(m: Member, end: 0 | 1): string {
+  return end === 0 ? m.segs[0].id : m.segs[m.segs.length - 1].id;
+}
+export const memberLength = (m: Member) => m.segs.reduce((t, s) => t + segLength(s), 0);
+function reversedMember(m: Member): Member {
+  const segs = [...m.segs].reverse().map(reversedSeg);
+  const flipped: Member = { ...m, segs };
+  return { ...flipped, start: startFromEnd(flipped, segFrames(m)[m.segs.length]) };
+}
+
+const COS_STRAIGHT = Math.cos((STRAIGHT_DEG * Math.PI) / 180);
+
+/** An end of a segment at a point of the path. */
+interface SegEnd {
+  i: number;
+  end: 0 | 1;
+}
+
+/**
+ * Join the path's segments into members: each segment its own, or (with `merge`) runs carrying on smoothly. Where
+ * three or more meet, only one straight-on pair carries on (the longest), so a post split where a rail meets it is
+ * one post, and a + crossing is one long member with two ending on its sides. Straight lines carrying on straight
+ * become one line.
+ */
+export function buildMembers(segs: PathSeg[], merge: boolean): Member[] {
+  const nodes: { p: V3; ends: SegEnd[] }[] = [];
+  segs.forEach((s, i) => {
+    for (const end of [0, 1] as const) {
+      const p = end === 0 ? s.a : s.b;
+      if (s.kind === "arc" && s.angle >= 2 * Math.PI - 1e-9) continue;
+      const n = nodes.find((x) => dist(x.p, p) < JOIN_TOL);
+      if (n) n.ends.push({ i, end });
+      else nodes.push({ p, ends: [{ i, end }] });
+    }
+  });
+  const away = (e: SegEnd) => (e.end === 0 ? segTangent(segs[e.i], false) : mul(segTangent(segs[e.i], true), -1));
+  // Which segment end carries on into which.
+  const next = new Map<string, SegEnd>();
+  const k = (e: SegEnd) => `${e.i}:${e.end}`;
+  /** A point inside a line of the path (not at its ends): rails meeting there stop at its side, they don't carry on through. */
+  const onASide = (p: V3) =>
+    segs.some((s) => {
+      if (s.kind !== "line") return false;
+      const t = segTangent(s, false);
+      const d = dot(sub(p, s.a), t);
+      return d > JOIN_TOL * 10 && d < segLength(s) - JOIN_TOL * 10 && dist(add(s.a, mul(t, d)), p) < JOIN_TOL;
+    });
+  if (merge) {
+    for (const n of nodes) {
+      if (onASide(n.p)) continue;
+      let best: [SegEnd, SegEnd] | null = null;
+      let bestLen = -1;
+      for (let a = 0; a < n.ends.length; a++) {
+        for (let b = a + 1; b < n.ends.length; b++) {
+          const ea = n.ends[a];
+          const eb = n.ends[b];
+          if (ea.i === eb.i) continue;
+          if (dot(away(ea), away(eb)) > -COS_STRAIGHT) continue;
+          // Where three or more meet, only straight lines carry on.
+          if (n.ends.length > 2 && (segs[ea.i].kind !== "line" || segs[eb.i].kind !== "line")) continue;
+          const l = segLength(segs[ea.i]) + segLength(segs[eb.i]);
+          if (l > bestLen + 1e-9) {
+            best = [ea, eb];
+            bestLen = l;
+          }
+        }
+      }
+      if (best) {
+        next.set(k(best[0]), best[1]);
+        next.set(k(best[1]), best[0]);
+      }
+    }
+  }
+  const used = new Set<number>();
+  const members: Member[] = [];
+  const walk = (first: number, from: 0 | 1): { chain: PathSeg[]; idx: number[]; closed: boolean } => {
+    // Walk from segment `first` leaving its `from` end's other end.
+    const chain: PathSeg[] = [];
+    const idx: number[] = [];
+    let i = first;
+    let entered: 0 | 1 = from;
+    for (;;) {
+      used.add(i);
+      idx.push(i);
+      chain.push(entered === 0 ? segs[i] : reversedSeg(segs[i]));
+      const leave: SegEnd = { i, end: entered === 0 ? 1 : 0 };
+      const to = next.get(k(leave));
+      if (!to) return { chain, idx, closed: false };
+      if (to.i === first) return { chain, idx, closed: true };
+      if (used.has(to.i)) return { chain, idx, closed: false };
+      i = to.i;
+      entered = to.end;
+    }
+  };
+  const order = segs.map((_, i) => i);
+  // Chains first from free ends, then whatever is left (loops).
+  for (const i of order) {
+    if (used.has(i)) continue;
+    const s = segs[i];
+    if (s.kind === "arc" && s.angle >= 2 * Math.PI - 1e-9) {
+      used.add(i);
+      members.push(asMember([s], [i], true));
+      continue;
+    }
+    // Start at a free end of this chain: walk back from i to find it.
+    let start = i;
+    let from: 0 | 1 = 0;
+    const seen = new Set<number>([i]);
+    for (;;) {
+      const back = next.get(k({ i: start, end: from }));
+      if (!back || seen.has(back.i)) break;
+      seen.add(back.i);
+      start = back.i;
+      from = back.end === 0 ? 1 : 0;
+    }
+    const r = walk(start, from);
+    members.push(asMember(r.chain, r.idx, r.closed && r.chain.length > 1));
+  }
+  function asMember(chain: PathSeg[], idx: number[], closed: boolean): Member {
+    // Straight lines carrying on straight: one line.
+    const parts: { s: PathSeg; i: number }[] = [];
+    const firstIdx = Math.min(...idx);
+    chain.forEach((s, j) => {
+      const last = parts[parts.length - 1];
+      if (last && last.s.kind === "line" && s.kind === "line" && dot(segTangent(last.s, false), segTangent(s, false)) > COS_STRAIGHT) {
+        last.s = { ...last.s, b: s.b, id: idx[j] < last.i ? s.id : last.s.id };
+        last.i = Math.min(last.i, idx[j]);
+      } else parts.push({ s, i: idx[j] });
+    });
+    if (closed && parts.length > 1) {
+      const a = parts[0];
+      const z = parts[parts.length - 1];
+      if (a.s.kind === "line" && z.s.kind === "line" && dot(segTangent(z.s, false), segTangent(a.s, false)) > COS_STRAIGHT) {
+        a.s = { ...a.s, a: z.s.a, id: z.i < a.i ? z.s.id : a.s.id };
+        a.i = Math.min(a.i, z.i);
+        parts.pop();
+      }
+    }
+    const fused = parts.map((x) => x.s);
+    const t0 = segTangent(fused[0], false);
+    return { segs: fused, closed, start: profileAxes(t0, fused[0].n), key: segs[firstIdx].id, order: firstIdx };
+  }
+  return members.sort((a, b) => a.order - b.order);
+}
+
+/**
+ * Walk each connected path so its members run on from one to the next (a line drawn the other way round is turned)
+ * and carry the profile's axes round the corners, so a profile set to one side stays on the same side all round and
+ * sections match at mitres — also between lines in different sketches. Where a loop comes back with the profile
+ * turned differently, a note says so.
+ */
+export function orientMembers(members: Member[]): { members: Member[]; notes: string[] } {
+  const ms = members.map((m) => ({ ...m }));
+  const nodeOf: { p: V3; ends: { member: number; end: 0 | 1 }[] }[] = [];
+  ms.forEach((m, i) => {
+    if (m.closed) return;
+    for (const end of [0, 1] as const) {
+      const p = endPoint(m, end);
+      const n = nodeOf.find((x) => dist(x.p, p) < JOIN_TOL);
+      if (n) n.ends.push({ member: i, end });
+      else nodeOf.push({ p, ends: [{ member: i, end }] });
+    }
+  });
+  // Directions: run on through corners where just two meet.
+  const dirDone = new Set<number>();
+  for (let root = 0; root < ms.length; root++) {
+    if (dirDone.has(root)) continue;
+    dirDone.add(root);
+    const queue = [root];
+    while (queue.length) {
+      const a = queue.shift()!;
+      for (const end of [0, 1] as const) {
+        if (ms[a].closed) continue;
+        const node = nodeOf.find((n) => n.ends.some((e) => e.member === a && e.end === end));
+        if (!node || node.ends.length !== 2) continue;
+        const other = node.ends.find((e) => !(e.member === a && e.end === end))!;
+        if (other.member === a || dirDone.has(other.member)) continue;
+        // a arrives here at its end 1 → the other should leave from its start; a leaves from its start → the other should arrive.
+        if (other.end === end) {
+          ms[other.member] = reversedMember(ms[other.member]);
+          for (const n of nodeOf) for (const e of n.ends) if (e.member === other.member) e.end = e.end === 0 ? 1 : 0;
+        }
+        dirDone.add(other.member);
+        queue.push(other.member);
+      }
+    }
+  }
+  // Axes: carried from member to member through every corner, from the first member of each connected path.
+  const axesDone = new Set<number>();
+  const arriving = (i: number, end: 0 | 1) => mul(outOf(ms[i], end), -1);
+  const atEnd = (i: number, end: 0 | 1) => {
+    const f = segFrames(ms[i]);
+    return end === 0 ? f[0] : f[f.length - 1];
+  };
+  const notes: string[] = [];
+  for (let root = 0; root < ms.length; root++) {
+    if (axesDone.has(root)) continue;
+    axesDone.add(root);
+    const queue = [root];
+    while (queue.length) {
+      const a = queue.shift()!;
+      for (const end of [0, 1] as const) {
+        if (ms[a].closed) continue;
+        const node = nodeOf.find((n) => n.ends.some((e) => e.member === a && e.end === end));
+        // Only through corners where two meet (a chain): where three or more meet, each keeps its own sketch's way up.
+        if (!node || node.ends.length !== 2) continue;
+        for (const o of node.ends) {
+          if (o.member === a) continue;
+          // Going into the corner along a, out along o.
+          const carried = carryRound(atEnd(a, end), arriving(a, end), outOf(ms[o.member], o.end));
+          if (axesDone.has(o.member)) {
+            {
+              const have = atEnd(o.member, o.end);
+              if (dot(have.x, carried.x) < 0.999 || dot(have.y, carried.y) < 0.999) {
+                const p = node.p.map((v) => Math.round(v * 100) / 100).join(", ");
+                const note = `The profile couldn't be kept facing the same way all round: at (${p}) it turns over between two lengths. Check that corner (Mirror or the profile angle may help).`;
+                if (!notes.includes(note)) notes.push(note);
+              }
+            }
+            continue;
+          }
+          const m = ms[o.member];
+          ms[o.member] = { ...m, start: o.end === 0 ? carried : startFromEnd(m, carried) };
+          axesDone.add(o.member);
+          queue.push(o.member);
+        }
+      }
+    }
+  }
+  return { members: ms, notes };
 }
 
 /** A member end, seen from its corner. */
@@ -181,8 +417,11 @@ export interface FrameCorner {
   at: V3;
   /** Members ending here. */
   ends: EndRef[];
-  /** A T: the member whose side the end meets (it doesn't end here). */
+  /** A T: the member whose side the ends meet (it doesn't end here), and its segment there. */
   on?: number;
+  onSeg?: number;
+  /** Two members carrying straight on through here (the others meet their side): they run on, square to each other. */
+  run?: [number, number];
   /** As built (after the user's choice and what's possible). */
   type: FrameCornerType;
   /** The member that runs through (butt / coped). */
@@ -197,18 +436,17 @@ export interface FrameCorner {
 export interface EndCut {
   extend: number;
   cuts: { n: V3; o: V3 }[];
-  /** Cut to the outside of this member (coped). */
-  cope?: number;
+  /** Cut to the outside of these members (coped). */
+  cope?: number[];
   /** For the cut list: degrees from square, or coped. */
   label: number | "coped";
 }
 
 export interface MemberPlan {
   member: Member;
-  /** Segment id at each end (for corner keys), and the end points and directions out of each end. */
   ends: [EndCut, EndCut];
-  /** Profile axes at each end. */
-  axes: [{ x: V3; y: V3 }, { x: V3; y: V3 }];
+  /** Profile axes at the start of each segment, then at the end. */
+  frames: Axes[];
   straight: boolean;
   /** The centre line's length. */
   pathLength: number;
@@ -217,32 +455,36 @@ export interface MemberPlan {
 export interface FramePlan {
   members: MemberPlan[];
   corners: FrameCorner[];
+  /** Things to tell (a profile turning over at a corner, a member ending on the side of a curve). */
+  notes: string[];
 }
 
-export const memberStart = (m: Member) => m.segs[0].a;
-export const memberEnd = (m: Member) => m.segs[m.segs.length - 1].b;
-/** The direction out of a member's end, away from its corner. */
-export function outOf(m: Member, end: 0 | 1): V3 {
-  return end === 0 ? segTangent(m.segs[0], false) : mul(segTangent(m.segs[m.segs.length - 1], true), -1);
+/** Where a point lies on a member's line segment (not at its ends): that segment, or null. */
+function onLineSeg(m: Member, p: V3): number | null {
+  for (let i = 0; i < m.segs.length; i++) {
+    const s = m.segs[i];
+    if (s.kind !== "line") continue;
+    const t = segTangent(s, false);
+    const L = segLength(s);
+    const d = dot(sub(p, s.a), t);
+    if (d < JOIN_TOL * 10 || d > L - JOIN_TOL * 10) continue;
+    if (dist(add(s.a, mul(t, d)), p) < JOIN_TOL) return i;
+  }
+  return null;
 }
-const endPoint = (m: Member, end: 0 | 1) => (end === 0 ? memberStart(m) : memberEnd(m));
-const endSegId = (m: Member, end: 0 | 1) => (end === 0 ? m.segs[0].id : m.segs[m.segs.length - 1].id);
 
-function axesAt(m: Member, end: 0 | 1, angle0: { x: V3; y: V3 }[]) {
-  void angle0;
-  const s = end === 0 ? m.segs[0] : m.segs[m.segs.length - 1];
-  return profileAxes(segTangent(s, end === 1), s.n);
-}
-
-/** Where on a straight member a point lies: its distance along, or null if off it or at an end. */
-function onStraight(m: Member, p: V3): number | null {
-  if (m.segs.length !== 1 || m.segs[0].kind !== "line") return null;
-  const a = m.segs[0].a;
-  const t = segTangent(m.segs[0], false);
-  const L = segLength(m.segs[0]);
-  const s = dot(sub(p, a), t);
-  if (s < JOIN_TOL * 10 || s > L - JOIN_TOL * 10) return null;
-  return dist(add(a, mul(t, s)), p) < JOIN_TOL ? s : null;
+/** Whether a point lies inside an arc of a member (not at its ends). */
+function onArc(m: Member, p: V3): boolean {
+  return m.segs.some((s) => {
+    if (s.kind !== "arc") return false;
+    const q = sub(p, s.c);
+    if (Math.abs(dot(q, s.axis)) > JOIN_TOL || Math.abs(len(q) - s.r) > JOIN_TOL) return false;
+    const u = unit(sub(s.a, s.c));
+    const w = cross(s.axis, u);
+    let ang = Math.atan2(dot(q, w), dot(q, u));
+    if (ang < 0) ang += 2 * Math.PI;
+    return ang > 1e-6 && ang < s.angle - 1e-6;
+  });
 }
 
 /** A corner's key: the curves meeting there (sorted), and the one a T meets the side of. */
@@ -250,8 +492,8 @@ export function cornerKey(ids: string[], on?: string): string {
   return [...ids].sort().join("+") + (on ? `|on:${on}` : "");
 }
 
-/** The corners of a set of members (where ends meet, and Ts), with their default types. */
-export function findCorners(members: Member[]): Omit<FrameCorner, "type" | "through">[] {
+/** The corners of a set of members (where ends meet, Ts, and straight runs others meet), with their default types. */
+export function findCorners(members: Member[]): { corners: Omit<FrameCorner, "type" | "through">[]; notes: string[] } {
   const groups: { at: V3; ends: EndRef[] }[] = [];
   members.forEach((m, i) => {
     if (m.closed) return;
@@ -263,35 +505,106 @@ export function findCorners(members: Member[]): Omit<FrameCorner, "type" | "thro
     }
   });
   const out: Omit<FrameCorner, "type" | "through">[] = [];
+  const notes: string[] = [];
   for (const g of groups) {
-    const ids = g.ends.map((e) => endSegId(members[e.member], e.end));
-    if (g.ends.length === 1) {
-      // A free end against the side of a straight member: a T.
-      const on = members.findIndex((m, i) => i !== g.ends[0].member && onStraight(m, g.at) !== null);
-      if (on < 0) continue;
-      out.push({ key: cornerKey(ids, members[on].segs[0].id), at: g.at, ends: g.ends, on, choices: ["butt", "coped", "none"] });
+    const ids = g.ends.map((e) => endCurveId(members[e.member], e.end));
+    const mine = new Set(g.ends.map((e) => e.member));
+    // Ends against the side of another member: a T (any number of them).
+    let on = -1;
+    let onSeg = -1;
+    for (let i = 0; i < members.length && on < 0; i++) {
+      if (mine.has(i)) continue;
+      const s = onLineSeg(members[i], g.at);
+      if (s !== null) {
+        on = i;
+        onSeg = s;
+      }
+    }
+    if (on >= 0) {
+      out.push({ key: cornerKey(ids, members[on].segs[onSeg].id), at: g.at, ends: g.ends, on, onSeg, choices: ["butt", "coped", "none"] });
       continue;
     }
-    let angle: number | undefined;
-    if (g.ends.length === 2) {
-      const da = outOf(members[g.ends[0].member], g.ends[0].end);
-      const db = outOf(members[g.ends[1].member], g.ends[1].end);
-      angle = (Math.acos(Math.max(-1, Math.min(1, dot(da, db)))) * 180) / Math.PI;
+    if (members.some((m, i) => !mine.has(i) && onArc(m, g.at))) {
+      const p = g.at.map((v) => Math.round(v * 100) / 100).join(", ");
+      notes.push(`A length ends on the side of a curved one at (${p}); it's left square there — trim it with Trim frame.`);
+      continue;
     }
+    if (g.ends.length === 1) continue;
+    const dirs = g.ends.map((e) => outOf(members[e.member], e.end));
+    if (g.ends.length >= 3) {
+      // Two carrying straight on: they run on through, the rest meet their side.
+      let run: [number, number] | undefined;
+      let best = -1;
+      for (let a = 0; a < g.ends.length; a++)
+        for (let b = a + 1; b < g.ends.length; b++) {
+          const ma = members[g.ends[a].member];
+          const mb = members[g.ends[b].member];
+          const sa = g.ends[a].end === 0 ? ma.segs[0] : ma.segs[ma.segs.length - 1];
+          const sb = g.ends[b].end === 0 ? mb.segs[0] : mb.segs[mb.segs.length - 1];
+          if (sa.kind !== "line" || sb.kind !== "line" || dot(dirs[a], dirs[b]) > -COS_STRAIGHT) continue;
+          const l = memberLength(ma) + memberLength(mb);
+          if (l > best) {
+            best = l;
+            run = [g.ends[a].member, g.ends[b].member];
+          }
+        }
+      if (run) {
+        out.push({ key: cornerKey(ids), at: g.at, ends: g.ends, run, choices: ["butt", "coped", "none"] });
+        continue;
+      }
+    }
+    let angle: number | undefined;
+    if (g.ends.length === 2) angle = (Math.acos(Math.max(-1, Math.min(1, dot(dirs[0], dirs[1])))) * 180) / Math.PI;
     out.push({ key: cornerKey(ids), at: g.at, ends: g.ends, ...(angle !== undefined ? { angle } : {}), choices: g.ends.length === 2 ? ["mitre", "butt", "coped", "none"] : ["butt", "coped", "none"] });
   }
-  return out;
+  return { corners: out, notes };
 }
 
 /** The usual type of a corner: a mitre between two members (none if they carry straight on), a butt joint otherwise. */
 function defaultType(c: Omit<FrameCorner, "type" | "through">): FrameCornerType {
-  if (c.on !== undefined) return "butt";
+  if (c.on !== undefined || c.run) return "butt";
   if (c.ends.length === 2) return (c.angle ?? 0) > 180 - STRAIGHT_DEG ? "none" : "mitre";
   return "butt";
 }
 
+/**
+ * Which member runs through a butt joint when nobody chose: the longest; between equal lengths, the one going most
+ * along X, then Y, then Z (so a cube's front and back rails run through, its side rails and uprights stop); then the
+ * first in the path.
+ */
+function usualThrough(members: Member[], ends: EndRef[]): number {
+  const score = (e: EndRef) => {
+    const d = outOf(members[e.member], e.end).map(Math.abs);
+    const axis = d[0] >= d[1] - 1e-9 && d[0] >= d[2] - 1e-9 ? 0 : d[1] >= d[2] - 1e-9 ? 1 : 2;
+    return { len: Math.round(memberLength(members[e.member]) * 100) / 100, axis, order: members[e.member].order };
+  };
+  return [...ends].sort((p, q) => {
+    const a = score(p);
+    const b = score(q);
+    return b.len - a.len || a.axis - b.axis || a.order - b.order;
+  })[0].member;
+}
+
 /** Too sharp to mitre or butt (degrees between the members). */
 export const SHARPEST = 10;
+
+/** The members (oriented) and corners (as chosen, else the usual) of a frame's path, and notes. */
+export function frameLayout(segs: PathSeg[], def: Pick<FrameDef, "noMerge" | "corners">): { members: Member[]; corners: FrameCorner[]; notes: string[] } {
+  const oriented = orientMembers(buildMembers(segs, !def.noMerge));
+  const members = oriented.members;
+  const found = findCorners(members);
+  const corners = found.corners.map((c): FrameCorner => {
+    const chosen = def.corners?.find((x) => x.key === c.key);
+    const type = chosen && c.choices.includes(chosen.type) ? chosen.type : defaultType(c);
+    if (type !== "butt" && type !== "coped") return { ...c, type };
+    let through: number;
+    if (c.on !== undefined) through = c.on;
+    else if (c.run) through = c.run[0];
+    else through = c.ends.find((e) => endCurveId(members[e.member], e.end) === chosen?.through)?.member ?? usualThrough(members, c.ends);
+    return { ...c, type, through };
+  });
+  return { members, corners, notes: [...oriented.notes, ...found.notes] };
+}
 
 /**
  * The whole plan: members, corners as chosen (`def.corners`, else the usual) and each member end's cuts, for a
@@ -299,38 +612,26 @@ export const SHARPEST = 10;
  */
 export function planFrame(segs: PathSeg[], def: Pick<FrameDef, "noMerge" | "corners">, shape: ProfileShape, gap: number): FramePlan | string {
   if (!segs.length) return "Pick the sketch lines or arcs for the frame to follow.";
-  const members = buildMembers(segs, !def.noMerge);
-  const raw = findCorners(members);
+  const { members, corners, notes } = frameLayout(segs, def);
   const plans: MemberPlan[] = members.map((m) => ({
     member: m,
     ends: [
       { extend: 0, cuts: [], label: 0 },
       { extend: 0, cuts: [], label: 0 },
     ],
-    axes: [axesAt(m, 0, []), axesAt(m, 1, [])],
-    straight: m.segs.every((s) => s.kind === "line") && m.segs.length === 1,
-    pathLength: m.segs.reduce((t, s) => t + segLength(s), 0),
+    frames: segFrames(m),
+    straight: m.segs.length === 1 && m.segs[0].kind === "line",
+    pathLength: memberLength(m),
   }));
-  const reachOf = (mi: number, end: 0 | 1, dir: V3) => {
-    const ax = plans[mi].axes[end];
-    return reachAlong(shape, dot(dir, ax.x), dot(dir, ax.y));
+  const axesAt = (mi: number, end: 0 | 1) => {
+    const f = plans[mi].frames;
+    return end === 0 ? f[0] : f[f.length - 1];
   };
-  const corners: FrameCorner[] = [];
-  for (const c of raw) {
-    const chosen = def.corners?.find((x) => x.key === c.key);
-    let type = chosen && c.choices.includes(chosen.type) ? chosen.type : defaultType(c);
-    const memberOfId = (id?: string) => {
-      if (!id) return undefined;
-      if (c.on !== undefined && members[c.on].segs.some((s) => s.id === id)) return c.on;
-      return c.ends.find((e) => endSegId(members[e.member], e.end) === id)?.member;
-    };
-    let through = c.on ?? memberOfId(chosen?.through) ?? c.ends[0].member;
-    if (c.on !== undefined) through = c.on;
-    const corner: FrameCorner = { ...c, type, ...(type === "butt" || type === "coped" ? { through } : {}) };
-    corners.push(corner);
-    if (type === "none") continue;
+  const reachOf = (ax: Axes, dir: V3) => reachAlong(shape, dot(dir, ax.x), dot(dir, ax.y));
+  for (const c of corners) {
+    if (c.type === "none") continue;
     if (c.angle !== undefined && c.angle < SHARPEST) return `Two members meet at a very sharp corner (${Math.round(c.angle)}°). Set that corner to None, or change the path.`;
-    if (type === "mitre") {
+    if (c.type === "mitre") {
       const [ea, eb] = c.ends;
       const da = outOf(members[ea.member], ea.end);
       const db = outOf(members[eb.member], eb.end);
@@ -340,33 +641,43 @@ export function planFrame(segs: PathSeg[], def: Pick<FrameDef, "noMerge" | "corn
         [eb, mul(m, -1), db],
       ] as const) {
         const cut = plans[e.member].ends[e.end];
-        const mq = reachOf(e.member, e.end, n);
+        const mq = reachOf(axesAt(e.member, e.end), n);
         cut.extend = Math.max(cut.extend, Math.max(0, (mq - gap / 2) / dot(n, d)) + 1);
         cut.cuts.push({ n, o: add(c.at, mul(n, gap / 2)) });
         cut.label = angleFromSquare(n, d);
       }
       continue;
     }
-    // Butt or coped: `through` runs on; the others stop at its side (coped: at its middle, then cut to its shape).
-    const T = through;
-    const tEnd = c.ends.find((e) => e.member === T);
-    const dT = tEnd ? outOf(members[T], tEnd.end) : segTangent(members[T].segs[0], false);
-    const tAxes = tEnd ? plans[T].axes[tEnd.end] : plans[T].axes[0];
+    // Butt or coped: `through` runs on; the others stop at its side (coped: at its middle, then cut to its outline).
+    const T = c.through!;
+    const tEnd = c.on === undefined && !c.run ? c.ends.find((e) => e.member === T) : undefined;
+    let dT: V3;
+    let tAxes: Axes;
+    if (c.on !== undefined) {
+      const s = members[T].segs[c.onSeg!];
+      dT = segTangent(s, false);
+      tAxes = plans[T].frames[c.onSeg!];
+    } else {
+      const e = c.ends.find((x) => x.member === T)!;
+      dT = outOf(members[T], e.end);
+      tAxes = axesAt(T, e.end);
+    }
+    const runs = new Set(c.run ?? []);
+    const copeWith = c.run ? [...c.run] : [T];
     let tBest: { extend: number; cut: { n: V3; o: V3 } } | null = null;
     for (const e of c.ends) {
-      if (e.member === T) continue;
+      if (e.member === T || runs.has(e.member)) continue;
       const dO = outOf(members[e.member], e.end);
       const u0 = sub(dO, mul(dT, dot(dO, dT)));
       if (len(u0) < 1e-6) continue; // straight on: nothing to butt against
       const u = unit(u0);
-      const hT = type === "coped" ? 0 : reachAlong(shape, dot(u, tAxes.x), dot(u, tAxes.y)) + gap;
+      const hT = c.type === "coped" ? 0 : reachAlong(shape, dot(u, tAxes.x), dot(u, tAxes.y)) + gap;
       const cut = plans[e.member].ends[e.end];
-      const mq = reachOf(e.member, e.end, mul(u, -1));
-      // s ≥ (hT − u·Q)/(u·dO) for every point Q; the most negative wants the end lengthened.
+      const mq = reachOf(axesAt(e.member, e.end), mul(u, -1));
       cut.extend = Math.max(cut.extend, Math.max(0, (mq - hT) / dot(u, dO)) + 1);
       cut.cuts.push({ n: u, o: add(c.at, mul(u, hT)) });
-      if (type === "coped") {
-        cut.cope = T;
+      if (c.type === "coped") {
+        cut.cope = [...(cut.cope ?? []), ...copeWith];
         cut.label = "coped";
       } else cut.label = angleFromSquare(u, dO);
       if (tEnd) {
@@ -374,8 +685,7 @@ export function planFrame(segs: PathSeg[], def: Pick<FrameDef, "noMerge" | "corn
         const w0 = sub(mul(dT, -1), mul(dO, dot(mul(dT, -1), dO)));
         if (len(w0) < 1e-6) continue;
         const w = unit(w0);
-        const ax = plans[e.member].axes[e.end];
-        const hO = reachAlong(shape, dot(w, ax.x), dot(w, ax.y));
+        const hO = reachOf(axesAt(e.member, e.end), w);
         const minWQ = -reachAlong(shape, -dot(w, tAxes.x), -dot(w, tAxes.y));
         const ext = Math.max(0, (hO - minWQ) / dot(w, mul(dT, -1))) + 1;
         if (!tBest || ext > tBest.extend) tBest = { extend: ext, cut: { n: mul(w, -1), o: add(c.at, mul(w, hO)) } };
@@ -388,7 +698,7 @@ export function planFrame(segs: PathSeg[], def: Pick<FrameDef, "noMerge" | "corn
       cut.label = angleFromSquare(tBest.cut.n, dT);
     }
   }
-  return { members: plans, corners };
+  return { members: plans, corners, notes };
 }
 
 /** Degrees between a cut and a square cut, for a member going along `d` (to 0.1°). */
@@ -411,7 +721,14 @@ export interface StraightMember {
   copes: { end: 0 | 1; at: V3; x: V3; y: V3; shape: ProfileShape }[];
 }
 
+/** The profile's outside only (no slots, no holes), as copes and trims meet it. */
+export function envelopeOf(shape: ProfileShape): ProfileShape {
+  return { label: shape.label, regions: (shape.outline ?? shape.regions.map((r) => r.outer)).map((outer) => ({ outer, holes: [] })) };
+}
+
+/** Inside the profile's outlines, or on them (within 1 µm). */
 function insideLoops(shape: ProfileShape, p: P2): boolean {
+  if (onLoops(shape, p)) return true;
   let inside = false;
   for (const r of shape.regions) {
     const l = r.outer;
@@ -426,6 +743,27 @@ function insideLoops(shape: ProfileShape, p: P2): boolean {
     }
   }
   return inside;
+}
+
+function onLoops(shape: ProfileShape, p: P2): boolean {
+  const tol = 1e-6;
+  for (const r of shape.regions) {
+    const l = r.outer;
+    if (l.kind === "circle") {
+      if (Math.abs(Math.hypot(p[0] - l.c[0], p[1] - l.c[1]) - l.r) < tol) return true;
+      continue;
+    }
+    for (let i = 0; i < l.pts.length; i++) {
+      const a = l.pts[i];
+      const b = l.pts[(i + 1) % l.pts.length];
+      const ex = b[0] - a[0];
+      const ey = b[1] - a[1];
+      const L2 = ex * ex + ey * ey || 1;
+      const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * ex + (p[1] - a[1]) * ey) / L2));
+      if (Math.hypot(a[0] + ex * t - p[0], a[1] + ey * t - p[1]) < tol) return true;
+    }
+  }
+  return false;
 }
 
 /** Where the 2D line p0 + s·v crosses the profile's outlines (values of s). */
@@ -458,8 +796,8 @@ function crossings(shape: ProfileShape, p0: P2, v: P2): number[] {
   return out;
 }
 
-/** The cut length of a straight member: from the furthest point at one end to the furthest at the other (mm). */
-export function cutLength(m: StraightMember, shape: ProfileShape): number {
+/** Where a straight member's material reaches along its axis, from its start: [first point, last point], or null. */
+export function memberRange(m: StraightMember, shape: ProfileShape): [number, number] | null {
   const pts = profilePoints(shape, 128);
   let lo = Infinity;
   let hi = -Infinity;
@@ -497,41 +835,102 @@ export function cutLength(m: StraightMember, shape: ProfileShape): number {
     lo = Math.min(lo, a);
     hi = Math.max(hi, b);
   }
-  return hi > lo ? hi - lo : 0;
+  return hi > lo ? [lo, hi] : null;
 }
 
-/** A plan's straight member ready to measure (cuts from both ends; copes to the member running through). */
+/** The cut length of a straight member: from the furthest point at one end to the furthest at the other (mm). */
+export function cutLength(m: StraightMember, shape: ProfileShape): number {
+  const r = memberRange(m, shape);
+  return r ? r[1] - r[0] : 0;
+}
+
+
+/** A plan's straight member ready to measure (cuts from both ends; copes to the outline of the member(s) running through). */
 export function straightMember(plan: FramePlan, i: number, shape: ProfileShape): StraightMember | null {
   const p = plan.members[i];
   if (!p.straight) return null;
   const s = p.member.segs[0];
   const copes: StraightMember["copes"] = [];
+  const env = envelopeOf(shape);
   for (const end of [0, 1] as const) {
-    const t = p.ends[end].cope;
-    if (t === undefined) continue;
-    const corner = plan.corners.find((c) => c.ends.some((e) => e.member === i && e.end === end));
-    const tp = plan.members[t];
-    const tEnd = corner?.ends.find((e) => e.member === t)?.end ?? 0;
-    copes.push({ end, at: corner?.at ?? s.a, x: tp.axes[tEnd].x, y: tp.axes[tEnd].y, shape });
+    for (const t of p.ends[end].cope ?? []) {
+      const corner = plan.corners.find((c) => c.ends.some((e) => e.member === i && e.end === end));
+      const at = corner?.at ?? (end === 0 ? s.a : s.b);
+      const tp = plan.members[t];
+      const tEnd = corner?.ends.find((e) => e.member === t)?.end;
+      const ax = corner?.on === t && corner.onSeg !== undefined ? tp.frames[corner.onSeg] : tEnd === 1 ? tp.frames[tp.frames.length - 1] : tp.frames[0];
+      copes.push({ end, at, x: ax.x, y: ax.y, shape: env });
+    }
   }
   return {
     start: s.a,
     dir: segTangent(s, false),
     length: segLength(s),
-    x: p.axes[0].x,
-    y: p.axes[0].y,
+    x: p.frames[0].x,
+    y: p.frames[0].y,
     extend: [p.ends[0].extend, p.ends[1].extend],
     cuts: [...p.ends[0].cuts, ...p.ends[1].cuts],
     copes,
   };
 }
 
+/** A member's centre line as points (with its lengthened ends), for measuring a curved member. */
+export function centreLine(p: MemberPlan): V3[] {
+  const m = p.member;
+  const pts: V3[] = [];
+  const t0 = segTangent(m.segs[0], false);
+  if (!m.closed && p.ends[0].extend > 0) pts.push(add(m.segs[0].a, mul(t0, -p.ends[0].extend)));
+  for (const s of m.segs) {
+    if (s.kind === "line") pts.push(s.a);
+    else {
+      const n = Math.max(8, Math.ceil(s.angle / (Math.PI / 64)));
+      for (let k = 0; k < n; k++) pts.push(add(s.c, rotate(sub(s.a, s.c), s.axis, (s.angle * k) / n)));
+    }
+  }
+  const last = m.segs[m.segs.length - 1];
+  pts.push(last.b);
+  if (!m.closed && p.ends[1].extend > 0) pts.push(add(last.b, mul(segTangent(last, true), p.ends[1].extend)));
+  return pts;
+}
+
+/** A polyline's length. */
+export function polylineLength(pts: V3[]): number {
+  let t = 0;
+  for (let i = 1; i < pts.length; i++) t += dist(pts[i - 1], pts[i]);
+  return t;
+}
+
+/** The part of a polyline where n·(p − o) ≥ 0 (the longest stretch). */
+export function clipPolyline(pts: V3[], n: V3, o: V3): V3[] {
+  const side = (p: V3) => dot(n, sub(p, o));
+  const runs: V3[][] = [];
+  let cur: V3[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    const sp = side(p);
+    if (i > 0) {
+      const q = pts[i - 1];
+      const sq = side(q);
+      if ((sq < 0) !== (sp < 0)) {
+        const x = add(q, mul(sub(p, q), sq / (sq - sp)));
+        if (sp < 0) {
+          cur.push(x);
+          runs.push(cur);
+          cur = [];
+        } else cur.push(x);
+      }
+    }
+    if (sp >= 0) cur.push(p);
+  }
+  if (cur.length) runs.push(cur);
+  return runs.sort((a, b) => polylineLength(b) - polylineLength(a))[0] ?? [];
+}
+
 /** What a member's cut list line says. */
 export function memberInfo(plan: FramePlan, i: number, shape: ProfileShape, frameId: string, usual?: string): FrameMemberInfo {
   const p = plan.members[i];
   const sm = straightMember(plan, i, shape);
-  const open = !p.member.closed;
-  const length = sm ? cutLength(sm, shape) : p.pathLength + (open ? p.ends[0].extend + p.ends[1].extend : 0);
+  const length = sm ? cutLength(sm, shape) : p.pathLength + (p.member.closed ? 0 : p.ends[0].extend + p.ends[1].extend);
   return {
     frame: frameId,
     member: i + 1,
@@ -543,44 +942,47 @@ export function memberInfo(plan: FramePlan, i: number, shape: ProfileShape, fram
   };
 }
 
-/** Which end of a straight member a trim plane is nearer, and the new line for the cut list. */
+/** Which end of a straight member a cut keeping n·(p − o) ≥ 0 trims: the end n points away from. */
+export const trimmedEnd = (m: StraightMember, n: V3): 0 | 1 => (dot(m.dir, n) > 0 ? 0 : 1);
+
+/** A straight member trimmed by a plane (keeping n·(p − o) ≥ 0): the new cut list line. */
 export function trimmedInfo(info: FrameMemberInfo, m: StraightMember, shape: ProfileShape, cut: { n: V3; o: V3 }): { info: FrameMemberInfo; member: StraightMember } {
   const member = { ...m, cuts: [...m.cuts, cut] };
-  const mid = add(m.start, mul(m.dir, m.length / 2));
-  // The cut keeps the side n points to: it trims the end that n points away from.
-  const end: 0 | 1 = dot(m.dir, cut.n) > 0 ? 0 : 1;
-  void mid;
+  const end = trimmedEnd(m, cut.n);
   const ends: FrameMemberInfo["ends"] = [...info.ends];
   ends[end] = angleFromSquare(cut.n, m.dir);
   return { info: { ...info, length: Math.round(cutLength(member, shape) * 100) / 100, ends }, member };
 }
 
 /**
- * Gusset: the triangular plate in the inside corner between two straight members meeting at an end of each (or one
- * ending on the other's side): its corners (3, or 4 with the inside corner cut off) and its normal; the plate is
- * `thickness` thick, centred on the plane through both members. Or a plain message.
+ * Gusset: the triangular plate in the inside corner between two straight members meeting at an end of each, or one
+ * ending on the other's side (then `flip` picks which side of it): its corners (3, or 4 with the inside corner cut
+ * off) and its normal; the plate is `thickness` thick, centred on the plane through both members. Or a plain message.
  */
-export function gussetOutline(a: StraightMember, b: StraightMember, shapeA: ProfileShape, shapeB: ProfileShape, size: number, chamfer: number): { pts: V3[]; n: V3; angle: number } | string {
-  const endsA: [V3, V3][] = [
-    [a.start, a.dir],
-    [add(a.start, mul(a.dir, a.length)), mul(a.dir, -1)],
+export function gussetOutline(a: StraightMember, b: StraightMember, shapeA: ProfileShape, shapeB: ProfileShape, size: number, chamfer: number, flip = false): { pts: V3[]; n: V3; angle: number } | string {
+  const endsOf = (m: StraightMember): [V3, V3][] => [
+    [m.start, m.dir],
+    [add(m.start, mul(m.dir, m.length)), mul(m.dir, -1)],
   ];
-  const endsB: [V3, V3][] = [
-    [b.start, b.dir],
-    [add(b.start, mul(b.dir, b.length)), mul(b.dir, -1)],
-  ];
-  let best: { p: V3; da: V3; db: V3 } | null = null;
-  for (const [pa, da] of endsA) for (const [pb, db] of endsB) if (dist(pa, pb) < JOIN_TOL * 10 && !best) best = { p: pa, da, db };
-  if (!best) return "These two members don't meet at a corner (an end of each in the same place). Pick two that do.";
-  const { p, da, db } = best;
+  const onSide = (m: StraightMember, p: V3) => {
+    const d = dot(sub(p, m.start), m.dir);
+    return d > JOIN_TOL * 10 && d < m.length - JOIN_TOL * 10 && dist(add(m.start, mul(m.dir, d)), p) < JOIN_TOL * 10;
+  };
+  let best: { p: V3; da: V3; db: V3; ma: StraightMember; mb: StraightMember; sa: ProfileShape; sb: ProfileShape } | null = null;
+  for (const [pa, da] of endsOf(a)) for (const [pb, db] of endsOf(b)) if (dist(pa, pb) < JOIN_TOL * 10 && !best) best = { p: pa, da, db, ma: a, mb: b, sa: shapeA, sb: shapeB };
+  // One ending on the side of the other: the plate goes along the one it meets (one way or, flipped, the other).
+  if (!best) for (const [pb, db] of endsOf(b)) if (!best && onSide(a, pb)) best = { p: pb, da: flip ? mul(a.dir, -1) : a.dir, db, ma: a, mb: b, sa: shapeA, sb: shapeB };
+  if (!best) for (const [pa, da] of endsOf(a)) if (!best && onSide(b, pa)) best = { p: pa, da: flip ? mul(b.dir, -1) : b.dir, db: da, ma: b, mb: a, sa: shapeB, sb: shapeA };
+  if (!best) return "These two members don't meet at a corner (an end of each in the same place, or one ending on the other's side). Pick two that do.";
+  const { p, da, db, ma, mb, sa, sb } = best;
   const c = dot(da, db);
   const angle = (Math.acos(Math.max(-1, Math.min(1, c))) * 180) / Math.PI;
   if (angle < SHARPEST || angle > 170) return `The members meet at ${Math.round(angle)}°, too ${angle < 90 ? "sharp" : "flat"} a corner for a gusset.`;
   const s = Math.sqrt(1 - c * c);
   const uA = unit(sub(db, mul(da, c)));
   const uB = unit(sub(da, mul(db, c)));
-  const hA = reachAlong(shapeA, dot(uA, a.x), dot(uA, a.y));
-  const hB = reachAlong(shapeB, dot(uB, b.x), dot(uB, b.y));
+  const hA = reachAlong(sa, dot(uA, ma.x), dot(uA, ma.y));
+  const hB = reachAlong(sb, dot(uB, mb.x), dot(uB, mb.y));
   // In the plane: e1 = da, e2 = uA; the inside corner where both inner faces meet.
   const x = (hB + c * hA) / s;
   const C = add(p, add(mul(da, x), mul(uA, hA)));
@@ -724,7 +1126,7 @@ export function parseTrimFrame(raw: unknown, readPlane: (v: unknown) => SketchPl
 
 export function parseGusset(raw: unknown): GussetDef {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-  return { parts: strs(r.parts).slice(0, 2), ...(r.chamfer === true ? { chamfer: true } : {}) };
+  return { parts: strs(r.parts).slice(0, 2), ...(r.chamfer === true ? { chamfer: true } : {}), ...(r.flip === true ? { flip: true } : {}) };
 }
 
 /** What a frame, trim or gusset needs from other features: sketches (all needed, the path a list) and parts. */
@@ -751,21 +1153,10 @@ export function cutListLines(list: { rows: CutListRow[]; totals: CutListTotal[] 
   ];
 }
 
-/**
- * The corners of a frame's path as they'll be built (type and the member running through), for the dialog: worked out
- * with a 1 mm square stand-in profile (corners don't depend on the profile), with the members' numbers.
- */
+/** The corners of a frame's path as they'll be built (type and the member running through), for the dialog, with the members. */
 export function frameCornersFor(segs: PathSeg[], def: Pick<FrameDef, "noMerge" | "corners">): { corners: FrameCorner[]; members: Member[] } {
-  const square: ProfileShape = { label: "", regions: [{ outer: { kind: "poly", pts: [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]] }, holes: [] }] };
-  const plan = planFrame(segs, def, square, 0);
-  const members = buildMembers(segs, !def.noMerge);
-  if (typeof plan !== "string") return { corners: plan.corners, members };
-  return { corners: findCorners(members).map((c) => ({ ...c, type: "none" as const })), members };
-}
-
-/** The curve id ("sketch/curve") at a member's end, as Butt / Coped's `through` names it. */
-export function endCurveId(m: Member, end: 0 | 1): string {
-  return end === 0 ? m.segs[0].id : m.segs[m.segs.length - 1].id;
+  const l = frameLayout(segs, def);
+  return { corners: l.corners, members: l.members };
 }
 
 /**

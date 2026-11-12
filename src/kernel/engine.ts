@@ -69,7 +69,7 @@ import { simplifyShape } from "./simplify";
 import { regionOfFaces } from "./facePattern";
 import { modifyFillets, NotAFillet } from "./modifyFillet";
 import { memberSolid, keepSide } from "./frame";
-import { gussetOutline, usualMaterial, memberInfo, planFrame, sketchPathSegments, straightMember, trimmedInfo, type PathSeg, type StraightMember } from "../model/frame";
+import { angleFromSquare, centreLine, clipPolyline, cutLength, envelopeOf, gussetOutline, memberInfo, memberRange, planFrame, polylineLength, sketchPathSegments, straightMember, trimmedInfo, usualMaterial, type MemberPlan, type PathSeg, type StraightMember } from "../model/frame";
 import { builtInProfile, placedProfile, type ProfileShape } from "../model/frameProfiles";
 import type { FrameMemberInfo } from "../model/frameTypes";
 import { splitFaces } from "./splitFace";
@@ -464,9 +464,8 @@ function biggestSolid(shape: Shape3D): Shape3D {
   return solids[best];
 }
 
-/** How long a straight frame member is along its own direction (mm, to 0.01), or null for a curved one. */
-function alongLength(shape: Shape3D, member: StraightMember | null): number | null {
-  if (!member) return null;
+/** Where a solid reaches along a straight frame member's axis, measured from the member's start: [from, to]. */
+function alongRange(shape: Shape3D, member: StraightMember): [number, number] | null {
   const d = member.dir;
   const axis = cross3(d, [0, 0, 1]);
   const s = Math.hypot(axis[0], axis[1], axis[2]);
@@ -474,7 +473,8 @@ function alongLength(shape: Shape3D, member: StraightMember | null): number | nu
   const turned = s > 1e-9 ? shape.clone().rotate(angle, [0, 0, 0], [axis[0] / s, axis[1] / s, axis[2] / s]) : d[2] < 0 ? shape.clone().rotate(180, [0, 0, 0], [1, 0, 0]) : shape.clone();
   try {
     const [lo, hi] = boundsOf(turned);
-    return Math.round((hi[2] - lo[2]) * 100) / 100;
+    const s0 = dot3(member.start, d);
+    return [lo[2] - s0, hi[2] - s0];
   } finally {
     turned.delete();
   }
@@ -5511,17 +5511,11 @@ export class GeometryEngine {
     return {};
   }
 
-  /**
-   * Composite part (Onshape's, "closed"): the picked parts become one part — its
-   * shape a compound of theirs, so they stay separate solids inside — picked,
-   * listed, coloured, exported and put in assemblies as one. It goes at the end
-   * of the parts (so it's the latest part, as a new part would be).
-   */
   // -------------------------------------------------------------------------
   // Frames (Onshape's Frame, Trim frame and Gusset): see model/frame.ts (the plan) and kernel/frame.ts (the solids).
 
-  /** Frame members built so far this build: what the cut list says, and (straight ones) where they run. */
-  private frameMembers = new Map<string, { info: FrameMemberInfo; member: StraightMember | null; shape: ProfileShape }>();
+  /** Frame members built so far this build: the cut list line, the plan, (straight ones) where they run, the centre line. */
+  private frameMembers = new Map<string, { info: FrameMemberInfo; member: StraightMember | null; shape: ProfileShape; plan: MemberPlan; line: Vec3[] }>();
 
   /** The frame's profile, placed as it sits on the path, or a plain message. */
   private frameProfile(feature: Feature, sketches: SketchMap, features: Feature[], values: Record<string, number>): ProfileShape | string {
@@ -5571,32 +5565,41 @@ export class GeometryEngine {
     const plan = planFrame(unique, def, shape, Math.max(0, values.gap ?? 0));
     if (typeof plan === "string") return plan;
     const solids: Shape3D[] = [];
+    const envelopes = new Map<number, Shape3D>();
+    const env = envelopeOf(shape);
     try {
       for (const m of plan.members) solids.push(memberSolid(m, shape));
-      // Coped ends: cut to the shape of the member running through, keeping the biggest piece.
+      // Coped ends: cut to the outside of the member(s) running through (no slots or holes), keeping the biggest piece.
       plan.members.forEach((m, i) => {
         for (const end of [0, 1] as const) {
-          const t = m.ends[end].cope;
-          if (t === undefined) continue;
-          const cut = solids[i].cut(solids[t]) as Shape3D;
-          solids[i].delete();
-          solids[i] = biggestSolid(cut);
+          for (const t of m.ends[end].cope ?? []) {
+            let tool = envelopes.get(t);
+            if (!tool) {
+              tool = memberSolid(plan.members[t], env);
+              envelopes.set(t, tool);
+            }
+            const cut = solids[i].cut(tool) as Shape3D;
+            solids[i].delete();
+            solids[i] = biggestSolid(cut);
+          }
         }
       });
     } catch (e) {
       solids.forEach((x) => x.delete());
       return describeError(e, "Couldn't make this frame.");
+    } finally {
+      envelopes.forEach((x) => x.delete());
     }
-    plan.members.forEach((_, i) => {
-      const id = i === 0 ? feature.id : `${feature.id}~${i + 1}`;
+    plan.members.forEach((m, i) => {
+      // Named by the member's first curve, so ids stay put when other lines are added or taken away.
+      const id = `${feature.id}~${m.member.key.replace(/[^A-Za-z0-9_.-]/g, "_")}`;
       const info = memberInfo(plan, i, shape, feature.id, usualMaterial(def.profile.kind));
-      this.frameMembers.set(id, { info, member: straightMember(plan, i, shape), shape });
+      this.frameMembers.set(id, { info, member: straightMember(plan, i, shape), shape, plan: m, line: centreLine(m) });
       this.parts.push({ id, name: `${feature.name} member ${i + 1}`, featureIds: [feature.id], shape: solids[i], frame: info });
     });
-    const notes: string[] = [];
+    const notes: string[] = [...plan.notes];
     if (skipped) notes.push(`${skipped === 1 ? "One curve was" : `${skipped} curves were`} left out: frames follow lines, arcs and circles (not splines or ellipses).`);
-    const left = plan.corners.filter((c) => c.ends.length >= 3 && c.type !== "none");
-    if (left.length && left.some((c) => c.ends.length > 3)) notes.push("Where more than three members meet, check the corners don't overlap (Trim frame can tidy them).");
+    if (plan.corners.some((c) => c.ends.length > 3 && c.type !== "none")) notes.push("Where more than three members meet, check the corners don't overlap (Trim frame can tidy them).");
     if (notes.length) this.warnings[feature.id] = notes.join(" ");
     return null;
   }
@@ -5607,58 +5610,86 @@ export class GeometryEngine {
     if (!def.plane && !def.to) return "Choose what to trim them to: a plane, a flat face or another part.";
     const target = def.to ? this.parts.find((p) => p.id === def.to) : undefined;
     if (def.to && !target) return "The part to trim to no longer exists. Edit this and pick another.";
-    for (const id of def.parts) {
-      const part = this.parts.find((p) => p.id === id);
-      if (!part) return "One of the members to trim no longer exists. Edit this and pick them again.";
-      if (id === def.to) return `${part.name} can't be trimmed to itself.`;
-      const fm = this.frameMembers.get(id);
-      if (!fm || !part.frame) return `${part.name} isn't a frame member. Trim frame trims parts made by a Frame.`;
-      const before = measureVolume(part.shape);
-      let next: Shape3D;
-      try {
-        if (target) {
-          next = biggestSolid(part.shape.cut(target.shape) as Shape3D);
-        } else {
-          const f = planeFrame(def.plane!);
-          const [lo, hi] = boundsOf(part.shape);
-          const size = 4 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 100;
-          const front = keepSide(part.shape, f.n, f.origin, size);
-          const back = keepSide(part.shape, [-f.n[0], -f.n[1], -f.n[2]], f.origin, size);
-          const vf = measureVolume(front);
-          const vb = measureVolume(back);
-          const keepFront = vf >= vb !== !!def.flip;
-          next = keepFront ? front : back;
-          (keepFront ? back : front).delete();
-          const n: Vec3 = keepFront ? f.n : [-f.n[0], -f.n[1], -f.n[2]];
-          if (fm.member) {
-            const t = trimmedInfo(part.frame, fm.member, fm.shape, { n, o: f.origin });
-            part.frame = t.info;
-            fm.info = t.info;
-            fm.member = t.member;
+    // A frame member is met by its outside only (not into its slots or holes).
+    const targetMember = def.to ? this.frameMembers.get(def.to) : undefined;
+    let tool: Shape3D | null = null;
+    try {
+      if (target) tool = targetMember ? memberSolid(targetMember.plan, envelopeOf(targetMember.shape)) : target.shape.clone();
+      for (const id of def.parts) {
+        const part = this.parts.find((p) => p.id === id);
+        if (!part) return "One of the members to trim no longer exists. Edit this and pick them again.";
+        if (id === def.to) return `${part.name} can't be trimmed to itself.`;
+        const fm = this.frameMembers.get(id);
+        if (!fm || !part.frame) return `${part.name} isn't a frame member. Trim frame trims parts made by a Frame.`;
+        const before = measureVolume(part.shape);
+        let next: Shape3D;
+        let info: FrameMemberInfo = part.frame;
+        try {
+          if (tool) {
+            next = biggestSolid(part.shape.cut(tool) as Shape3D);
+            if (fm.member) {
+              const was = memberRange(fm.member, fm.shape);
+              const now = alongRange(next, fm.member);
+              if (was && now) {
+                const end: 0 | 1 = Math.abs(now[0] - was[0]) > Math.abs(now[1] - was[1]) ? 0 : 1;
+                // Measured from the cut solid: its longest point at the trimmed end.
+                const m = fm.member;
+                const member: StraightMember = { ...m, cuts: [...m.cuts, end === 0 ? { n: m.dir, o: add3(m.start, scale3(m.dir, now[0])) } : { n: scale3(m.dir, -1), o: add3(m.start, scale3(m.dir, now[1])) }] };
+                const ends: FrameMemberInfo["ends"] = [...info.ends];
+                ends[end] = "coped";
+                info = { ...info, length: Math.round(cutLength(member, fm.shape) * 100) / 100, ends };
+                fm.member = member;
+              }
+            }
+          } else {
+            const f = planeFrame(def.plane!);
+            const [lo, hi] = boundsOf(part.shape);
+            const size = 4 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 100;
+            const front = keepSide(part.shape, f.n, f.origin, size);
+            const back = keepSide(part.shape, [-f.n[0], -f.n[1], -f.n[2]], f.origin, size);
+            const keepFront = measureVolume(front) >= measureVolume(back) !== !!def.flip;
+            next = keepFront ? front : back;
+            (keepFront ? back : front).delete();
+            const n: Vec3 = keepFront ? f.n : [-f.n[0], -f.n[1], -f.n[2]];
+            if (fm.member) {
+              const t = trimmedInfo(info, fm.member, fm.shape, { n, o: f.origin });
+              info = t.info;
+              fm.member = t.member;
+            } else {
+              // Curved: measured along its middle, what's left of it.
+              const side = (p: Vec3) => dot3(n, [p[0] - f.origin[0], p[1] - f.origin[1], p[2] - f.origin[2]]);
+              const kept = clipPolyline(fm.line, n, f.origin);
+              if (kept.length > 1) {
+                const end: 0 | 1 = side(fm.line[0]) < 0 ? 0 : 1;
+                const a = end === 0 ? kept[0] : kept[kept.length - 1];
+                const b = end === 0 ? kept[1] : kept[kept.length - 2];
+                const ends: FrameMemberInfo["ends"] = [...info.ends];
+                ends[end] = angleFromSquare(n, [b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
+                info = { ...info, length: Math.round(polylineLength(kept) * 100) / 100, ends };
+                fm.line = kept;
+              }
+            }
           }
+        } catch (e) {
+          return describeError(e, `Couldn't trim ${part.name}.`);
         }
-      } catch (e) {
-        return describeError(e, `Couldn't trim ${part.name}.`);
-      }
-      const after = measureVolume(next);
-      if (!(after > 1e-6)) {
-        next.delete();
-        return `Trimming would leave nothing of ${part.name}. Try Flip, or another plane.`;
-      }
-      if (Math.abs(after - before) < 1e-6 * Math.max(1, before)) {
-        next.delete();
-        return `${part.name} doesn't reach ${target ? target.name : "the plane"}, so there's nothing to trim.`;
-      }
-      if (target && part.frame) {
-        // Cut to another part: measured along the member (its ends follow the part's shape).
-        const length = alongLength(next, fm.member);
-        const info: FrameMemberInfo = { ...part.frame, ...(length !== null ? { length } : {}), ends: [part.frame.ends[0], "coped"] };
+        const after = measureVolume(next);
+        if (!(after > 1e-6)) {
+          next.delete();
+          return `Trimming would leave nothing of ${part.name}. Try Flip, or another plane.`;
+        }
+        if (Math.abs(after - before) < 1e-6 * Math.max(1, before)) {
+          next.delete();
+          return `${part.name} doesn't reach ${target ? target.name : "the plane"}, so there's nothing to trim.`;
+        }
         part.frame = info;
         fm.info = info;
+        part.shape.delete();
+        part.shape = next;
+        part.featureIds.push(feature.id);
       }
-      part.shape.delete();
-      part.shape = next;
-      part.featureIds.push(feature.id);
+    } finally {
+      tool?.delete();
     }
     return null;
   }
@@ -5674,7 +5705,7 @@ export class GeometryEngine {
     const shown = visibleParamKeys(feature);
     const bad = FEATURE_DEFS.gusset.params.find((p) => errors[p.key] && shown.has(p.key));
     if (bad) return `${bad.label}: ${errors[bad.key]}`;
-    const g = gussetOutline(a.member, b.member, a.shape, b.shape, values.size, feature.gusset?.chamfer ? values.chamfer : 0);
+    const g = gussetOutline(a.member, b.member, a.shape, b.shape, values.size, feature.gusset?.chamfer ? values.chamfer : 0, !!feature.gusset?.flip);
     if (typeof g === "string") return g;
     const t = values.thickness;
     try {
@@ -5691,6 +5722,12 @@ export class GeometryEngine {
     return null;
   }
 
+  /**
+   * Composite part (Onshape's, "closed"): the picked parts become one part — its
+   * shape a compound of theirs, so they stay separate solids inside — picked,
+   * listed, coloured, exported and put in assemblies as one. It goes at the end
+   * of the parts (so it's the latest part, as a new part would be).
+   */
   private applyComposite(feature: Feature): string | null {
     const ids = [...new Set(feature.compositeParts ?? [])];
     if (ids.length < 2) return "Pick two or more parts to group into a composite part — in the 3D view or in the Parts list.";

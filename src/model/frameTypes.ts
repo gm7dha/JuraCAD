@@ -66,6 +66,8 @@ export interface GussetDef {
   parts: string[];
   /** Cut its inside corner off (by the "chamfer" box), to clear a weld or the members' rounded edges. */
   chamfer?: boolean;
+  /** Where one member ends on the other's side: the plate goes the other way along it. */
+  flip?: boolean;
 }
 
 /** What a frame member is, for the cut list (on PartMesh.frame). */

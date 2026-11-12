@@ -19,6 +19,8 @@ export interface ProfileRegion {
 }
 export interface ProfileShape {
   regions: ProfileRegion[];
+  /** The outside it fills, when that isn't just its outlines (an extrusion's square, slots and all): what copes and trims meet. */
+  outline?: ProfileLoop[];
   /** "2020 aluminium extrusion", "40 × 40 × 2 box section"… */
   label: string;
 }
@@ -195,7 +197,8 @@ export function builtInProfile(kind: FrameProfileKind, sizeKey: string, custom?:
     case "extrusion": {
       const cell = sizeKey === "3030" ? 30 : sizeKey === "4040" ? 40 : 20;
       const series = cell === 30 ? SLOT_30 : cell === 40 ? SLOT_40 : SLOT_20;
-      return { regions: [extrusion(cell, sizeKey === "2040" ? 2 : 1, series)], label: label(sizeKey) };
+      const cols = sizeKey === "2040" ? 2 : 1;
+      return { regions: [extrusion(cell, cols, series)], outline: [rect(cell * cols, cell)], label: label(sizeKey) };
     }
     case "box": {
       const [w, h, t] = dims;
@@ -299,7 +302,11 @@ export function placedProfile(s: ProfileShape, anchor: string | undefined, mirro
     const y = p[1] - ay;
     return [x * c - y * sn, x * sn + y * c];
   };
-  return { label: s.label, regions: s.regions.map((r) => ({ outer: mapLoop(r.outer, f, mirror), holes: r.holes.map((h) => mapLoop(h, f, mirror)) })) };
+  return {
+    label: s.label,
+    regions: s.regions.map((r) => ({ outer: mapLoop(r.outer, f, mirror), holes: r.holes.map((h) => mapLoop(h, f, mirror)) })),
+    ...(s.outline ? { outline: s.outline.map((l) => mapLoop(l, f, mirror)) } : {}),
+  };
 }
 
 export const ANCHORS: { key: string; label: string }[] = [

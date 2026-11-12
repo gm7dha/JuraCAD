@@ -4,7 +4,7 @@
  * half-spaces, and coped members cut to the member running through. The planning is pure, in model/frame.ts.
  */
 import { assembleWire, basicFaceExtrusion, makeBox, makeCircle, makeFace, makeLine, revolution, Vector, type Shape3D, type Wire } from "replicad";
-import { dot, profileAxes, segLength, segTangent, type MemberPlan, type PathSeg, type V3 } from "../model/frame";
+import { dot, segLength, segTangent, type Axes, type MemberPlan, type PathSeg, type V3 } from "../model/frame";
 import type { ProfileLoop, ProfileShape } from "../model/frameProfiles";
 
 const add = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -58,8 +58,7 @@ function fuseAll(pieces: Shape3D[]): Shape3D {
 }
 
 /** The profile pushed from `from` along `dir` by `length`. */
-function prism(shape: ProfileShape, from: V3, dir: V3, n: V3, length: number): Shape3D {
-  const { x, y } = profileAxes(dir, n);
+function prism(shape: ProfileShape, from: V3, dir: V3, { x, y }: Axes, length: number): Shape3D {
   const faces = profileFaces(shape, from, x, y);
   const solids = faces.map((f) => {
     const v = new Vector(mul(dir, length));
@@ -73,10 +72,9 @@ function prism(shape: ProfileShape, from: V3, dir: V3, n: V3, length: number): S
   return fuseAll(solids);
 }
 
-function segmentSolid(shape: ProfileShape, s: PathSeg): Shape3D {
-  if (s.kind === "line") return prism(shape, s.a, segTangent(s, false), s.n, segLength(s));
-  const t = segTangent(s, false);
-  const { x, y } = profileAxes(t, s.n);
+function segmentSolid(shape: ProfileShape, s: PathSeg, f: Axes): Shape3D {
+  if (s.kind === "line") return prism(shape, s.a, segTangent(s, false), f, segLength(s));
+  const { x, y } = f;
   const faces = profileFaces(shape, s.a, x, y);
   const solids = faces.map((f) => {
     try {
@@ -109,19 +107,19 @@ export function memberSolid(plan: MemberPlan, shape: ProfileShape): Shape3D {
   if (plan.straight) {
     const s = m.segs[0];
     const t = segTangent(s, false);
-    solid = prism(shape, add(s.a, mul(t, -e0)), t, s.n, segLength(s) + e0 + e1);
+    solid = prism(shape, add(s.a, mul(t, -e0)), t, plan.frames[0], segLength(s) + e0 + e1);
   } else {
     const pieces: Shape3D[] = [];
     const first = m.segs[0];
     const last = m.segs[m.segs.length - 1];
     if (e0 > 0) {
       const t = segTangent(first, false);
-      pieces.push(prism(shape, add(first.a, mul(t, -e0)), t, first.n, e0));
+      pieces.push(prism(shape, add(first.a, mul(t, -e0)), t, plan.frames[0], e0));
     }
-    for (const s of m.segs) pieces.push(segmentSolid(shape, s));
+    m.segs.forEach((s, k) => pieces.push(segmentSolid(shape, s, plan.frames[k])));
     if (e1 > 0) {
       const t = segTangent(last, true);
-      pieces.push(prism(shape, last.b, t, last.n, e1));
+      pieces.push(prism(shape, last.b, t, plan.frames[plan.frames.length - 1], e1));
     }
     solid = fuseAll(pieces);
   }

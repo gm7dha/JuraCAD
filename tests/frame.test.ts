@@ -76,8 +76,8 @@ describe("frame members and corners", () => {
     const keys = plan(segs, s).corners.map((c) => c.key);
     const p = plan(segs, s, keys.map((key) => ({ key, type: "butt" as const })));
     const lens = p.members.map((_, i) => memberInfo(p, i, s, "f").length);
-    // The first member listed at each corner runs through: member 1 at both its ends, 2 and 3 at one, 4 at neither.
-    expect(lens.map((l) => Math.round(l * 100) / 100)).toEqual([440, 300, 400, 260]);
+    // The longer members run through at every corner: two pairs.
+    expect(lens.map((l) => Math.round(l * 100) / 100)).toEqual([440, 260, 440, 260]);
     const g = plan(segs, s, keys.map((key) => ({ key, type: "butt" as const })), 2);
     expect(Math.min(...g.members.map((_, i) => memberInfo(g, i, s, "f").length))).toBeCloseTo(256, 6);
     // Swapping which runs through at one corner.

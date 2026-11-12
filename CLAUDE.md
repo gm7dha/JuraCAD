@@ -606,35 +606,48 @@
   ("custom" = the width/height/wall params) or `{kind:"sketch"}` (its closed regions' polygons); `anchor` (9 points of the
   outline's box), `mirror`, `noMerge`, `corners` (choices keyed by `cornerKey` = the sorted "sketch/curve" ids meeting there,
   "|on:<id>" for a T; `through` = the curve of the member that runs through); params angle, gap), "trimFrame" (`trimFrame`:
-  member `parts`, `plane` (keeps the side with more of each member; `flip`) or `to` (a part: cut, biggest piece kept);
-  `picking` not saved, stripped in buildInput) and "gusset" (`gusset.parts` = 2 members, `chamfer`; params size/thickness/chamfer).
-  Missing everywhere else, so old files are unchanged. Pure: `src/model/frameProfiles.ts` (`PROFILE_KINDS`: T-slot extrusion
-  2020/2040/3030/4040 — outside + slots with 45° V sides, cavities left solid, ≈40 edges + bore —, box section, angle, round tube,
-  flat bar, planed timber; `placedProfile`, `reachAlong` (exact for circles)) and `src/model/frame.ts`: `sketchPathSegments`
-  (lines/arcs/circles in 3D), `buildMembers` (runs carrying on within 0.5° with the same sketch normal merged), `findCorners`
-  (ends within `JOIN_TOL`; a lone end on a straight member's side = a T), `planFrame` → per member end `EndCut` {extend, cuts:
-  half-spaces "keep n·(x − o) ≥ 0", cope, label}: mitre = the bisector of the two directions (± gap/2), butt = the through member
-  stops flush with the other's far face and the others at its near face (+ gap; extents from `reachAlong` along the direction
-  square to each axis), coped = cut at the through member's axis plane then minus its solid; defaults mitre for two members (none
-  when straight on), butt for 3+ and Ts; < `SHARPEST` 10° refused. Profile axes: x = n × t (in the sketch plane), y = the sketch
-  normal (`profileAxes`). `cutLength` (straight members): over the profile's points, each line clipped by the cuts (and copes via
-  2D crossings with the through member's outline), longest to longest; curved members = centre line + extensions
-  (`curved`). `memberInfo` → `FrameMemberInfo` on BuiltPart/PartMesh `.frame` (profile label, length, end angles from square or
-  "coped", `usual` material); `trimmedInfo`, `gussetOutline` (inside corner where the inner faces meet, legs `size` along each,
-  optional chamfer; centred on the members' plane), `cutList`/`frameCutList` (groups by profile + length to 0.1 + ends; mass from
-  the part's material or `usualMaterial`: extrusion aluminium, sections steel, timber oak), `cutListCsv`, `togglePathLine`,
-  `frameCornersFor` (the dialog's corner list), `frameUses` + parsers. Solids `src/kernel/frame.ts` (`memberSolid`: a prism per
-  straight member from start − extend, arcs revolved, merged runs fused, then half-space boxes cut; faces from wires
-  anticlockwise/holes clockwise). Engine `applyFrame`/`applyTrimFrame`/`applyGusset` (`frameMembers` per build): part ids
-  `<feature>`, `~2`…, names "<Frame> member k"; a 12-member cube frame builds in ~3 s. UI: Toolbar group "frames" (Frame, Trim
-  frame, Gusset, Cut list → `CutListDialog.tsx`, dialog "cutList", Save as CSV), dialogs in `src/app/FrameOptions.tsx`; clicking a
-  sketch line while a Frame is open leaves it out / puts it back (lineDraftId), Trim frame's Members / To a plane or face / To a
-  part, Gusset picks 2 parts. Dependents: path sketches a list, profile sketch / gusset parts / trim target needed, trim members a
-  list, trim plane via planesOf; frames and gussets make solid parts. Claude: add_feature "frame" / "trim_frame" / "gusset" and
-  `describe_cut_list` (csv) in `src/mcp/frameSpec.ts`. Not done: part edges and curve features as paths, cut list on drawings,
-  corner choices for mitres of 3+ members, gusset placement off the middle plane. Tests: tests/frame (pure), engineFrame (2020
-  rectangle volumes = area × path, butt lengths, cube of 12 with no overlaps, gusset volume, plane trim, coped tubes, trim to a
-  member), mcpFrame.
+  member `parts`, `plane` (keeps the side with more of each member; `flip`) or `to` (a part — a frame member is met by its
+  outside only — biggest piece kept); `picking` not saved, stripped in buildInput) and "gusset" (`gusset.parts` = 2 members,
+  `chamfer`, `flip` = the other side where one ends on the other's side; params size/thickness/chamfer). Missing everywhere
+  else, so old files are unchanged. Pure: `src/model/frameProfiles.ts` (`PROFILE_KINDS`: T-slot extrusion 2020/2040/3030/4040 —
+  outside + slots with 45° V sides, cavities left solid, ≈40 edges + bore; `ProfileShape.outline` = its 20×20… square, the
+  outside copes/trims meet (`envelopeOf`: else the regions' outers without holes) —, box section, angle, round tube, flat bar,
+  planed timber; `placedProfile`, `reachAlong` exact for circles) and `src/model/frame.ts`:
+  - `sketchPathSegments` (lines/arcs/circles in 3D); `buildMembers`: with merge, segments carry on where they meet straight on /
+    tangent; where 3+ meet only the longest straight line-line pair carries on (a post split at a rail = one post; a + = one
+    member, two ending on its side); never through a point lying inside another line (rails each side of a post stay apart);
+    collinear lines fused into one line (id = the earliest curve's); `Member.key`/`order` = the earliest curve in the path.
+  - `orientMembers`: lines run on from one to the next through 2-member corners (reversed if drawn the other way), and the
+    profile's axes (`Member.start`, carried along arcs, `segFrames`) are carried round 2-member corners by the least turn
+    (`carryRound`; a U-turn turns about up), so a one-sided anchor stays on one side all round and sections match at mitres
+    across sketches; each path's first member (and every member at 3+-way corners) starts from its sketch: x = n × t, y = n
+    (`profileAxes`); a loop coming back turned over gets a note.
+  - `findCorners`: ends at a point inside another member's LINE segment = a T (any number of ends; inside an arc = a note,
+    left square); 3+ ends with a straight-on line pair = a "run" (the pair meet square and run on, the rest butt against it);
+    2 ends = mitre (none if straight on); 3+ = butt. `frameLayout` applies choices; `usualThrough` = the longest, then the one
+    most along X, then Y, then Z, then path order (a rectangle: two pairs; a cube: front/back rails run through, side rails and
+    uprights stop — 300 cube in 2040: 4×340, 4×260, 4×280). `planFrame` → per member end `EndCut` {extend, cuts: half-spaces
+    "keep n·(x − o) ≥ 0", cope: members, label}: mitre = the bisector (± gap/2); butt = others stop at the through member's
+    near face (+ gap), it reaches their far face; coped = cut at its axis plane then minus its OUTSIDE (envelope) solid; < 10°
+    refused. `memberRange`/`cutLength` (straight: over the profile's points, clipped by cuts and copes — boundary points count
+    as inside), curved = path + extensions; `centreLine`/`clipPolyline` re-measure a curved member a plane trims.
+  - `memberInfo` → `FrameMemberInfo` on BuiltPart/PartMesh `.frame`; `trimmedInfo`/`trimmedEnd`; `gussetOutline` (corner or
+    T; the inside corner where the inner faces meet, legs `size`, optional chamfer, centred on the members' plane);
+    `cutList`/`frameCutList` (profile + length to 0.1 + ends; mass from the part's material or `usualMaterial`),
+    `cutListCsv`, `togglePathLine`, `frameCornersFor`, `frameUses` + parsers.
+  Solids `src/kernel/frame.ts` (`memberSolid`: prisms/revolves with the plan's frames, fused, half-space boxes cut). Engine
+  `applyFrame` (part ids `<feature>~<sketch>_<curve>` of the member's first curve — stable when other lines change; names
+  "<Frame> member k" by path order; copes cut with the through members' envelope solids), `applyTrimFrame` (to a part: which
+  end is told by `alongRange` of the cut solid vs `memberRange`, then a square plane at the measured end, label "coped"),
+  `applyGusset` (`frameMembers` per build). A 12-member cube frame builds in ~3 s. UI: Toolbar group "frames" (Frame, Trim
+  frame, Gusset, Cut list → `CutListDialog.tsx`, dialog "cutList", Save as CSV), dialogs in `src/app/FrameOptions.tsx`;
+  clicking a sketch line while a Frame is open leaves it out / puts it back (lineDraftId), Trim frame's Members / To a plane
+  or face / To a part, Gusset picks 2 parts. Dependents: path sketches a list, profile sketch / gusset parts / trim target
+  needed, trim members a list, trim plane via planesOf; frames and gussets make solid parts. Claude: add_feature "frame" /
+  "trim_frame" / "gusset" and `describe_cut_list` (csv) in `src/mcp/frameSpec.ts`. Not done: part edges and curve features as
+  paths, cut list on drawings, mitres where 3+ meet, gussets off the middle plane, Ts on arcs. Tests: tests/frame (pure),
+  engineFrame (volumes, butt pairs, the 2040 cube, split-post T both orders and unmerged, +, rails each side of a post and at an
+  angle, lines drawn either way, an L across sketches, copes 290/280, stable ids, gussets at a corner and a T, trims), mcpFrame.
 - Split face and Modify fillet (Onshape's). Split face = a "split" with `splitDef.mode: "face"` (missing = Split part, exactly as
   before): `picks` = faces of one part (+ edges when `splitDef.tool` is "edges"); `tool` missing = `splitDef.plane` (its section with
   each face, `planeCutEdges`), "sketch" = the feature's `sketchRef` (its curves as an `extrudeSurface` symmetric past the parts, sectioned

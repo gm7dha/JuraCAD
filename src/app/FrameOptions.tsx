@@ -142,11 +142,11 @@ export function FrameOptions() {
           <legend>Corners</legend>
           <ul className="pick-list frame-corners" aria-label="Corners">
             {corners.map((c) => {
-              const nums = [...c.ends.map((e) => e.member + 1), ...(c.on !== undefined ? [c.on + 1] : [])];
+              const nums = [...new Set([...c.ends.map((e) => e.member + 1), ...(c.on !== undefined ? [c.on + 1] : [])])].sort((a, b) => a - b);
               const chosen = (def.corners ?? []).find((x) => x.key === c.key);
               const ends = c.ends;
               const swap = () => {
-                if (c.on !== undefined || ends.length < 2) return;
+                if (c.on !== undefined || c.run || ends.length < 2) return;
                 const at = ends.findIndex((e) => e.member === c.through);
                 const next = ends[(at + 1) % ends.length];
                 setCorner(c.key, { type: c.type, through: endCurveId(members[next.member], next.end) });
@@ -155,7 +155,7 @@ export function FrameOptions() {
                 <li key={c.key}>
                   <span className="small">
                     ({fmt(c.at[0])}, {fmt(c.at[1])}, {fmt(c.at[2])}) — members {nums.join(", ")}
-                    {c.on !== undefined ? " (ends on its side)" : ""}
+                    {c.on !== undefined ? " (ending on a side)" : c.run ? " (meeting a straight run)" : ""}
                   </span>
                   <select
                     className="full-select"
@@ -171,8 +171,8 @@ export function FrameOptions() {
                   </select>
                   {(c.type === "butt" || c.type === "coped") && c.through !== undefined && (
                     <span className="small">
-                      Member {c.through + 1} runs through.
-                      {c.on === undefined && (
+                      {c.run ? `Members ${c.run[0] + 1} and ${c.run[1] + 1} run on through.` : `Member ${c.through + 1} runs through.`}
+                      {c.on === undefined && !c.run && (
                         <button type="button" className="link-button" onClick={swap}>
                           Swap
                         </button>
@@ -267,6 +267,10 @@ export function GussetOptions() {
       <label className="check-row" title="Cut the plate's inside corner off, to clear a weld or the members' rounded edges">
         <input type="checkbox" checked={!!def.chamfer} onChange={(e) => setDraftField({ gusset: { ...def, chamfer: e.target.checked || undefined } })} />
         Cut the inside corner off
+      </label>
+      <label className="check-row" title="Where one member ends on the side of the other, the plate can go either way along it">
+        <input type="checkbox" checked={!!def.flip} onChange={(e) => setDraftField({ gusset: { ...def, flip: e.target.checked || undefined } })} />
+        Other side (where one ends on the other&apos;s side)
       </label>
     </fieldset>
   );
