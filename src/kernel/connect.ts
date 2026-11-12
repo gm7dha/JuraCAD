@@ -10,7 +10,7 @@ import type { StudioInput } from "./protocol";
 import type { JuraCADDocument } from "../model/types";
 import { configurationsInUse } from "../assembly/configured";
 import { KernelClient } from "./client";
-import { compareStudioInputs, configuredStudioInputs, featureForEngine, featuresForEngine } from "./buildInput";
+import { compareStudioInputs, configuredStudioInputs, featureForEngine, featuresForEngine, withContexts } from "./buildInput";
 
 let client: KernelClient | null = null;
 
@@ -24,7 +24,7 @@ function currentStudios(): StudioInput[] {
   const s = useStore.getState();
   const here = activeStudioId(s);
   const editingIn = s.editing ? here : null;
-  return [...studiosOf(s.history.present).map((st) => ({ ...st, features: featuresForEngine(st.features) })).map((st) => ({
+  return [...studiosOf(s.history.present).map((st) => ({ ...st, features: featuresForEngine(st.features) })).map((st) => withContexts(s.history.present, {
     id: st.id,
     features: convertPreview(
       // Picking parts or faces for the open feature: shown as they were before it (see pickingPreview).
@@ -35,7 +35,7 @@ function currentStudios(): StudioInput[] {
           : st.features, st.id === editingIn ? s.editing?.draft ?? null : null),
       st.id === editingIn ? s.editing?.draft ?? null : null,
     ),
-  })), ...configuredStudios(s.history.present), ...versionStudios(s.versionCompare)];
+  }))), ...configuredStudios(s.history.present), ...versionStudios(s.versionCompare)];
 }
 
 /** Old versions being compared: their Part Studios, built alongside (see compareStudioInputs). */
@@ -130,6 +130,7 @@ export function connectKernel(): () => void {
   let lastVariables = useStore.getState().history.present.variables;
   let lastPartNames = useStore.getState().history.present.partNames;
   let lastStudios = useStore.getState().history.present.partStudios;
+  let lastContexts = useStore.getState().history.present.contexts;
   let lastDraft = useStore.getState().editing?.draft ?? null;
   let lastDoc = useStore.getState().history.present;
   /** What this tab last wrote to browser storage (null: write the design and its versions again next time). */
@@ -155,12 +156,14 @@ export function connectKernel(): () => void {
       s.history.present.variables !== lastVariables ||
       s.history.present.partNames !== lastPartNames ||
       s.history.present.partStudios !== lastStudios ||
+      s.history.present.contexts !== lastContexts ||
       configuredKey(s.history.present) !== lastConfigured ||
       s.versionCompare?.docs !== lastCompared
     ) {
       lastCompared = s.versionCompare?.docs;
       lastConfigured = configuredKey(s.history.present);
       lastStudios = s.history.present.partStudios;
+      lastContexts = s.history.present.contexts;
       lastPartNames = s.history.present.partNames;
       lastFeatures = s.history.present.features;
       lastVariables = s.history.present.variables;

@@ -143,9 +143,9 @@ export function assemblyHole(a: Pick<Assembly, "features">, sketchId: string, sp
     operation: "remove",
     suppressed: false,
     params: { ...defaultParams("hole"), diameter: `${spec.diameter} mm`, ...(spec.depth !== undefined ? { depth: `${spec.depth} mm` } : {}) },
-    hole: { sketchRef: sketchId, kind: "simple", end: spec.throughAll ? "throughAll" : "blind", flip: !!spec.flip, bothWays: spec.throughAll },
+    hole: { sketchRef: sketchId, kind: "simple", standard: "Custom", fit: "clearance", end: spec.throughAll ? "throughAll" : "blind", flip: !!spec.flip, ...(spec.throughAll ? { bothWays: true } : {}) },
     apart: true,
-  } as Feature;
+  };
 }
 
 export interface CutSpec {

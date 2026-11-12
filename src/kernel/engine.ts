@@ -2257,6 +2257,8 @@ interface StudioBuild {
   /** Curve features (Helix, Fit spline…) built: their wires, and lines to draw (see RebuildResult.curves). */
   curves?: Map<string, BuiltCurve>;
   curveLines?: Record<string, number[][]>;
+  /** Edit in context: the other parts of an assembly shown here for reference, placed (see StudioInput.contexts). */
+  contextParts?: BuiltPart[];
 }
 
 /** A curve feature as built: its runs (usually one wire), and whether a sweep along it should follow its own bending (a helix). */
@@ -2306,6 +2308,34 @@ export class GeometryEngine {
   /** While a Part Studio is being built: what its sketches' part faces and edges are now (see followSketch). */
   private links: Record<string, SketchLinkInfo> = {};
   private builds = new Map<string, StudioBuild>();
+  /** While a Part Studio is being built: the context parts shown in it (Edit in context). */
+  private contextParts: BuiltPart[] = [];
+
+  /** A part by id while a Part Studio is being built: its own, or one shown there in context. */
+  private partOrContext(id: string): BuiltPart | undefined {
+    return this.parts.find((p) => p.id === id) ?? this.contextParts.find((p) => p.id === id);
+  }
+
+  /** Copies of other Part Studios' parts (already built), placed as each context says. */
+  private placeContextParts(contexts: NonNullable<StudioInput["contexts"]>): BuiltPart[] {
+    const out: BuiltPart[] = [];
+    for (const c of contexts) {
+      for (const cp of c.parts) {
+        const source = this.builds.get(cp.studioId)?.parts.find((p) => p.id === cp.partId);
+        if (!source || !this.studiosBuilt.has(cp.studioId)) continue;
+        let shape = source.shape.clone();
+        if (cp.mirrored) shape = shape.mirror("YZ", [0, 0, 0]);
+        const [x, y, z, w] = cp.placement.rotation;
+        const s = Math.sqrt(Math.max(0, 1 - w * w));
+        const angle = (2 * Math.acos(Math.max(-1, Math.min(1, w))) * 180) / Math.PI;
+        if (s > 1e-9 && Math.abs(angle) > 1e-9) shape = shape.rotate(angle, [0, 0, 0], [x / s, y / s, z / s]);
+        const at = cp.placement.position;
+        if (Math.abs(at[0]) + Math.abs(at[1]) + Math.abs(at[2]) > 0) shape = shape.translate(at);
+        out.push({ id: cp.id, name: source.name, featureIds: [], shape, ...(source.surface ? { surface: true } : {}) });
+      }
+    }
+    return out;
+  }
 
   /**
    * Rebuild the Part Studios whose features (or the variables or part names)
@@ -2364,6 +2394,7 @@ export class GeometryEngine {
     }
     const rebuilt: string[] = [];
     const meshes: PartMesh[] = [];
+    const contextMeshes: PartMesh[] = [];
     const featureErrors: Record<string, string> = {};
     const featureWarnings: Record<string, string> = {};
     const featureNotes: Record<string, string> = {};
@@ -2372,7 +2403,9 @@ export class GeometryEngine {
     const curves: Record<string, number[][]> = {};
     const shared = JSON.stringify([variables, partNames]);
     // Part Studios using parts from others (Derived) are built after them, and again whenever they change.
-    const sourcesOf = (s: StudioInput) => [...new Set(s.features.filter((f) => f.type === "derived" && !f.suppressed && f.derived).map((f) => f.derived!.studioId))].filter((id) => id !== s.id);
+    // (So are Part Studios showing other studios' parts in context.)
+    const sourcesOf = (s: StudioInput) =>
+      [...new Set([...s.features.filter((f) => f.type === "derived" && !f.suppressed && f.derived).map((f) => f.derived!.studioId), ...(s.contexts ?? []).flatMap((c) => c.parts.map((p) => p.studioId))])].filter((id) => id !== s.id);
     const ordered: StudioInput[] = [];
     const pending = [...studios];
     while (pending.length) {
@@ -2392,6 +2425,7 @@ export class GeometryEngine {
           shared +
           (studio.partSuffix ? JSON.stringify([studio.variables, studio.partSuffix]) : "") +
           (studio.partNames ? JSON.stringify(studio.partNames) : "") +
+          (studio.contexts?.length ? JSON.stringify(studio.contexts) : "") +
           (deps.length ? JSON.stringify(deps) : "");
         let b = this.builds.get(studio.id);
         if (!b || b.key !== key) {
@@ -2400,6 +2434,8 @@ export class GeometryEngine {
           this.parts = [];
           this.tools = new Map();
           this.links = {};
+          // Edit in context: other Part Studios' parts placed round the part being edited (to sketch on and use).
+          this.contextParts = studio.contexts?.length ? this.placeContextParts(studio.contexts) : [];
           setCurrentScope(studio.variables ?? variables);
           // What each sketch could snap to is kept (cheaply) for when one is opened — not for other configurations.
           this.snaps = studio.partSuffix ? null : new Map();
@@ -2411,6 +2447,8 @@ export class GeometryEngine {
           } catch (e) {
             this.disposeSnaps(this.snaps);
             this.snaps = null;
+            this.contextParts.forEach((p) => p.shape.delete());
+            this.contextParts = [];
             throw e;
           }
           setCurrentScope(variables);
@@ -2422,7 +2460,8 @@ export class GeometryEngine {
           for (const p of this.parts) for (const m of p.members ?? []) if (names[m.id]) m.name = names[m.id];
           // Another configuration's copies of the parts (for assemblies).
           if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
-          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, centres: this.centres, links: this.links, snaps: this.snaps ?? new Map(), followed: this.followed, owned: this.owned, curves: this.curves, curveLines: this.curveLines };
+          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, centres: this.centres, links: this.links, snaps: this.snaps ?? new Map(), followed: this.followed, owned: this.owned, curves: this.curves, curveLines: this.curveLines, ...(this.contextParts.length ? { contextParts: this.contextParts } : {}) };
+          this.contextParts = [];
           this.curves = new Map();
           this.snaps = null;
           this.builds.set(studio.id, b);
@@ -2433,6 +2472,7 @@ export class GeometryEngine {
             const owned = b.owned?.[studio.partSuffix ? p.id.slice(0, -studio.partSuffix.length) : p.id];
             meshes.push({ ...this.meshPart(p), studioId: studio.id, ...(configuration ? { configuration } : {}), ...(owned?.length ? { connectors: owned } : {}) });
           }
+          for (const p of b.contextParts ?? []) contextMeshes.push({ ...this.meshPart(p), studioId: studio.id });
         }
         // Problems are shown for the configuration on show only.
         if (!studio.partSuffix) {
@@ -2456,6 +2496,7 @@ export class GeometryEngine {
     for (const s of studios) if (!s.partSuffix) Object.assign(curves, this.builds.get(s.id)?.curveLines ?? {});
     return {
       parts: meshes,
+      ...(contextMeshes.length ? { contextParts: contextMeshes } : {}),
       featureErrors,
       ...(Object.keys(featureWarnings).length ? { featureWarnings } : {}),
       ...(Object.keys(featureNotes).length ? { featureNotes } : {}),
@@ -2574,7 +2615,7 @@ export class GeometryEngine {
     const edges: RefEdge[] = [];
     const sizeOf = (b: Bounds) => Math.hypot(b[1][0] - b[0][0], b[1][1] - b[0][1], b[1][2] - b[0][2]);
     if (facePick && plane.kind === "face") {
-      const part = this.parts.find((p) => p.id === facePick.partId);
+      const part = this.partOrContext(facePick.partId);
       // Found strictly: a face that's gone is reported, rather than the sketch jumping onto another face.
       let face: Face | null = null;
       if (part) {
@@ -2642,7 +2683,7 @@ export class GeometryEngine {
       for (const c of partLinked) group(((c as { link: CurveLink }).link as PartLink).partId).curves.push(c);
       for (const p of partPoints) group((p.link as { partId: string }).partId).points.push(p);
       for (const [partId, { curves, points }] of byPart) {
-        const part = this.parts.find((p) => p.id === partId);
+        const part = this.partOrContext(partId);
         if (!part) {
           for (const c of curves) links[c.id] = null;
           for (const p of points) pointLinks[p.id] = null;
@@ -2755,7 +2796,7 @@ export class GeometryEngine {
       index: features.indexOf(feature),
       features,
       earlier: [...sketches.entries()],
-      parts: this.parts.map((p) => ({ id: p.id, shape: p.shape.clone() })),
+      parts: [...this.parts, ...this.contextParts].map((p) => ({ id: p.id, shape: p.shape.clone() })),
       faceEdges: this.links[feature.id]?.edges ?? [],
       shared: this.buildShared,
     });
@@ -6977,7 +7018,8 @@ export class GeometryEngine {
    * that keeps within half a micron of it. The copy follows the edge after.
    */
   useEdge(partId: string, ref: EdgeRef, plane: SketchPlane): { edge: RefEdge } | { error: string } {
-    const part = this.parts.find((p) => p.id === partId);
+    // (A part shown in context lives in the build of the Part Studio it's shown in.)
+    const part = this.parts.find((p) => p.id === partId) ?? [...this.builds.values()].flatMap((b) => b.contextParts ?? []).find((p) => p.id === partId);
     if (!part) return { error: "That part isn't there any more. Click another edge." };
     const frame = planeFrame(plane);
     const all = edgesOf(part.shape);
@@ -8044,6 +8086,14 @@ export class GeometryEngine {
         // already freed
       }
     }
+    for (const p of b.contextParts ?? []) {
+      try {
+        p.shape.delete();
+      } catch {
+        // already freed
+      }
+    }
+    b.contextParts = [];
     b.parts = [];
     b.tools.clear();
     this.disposeSnaps(b.snaps);

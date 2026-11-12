@@ -22,15 +22,17 @@
  */
 import { newId } from "../model/document";
 import type { Assembly, ContextPart, EditContext, JuraCADDocument } from "../model/types";
-import type { PartMesh } from "../kernel/protocol";
+import type { ContextInput, PartMesh } from "../kernel/protocol";
+import { contextPartId } from "./featureParse";
+
+export type { ContextInput };
 import { compose, invert, type Placement } from "./math";
 export { parseContexts } from "./featureParse";
 import { findMesh, meshIdOf } from "./configured";
 import { leavesOf, type Leaf } from "./subassembly";
 import { solveWithParts } from "./mates";
 
-/** The id a context's part has in the Part Studio it's shown in. */
-export const contextPartId = (contextId: string, key: string): string => `ctx:${contextId}:${key}`;
+export { contextInputs, contextPartId } from "./featureParse";
 
 /** True for the id of a context's part (never a Part Studio's own part). */
 export const isContextPartId = (id: string): boolean => id.startsWith("ctx:");
@@ -176,20 +178,4 @@ export function tidyContexts(doc: JuraCADDocument, studioIds: readonly string[])
   if (kept.length === list.length) return doc;
   const { contexts: _c, ...rest } = doc;
   return kept.length ? { ...rest, contexts: kept } : rest;
-}
-
-/** What the engine needs to build a Part Studio's contexts: each part's id there, the part it shows and where. */
-export interface ContextInput {
-  id: string;
-  parts: { id: string; partId: string; studioId: string; placement: Placement; mirrored?: boolean }[];
-}
-
-/** The engine's view of one Part Studio's contexts (undefined when it has none, so older designs build exactly as before). */
-export function contextInputs(doc: Pick<JuraCADDocument, "contexts">, studioId: string): ContextInput[] | undefined {
-  const list = contextsIn(doc, studioId);
-  if (!list.length) return undefined;
-  return list.map((c) => ({
-    id: c.id,
-    parts: c.parts.map((p) => ({ id: contextPartId(c.id, p.key), partId: p.partId, studioId: p.studioId, placement: p.placement, ...(p.mirrored ? { mirrored: true } : {}) })),
-  }));
 }

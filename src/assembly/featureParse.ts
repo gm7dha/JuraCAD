@@ -4,7 +4,8 @@
  * assembly solver). See assemblyFeatures.ts and inContext.ts.
  */
 import { parsePlacement } from "./math";
-import type { ContextPart, EditContext, Feature, FeatureType } from "../model/types";
+import type { ContextPart, EditContext, Feature, FeatureType, JuraCADDocument } from "../model/types";
+import type { ContextInput } from "../kernel/protocol";
 
 /** The kinds of feature an assembly can hold: sketches, and what cuts with them. */
 export const ASSEMBLY_FEATURE_TYPES: readonly FeatureType[] = ["sketch", "extrude", "revolve", "hole"];
@@ -62,4 +63,17 @@ export function parseContexts(raw: unknown): EditContext[] {
     });
   }
   return out;
+}
+
+/** The id a context's part has in the Part Studio it's shown in. */
+export const contextPartId = (contextId: string, key: string): string => `ctx:${contextId}:${key}`;
+
+/** The engine's view of one Part Studio's contexts (undefined when it has none, so older designs build exactly as before). */
+export function contextInputs(doc: Pick<JuraCADDocument, "contexts">, studioId: string): ContextInput[] | undefined {
+  const list = (doc.contexts ?? []).filter((c) => c.studioId === studioId);
+  if (!list.length) return undefined;
+  return list.map((c) => ({
+    id: c.id,
+    parts: c.parts.map((p) => ({ id: contextPartId(c.id, p.key), partId: p.partId, studioId: p.studioId, placement: p.placement, ...(p.mirrored ? { mirrored: true } : {}) })),
+  }));
 }

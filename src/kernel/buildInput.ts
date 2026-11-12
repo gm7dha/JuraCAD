@@ -12,6 +12,7 @@ import { switchConfiguration } from "../model/configurations";
 import { resolveVariables } from "../model/variables";
 import { setCurrentScope } from "../model/expr";
 import { studiosOf } from "../model/studios";
+import { contextInputs } from "../assembly/featureParse";
 
 /** One feature without the parts the engine doesn't need (the same object when there are none). */
 export function featureForEngine<T extends Feature | null>(f: T): T {
@@ -101,5 +102,11 @@ export function compareStudioInputs(versionId: string, doc: JuraCADDocument): St
 
 /** Everything in a document to build: every Part Studio, and those shown in other configurations. */
 export function documentStudioInputs(doc: JuraCADDocument): StudioInput[] {
-  return [...studiosOf(doc).map((st) => ({ id: st.id, features: featuresForEngine(st.features) })), ...configuredStudioInputs(doc)];
+  return [...studiosOf(doc).map((st) => withContexts(doc, { id: st.id, features: featuresForEngine(st.features) })), ...configuredStudioInputs(doc)];
+}
+
+/** A Part Studio's input with its Edit in context parts, if it has any (else the same object, so nothing changes). */
+export function withContexts(doc: Pick<JuraCADDocument, "contexts">, input: StudioInput): StudioInput {
+  const contexts = doc.contexts?.length ? contextInputs(doc, input.id) : undefined;
+  return contexts ? { ...input, contexts } : input;
 }

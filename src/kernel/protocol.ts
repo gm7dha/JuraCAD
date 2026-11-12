@@ -84,6 +84,26 @@ export interface StudioInput {
   partSuffix?: string;
   /** Names for its parts instead of the design's (an old version being compared: its own names). */
   partNames?: Record<string, string>;
+  /**
+   * Edit in context (src/assembly/inContext.ts): other parts of an assembly shown in this Part Studio for reference,
+   * placed relative to the part being edited. Sketches can sit on their faces and use their edges (by their ids here).
+   * Missing = none.
+   */
+  contexts?: ContextInput[];
+}
+
+/** One context's parts, for the engine. */
+export interface ContextInput {
+  id: string;
+  parts: {
+    /** Its id in this Part Studio ("ctx:<context>:<key>"). */
+    id: string;
+    /** The part it shows, and the Part Studio that's in (built first). */
+    partId: string;
+    studioId: string;
+    placement: { position: [number, number, number]; rotation: [number, number, number, number] };
+    mirrored?: boolean;
+  }[];
 }
 
 /** Display mesh for one part, ready to hand to three.js. */
@@ -164,6 +184,8 @@ export interface FlatPatternData {
 
 export interface RebuildResult {
   parts: PartMesh[];
+  /** Edit in context: the context parts of the Part Studios rebuilt (ids "ctx:…", `studioId` the studio they're shown in). Missing = none. */
+  contextParts?: PartMesh[];
   /** Feature ID → plain-English reason it failed. */
   featureErrors: Record<string, string>;
   /** Feature ID → something to tell about a feature that was built (e.g. an extra sketch it left out). Not a failure. */
