@@ -8,6 +8,17 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.67 — Drawing extras
+
+- **Crop view**: crop a drawing view to a rectangle or a shape you click round; lines, dimensions and marks outside are hidden.
+- Revisions can say who made and approved them (BY and APPROVED columns).
+- Drawing standard **ISO / ANSI** (ANSI numbers read across); first- or third-angle stays its own choice and never moves your
+  views unasked.
+- **Decimal comma** on every number the sheet works out, and **inspection balloons** with numbers that stay put.
+- Your own **title block entries** (Finish, Checked by…) and **drawing templates** kept in the browser, for new drawings.
+- Put a **table from a CSV file** on a drawing.
+- Claude can add revisions, crop views and set the drawing standard and title block entries.
+
 ## v0.66 — Boundary surface and Face blend
 
 - New **Boundary surface**: a surface through curves round its edges in two directions (part edges, 3D curves or sketches).
