@@ -132,7 +132,7 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     feature.sketchRef = sketches[sketches.length - 1]?.id;
     feature.operation = "add";
   }
-  if (type === "thicken" || type === "moveFace" || type === "deleteFace" || type === "thread" || type === "fullRound" || type === "wrap" || type === "fill" || type === "enclose" || type === "offsetSurface") feature.picks = [];
+  if (type === "thicken" || type === "moveFace" || type === "deleteFace" || type === "modifyFillet" || type === "thread" || type === "fullRound" || type === "wrap" || type === "fill" || type === "enclose" || type === "offsetSurface") feature.picks = [];
   if (type === "extendSurface") feature.picks = [];
   if (type === "ruled") {
     feature.picks = [];
@@ -682,9 +682,21 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
         plane: parsePlane(sp.plane) ?? { kind: "default", name: "Right" },
         ...(typeof sp.toolPartId === "string" ? { toolPartId: sp.toolPartId } : {}),
         keep: sp.keep === "front" || sp.keep === "back" ? sp.keep : "both",
-        picking: sp.picking === "plane" ? "plane" : "part",
+        picking: sp.picking === "plane" ? "plane" : sp.mode === "face" && (sp.picking === "faces" || sp.picking === "edges") ? sp.picking : "part",
+        ...(sp.mode === "face" ? { mode: "face" as const } : {}),
+        ...(sp.mode === "face" && (sp.tool === "sketch" || sp.tool === "edges") ? { tool: sp.tool } : {}),
       };
+      if (feature.splitDef.mode === "face") {
+        if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
+        feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
+      }
     }
+    if (feature.type === "modifyFillet") {
+      const mf = (f.modifyFillet ?? {}) as Record<string, unknown>;
+      const def = { ...(mf.remove === true ? { remove: true } : {}), ...(mf.noPropagate === true ? { noPropagate: true } : {}) };
+      if (Object.keys(def).length) feature.modifyFillet = def;
+    }
+    if ((feature.type === "fillet" || feature.type === "chamfer") && f.allEdges === true) feature.allEdges = true;
     if (feature.type === "replaceFace") {
       const rd = (f.replaceDef ?? {}) as Record<string, unknown>;
       feature.replaceDef = { target: rd.target ? parsePlane(rd.target) ?? null : null, picking: rd.picking === "target" ? "target" : "faces" };
@@ -803,7 +815,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       });
       if (more.length) feature.moreAreas = more;
     }
-    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled", "cornerBreak"].includes(feature.type) || (feature.type === "sheetMetal" && feature.sheetConvert) || feature.pattern?.of === "face" || feature.mirror?.of === "face") {
+    if (["fillet", "chamfer", "shell", "thicken", "draft", "moveFace", "replaceFace", "deleteFace", "modifyFillet", "thread", "flange", "hem", "fullRound", "wrap", "fill", "enclose", "offsetSurface", "extendSurface", "ruled", "cornerBreak"].includes(feature.type) || (feature.type === "sheetMetal" && feature.sheetConvert) || feature.pattern?.of === "face" || feature.mirror?.of === "face") {
       feature.picks = Array.isArray(f.picks) ? f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null) : [];
     }
     features.push(feature);

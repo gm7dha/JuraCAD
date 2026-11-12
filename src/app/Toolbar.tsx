@@ -626,6 +626,15 @@ export function Toolbar() {
               title: hasPart ? "Delete face — remove fillets, chamfers, holes or bosses and close the gap" : "Make a part first",
             },
             {
+              key: "modifyFillet",
+              label: "Modify fillet",
+              icon: <Icons.ModifyFillet />,
+              onClick: () => startCreate("modifyFillet"),
+              disabled: !ready || !hasPart,
+              active: editingType === "modifyFillet",
+              title: hasPart ? "Modify fillet — give rounded edges a new radius, or take them off (on imported parts too)" : "Make a part first",
+            },
+            {
               key: "draft",
               label: "Draft",
               icon: <Icons.Draft />,

@@ -13,7 +13,7 @@ import type { FinishId } from "./finishes";
 import type { LibraryInsert } from "../library/types";
 
 /** The kinds of feature JuraCAD can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog" | "simplify" | "mateConnector" | "composite" | "curve";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog" | "simplify" | "mateConnector" | "composite" | "modifyFillet" | "curve";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -155,8 +155,16 @@ export interface SplitOptions {
   toolPartId?: string;
   /** Keep both pieces as separate parts, or only the piece on the plane's front (normal) or back side. */
   keep: "both" | "front" | "back";
-  /** What a click in the 3D view picks. */
-  picking?: "part" | "plane";
+  /** What a click in the 3D view picks ("faces"/"edges": Split face's faces to split, or the edges to split them along). */
+  picking?: "part" | "plane" | "faces" | "edges";
+  /**
+   * Onshape's Split type "Face": divide faces of a part (`Feature.picks`, kind face) instead of cutting the part,
+   * along `plane`, the curves of the feature's `sketchRef` (pushed along the sketch's normal) or edges lying on
+   * them (`Feature.picks`, kind edge) — `tool`, missing = the plane. The part keeps its shape and gets more faces.
+   * Missing = Split part, as before (then `tool` is ignored).
+   */
+  mode?: "face";
+  tool?: "plane" | "sketch" | "edges";
 }
 
 export interface HoleOptions {
@@ -359,6 +367,14 @@ export interface Feature {
   splitDef?: SplitOptions;
   /** Thicken, Rib and Draft: which way. */
   flipSide?: boolean;
+  /**
+   * Modify fillet (Onshape's): the rounded faces picked (`picks`) are taken off, putting the sharp edge back
+   * (`remove`), or given the new `radius` (missing `remove`). `noPropagate`: only the picked faces, not the
+   * rounded faces of the same radius running on from them (Onshape's "Propagate", on unless this is set).
+   */
+  modifyFillet?: { remove?: boolean; noPropagate?: boolean };
+  /** Fillet and Chamfer: round (bevel) every edge of the parts the picks are on, whatever was picked on them (Onshape's picking a whole part). */
+  allEdges?: boolean;
   /** Delete face: leave the hole open instead of healing it (a solid part becomes a surface). */
   leaveOpen?: boolean;
   /** Corner break: round the corners off (missing) or cut them off straight. */

@@ -323,11 +323,18 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "Removes faces and closes the gap — takes away fillets, chamfers, holes and bosses.",
     params: [],
   },
+  modifyFillet: {
+    type: "modifyFillet",
+    label: "Modify fillet",
+    namePrefix: "Modify fillet",
+    description: "Click rounded edges (fillets) to give them a new radius, or to take them off and put the sharp edge back — on any part, imported ones too.",
+    params: [{ key: "radius", label: "New radius", defaultValue: "2", positive: true, group: "size" }],
+  },
   split: {
     type: "split",
     label: "Split",
     namePrefix: "Split",
-    description: "Cuts a part in two along a plane or flat face, making two parts (or keeping one side).",
+    description: "Cuts a part in two along a plane or flat face, making two parts (or keeping one side) — or divides faces of a part along a plane, a sketch or edges, so you can pick part of a face.",
     params: [],
   },
   sheetMetal: {
@@ -575,7 +582,7 @@ export function isSolidFeature(type: FeatureType): boolean {
 }
 
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */
-export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo" | "sweepControl" | "sheetConvert" | "transform" | "thin" | "revolve" | "curve">>): Set<string> {
+export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo" | "sweepControl" | "sheetConvert" | "transform" | "thin" | "revolve" | "modifyFillet" | "curve">>): Set<string> {
   const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
   // Curves: only the boxes their kind uses.
   if (f.type === "curve") return new Set(curveParamKeys(f.curve));
@@ -591,6 +598,7 @@ export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | 
   if (f.type === "revolve" && !(f.revolve?.second && !f.revolve.symmetric)) keys.delete("angle2");
   if ((f.type === "flange" || f.type === "hem") && !f.mitreCorners) keys.delete("cornerGap");
   if (f.type === "extendSurface" && f.extendTo) keys.delete("distance");
+  if (f.type === "modifyFillet" && f.modifyFillet?.remove) keys.delete("radius");
   const end = f.extrude?.end ?? "blind";
   if (f.type === "extrude" && end !== "blind" && end !== "symmetric") keys.delete("depth");
   if (f.type === "extrude" && !(end === "blind" && f.extrude?.second && !f.surface)) keys.delete("depth2");
