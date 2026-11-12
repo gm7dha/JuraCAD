@@ -4291,3 +4291,44 @@ kbd {
   border-radius: 3px;
   border: 1px solid var(--line);
 }
+
+/* Assembly features (AssemblyFeaturesUI.tsx): which parts a cut takes, and the Edit in context bar. */
+.asm-feature-parts {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0 4px 24px;
+}
+.feature-row:has(.asm-feature-parts) {
+  flex-wrap: wrap;
+}
+.param-row {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+}
+.context-bar {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--glass);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  max-width: calc(100% - 32px);
+}
+.context-bar-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}

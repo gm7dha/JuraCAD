@@ -6,6 +6,7 @@ import { activeAssembly, activeDrawing, activeFeatures, studioParts, useStore } 
 import { findDependents } from "../model/dependents";
 import { DrawingPanel, DrawingSheet, DrawingToolbar } from "./DrawingUI";
 import { AssemblyPanel, AssemblyToolbar, ExplodePanel, InsertPanel, InstancePanel, MateDialog, PatternPanel } from "./AssemblyUI";
+import { AsmCutPanel, ContextBar } from "./AssemblyFeaturesUI";
 import { Viewport, viewNormalToPlaneFeature, viewportApi } from "../viewport/Viewport";
 import type { StandardView } from "../viewport/ViewCube";
 import { CheckDialog } from "./CheckDialog";
@@ -308,10 +309,12 @@ export function App() {
               <PatternPanel />
               <ExplodePanel />
               <MateDialog />
+              <AsmCutPanel />
             </>
           ) : (
             <>
               <SketchOverlay />
+              <ContextBar />
               <FeatureDialog />
               <SketchPanel />
               <MeasurePanel />

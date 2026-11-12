@@ -120,7 +120,7 @@ describe("assembly features", () => {
     const r = engine.assemblyCuts(instancesForKernel(one, parts));
     expect(r.cut).toEqual(["i2"]);
     const clashes = engine.clashes(instancesForKernel(one, parts));
-    expect(clashes.every((c) => c.volume < 1e-6)).toBe(true);
+    expect(clashes.every((c) => (c.volume ?? 0) < 1e-6)).toBe(true);
     const bom = billOfMaterials(one, { [lower.id]: "Lower", [upper.id]: "Upper" }, {}, undefined, {}, { modified: new Set(r.cut) });
     expect(bom.map((b) => b.name)).toEqual(["Lower", "Upper (modified in assembly)"]);
   });

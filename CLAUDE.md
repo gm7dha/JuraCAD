@@ -286,6 +286,48 @@
   solve, `flexibleInner`); the Viewport, `instancesForKernel(…, solved)` and `stepTree(…, inner)` (a product per flexible copy,
   `<sub>@<key>`) pass the live one. `connectorFrameFor` goes through flexible copies with `frameThroughFlexible`. Mirrored copies
   and pattern copies are never flexible. Old documents (no flag) take exactly the old code paths.
+- Assembly features (Onshape's) and Edit in context. Assembly features: `Assembly.features` (ordinary Feature records — sketch,
+  Extrude/Revolve with operation remove, Hole; `isAssemblyFeature`; parsed by document.ts `withAssemblyFeatures` through the same
+  `parseFeatures`, ids unique with the studios') + `Assembly.featureParts` (feature id → leaf keys; missing = every TOP-LEVEL part
+  it reaches — parts inside sub-assemblies only when listed; `tidyFeatureParts` in updateAssembly). Pure `src/assembly/assemblyFeatures.ts`
+  (`cutsFor(asm, key)` = the cutting features + their sketches, undefined when none so plain copies go to the engine exactly as before;
+  `assemblySketch`/`assemblyHole`/`assemblyExtrudeCut`; `deleteAssemblyFeatures` via `findDependents`; `assemblyFeaturesText`),
+  file-reading bits in `featureParse.ts` (kept light: document.ts imports it). Sketch planes are fixed numbers in ASSEMBLY coordinates
+  (a clicked face is `planeOnFace` with no `face` pick): the cut stays where it was made, and a copy a mate moves is cut where it
+  sits now. `kernelInstances(…, cuts)` (via `instancesForKernel`) puts `InstanceInput.cuts` (+ `cutAt` = the solved place when it's
+  shown elsewhere, an exploded view), so exports, drawings, the clash check and Claude's tools all get cut shapes; the engine's
+  `placeInstances` → `cutCopy` (places the part at `cutAt`, `buildSolid` each tool with `[that placed part]` as the parts — so through
+  all / up to next work per copy — cuts, moves back to the part's own coordinates; cached by part object + cuts + place, ≤ 48; a
+  feature that fails is skipped with its message; `by` = features that took material). `GeometryEngine.assemblyCuts` (worker
+  `assemblyCuts`) → meshes in part coordinates (mirrored copies flipped back), `cut`, `reached` per feature, `errors`. STEP with
+  structure: a cut top-level copy is its own part definition (`StepTree.parts[…].cuts/cutAt`, "<part> (modified in assembly)").
+  Parts list: `BomOptions.modified` (keys) → separate "(modified in assembly)" lines (top level / flattened paths). App:
+  `src/app/assemblyFeatureState.ts` (own zustand store: the worker's cut meshes for the assembly on show — `useAssemblyCuts`, used
+  by Viewport's `instanceMeshes`, connectorAt reads refs from the cut mesh (`cutMeshFor`) —, the Hole/Cut draft, actions through
+  `changeDocument`), `src/app/AssemblyFeaturesUI.tsx` (toolbar group "Hole"/"Cut" in AssemblyToolbar, the "Assembly features" list
+  with Parts…/Off/delete, `AsmCutPanel`: the first flat face clicked is the plane, each click on it adds a place, typed positions,
+  diameter or rectangle/circle, through all/depth/flip; `asmCutPick` first in handleAssemblyPick). Not done: Fillet/Chamfer/Sweep as
+  assembly features, a full sketch editor in assemblies (the dialog makes points/rectangles/circles; Claude's tool the same), cut
+  copies inside sub-assemblies in the structured STEP (top-level copies only there; flat exports have them all).
+  Edit in context: `doc.contexts` (`EditContext`: studioId, assemblyId, instance key, `parts` = the OTHER parts' {key, partId,
+  studioId, placement relative to the edited copy, mirrored}; `hidden`), pure `src/assembly/inContext.ts` (`takeContext` — made or
+  taken again for the same assembly+copy, same object when nothing moved —, `updateContext`, `contextProblem`, `setContextHidden`,
+  `removeContext`, `tidyContexts`; parts from the edited part's own Part Studio are left out — they're built there already and
+  would make the studio depend on itself). Engine: `StudioInput.contexts` (`contextInputs`, added by buildInput's `withContexts` in
+  connect.ts and `documentStudioInputs`) — a studio is built after its contexts' studios (`sourcesOf`, as Derived; key includes
+  them), `placeContextParts` clones and places those studios' built parts as `BuiltPart`s with ids `ctx:<context>:<key>`
+  (`contextPartId`/`contextPartOf`/`isContextPartId`) kept in `StudioBuild.contextParts` (freed in disposeBuild), found by
+  `partOrContext` in followSketch (face sketches and links) and useEdge, and in each sketch's snaps (candidates). Geometry is live
+  (the part as built now); only places are a snapshot. `RebuildResult.contextParts` (rebuilt studios) → `keepContextParts` in
+  assemblyFeatureState (carried forward like parts; never in `store.parts`, so parts lists/exports never see them) →
+  `useShownContextParts` added see-through to the Part Studio's display; `withContextParts` in Viewport for planeForFace/Use;
+  clicking one outside a sketch says it's for reference. UI: an instance row's right-click (InstanceMenu) or the toolbar's "In
+  context" → `editInContext` (opens the studio), `ContextBar` (Update context / Hide / Remove). Not done: Claude's tools for
+  contexts; intersect/up-to-face/mates against context parts; Onshape's automatic "in-context" update. Tests: assemblyCutFeatures
+  (pure), engineAssemblyCuts (two plates drilled in the assembly only — STL/STEP/structured STEP have the holes, studio parts
+  unchanged, a moved copy, chosen parts + BOM, a pocket, a mirrored copy), engineInContext (Use an edge of a context part, Update
+  context moves it, removed = lost, live geometry, own studio left out), mcpAssemblyFeatures (`add_assembly_feature`,
+  `delete_assembly_feature`, describe_assembly lists them).
 - Drawings: `src/drawing/` — `drawing.ts` (document edits, parsing), `cameras.ts` (view directions; first-angle),
   `annotations.ts` (centre marks/lines, section hatching, balloons), `sections.ts` (section cuts drawn on a view:
   cut plane, camera, letters; views are keyed by `viewKey` — the kind, or "section:<id>"), `sheet.ts` (lays the sheet out as simple line/text shapes in sheet mm, y up), `export.ts` (SVG and a hand-written

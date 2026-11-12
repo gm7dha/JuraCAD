@@ -23,7 +23,6 @@
 import { newId } from "../model/document";
 import type { Assembly, ContextPart, EditContext, JuraCADDocument } from "../model/types";
 import type { ContextInput, PartMesh } from "../kernel/protocol";
-import { contextPartId } from "./featureParse";
 
 export type { ContextInput };
 import { compose, invert, type Placement } from "./math";

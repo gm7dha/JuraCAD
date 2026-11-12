@@ -10,6 +10,7 @@ import type { StudioInput } from "./protocol";
 import type { JuraCADDocument } from "../model/types";
 import { configurationsInUse } from "../assembly/configured";
 import { KernelClient } from "./client";
+import { keepContextParts } from "../app/assemblyFeatureState";
 import { compareStudioInputs, configuredStudioInputs, featureForEngine, featuresForEngine, withContexts } from "./buildInput";
 
 let client: KernelClient | null = null;
@@ -35,7 +36,7 @@ function currentStudios(): StudioInput[] {
           : st.features, st.id === editingIn ? s.editing?.draft ?? null : null),
       st.id === editingIn ? s.editing?.draft ?? null : null,
     ),
-  }))), ...configuredStudios(s.history.present), ...versionStudios(s.versionCompare)];
+  })), ...configuredStudios(s.history.present), ...versionStudios(s.versionCompare)];
 }
 
 /** Old versions being compared: their Part Studios, built alongside (see compareStudioInputs). */
@@ -85,6 +86,8 @@ export function connectKernel(): () => void {
         return;
       }
       s.setRebuildResult(result.parts, result.featureErrors, result.durationMs, result.rebuilt, result.studioOrder, result.sketchLinks, result.featureWarnings, result.featureNotes, result.followed, result.curves);
+      // Edit in context: the other assembly parts shown in each Part Studio (kept apart from the studio's own parts).
+      keepContextParts(result.contextParts, result.rebuilt, result.studioOrder);
       // Where each Move / copy's triad goes (kept the same object while nothing changed, so nothing redraws).
       // (Only the Part Studios rebuilt are in the result: the others' are kept.)
       const was = useStore.getState().transformCentres;
