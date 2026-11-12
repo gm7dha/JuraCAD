@@ -19,7 +19,7 @@ import { heightAt, type HeightGrid } from "./elevation";
 import { BUILDING_LEAST, groundMarks } from "./groundMarks";
 import type { Body, PuzzlePiece } from "./mountainPuzzle";
 import { NO_FEATURES, type MapFeatures, type OsmLineKind } from "./osm";
-import { bestRoom, roomScale, type BedRect } from "./puzzle3mf";
+import { bestRoom, centredRooms, platesInPlace, roomScale, towerCorner, towerSpot, type BedRect } from "./puzzle3mf";
 
 type XY = [number, number];
 
@@ -47,11 +47,10 @@ export interface IslandSpec {
    * land (not the whole area, sea and all) to the bed less its margins, and the scale can't go past 100%.
    */
   inPlace?: boolean;
-  /**
-   * Put together: the parts of the bed it may go in (each a rectangle clear of the printer's no-print corners and the
-   * prime tower's corner, from `freeRooms`); the one it can be biggest in is used. Missing = the whole bed.
-   */
-  rooms?: BedRect[];
+  /** Put together: parts of the bed it must keep clear of (the printer's no-print corners). */
+  keepOut?: BedRect[];
+  /** Put together in several filaments: leave a spot for Bambu Studio's prime tower. */
+  tower?: boolean;
 }
 
 export const ISLAND_DEFAULTS: Omit<IslandSpec, "bed"> = { scale: 1, piece: 35, base: 3, relief: 8, fit: 0.1, seed: 1, sea: 0.5, land: "islands" };
@@ -94,8 +93,13 @@ export interface IslandPuzzle {
   height: number;
   /** The grid point (m) at the puzzle's (0, 0): the area's south-west corner, or the land's when printed put together. */
   origin: { e: number; n: number };
-  /** Put together: the part of the bed it was sized for (and goes in). */
+  /** Put together: the rectangle, centred on the bed, it was sized for (and goes in). */
   room?: BedRect;
+  /**
+   * Put together with a prime tower: where its front-left corner can go (mm on the bed, null if nowhere), and whether the
+   * puzzle had to be made smaller to leave the back-left corner free for it.
+   */
+  tower?: { at: [number, number] | null; shrunk: boolean };
   /** mm per metre across. */
   k: number;
   /** The highest ground (m). */
@@ -306,10 +310,26 @@ export function makeIslandPuzzle(
   const y0 = box.y0 > 0 ? Math.max(0, box.y0 - pad) : 0;
   const x1 = box.x0 + box.w < areaWidth ? Math.min(areaWidth, box.x0 + box.w + pad) : areaWidth;
   const y1 = box.y0 + box.h < areaHeight ? Math.min(areaHeight, box.y0 + box.h + pad) : areaHeight;
-  const rooms = spec.rooms?.length ? spec.rooms : [[0, 0, spec.bed[0], spec.bed[1]] as BedRect];
-  const room = bestRoom(rooms, x1 - x0, y1 - y0);
-  const k = roomScale(room, x1 - x0, y1 - y0) * spec.scale;
-  return { ...buildIsland(grid, { e: sw.e + x0, n: sw.n + y0 }, x1 - x0, y1 - y0, spec, cuts, features, k), room };
+  // Sized for the biggest rectangle centred on the bed (Bambu Studio centres it) clear of what must be kept free.
+  const keepOut = spec.keepOut ?? [];
+  const build = (clear: BedRect[]) => {
+    const rooms = centredRooms(spec.bed, clear);
+    const room = bestRoom(rooms.length ? rooms : [[0, 0, spec.bed[0], spec.bed[1]]], x1 - x0, y1 - y0);
+    const k = roomScale(room, x1 - x0, y1 - y0) * spec.scale;
+    return { ...buildIsland(grid, { e: sw.e + x0, n: sw.n + y0 }, x1 - x0, y1 - y0, spec, cuts, features, k), room };
+  };
+  const p = build(keepOut);
+  if (!spec.tower) return p;
+  // The prime tower: a free spot beside the island's real outline if there is one, else the island made smaller to leave
+  // the back-left corner free.
+  const spot = (q: IslandPuzzle) => {
+    const plate = platesInPlace(q.pieces, spec.bed, q.room).plates[0];
+    return plate ? towerSpot(plate, spec.bed, keepOut) : null;
+  };
+  const at = spot(p);
+  if (at) return { ...p, tower: { at, shrunk: false } };
+  const smaller = build([...keepOut, towerCorner(spec.bed)]);
+  return { ...smaller, tower: { at: spot(smaller), shrunk: smaller.k < p.k * 0.999 } };
 }
 
 /** Where the land asked for lies in the area (m from its south-west corner), found on a grid of about 1500 a side. */

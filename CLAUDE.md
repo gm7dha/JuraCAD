@@ -1168,18 +1168,24 @@
   puzzle without `groundAt`). The plates' .zip and .3mf are stored, not compressed (`zipStored` has no deflate).
   Printed put together (`IslandSpec.inPlace`, "Print it put together (in place)"; missing = laid out, byte for byte as before):
   `makeIslandPuzzle` crops the area to the kept land (`landBox`: `keepLand` on a ~1500-a-side grid; + 1% and a cell of sea
-  only where the land doesn't reach the area's edge — never past the area) and fits that to the best of `IslandSpec.rooms`
-  (`freeRooms(bed, keepOut)` in puzzle3mf.ts: maximal rectangles clear of the keep-outs; `bestRoom`/`roomScale`, less
-  `BED_MARGIN`; scale ≤ 100%, `islandChecks`); `IslandPuzzle.origin` = the grid point at (0, 0) (the map is placed from it),
-  `.room` the room used. Keep-outs (the dialog): `Printer.bedExclude` (Bambu's `bed_exclude_area`: X1/P1 0×0–18×28; A1, H2D,
-  X2D, H3C none), and with colour on `towerCorner` (back-left `TOWER_ROOM` 55 mm for the prime tower, default x 15 y 220,
-  35 wide); the X2D/H2D's one-nozzle strip is NOT kept free (the owner prints colour through the AMS on one nozzle). `IN_PLACE_FIT` 0.1
-  (the usual): the narrowest mesh gap is then ~0.3 mm (0.4 at 0.15). `platesInPlace(pieces, bed, room)`: one plate, one move
-  for every piece (centred in the room), `fits`. 3MF objects get `IN_PLACE_SETTINGS` (BambuStudio PrintObjectConfig keys read
-  per object from model_settings.config even for a non-Bambu 3MF: `brim_type` no_brim, `elefant_foot_compensation` 0.15 =
-  BBL's 0.20 mm profiles) via the optional `settings` of plateFiles/plate3mf/allPlatesZip/bandPlateFiles/bandPlateFile (none =
-  unchanged bytes); no negative parts — the mesh's gap is already "don't print here". Full-colour files carry no settings
-  (said in the window). Laid-out plates still ignore `bedExclude`. tests/islandInPlace.
+  only where the land doesn't reach the area's edge — never past the area) and sizes it for the biggest rectangle CENTRED on
+  the bed clear of `IslandSpec.keepOut` (`centredRooms`/`bestRoom`/`roomScale` in puzzle3mf.ts, less `BED_MARGIN`; scale ≤
+  100%, `islandChecks`) — centred because Bambu Studio re-centres a non-project 3MF on opening (Plater load_files
+  `center_instances_around_point(bed_center)`; we write no project_settings.config). `IslandPuzzle.origin` = the grid point
+  at (0, 0) (the map is placed from it), `.room` the room used. `platesInPlace(pieces, bed, room)`: one plate, the puzzle
+  centred on the bed, `fits` within the room. Keep-outs (the dialog): `Printer.bedExclude` (Bambu's `bed_exclude_area`:
+  X1/P1 0×0–18×28; A1, H2D, X2D, H3C none) and, on the H2D, `oneNozzleOnly` strips of its `slicerBed` (Bambu's 350 × 320
+  printable_area, nozzles 0–325 / 25–350; in-place is sized and placed on `slicerBed`, as Bambu centres there; PRINTERS'
+  325 size is left alone). The X2D (256 = Bambu's) needs nothing: the owner prints colour through the AMS on one nozzle.
+  In colour, `IslandSpec.tower`: after centring, `towerSpot` (1 mm raster of the pieces' undersides + keep-outs, summed
+  table) finds a `TOWER_SIDE` 35 + `TOWER_CLEAR` 5 square nearest Bambu's back-left default (x 15, y bed − 36) →
+  `IslandPuzzle.tower.at` (the window says where to drag the tower); none = rebuilt for rooms clear of `towerCorner` too
+  (`TOWER_ROOM` 55, `tower.shrunk`). `IN_PLACE_FIT` 0.1 (the usual): the narrowest mesh gap is then ~0.3 mm (0.4 at 0.15).
+  3MF objects get `IN_PLACE_SETTINGS` (BambuStudio PrintObjectConfig keys, read per object from model_settings.config even
+  for a non-Bambu 3MF: `brim_type` no_brim, `elefant_foot_compensation` 0.15 = BBL's 0.20 mm profiles) via the optional
+  `settings` of plateFiles/plate3mf/allPlatesZip/bandPlateFiles/bandPlateFile (none = unchanged bytes); no negative parts —
+  the mesh's gap is already "don't print here". Full-colour files carry no settings (said in the window). Laid-out plates
+  still ignore `bedExclude`. tests/islandInPlace.
   Tests: tests/islandPuzzle (pure; over seeds/sizes on a ragged coast: ≥ 2 joints per piece, outlines from the meshes never
   cross or come within 2·fit, every tab catches when pulled, median play ≤ 0.5 mm — `tests/support/outlineGeom.ts`), tests/islandMarks.
 - Mountain puzzle (a card in the Design library's 3D printing tab under "Puzzles" — `src/library/tools.ts` `LIBRARY_TOOLS`:

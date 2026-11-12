@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { gridFrom } from "../src/terrain/elevation";
 import { IN_PLACE_FIT, ISLAND_DEFAULTS, islandChecks, makeIslandPuzzle, MIN_JOINTS, type IslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
 import { PRINTERS } from "../src/model/printBed";
-import { allPlatesZip, BED_MARGIN, bestRoom, freeRooms, type BedRect, type Plate, IN_PLACE_SETTINGS, plateFiles, platesFor, platesInPlace, towerCorner } from "../src/terrain/puzzle3mf";
+import { allPlatesZip, BED_MARGIN, bestRoom, centredRooms, type BedRect, type Plate, IN_PLACE_SETTINGS, plateFiles, platesFor, platesInPlace, TOWER_CLEAR, TOWER_ROOM, TOWER_SIDE, towerSpot } from "../src/terrain/puzzle3mf";
 import { islandBands, LAYER_DEFAULT, mapRaster, NO_MAP, SEA_BLUE } from "../src/terrain/colour";
 import { bandPlateFile, bandPuzzle, plateSwaps } from "../src/terrain/colourFiles";
 import { box, collides, outlineSegs, SegGrid, segSegDist, segsCross } from "./support/outlineGeom";
@@ -200,37 +200,85 @@ describe("land touching the area's edge, put together", () => {
     });
 });
 
-describe("keeping clear of the printer's corners and the prime tower", () => {
+describe("keeping clear of the printer's corners, in the middle of the bed", () => {
   const x1 = PRINTERS.find((q) => q.id === "bambu-x1")!;
-  it("knows the X1 / P1's no-print corner (Bambu's profiles); the others have none", () => {
+  const h2d = PRINTERS.find((q) => q.id === "bambu-h2d")!;
+  const centre = (b: ReturnType<typeof plateBox>) => [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2];
+  const clearOf = (b: ReturnType<typeof plateBox>, [a, c, d, e]: BedRect) => !(b.x0 < d && a < b.x1 && b.y0 < e && c < b.y1);
+  it("knows the X1 / P1's no-print corner and the H2D's own bed and one-nozzle strips (Bambu's profiles)", () => {
     expect(x1.bedExclude).toEqual([[0, 0, 18, 28]]);
     for (const id of ["bambu-a1", "bambu-x2d", "bambu-h2d", "bambu-h3c"]) expect(PRINTERS.find((q) => q.id === id)!.bedExclude, id).toBeUndefined();
+    expect(h2d.slicerBed).toEqual([350, 320, 325]);
+    expect(h2d.oneNozzleOnly).toEqual([[0, 0, 25, 320], [325, 0, 350, 320]]);
+    expect(PRINTERS.find((q) => q.id === "bambu-x2d")!.oneNozzleOnly).toBeUndefined();
   });
-  it("finds the free parts of the bed", () => {
-    expect(freeRooms(BED, [])).toEqual([[0, 0, 256, 256]]);
-    const rooms = freeRooms(BED, [[0, 0, 18, 28], towerCorner(BED)]);
-    for (const r of rooms) {
-      expect(r[0] < 18 && r[1] < 28).toBe(false);
-      expect(r[0] < 55 && r[3] > 201).toBe(false);
-    }
-    expect(rooms.map((r) => r.join(","))).toContain("55,0,256,256");
-    expect(rooms.map((r) => r.join(","))).toContain("0,28,256,201");
-    // A wide puzzle goes in the wide room, a tall one in the tall room.
-    expect(bestRoom(rooms, 300, 100)).toEqual([0, 28, 256, 201]);
-    expect(bestRoom(rooms, 100, 300)).toEqual([55, 0, 256, 256]);
+  it("finds the biggest rectangles centred on the bed clear of the keep-outs", () => {
+    expect(centredRooms(BED, [])).toEqual([[0, 0, 256, 256]]);
+    const rooms = centredRooms(BED, x1.bedExclude!).map((r) => r.join(","));
+    expect(rooms).toContain("0,28,256,228");
+    expect(rooms).toContain("18,0,238,256");
+    expect(bestRoom(centredRooms(BED, x1.bedExclude!), 300, 100)).toEqual([0, 28, 256, 228]);
   });
-  it("puts the island in the room it was sized for, clear of the corners kept free", () => {
-    const keepOut: BedRect[] = [...x1.bedExclude!, towerCorner(BED)];
-    const p = makeIslandPuzzle(island, sw, W, H, { ...IN_PLACE, rooms: freeRooms(BED, keepOut) });
-    expect(p.room).toBeDefined();
+  it("puts the island in the middle of the bed — where Bambu Studio moves it — clear of the X1's corner", () => {
+    const p = makeIslandPuzzle(island, sw, W, H, { ...IN_PLACE, keepOut: x1.bedExclude });
     const placed = platesInPlace(p.pieces, BED, p.room);
     expect(placed.fits).toBe(true);
     const b = plateBox(placed.plates[0]);
-    for (const [a, c, d, e] of keepOut) expect(b.x0 < d && a < b.x1 && b.y0 < e && c < b.y1, `keeps out of ${[a, c, d, e]}`).toBe(false);
-    expect(b.x0).toBeGreaterThanOrEqual(p.room![0] + BED_MARGIN - 1e-6);
-    expect(b.x1).toBeLessThanOrEqual(p.room![2] - BED_MARGIN + 1e-6);
-    expect(b.y0).toBeGreaterThanOrEqual(p.room![1] + BED_MARGIN - 1e-6);
-    expect(b.y1).toBeLessThanOrEqual(p.room![3] - BED_MARGIN + 1e-6);
+    const [cx, cy] = centre(b);
+    expect(Math.abs(cx - BED[0] / 2)).toBeLessThan(1e-6);
+    expect(Math.abs(cy - BED[1] / 2)).toBeLessThan(1e-6);
+    expect(clearOf(b, x1.bedExclude![0])).toBe(true);
+  });
+  it("keeps an H2D island within one nozzle's reach on Bambu's 350 mm bed", () => {
+    const bed = h2d.slicerBed!;
+    const p = makeIslandPuzzle(island, sw, W, H, { ...IN_PLACE, bed, keepOut: h2d.oneNozzleOnly });
+    const b = plateBox(platesInPlace(p.pieces, bed, p.room).plates[0]);
+    expect(b.x0).toBeGreaterThanOrEqual(25);
+    expect(b.x1).toBeLessThanOrEqual(325);
+    expect(Math.abs(centre(b)[0] - 175)).toBeLessThan(1e-6);
+    expect(b.x1 - b.x0).toBeGreaterThan(280);
+  });
+});
+
+describe("the prime tower, put together in colour", () => {
+  /** No corner of a piece's underside within the tower's square and its clearance; the square on the bed. */
+  const towerClear = (p: IslandPuzzle, bed: [number, number, number]) => {
+    const [x, y] = p.tower!.at!;
+    expect(x).toBeGreaterThanOrEqual(TOWER_CLEAR);
+    expect(y).toBeGreaterThanOrEqual(TOWER_CLEAR);
+    expect(x + TOWER_SIDE + TOWER_CLEAR).toBeLessThanOrEqual(bed[0]);
+    expect(y + TOWER_SIDE + TOWER_CLEAR).toBeLessThanOrEqual(bed[1]);
+    const plate = platesInPlace(p.pieces, bed, p.room).plates[0];
+    const m = TOWER_CLEAR - 1.5;
+    for (const { piece, move } of plate.pieces) {
+      const v = piece.bodies[0].vertices;
+      for (let i = 0; i < v.length; i += 3) {
+        if (v[i + 2] > 1e-6) continue;
+        const [px, py] = [v[i] + move[0], v[i + 1] + move[1]];
+        expect(px > x - m && px < x + TOWER_SIDE + m && py > y - m && py < y + TOWER_SIDE + m, `${piece.name} at ${px}, ${py}`).toBe(false);
+      }
+    }
+  };
+  it("finds a free spot beside an irregular island without making it smaller", () => {
+    const plain = makeIslandPuzzle(island, sw, W, H, IN_PLACE);
+    const p = makeIslandPuzzle(island, sw, W, H, { ...IN_PLACE, tower: true });
+    expect(p.tower?.shrunk).toBe(false);
+    expect(p.tower?.at).not.toBeNull();
+    expect(p.k).toBe(plain.k);
+    towerClear(p, BED);
+  });
+  it("makes an island that fills its room smaller, leaving the back-left corner for the tower", () => {
+    // A block of land that fills its rectangle: nowhere beside it for a 45 mm square.
+    const block = gridFrom(sw, W, H, 25, (e) => (e - sw.e < W / 2 ? 100 : 0));
+    const full = makeIslandPuzzle(block, sw, W, H, IN_PLACE);
+    expect(towerSpot(platesInPlace(full.pieces, BED, full.room).plates[0], BED)).toBeNull();
+    const p = makeIslandPuzzle(block, sw, W, H, { ...IN_PLACE, tower: true });
+    expect(p.tower?.shrunk).toBe(true);
+    expect(p.k).toBeLessThan(full.k);
+    expect(p.tower?.at).not.toBeNull();
+    towerClear(p, BED);
+    const b = plateBox(platesInPlace(p.pieces, BED, p.room).plates[0]);
+    expect(b.x0 >= TOWER_ROOM || b.y1 <= BED[1] - TOWER_ROOM).toBe(true);
   });
 });
 

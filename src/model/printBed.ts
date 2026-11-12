@@ -17,13 +17,30 @@ export interface Printer {
    * profiles' `bed_exclude_area` (X1 / P1: 0×0–18×28, where the nozzle is wiped).
    */
   bedExclude?: [number, number, number, number][];
+  /**
+   * Bambu Studio's own bed (its `printable_area`) when `size` is only one nozzle's part of it — the H2D's 350 × 320, its
+   * nozzles reaching 0–325 and 25–350 (`extruder_printable_area`). Bambu Studio centres an opened 3MF on this bed, so the
+   * island puzzle printed put together is sized and placed on it.
+   */
+  slicerBed?: [number, number, number];
+  /** Strips of `slicerBed` only one of the two nozzles reaches: a print on one nozzle, centred, keeps out of both. */
+  oneNozzleOnly?: [number, number, number, number][];
 }
 
 export const PRINTERS: Printer[] = [
   { id: "bambu-x1", name: "Bambu Lab X1 / P1 series", size: [256, 256, 256], bedExclude: [[0, 0, 18, 28]] },
   { id: "bambu-a1", name: "Bambu Lab A1", size: [256, 256, 256] },
   { id: "bambu-a1-mini", name: "Bambu Lab A1 mini", size: [180, 180, 180] },
-  { id: "bambu-h2d", name: "Bambu Lab H2D", size: [325, 320, 325] },
+  {
+    id: "bambu-h2d",
+    name: "Bambu Lab H2D",
+    size: [325, 320, 325],
+    slicerBed: [350, 320, 325],
+    oneNozzleOnly: [
+      [0, 0, 25, 320],
+      [325, 0, 350, 320],
+    ],
+  },
   {
     // From 3D Printing Industry's launch article: 256 × 256 × 260 with the main nozzle; 235.5 × 256 × 256 for the
     // second nozzle and for both together. Nozzles up to 300 °C, a heated chamber up to 65 °C.

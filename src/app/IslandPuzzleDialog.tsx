@@ -12,7 +12,7 @@ import { IN_PLACE_FIT, ISLAND_DEFAULTS, islandChecks, type IslandBuilt, type Isl
 import { BOUNDARY_LEVELS, boundaryQuery, ISLANDS, MARKS_MOST, marksQuery, OVERPASS_URL } from "../terrain/islands";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
 import { boundariesOnGrid, boundaryLevels, featuresOnGrid, featureSummary, levelName, NO_FEATURES, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
-import { allPlatesZip, freeRooms, IN_PLACE_SETTINGS, plate3mf, platesByLevel, platesFor, platesInPlace, towerCorner, TOWER_ROOM, type BedRect } from "../terrain/puzzle3mf";
+import { allPlatesZip, IN_PLACE_SETTINGS, plate3mf, platesByLevel, platesFor, platesInPlace, TOWER_ROOM, TOWER_SIDE, type BedRect } from "../terrain/puzzle3mf";
 import { islandBands, mapOnPuzzle, mapRaster, NO_MAP, PLAIN_COLOUR, SEA_BLUE, type ColourSpec, type HeightScale } from "../terrain/colour";
 import { ColourDownloads, ColourPanel, useColoured } from "./PuzzleColour";
 import { downloadFile, safeFileName } from "./download";
@@ -210,14 +210,13 @@ export function IslandPuzzleDialog() {
   const needsFetch = detail !== "area" && (!marksMap || (marksMap.fetched === "water" && detail === "all"));
   const canFetch = !!loaded && fresh && Math.max(loaded.area.width, loaded.area.height) <= MARKS_MOST;
 
-  // Put together, the island keeps out of the printer's no-print corner, and — in several filaments — out of the prime
-  // tower's corner.
+  // Put together, the island is sized on Bambu Studio's own bed (it centres the file there) and keeps out of the printer's
+  // no-print corner (and, on the H2D, of what only the other nozzle reaches); in several filaments it leaves a spot for the
+  // prime tower.
   const printerInfo = printerOf(printer.printer);
-  const keepOut: BedRect[] = [
-    ...(printerInfo?.bedExclude ?? []),
-    ...(colourOn ? [towerCorner(bed)] : []),
-  ];
-  const fullSpec: IslandSpec = spec.inPlace ? { ...spec, bed, rooms: freeRooms(bed, keepOut) } : { ...spec, bed };
+  const placeBed: [number, number, number] = spec.inPlace ? (printerInfo?.slicerBed ?? bed) : bed;
+  const keepOut: BedRect[] = [...(printerInfo?.bedExclude ?? []), ...(printerInfo?.oneNozzleOnly ?? [])];
+  const fullSpec: IslandSpec = spec.inPlace ? { ...spec, bed: placeBed, keepOut, tower: colourOn } : { ...spec, bed };
   const problems = islandChecks(fullSpec);
   const specKey = JSON.stringify(fullSpec);
   useEffect(() => {
@@ -252,7 +251,7 @@ export function IslandPuzzleDialog() {
   const byLevel = colourOn && colour.mode === "bands";
   const inPlace = !!spec.inPlace;
   // Put together: one plate, every piece where it sits in the finished puzzle (it must fit the bed less its margins).
-  const placed = useMemo(() => (puzzle && inPlace ? platesInPlace(puzzle.pieces, bed, puzzle.room) : null), [puzzle, bed[0], bed[1], bed[2], inPlace]);
+  const placed = useMemo(() => (puzzle && inPlace ? platesInPlace(puzzle.pieces, placeBed, puzzle.room) : null), [puzzle, placeBed[0], placeBed[1], placeBed[2], inPlace]);
   const plates = useMemo(
     () => (!puzzle ? [] : placed ? (placed.fits ? placed.plates : []) : (byLevel ? platesByLevel : platesFor)(puzzle.pieces, bed)),
     [puzzle, placed, bed[0], bed[1], bed[2], byLevel],
@@ -444,7 +443,7 @@ export function IslandPuzzleDialog() {
               {numberBox(Math.round(spec.scale * 100), (v) => set("scale", v / 100), 10, 20, inPlace ? 100 : 1000, "%")}
               <span className="muted small">
                 {inPlace
-                  ? ` 100% = the island fills the bed (${bed[0]} × ${bed[1]} mm, less 5 mm round the edge${keepOut.length ? " and the corners kept free" : ""}); it can't be bigger`
+                  ? ` 100% = the island fills the bed (${placeBed[0]} × ${placeBed[1]} mm, less 5 mm round the edge${keepOut.length ? " and the parts kept free" : ""}), in the middle, where Bambu Studio puts it; it can't be bigger`
                   : ` 100% = the finished puzzle covers the bed (${bed[0]} × ${bed[1]} mm)`}
               </span>
             </span>
@@ -549,10 +548,16 @@ export function IslandPuzzleDialog() {
                 <p className="muted small">
                   One plate, the pieces put together as above. In Bambu Studio don't use Arrange (it would spread the pieces out); each piece comes in with
                   no brim and elephant-foot compensation on, so the first layer doesn't join them.
-                  {printerInfo?.bedExclude?.length ? " The front-left corner, where this printer wipes its nozzle, is left free." : ""}
-                  {colourOn
-                    ? ` The back-left corner (${TOWER_ROOM} × ${TOWER_ROOM} mm) is left free for the prime tower Bambu Studio adds for several filaments: if it shows up on the island, drag it into that corner.`
+                  {" "}Bambu Studio puts the island in the middle of the bed when it opens the file; it's sized to fit there.
+                  {printerInfo?.bedExclude?.length ? " It keeps clear of the front-left corner, where this printer wipes its nozzle." : ""}
+                  {printerInfo?.oneNozzleOnly?.length ? " It stays within what one nozzle reaches." : ""}
+                  {colourOn && puzzle?.tower?.at
+                    ? ` For several filaments Bambu Studio adds a prime tower (${TOWER_SIDE} mm wide). Drag it to about x ${Math.round(puzzle.tower.at[0])}, y ${Math.round(puzzle.tower.at[1])} — there's room there beside the island.`
                     : ""}
+                  {colourOn && puzzle?.tower?.shrunk
+                    ? ` The island is a little smaller than the bed allows, so the back-left corner (${TOWER_ROOM} × ${TOWER_ROOM} mm) stays free for the prime tower.`
+                    : ""}
+                  {colourOn && puzzle?.tower && !puzzle.tower.at ? " There's no free spot for the prime tower: lower the scale to make room for it." : ""}
                   {colour.mode === "full" ? " The full-colour files can't carry those settings: turn the brim off and elephant-foot compensation on yourself." : ""}
                 </p>
               )}
