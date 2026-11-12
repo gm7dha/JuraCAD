@@ -71,4 +71,26 @@ describe("curves made by Claude", () => {
     const bad = await fails(s, "add_feature", { type: "curve", curve_type: "fit_spline", points: [[0, 0, 0]] });
     expect(bad).toMatch(/at least two/);
   });
+
+  it("projected and bridging curves from Claude's inputs", async () => {
+    const s = newSession();
+    await ok(s, "add_feature", { type: "sphere", diameter: 40 });
+    await ok(s, "add_sketch", { name: "Ring", plane: "Top", shapes: [{ type: "circle", center: [0, 0], diameter: 20 }] });
+    const proj = await ok(s, "add_feature", { type: "curve", curve_type: "projected", sketch: "Ring", part: "Part 1", faces: [{ near: [0, 0, 20] }] });
+    expect(proj).toMatch(/Projected curve 1/);
+    await ok(s, "add_sketch", { name: "Line", plane: "Front", shapes: [{ type: "line", from: [-30, 5], to: [30, 5] }] });
+    await ok(s, "add_feature", { type: "curve", curve_type: "projected", sketch: "Ring", second_sketch: "Line" });
+    await ok(s, "add_feature", { type: "curve", curve_type: "fit_spline", points: [[30, 0, 0], [40, 10, 0], [50, 0, 0]] });
+    const br = await ok(s, "add_feature", { type: "curve", curve_type: "bridging", from: { curve: "Fit spline 1", end: "end" }, to: [70, 20, 5], match_from: "curvature", bulge: 1.5 });
+    expect(br).toMatch(/Bridging curve 1/);
+    const b = s.build();
+    expect(b.errors).toEqual({});
+    expect(Object.keys(b.curves ?? {})).toHaveLength(4);
+    // The bridge starts where the spline ends.
+    const bridge = s.doc.features.find((f) => f.name === "Bridging curve 1")!;
+    const line = b.curves![bridge.id][0];
+    expect(Math.hypot(line[0] - 50, line[1], line[2])).toBeLessThan(1e-3);
+    expect(await fails(s, "add_feature", { type: "curve", curve_type: "projected", sketch: "Ring" })).toMatch(/faces/);
+    expect(await fails(s, "add_feature", { type: "curve", curve_type: "bridging", from: [0, 0, 0] })).toMatch(/"to"/);
+  });
 });

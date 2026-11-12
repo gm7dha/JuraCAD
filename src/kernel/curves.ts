@@ -70,10 +70,10 @@ export function helixWire(h: HelixSpec): Wire {
     const semi = tapered ? Math.atan2(h.r1 - h.r0, h.height) : 0;
     // Along the cone's side, the height is v·cos(semi).
     const vLen = tapered ? h.height / Math.cos(semi) : h.height;
-    const surface = tapered ? new oc.Geom_ConicalSurface(ax3, semi, h.r0) : new oc.Geom_CylindricalSurface(ax3, h.r0);
+    const surface = keep(tapered ? new oc.Geom_ConicalSurface(ax3, semi, h.r0) : new oc.Geom_CylindricalSurface(ax3, h.r0));
     const u1 = (h.clockwise ? -1 : 1) * 2 * Math.PI * h.turns;
     const seg = keep(new oc.GC_MakeSegment2d(keep(new oc.gp_Pnt2d(0, 0)), keep(new oc.gp_Pnt2d(u1, vLen))));
-    const edge = keep(new oc.BRepBuilderAPI_MakeEdge(seg.Value(), surface)).Edge();
+    const edge = keep(keep(new oc.BRepBuilderAPI_MakeEdge(keep(seg.Value()), surface)).Edge());
     const w = keep(new oc.BRepBuilderAPI_MakeWire(edge)).Wire();
     oc.BRepLib.BuildCurves3d(w);
     return cast(w) as Wire;
@@ -222,6 +222,48 @@ export function edgePolyline(e: Edge): number[] {
   const out: number[] = [];
   for (let i = 0; i <= n; i++) out.push(...takeVec(e.pointAt(i / n)));
   return out;
+}
+
+/**
+ * A wire as one polyline, walked the way the wire runs (its edges in order, each the right way round), so its first
+ * and last points are the wire's start and end — the drawn line and the engine's ends always agree.
+ */
+export function wirePolyline(w: Wire): number[] {
+  const oc = getOC() as any;
+  const curve = new oc.BRepAdaptor_CompCurve(w.wrapped, true);
+  try {
+    const C0 = oc.GeomAbs_Shape.GeomAbs_C0;
+    const n = curve.NbIntervals(C0);
+    const knots = new oc.NCollection_Array1_double(1, n + 1);
+    curve.Intervals(knots, C0);
+    const out: number[] = [];
+    const at = (u: number) => {
+      const p = curve.Value(u);
+      const q: Vec3 = [p.X(), p.Y(), p.Z()];
+      p.delete();
+      return q;
+    };
+    for (let i = 1; i <= n; i++) {
+      const a = knots.Value(i);
+      const b = knots.Value(i + 1);
+      // How long this piece is (roughly), for how many points it needs.
+      let rough = 0;
+      let prev = at(a);
+      for (let k = 1; k <= 16; k++) {
+        const q = at(a + ((b - a) * k) / 16);
+        rough += dist(prev, q);
+        prev = q;
+      }
+      const type = curve.GetType();
+      const straight = n === 1 && type === oc.GeomAbs_CurveType.GeomAbs_Line;
+      const steps = straight ? 1 : Math.max(24, Math.min(2000, Math.ceil(rough / 0.6)));
+      for (let k = i === 1 ? 0 : 1; k <= steps; k++) out.push(...at(a + ((b - a) * k) / steps));
+    }
+    knots.delete();
+    return out;
+  } finally {
+    curve.delete();
+  }
 }
 
 /** Each edge of a shape as a polyline. */

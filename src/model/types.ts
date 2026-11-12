@@ -1195,7 +1195,7 @@ export interface CurveDef {
   helixBy?: "heightTurns" | "heightPitch" | "turnsPitch";
   /** Helix: turns clockwise as it rises (seen from above). Missing = anticlockwise (a right-hand thread). */
   clockwise?: boolean;
-  /** Helix: up the other way along its axis. Projected curve: project the other way only. */
+  /** Helix: rise the other way along its axis (round a face: start from its other end). */
   flip?: boolean;
   /** Projected curve: onto picked faces (`Feature.picks`, missing = this) or where two sketches' curves meet ("sketches"; the second is `sketch2`). */
   project?: "faces" | "sketches";

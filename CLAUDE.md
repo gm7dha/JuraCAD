@@ -560,9 +560,14 @@
   chained into wires (`chainEdges`). Wires live per build (`StudioBuild.curves`, freed in `disposeBuild`); drawn lines go out as
   `RebuildResult.curves` → `store.builtCurves` → `SceneManager.setCurves` (PickTarget "curve"; shown with the eye like planes,
   `hasEye`). Used by: Sweep/Curve pattern `pathRef` = a curve feature, or `pathEdges` (TopoPicks of part edges, chained) —
-  engine `sweepSpine` (open paths start at the end nearest the profile; `sweepAlongSpine` in sweep.ts), set per feature through the
-  module-level `pathSpine` because buildSolid has no `this`; curve patterns walk its polyline (`walkPoints` in pathSample.ts);
-  GeomPick `curve` (+ end a/b/mid) for planes (Curve point: `position` by parameter, not length, on curves), fit splines, bridges.
+  engine `sweepSpine` (open paths start at the end nearest the profile as built; `sweepAlongSpine` in sweep.ts), handed to
+  buildSolid as its `paths` argument; a twist round a curve's/edges' sharp corners is refused (a sketch path does it), and kept
+  facing one way a path running edge-on to the profile (`edgeOnSomewhere`) or a result under 1% of area × length
+  (`refuseFlattened`, sketch paths too) is refused; curve patterns walk its polyline (`walkPoints` in pathSample.ts). Drawn lines
+  are one per wire in the wire's own order and direction (`wirePolyline`: BRepAdaptor_CompCurve by C0 intervals), so their ends
+  are the wire's; GeomPick `curve` (+ end a/b/mid): an end is the wire end nearest `p` across all pieces (`curveEndNear`), mid
+  and Curve point `position` are by length (`paramAtLength` on the wire). Helix axes from faces/edges point one fixed way
+  (`canonicalAxis`); projected sheets reach 2 × the size of the sketches and faces.
   Dialog `src/app/CurveOptions.tsx` (`CurveOptions`, `PathChoice`: sketch / curve / "Part edges (click them)"); Toolbar group
   "curves" (`startCurve`). Claude: add_feature "curve" with `curve_type` (`src/mcp/curveSpec.ts`), sweep `path` (sketch or
   curve) / `path_edges` + `path_part`; points may be {"curve", "end"}. Not done: isocline, offset and trim curves; sketches can't

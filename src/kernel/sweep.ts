@@ -2,7 +2,7 @@
  * Sweep (a profile carried along a path) and loft (a smooth solid joining
  * outlines on different sketches), with OpenCascade.
  */
-import { cast, genericSweep, getOC, isShape3D, loft, makeBSplineApproximation, makeFace, measureVolume, assembleWire, Wire, type Shape3D } from "replicad";
+import { cast, genericSweep, getOC, isShape3D, loft, makeBSplineApproximation, makeFace, measureLength, measureVolume, assembleWire, Wire, type Shape3D } from "replicad";
 
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import { findChains, findRegions, type Segment } from "../sketch/regions";
@@ -705,6 +705,17 @@ export function sweepSketch(profilePlane: SketchPlane, profile: SketchData, path
         result = merged;
       }
     }
+    if (control.lockOrientation) {
+      // A profile that went edge-on somewhere comes out flattened: refused instead of kept.
+      const whole = segmentsWire(chain.segments, pathFrame, 0);
+      let length = 0;
+      try {
+        length = measureLength(whole);
+      } finally {
+        release(whole);
+      }
+      refuseFlattened(result!, regions, frame, length);
+    }
     return result!;
   } finally {
     if (spine) release(spine);
@@ -800,8 +811,15 @@ export function sweepAlongSpine(profilePlane: SketchPlane, profile: SketchData, 
   let guide: Wire | null = null;
   if (!plain && Math.abs(twist) >= 1e-9) {
     checkTwistSize(twist);
+    if (spineHasCorner(spine)) {
+      throw new Error(
+        "A twist can't go round the sharp corners of a curve or of part edges yet. Draw the path in a sketch instead (a twist goes round a sketch's corners), round the corners, or set the twist to 0.",
+      );
+    }
     guide = twistGuide(spine, twist);
   }
+  // Kept facing one way, the profile mustn't turn edge-on to the path anywhere (it would flatten there).
+  if (control.lockOrientation && edgeOnSomewhere(spine, frame.n as Vec3)) throw new Error(EDGE_ON_LOCKED);
   const startAxis = control.lockOrientation ? { p: frame.origin as Vec3, n: frame.n as Vec3, x: frame.u as Vec3 } : null;
   const sweepOne = (wire: Wire): Shape3D => {
     try {
@@ -830,8 +848,57 @@ export function sweepAlongSpine(profilePlane: SketchPlane, profile: SketchData, 
         result = merged;
       }
     }
+    if (control.lockOrientation) refuseFlattened(result!, regions, frame, measureLength(spine));
     return result!;
   } finally {
     if (guide) release(guide);
+  }
+}
+
+/** Kept facing one way, the profile went edge-on to the path somewhere: what to say. */
+const EDGE_ON_LOCKED =
+  'Kept facing one way, the profile would turn edge-on to the path somewhere along it, flattening the sweep there. Turn off "Keep profile orientation" (then it turns with the path), or use a path that never runs along the profile\'s plane.';
+
+/** Does the path have a sharp corner (a jump in direction between its pieces)? */
+function spineHasCorner(spine: Wire): boolean {
+  const pieces = samplePath(spine, 4);
+  for (let i = 1; i < pieces.length; i++) {
+    const a = pieces[i - 1][pieces[i - 1].length - 1].t;
+    if (dot(a, pieces[i][0].t) < Math.cos((1 * Math.PI) / 180)) return true;
+  }
+  if (spine.isClosed && pieces.length > 1) return dot(pieces[pieces.length - 1][pieces[pieces.length - 1].length - 1].t, pieces[0][0].t) < Math.cos((1 * Math.PI) / 180);
+  return false;
+}
+
+/** Does the path anywhere run (within 2°) along a plane with this normal? */
+function edgeOnSomewhere(spine: Wire, n: Vec3): boolean {
+  return samplePath(spine, 48).some((piece) => piece.some((q) => Math.abs(dot(q.t, n)) < Math.sin((2 * Math.PI) / 180)));
+}
+
+/**
+ * A sweep kept facing one way that came out far thinner than its profile carried along the path (under 1%): the
+ * profile went edge-on somewhere and OpenCascade made a flattened, broken solid. Refused in plain words (the shape is freed).
+ */
+function refuseFlattened(shape: Shape3D, regions: { outer: { polygon: [number, number][] } }[], frame: ReturnType<typeof planeFrame>, pathLength: number): void {
+  void frame;
+  const area = regions.reduce((t, r) => {
+    const p = r.outer.polygon;
+    let a = 0;
+    for (let i = 0; i < p.length; i++) {
+      const [x0, y0] = p[i];
+      const [x1, y1] = p[(i + 1) % p.length];
+      a += x0 * y1 - x1 * y0;
+    }
+    return t + Math.abs(a) / 2;
+  }, 0);
+  let volume = 0;
+  try {
+    volume = measureVolume(shape);
+  } catch {
+    volume = 0;
+  }
+  if (area > 0 && pathLength > 0 && volume < 0.01 * area * pathLength) {
+    release(shape);
+    throw new Error(EDGE_ON_LOCKED);
   }
 }

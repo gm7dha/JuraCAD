@@ -274,6 +274,100 @@ describe("Fit spline, bridging and composite curves; sweeps along part edges", (
   });
 });
 
+describe("review fixes", () => {
+  const box = () => feature("box", { width: 20, depth: 20, height: 5 });
+  const topEdges = (b: Feature, refs: { edgeRefs: EdgeRef[] }) => {
+    const find = (a: Vec3, c: Vec3) => {
+      const ref = refs.edgeRefs.find((e) => (near(e.a, a) && near(e.b, c)) || (near(e.a, c) && near(e.b, a)))!;
+      return { partId: b.id, ref } as TopoPick;
+    };
+    return [find([0, 0, 5], [20, 0, 5]), find([20, 0, 5], [20, 20, 5]), find([20, 20, 5], [0, 20, 5])];
+  };
+
+  it("a curve's end is the end clicked, whatever order its pieces were picked in", () => {
+    for (const order of [[0, 1, 2], [1, 0, 2], [1, 2, 0]]) {
+      engine = new GeometryEngine();
+      const b = box();
+      const e = topEdges(b, engine.rebuild([b]).parts[0]);
+      const comp = curve({ kind: "composite", curves: [] }, {}, { picks: order.map((i) => e[i]) });
+      const fit = curve({ kind: "fitSpline", points: [{ p: [0, 0, 5], curve: comp.id, end: "a" }, { p: [10, 10, 20] }] });
+      const r = engine.rebuild([b, comp, fit]);
+      expect(r.featureErrors).toEqual({});
+      expect(near(allPoints(r.curves![fit.id])[0], [0, 0, 5])).toBe(true);
+      // The drawn line runs the way the curve does: its ends are the curve's ends.
+      const line = allPoints(r.curves![comp.id]);
+      const ends = [line[0], line[line.length - 1]];
+      expect(ends.some((p) => near(p, [0, 0, 5])) && ends.some((p) => near(p, [0, 20, 5]))).toBe(true);
+      engine.dispose();
+    }
+  });
+
+  it("a Curve point plane on a curve sits that share of the way along it by length", () => {
+    engine = new GeometryEngine();
+    const b = box();
+    const e = topEdges(b, engine.rebuild([b]).parts[0]);
+    const comp = curve({ kind: "composite", curves: [] }, {}, { picks: [e[0], e[1]] });
+    const fit = curve({ kind: "fitSpline", points: [{ p: [0, 0, 0] }, { p: [3, 8, 0] }, { p: [30, 10, 0] }] });
+    const plane = (id: string): Feature => ({ ...feature("plane", {}), planeDef: { mode: "curvePoint", ref: { kind: "default", name: "Top" }, axis: "u", points: [{ p: [0, 0, 0], curve: id }], position: 0.25 } });
+    const pc = plane(comp.id);
+    const pf = plane(fit.id);
+    const r = engine.rebuild([b, comp, fit, pc, pf]);
+    expect(r.featureErrors).toEqual({});
+    const quarter = (pts: Vec3[]) => {
+      const total = lengthOf([pts.flat()]);
+      let d = 0;
+      for (let i = 1; i < pts.length; i++) {
+        const step = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1], pts[i][2] - pts[i - 1][2]);
+        if (d + step >= total / 4) {
+          const f = (total / 4 - d) / step;
+          return [0, 1, 2].map((k) => pts[i - 1][k] + (pts[i][k] - pts[i - 1][k]) * f) as Vec3;
+        }
+        d += step;
+      }
+      return pts[pts.length - 1];
+    };
+    expect(near(r.followed![pc.id].origin as Vec3, quarter(allPoints(r.curves![comp.id])), 0.01)).toBe(true);
+    expect(near(r.followed![pf.id].origin as Vec3, quarter(allPoints(r.curves![fit.id])), 0.02)).toBe(true);
+  });
+
+  it("refuses a sweep along a helix kept facing one way (it would turn edge-on)", () => {
+    engine = new GeometryEngine();
+    const h = curve({ kind: "helix", around: "axis", axis: { p: [0, 0, 0], axis: "z" } }, { diameter: 20, height: 30, turns: 5 });
+    const profile = sketchFeature({ kind: "default", name: "Front" }, addCircle(emptySketch(), { x: 10, y: 0 }, 1).sketch);
+    const sweep: Feature = { ...feature("sweep", {}), sketchRef: profile.id, pathRef: h.id, apart: true, sweepControl: { lockOrientation: true } };
+    const r = engine.rebuild([h, profile, sweep]);
+    expect(r.featureErrors[sweep.id]).toMatch(/edge-on/);
+    expect(r.parts).toHaveLength(0);
+  });
+
+  it("sweeps along a composite with a corner (right volume), and says plainly a twist there needs a sketch path", () => {
+    engine = new GeometryEngine();
+    const b = box();
+    const e = topEdges(b, engine.rebuild([b]).parts[0]);
+    const comp = curve({ kind: "composite", curves: [] }, {}, { picks: [e[1], e[0]] });
+    const profile = sketchFeature({ kind: "default", name: "Right" }, addCircle(emptySketch(), { x: 0, y: 5 }, 1).sketch);
+    const sweep: Feature = { ...feature("sweep", {}), sketchRef: profile.id, pathRef: comp.id, operation: "new" };
+    const r = engine.rebuild([b, comp, profile, sweep]);
+    expect(r.featureErrors).toEqual({});
+    const v = engine.check("fine", [sweep.id]).parts[0].exactVolume!;
+    expect(relativeError(v, Math.PI * 40)).toBeLessThan(0.03);
+    const twisted: Feature = { ...sweep, params: { ...sweep.params, twist: "90" } };
+    expect(engine.rebuild([b, comp, profile, twisted]).featureErrors[sweep.id]).toMatch(/sketch/);
+  });
+
+  it("curves of Part Studios not rebuilt are carried forward", () => {
+    engine = new GeometryEngine();
+    const ha = curve({ kind: "helix", around: "axis", axis: { p: [0, 0, 0], axis: "z" } }, { diameter: 10, height: 10, turns: 2 });
+    const hb = curve({ kind: "helix", around: "axis", axis: { p: [0, 0, 0], axis: "x" } }, { diameter: 10, height: 10, turns: 2 });
+    const first = engine.rebuildStudios([{ id: "a", features: [ha] }, { id: "b", features: [hb] }]);
+    expect(Object.keys(first.curves!).sort()).toEqual([ha.id, hb.id].sort());
+    const again = engine.rebuildStudios([{ id: "a", features: [ha] }, { id: "b", features: [{ ...hb, params: { ...hb.params, turns: "3" } }] }]);
+    expect(again.rebuilt).toEqual(["b"]);
+    expect(again.curves![ha.id]).toEqual(first.curves![ha.id]);
+    expect(again.curves![hb.id]).not.toEqual(first.curves![hb.id]);
+  });
+});
+
 describe("Old designs", () => {
   it("a design with no curves reports none", () => {
     engine = new GeometryEngine();
