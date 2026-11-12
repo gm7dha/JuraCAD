@@ -167,9 +167,103 @@ describe("modify fillet", () => {
     expect(r.featureErrors).toEqual({});
     expect(volume()).toBeCloseTo(sharpTop, 3);
     expect(r.featureNotes?.[off.id]).toMatch(/Also took off/);
-    // Without Propagate only that piece goes: refused, or less put back than the whole run.
+    // Without Propagate a single piece that carries on smoothly into the next is refused, not half put back.
     const one = build([sk, plate, round, fillet, { ...off, modifyFillet: { remove: true, noPropagate: true } }]);
-    if (!Object.keys(one.featureErrors).length) expect(volume()).toBeLessThan(sharpTop - 1e-3);
+    expect(Object.values(one.featureErrors)[0]).toMatch(/Tick “Propagate”/);
+  });
+
+  const edgeWhere = (r: Built, test: (mid: number[]) => boolean, part = 0) =>
+    r.parts[part].edgeRefs.filter((e) => e.kind === "edge" && test(e.mid)).map((ref) => ({ partId: r.parts[part].id, ref }));
+  const near = (a: number, b: number) => Math.abs(a - b) < 1e-6;
+
+  it("refuses a round scoop that meets the wall at a corner (not a fillet)", () => {
+    const box = feature("box", { width: 30, depth: 30, height: 10 });
+    // A Ø20 cylinder whose axis is 5 mm outside the back wall: a 120° scoop with sharp edges.
+    const scoop = feature("cylinder", { diameter: 20, height: 10, x: 15, y: 35 }, "remove");
+    const r1 = build([box, scoop]);
+    const before = volume();
+    const round = faces(r1, (f) => f.surface.startsWith("CYLIND"));
+    expect(round).toHaveLength(1);
+    for (const mod of [{ remove: true }, undefined]) {
+      const r = build([box, scoop, { ...feature("modifyFillet", { radius: 4 }), picks: round, ...(mod ? { modifyFillet: mod } : {}) }]);
+      expect(Object.values(r.featureErrors)[0]).toMatch(/isn't a fillet — it meets the face beside it at a corner/);
+    }
+    build([box, scoop]);
+    expect(volume()).toBeCloseTo(before, 6);
+  });
+
+  it("takes off a fillet whose ends are cut by slanted faces, with no nibs left", () => {
+    let data = emptySketch();
+    const pts: [number, number][] = [[0, 0], [30, 0], [25, 10], [5, 10], [0, 0]];
+    for (let i = 1; i < pts.length; i++) data = addLine(data, { x: pts[i - 1][0], y: pts[i - 1][1] }, { x: pts[i][0], y: pts[i][1] }).sketch;
+    const sk = sketchFeature({ kind: "default", name: "Top" }, data);
+    const plate = extrudeFeature(sk.id, 10);
+    const r0 = build([sk, plate]);
+    expect(volume()).toBeCloseTo(2500, 6);
+    const edge = edgeWhere(r0, (m) => near(m[1], 0) && near(m[2], 10));
+    expect(edge).toHaveLength(1);
+    const fillet = { ...feature("fillet", { radius: 2 }), picks: edge };
+    const r1 = build([sk, plate, fillet]);
+    const round = faces(r1, (f) => f.surface.startsWith("CYLIND"));
+    const r = build([sk, plate, fillet, { ...feature("modifyFillet", {}), picks: round, modifyFillet: { remove: true } }]);
+    expect(r.featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(2500, 6);
+    expect(faceCount(r)).toBe(6);
+  });
+
+  it("follows every edge and corner of a fully rounded box (Propagate), and re-sizes them all", () => {
+    const box = feature("box", { width: 20, depth: 20, height: 10 });
+    const r0 = build([box]);
+    const all2 = { ...feature("fillet", { radius: 2 }), picks: faces(r0, frontFace), allEdges: true };
+    const r1 = build([box, all2]);
+    expect(faceCount(r1)).toBe(26);
+    const strip = faces(r1, (f) => f.surface.startsWith("CYLIND")).slice(0, 1);
+    const off = build([box, all2, { ...feature("modifyFillet", {}), picks: strip, modifyFillet: { remove: true } }]);
+    expect(off.featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(4000, 6);
+    expect(faceCount(off)).toBe(6);
+    const three = build([box, all2, { ...feature("modifyFillet", { radius: 3 }), picks: strip }]);
+    expect(three.featureErrors).toEqual({});
+    const resized = volume();
+    build([box, { ...feature("fillet", { radius: 3 }), picks: faces(r0, frontFace), allEdges: true }]);
+    expect(resized).toBeCloseTo(volume(), 4);
+    // Without Propagate one strip can't come off alone: it runs on into the corner balls.
+    const one = build([box, all2, { ...feature("modifyFillet", {}), picks: strip, modifyFillet: { remove: true, noPropagate: true } }]);
+    expect(Object.values(one.featureErrors)[0]).toMatch(/Propagate/);
+  });
+
+  it("doesn't follow a mitred corner, but takes both pieces off when both are picked", () => {
+    const box = feature("box", { width: 20, depth: 20, height: 10 });
+    const r0 = build([box]);
+    // Two top edges meeting at the corner (20, 0, 10); the upright edge there stays sharp, so the fillets meet in a mitre.
+    const edges = edgeWhere(r0, (m) => near(m[2], 10) && (near(m[1], 0) || near(m[0], 20)));
+    expect(edges).toHaveLength(2);
+    const fillet = { ...feature("fillet", { radius: 2 }), picks: edges };
+    const r1 = build([box, fillet]);
+    const rounds = faces(r1, (f) => !f.surface.startsWith("PLANE"));
+    expect(rounds.length).toBeGreaterThanOrEqual(2);
+    const one = build([box, fillet, { ...feature("modifyFillet", {}), picks: [rounds[0]], modifyFillet: { remove: true } }]);
+    expect(Object.values(one.featureErrors)[0]).toBeTruthy();
+    const both = build([box, fillet, { ...feature("modifyFillet", {}), picks: rounds, modifyFillet: { remove: true } }]);
+    expect(both.featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(4000, 6);
+  });
+
+  it("re-sizes an inside-corner fillet to match one made at that size", () => {
+    const base = feature("box", { width: 20, depth: 20, height: 5 });
+    const wall = feature("box", { width: 5, depth: 20, height: 20 }, "add");
+    const r0 = build([base, wall]);
+    const inner = edgeWhere(r0, (m) => near(m[0], 5) && near(m[2], 5));
+    expect(inner).toHaveLength(1);
+    const f2 = { ...feature("fillet", { radius: 2 }), picks: inner };
+    const r1 = build([base, wall, f2]);
+    const round = faces(r1, (f) => f.surface.startsWith("CYLIND"));
+    const r = build([base, wall, f2, { ...feature("modifyFillet", { radius: 3 }), picks: round }]);
+    expect(r.featureErrors).toEqual({});
+    const resized = volume();
+    build([base, wall, { ...feature("fillet", { radius: 3 }), picks: inner }]);
+    expect(resized).toBeCloseTo(volume(), 6);
+    expect(resized).toBeCloseTo(3500 + 20 * (9 - (9 * Math.PI) / 4), 6);
   });
 
   it("re-sizes a fillet on an imported STEP part", async () => {

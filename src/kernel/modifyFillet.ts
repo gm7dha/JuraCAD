@@ -12,7 +12,7 @@
  * round a round one. Neighbouring pieces' wedges meet exactly, so a run of
  * tangent fillets (a rounded rectangle's edge) comes off as one.
  */
-import { assembleWire, basicFaceExtrusion, getOC, makeFace, makeLine, makeThreePointArc, revolution, Vector, type Edge, type Face, type Shape3D } from "replicad";
+import { assembleWire, basicFaceExtrusion, getOC, makeBox, makeFace, makeLine, makePolygon, makeThreePointArc, revolution, Vector, type Edge, type Face, type Shape3D } from "replicad";
 import { circleThrough3D } from "../geometry/measureMath";
 import type { Vec3 } from "../geometry/topoRef";
 import { edgesOf, facesOf, solidsOf } from "./topology";
@@ -82,7 +82,7 @@ function cornerOutside(face: Face, pm: Vec3, corner: Vec3): boolean {
  * The wedge between one fillet face and its sharp corner (the caller frees the
  * solid). Throws NotAFillet with a plain message when the face isn't one.
  */
-export function filletWedge(face: Face): { solid: Shape3D; wedge: FilletWedge } {
+export function filletWedge(face: Face, extend: [number, number] = [0, 0]): { solid: Shape3D; wedge: FilletWedge } {
   const kind = face.geomType;
   if (kind !== "CYLINDRE" && kind !== "TORUS") throw new NotAFillet("Pick rounded faces made by a fillet: a piece of a cylinder (along a straight edge) or of a ring (round a hole or a boss).");
   // replicad's pointOnSurface takes shares (0…1) of the face's own u and v ranges.
@@ -91,13 +91,18 @@ export function filletWedge(face: Face): { solid: Shape3D; wedge: FilletWedge } 
   const uMin0 = 0, uMax0 = 1, vMin = 0, vMax = 1;
   if (kind === "CYLINDRE") {
     // u goes round, v along: the section at the start, pushed along the fillet's length.
-    const p1 = at(uMin0, vMin);
-    const p2 = at(uMax0, vMin);
-    const pm = at(0.5, vMin);
+    const p1a = at(uMin0, vMin);
+    const run = sub(at(uMin0, vMax), p1a);
+    if (len(run) < 1e-6) throw new NotAFillet("This rounded face has no length.");
+    // Carried on past an end that's cut by a flat face (trimmed back to that face afterwards).
+    const d = unit(run);
+    const back = scale(d, -extend[0]);
+    const p1 = add(p1a, back);
+    const p2 = add(at(uMax0, vMin), back);
+    const pm = add(at(0.5, vMin), back);
     const s = crossSection(p1, pm, p2);
-    const along = sub(at(uMin0, vMax), p1);
-    if (len(along) < 1e-6) throw new NotAFillet("This rounded face has no length.");
-    const outside = cornerOutside(face, pm, s.corner);
+    const along = add(run, scale(d, extend[0] + extend[1]));
+    const outside = cornerOutside(face, sub(pm, back), sub(s.corner, back));
     const section = sectionFace(p1, pm, p2, s.corner);
     const vec = new Vector(along);
     try {
@@ -133,61 +138,123 @@ export function filletWedge(face: Face): { solid: Shape3D; wedge: FilletWedge } 
   }
 }
 
-/** The faces sharing an edge with this one. */
-function neighbours(face: Face, all: Face[]): Face[] {
-  const mine = edgesOf(face);
-  try {
-    return all.filter((f) => !f.isSame(face) && edgesOf(f).some((e) => {
-      const hit = mine.some((m) => m.isSame(e));
-      e.delete();
-      return hit;
-    }));
-  } finally {
-    mine.forEach((e) => e.delete());
-  }
+
+const ROUND_KINDS = new Set(["CYLINDRE", "TORUS"]);
+/** Normals within this of each other (about 1°) count as a smooth (tangent) join. */
+const SMOOTH = Math.cos((1 * Math.PI) / 180);
+const HASH_MAX = 2147483647;
+
+/** Which faces share which edges (edge index → face indices), by hash so big parts stay quick. */
+function adjacency(all: Face[]): { edges: Edge[]; faces: number[][]; edgesOfFace: number[][] } {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const edges: Edge[] = [];
+  const faces: number[][] = [];
+  const edgesOfFace: number[][] = all.map(() => []);
+  const buckets = new Map<number, number[]>();
+  all.forEach((f, fi) => {
+    for (const e of edgesOf(f)) {
+      const h = oc.ReplicadShapeHasher.HashCode(e.wrapped, HASH_MAX) as number;
+      const bucket = buckets.get(h) ?? [];
+      const found = bucket.find((k) => edges[k].isSame(e));
+      if (found !== undefined) {
+        e.delete();
+        if (!faces[found].includes(fi)) faces[found].push(fi);
+        if (!edgesOfFace[fi].includes(found)) edgesOfFace[fi].push(found);
+        continue;
+      }
+      const k = edges.length;
+      edges.push(e);
+      faces.push([fi]);
+      edgesOfFace[fi].push(k);
+      bucket.push(k);
+      buckets.set(h, bucket);
+    }
+  });
+  return { edges, faces, edgesOfFace };
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+const normalAt = (f: Face, p: Vec3) => unit(take(f.normalAt(p)));
+/** Two faces meet smoothly at a point of their shared edge (their outward normals agree there). */
+const smoothAt = (a: Face, b: Face, p: Vec3) => dot(normalAt(a, p), normalAt(b, p)) > SMOOTH;
+const edgeMid = (e: Edge) => take(e.pointAt(0.5));
+
+/**
+ * Whether a point of a round face's edge lies on one of its long sides (where the faces it blends into are)
+ * or on one of its ends: a cylinder's sides run along it (its u is the angle round), a torus's round it.
+ */
+function onSide(face: Face, kind: string, p: Vec3): boolean {
+  const { uMin, uMax, vMin, vMax } = face.UVBounds;
+  const [u0, v] = face.uvCoordinates(p);
+  // u is an angle on both: bring it into the face's range a whole turn at a time.
+  let u = u0;
+  while (u < uMin - 1e-6) u += 2 * Math.PI;
+  while (u > uMax + 1e-6) u -= 2 * Math.PI;
+  const du = Math.min(Math.abs(u - uMin), Math.abs(u - uMax)) / Math.max(uMax - uMin, 1e-12);
+  const dv = Math.min(Math.abs(v - vMin), Math.abs(v - vMax)) / Math.max(vMax - vMin, 1e-12);
+  return kind === "CYLINDRE" ? du < dv : dv < du;
 }
 
 /** A round face's tube radius (cylinder radius, or a torus's tube), for matching neighbouring fillets. */
 function tubeRadius(face: Face): number | null {
   const kind = face.geomType;
-  if (kind !== "CYLINDRE" && kind !== "TORUS") return null;
+  if (!ROUND_KINDS.has(kind)) return null;
   const at = (u: number, v: number) => take(face.pointOnSurface(u, v));
   const pts = kind === "CYLINDRE" ? [at(0, 0), at(0.5, 0), at(1, 0)] : [at(0, 0), at(0, 0.5), at(0, 1)];
   return circleThrough3D(pts[0], pts[1], pts[2])?.radius ?? null;
 }
 
+interface Topology {
+  all: Face[];
+  kinds: string[];
+  adj: ReturnType<typeof adjacency>;
+}
+
+/** The faces next to face i, each with the edges they share. */
+function around(t: Topology, i: number): { j: number; edges: number[] }[] {
+  const out = new Map<number, number[]>();
+  for (const k of t.adj.edgesOfFace[i]) for (const j of t.adj.faces[k]) if (j !== i) out.set(j, [...(out.get(j) ?? []), k]);
+  return [...out].map(([j, edges]) => ({ j, edges }));
+}
+
 /**
- * Onshape's "Propagate": the picked fillet faces plus the round faces of the
- * same radius that run on from them (a fillet round a rounded rectangle's
- * edge is several pieces). Returns new handles into `all`.
+ * Onshape's "Propagate": the picked faces plus the rounded faces that carry on SMOOTHLY from them — across a
+ * fillet's ends only (never sideways into the faces it blends), to pieces of the same radius or corner blends
+ * (a ball where three fillets meet), each tangent at the shared edge. Mitred joins and slot ends aren't tangent,
+ * so they aren't followed.
  */
-export function propagateFillets(picked: Face[], all: Face[]): Face[] {
-  const out: Face[] = all.filter((f) => picked.some((p) => p.isSame(f)));
-  const queue = [...out];
+function propagate(t: Topology, picked: number[]): number[] {
+  const out = [...picked];
+  const queue = [...picked];
   while (queue.length) {
-    const f = queue.pop()!;
-    const r = tubeRadius(f);
-    if (r === null) continue;
-    for (const n of neighbours(f, all)) {
-      if (out.includes(n)) continue;
-      const rn = tubeRadius(n);
-      if (rn === null || Math.abs(rn - r) > Math.max(1e-4, r * 1e-4)) continue;
-      out.push(n);
-      queue.push(n);
+    const i = queue.pop()!;
+    const round = ROUND_KINDS.has(t.kinds[i]);
+    const r = round ? tubeRadius(t.all[i]) : null;
+    for (const { j, edges } of around(t, i)) {
+      if (out.includes(j) || t.kinds[j] === "PLANE") continue;
+      const p = edgeMid(t.adj.edges[edges[0]]);
+      if (round && onSide(t.all[i], t.kinds[i], p)) continue;
+      if (!smoothAt(t.all[i], t.all[j], p)) continue;
+      if (ROUND_KINDS.has(t.kinds[j])) {
+        const rj = tubeRadius(t.all[j]);
+        // From a corner blend, a round neighbour must be a fillet of the chain's radius too (checked from its side).
+        const ref = r ?? out.map((k) => (ROUND_KINDS.has(t.kinds[k]) ? tubeRadius(t.all[k]) : null)).find((x) => x !== null) ?? rj;
+        if (rj === null || ref === null || Math.abs(rj - ref) > Math.max(1e-4, ref * 1e-4)) continue;
+        if (onSide(t.all[j], t.kinds[j], p)) continue;
+      }
+      out.push(j);
+      queue.push(j);
     }
   }
   return out;
 }
 
+const NOT_TANGENT = "This round face isn't a fillet — it meets the face beside it at a corner, not smoothly.";
+
 /** Edges of the part lying on the wedges' corner lines or circles: the sharp edges put back. */
 export function recoveredEdges(shape: Shape3D, wedges: FilletWedge[]): Edge[] {
-  const size = (() => {
-    const b = shape.boundingBox;
-    const s = Math.hypot(b.width, b.height, b.depth);
-    b.delete();
-    return s;
-  })();
-  const tol = Math.max(1e-4, size * 1e-6);
+  const tol = Math.max(1e-4, sizeOf(shape) * 1e-6);
   const onCorner = (p: Vec3) =>
     wedges.some((w) => {
       if (w.along) {
@@ -205,11 +272,79 @@ export function recoveredEdges(shape: Shape3D, wedges: FilletWedge[]): Edge[] {
       const hp = dot(rp, a.dir);
       return Math.abs(hp - hc) < tol * 10 && Math.abs(len(sub(rp, scale(a.dir, hp))) - rho) < tol * 10;
     });
+  return pickEdges(shape, onCorner);
+}
+
+function pickEdges(shape: Shape3D, test: (p: Vec3) => boolean): Edge[] {
   const out: Edge[] = [];
   for (const e of edgesOf(shape)) {
     const pts = [0.1, 0.5, 0.9].map((t) => take(e.pointAt(t)));
-    if (pts.every(onCorner)) out.push(e);
+    if (pts.every(test)) out.push(e);
     else e.delete();
+  }
+  return out;
+}
+
+function sizeOf(shape: Shape3D): number {
+  const b = shape.boundingBox;
+  const s = Math.hypot(b.width, b.height, b.depth);
+  b.delete();
+  return s;
+}
+
+/** A flat face's plane: a point on it and its outward normal. */
+interface Plane {
+  p: Vec3;
+  n: Vec3;
+}
+const planeOf = (f: Face): Plane => {
+  const p = take(f.center);
+  return { p, n: normalAt(f, p) };
+};
+const offPlane = (q: Vec3, pl: Plane) => dot(sub(q, pl.p), pl.n);
+
+/** The side of a plane the part is on (behind its outward normal), as a block big enough to hold `box`. */
+function behind(pl: Plane, box: [Vec3, Vec3]): Shape3D {
+  const c: Vec3 = scale(add(box[0], box[1]), 0.5);
+  const h = len(sub(box[1], box[0])) + 10;
+  const foot = sub(c, scale(pl.n, offPlane(c, pl)));
+  const u = unit(cross(pl.n, Math.abs(pl.n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0]));
+  const v = cross(pl.n, u);
+  const corner = (a: number, b: number): Vec3 => add(foot, add(scale(u, a * h), scale(v, b * h)));
+  const square = makePolygon([corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)]);
+  const depth = new Vector(scale(pl.n, -2 * h));
+  try {
+    return basicFaceExtrusion(square, depth) as Shape3D;
+  } finally {
+    square.delete();
+    depth.delete();
+  }
+}
+
+function boxOf(faces: Face[], grow: number): [Vec3, Vec3] {
+  const lo: Vec3 = [Infinity, Infinity, Infinity];
+  const hi: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (const f of faces) {
+    const b = f.boundingBox;
+    const [a, z] = b.bounds;
+    b.delete();
+    for (let k = 0; k < 3; k++) {
+      lo[k] = Math.min(lo[k], a[k] - grow);
+      hi[k] = Math.max(hi[k], z[k] + grow);
+    }
+  }
+  return [lo, hi];
+}
+
+/** `a` cut down to the part of it on the inner side of every plane (frees `a`). */
+function within(a: Shape3D, planes: Plane[], box: [Vec3, Vec3]): Shape3D {
+  let out = a;
+  for (const pl of planes) {
+    const side = behind(pl, box);
+    const next: Shape3D = out.intersect(side, { simplify: false });
+    side.delete();
+    out.delete();
+    out = next;
   }
   return out;
 }
@@ -223,50 +358,166 @@ export interface ModifyResult {
 /**
  * Take the fillet faces off (put the sharp edges back) and, with `radius`,
  * round the recovered edges again at that radius. Throws plain-English
- * errors; the input shape is left alone.
+ * errors (NotAFillet for faces that aren't fillets it can take apart); the
+ * input shape is left alone.
+ *
+ * When every face round the fillets is flat and every piece is on an outside
+ * edge (a block's rounded edges, corner balls and all), the sharp shape is
+ * the part filled out to those flat faces near the fillets ("by planes").
+ * Otherwise (a fillet into a hole or round a boss, or in an inside corner)
+ * each round piece's own wedge is added or cut, carried past ends cut by a
+ * flat face and trimmed back to it.
  */
 export function modifyFillets(shape: Shape3D, picked: Face[], opts: { radius?: number; propagate: boolean }): ModifyResult {
   const all = facesOf(shape);
-  let targets: Face[] = [];
+  const t: Topology = { all, kinds: all.map((f) => f.geomType), adj: adjacency(all) };
   const pieces: { solid: Shape3D; wedge: FilletWedge }[] = [];
   try {
-    targets = opts.propagate ? propagateFillets(picked, all) : all.filter((f) => picked.some((p) => p.isSame(f)));
-    if (targets.length === 0) throw new NotAFillet("The picked faces can't be found on the part.");
-    for (const f of targets) pieces.push(filletWedge(f));
-    const join = (list: Shape3D[]): Shape3D | null => {
-      let acc: Shape3D | null = null;
-      for (const s of list) {
-        if (!acc) {
-          acc = s.clone();
-          continue;
-        }
-        const next: Shape3D = acc.fuse(s, { simplify: false });
-        acc.delete();
-        acc = next;
-      }
-      return acc;
-    };
-    const grow = join(pieces.filter((p) => p.wedge.outside).map((p) => p.solid));
-    const shrink = join(pieces.filter((p) => !p.wedge.outside).map((p) => p.solid));
-    let result: Shape3D = shape;
-    try {
-      if (grow) result = result.fuse(grow);
-      if (shrink) {
-        const cut: Shape3D = result.cut(shrink);
-        if (result !== shape) result.delete();
-        result = cut;
-      }
-    } finally {
-      grow?.delete();
-      shrink?.delete();
+    const pickedIdx = all.map((f, i) => (picked.some((p) => p.isSame(f)) ? i : -1)).filter((i) => i >= 0);
+    if (pickedIdx.length === 0) throw new NotAFillet("The picked faces can't be found on the part.");
+    for (const i of pickedIdx) {
+      if (t.kinds[i] === "PLANE") throw new NotAFillet("Pick rounded faces made by a fillet, not flat ones.");
     }
-    if (result === shape) result = shape.clone();
+    const chain = opts.propagate ? propagate(t, pickedIdx) : pickedIdx;
+    const inChain = new Set(chain);
+    // Every piece must blend smoothly into the faces along its sides; its ends may meet flat faces at any angle,
+    // or other pieces of the chain. Anything else round at an end can't be put back sharp on its own.
+    const supports = new Set<number>();
+    const sidePairs: [number, number][] = [];
+    for (const i of chain) {
+      const round = ROUND_KINDS.has(t.kinds[i]);
+      const sides: number[] = [];
+      for (const { j, edges } of around(t, i)) {
+        if (inChain.has(j)) continue;
+        for (const k of edges) {
+          const p = edgeMid(t.adj.edges[k]);
+          const side = round ? onSide(all[i], t.kinds[i], p) : true;
+          if (side) {
+            if (!smoothAt(all[i], all[j], p)) throw new NotAFillet(NOT_TANGENT);
+            if (!sides.includes(j)) sides.push(j);
+          } else if (t.kinds[j] !== "PLANE") {
+            throw new NotAFillet(
+              smoothAt(all[i], all[j], p)
+                ? "This fillet carries on smoothly into the next rounded face. Tick “Propagate” to change them together."
+                : "This fillet meets another rounded face at its end (a mitred corner). Pick the rounded faces meeting it too, so they're changed together.",
+            );
+          }
+          supports.add(j);
+        }
+      }
+      if (round) {
+        if (sides.length === 0) throw new NotAFillet("This rounded face doesn't blend into any face beside it, so it isn't a fillet.");
+        if (sides.length === 2) sidePairs.push([sides[0], sides[1]]);
+      } else if (sides.some((j) => t.kinds[j] !== "PLANE")) {
+        throw new NotAFillet("These rounded faces include a corner piece that blends into a curved face. They can't be put back sharp here.");
+      }
+    }
+    const chainFaces = chain.map((i) => all[i]);
+    const rounds = chain.filter((i) => ROUND_KINDS.has(t.kinds[i]));
+    // Wedges for the round pieces (also tells which side each is on, and the corner lines).
+    const planarEnds = (i: number, end: 0 | 1): Plane[] => {
+      const out: Plane[] = [];
+      for (const { j, edges } of around(t, i)) {
+        if (inChain.has(j) || t.kinds[j] !== "PLANE") continue;
+        for (const k of edges) {
+          const p = edgeMid(t.adj.edges[k]);
+          if (onSide(all[i], t.kinds[i], p)) continue;
+          const [, v] = all[i].uvCoordinates(p);
+          const { vMin, vMax } = all[i].UVBounds;
+          if ((Math.abs(v - vMin) < Math.abs(v - vMax) ? 0 : 1) === end) out.push(planeOf(all[j]));
+        }
+      }
+      return out;
+    };
+    const tubes = rounds.map((i) => tubeRadius(all[i]) ?? 0);
+    const reach = 4 * Math.max(1, ...tubes);
+    const trims: Plane[][] = [];
+    for (const i of rounds) {
+      const ends = t.kinds[i] === "CYLINDRE" ? [planarEnds(i, 0), planarEnds(i, 1)] : [[], []];
+      const piece = filletWedge(all[i], [ends[0].length ? reach : 0, ends[1].length ? reach : 0]);
+      if (t.kinds[i] === "TORUS") {
+        // A ring piece ending on a flat face must end square to it (the face holds the ring's axis).
+        for (const { j, edges } of around(t, i)) {
+          if (inChain.has(j) || t.kinds[j] !== "PLANE") continue;
+          const p = edgeMid(t.adj.edges[edges[0]]);
+          if (onSide(all[i], "TORUS", p)) continue;
+          const pl = planeOf(all[j]);
+          const a = piece.wedge.axis!;
+          if (Math.abs(dot(pl.n, a.dir)) > 1e-6 || Math.abs(offPlane(a.origin, pl)) > 1e-4) {
+            piece.solid.delete();
+            throw new NotAFillet("This round fillet ends on a slanted face, which can't be put back sharp yet.");
+          }
+        }
+      }
+      pieces.push(piece);
+      trims.push([...ends[0], ...ends[1]]);
+    }
+    const allOutside = pieces.every((p) => p.wedge.outside);
+    const flatAround = [...supports].every((j) => t.kinds[j] === "PLANE");
+    let result: Shape3D;
+    let edgesFor: (r: Shape3D) => Edge[];
+    if (flatAround && allOutside) {
+      // By planes: the part filled out to every flat face round the fillets, near them.
+      const planes = [...supports].map((j) => planeOf(all[j]));
+      const box = boxOf(chainFaces, 1.5 * Math.max(1, ...tubes));
+      const lo = box[0];
+      const hi = box[1];
+      const block = within(makeBox(lo, hi), planes, box);
+      try {
+        result = shape.fuse(block);
+      } finally {
+        block.delete();
+      }
+      const tol = Math.max(1e-4, sizeOf(shape) * 1e-6) * 10;
+      const pairPlanes = sidePairs.map(([a, b]) => [planeOf(all[a]), planeOf(all[b])] as const);
+      const inBox = (p: Vec3) => [0, 1, 2].every((k) => p[k] >= lo[k] - tol && p[k] <= hi[k] + tol);
+      edgesFor = (r) => pickEdges(r, (p) => inBox(p) && pairPlanes.some(([a, b]) => Math.abs(offPlane(p, a)) < tol && Math.abs(offPlane(p, b)) < tol));
+    } else {
+      if (rounds.length !== chain.length) throw new NotAFillet("These rounded faces include corner pieces next to curved faces or inside corners. They can't be put back sharp here.");
+      const join = (list: Shape3D[]): Shape3D | null => {
+        let acc: Shape3D | null = null;
+        for (const s of list) {
+          if (!acc) {
+            acc = s.clone();
+            continue;
+          }
+          const next: Shape3D = acc.fuse(s, { simplify: false });
+          acc.delete();
+          acc = next;
+        }
+        return acc;
+      };
+      const box = boxOf(chainFaces, reach + 1);
+      const trimmed = pieces.map((p, k) => (trims[k].length ? within(p.solid.clone(), trims[k], box) : p.solid.clone()));
+      const grow = join(trimmed.filter((_, k) => pieces[k].wedge.outside));
+      const shrink = join(trimmed.filter((_, k) => !pieces[k].wedge.outside));
+      trimmed.forEach((x) => x.delete());
+      result = shape;
+      try {
+        if (grow) result = result.fuse(grow);
+        if (shrink) {
+          const cut: Shape3D = result.cut(shrink);
+          if (result !== shape) result.delete();
+          result = cut;
+        }
+      } finally {
+        grow?.delete();
+        shrink?.delete();
+      }
+      if (result === shape) result = shape.clone();
+      edgesFor = (r) => recoveredEdges(r, pieces.map((p) => p.wedge));
+    }
     if (!soundSolid(result)) {
       result.delete();
       throw new Error("Couldn't take these fillets off cleanly — the faces either side don't meet in a sharp edge.");
     }
-    if (opts.radius === undefined) return { shape: result, faces: targets.length };
-    const edges = recoveredEdges(result, pieces.map((p) => p.wedge));
+    // Nothing round may be left where the fillets were.
+    if (leftovers(result, chainFaces)) {
+      result.delete();
+      throw new Error("Couldn't take these fillets off cleanly — part of a rounded face was left behind.");
+    }
+    if (opts.radius === undefined) return { shape: result, faces: chain.length };
+    const edges = edgesFor(result);
     if (edges.length === 0) {
       result.delete();
       throw new Error("The fillets came off, but the sharp edges they left couldn't be found to round again.");
@@ -285,10 +536,27 @@ export function modifyFillets(shape: Shape3D, picked: Face[], opts: { radius?: n
       throw new Error(`Couldn't round these edges at ${round3(opts.radius)} mm. Try a smaller radius — it has to fit on the faces next to each edge.`);
     }
     result.delete();
-    return { shape: rounded, faces: targets.length };
+    return { shape: rounded, faces: chain.length };
   } finally {
     pieces.forEach((p) => p.solid.delete());
+    t.adj.edges.forEach((e) => e.delete());
     all.forEach((f) => f.delete());
+  }
+}
+
+/** Whether a face of the new part still lies on one of the old rounded faces (at its middle). */
+function leftovers(result: Shape3D, old: Face[]): boolean {
+  const mids = old.map((f) => take(f.pointOnSurface(0.5, 0.5)));
+  const tol = Math.max(1e-4, sizeOf(result) * 1e-6) * 10;
+  const faces = facesOf(result);
+  try {
+    return faces.some((f) => {
+      if (f.geomType === "PLANE") return false;
+      const c = take(f.pointOnSurface(0.5, 0.5));
+      return mids.some((m) => len(sub(m, c)) < tol);
+    });
+  } finally {
+    faces.forEach((f) => f.delete());
   }
 }
 
