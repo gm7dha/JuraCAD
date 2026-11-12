@@ -41,9 +41,23 @@ export interface IslandSpec {
   /** Height (m) below which it's sea. */
   sea: number;
   land: IslandLand;
+  /**
+   * Printed put together, every piece where it sits in the finished puzzle, on one plate: 100% then fits the island's
+   * land (not the whole area, sea and all) to the bed less its margins, and the scale can't go past 100%.
+   */
+  inPlace?: boolean;
 }
 
 export const ISLAND_DEFAULTS: Omit<IslandSpec, "bed"> = { scale: 1, piece: 35, base: 3, relief: 8, fit: 0.1, seed: 1, sea: 0.5, land: "islands" };
+
+/**
+ * The fit gap each side used when the puzzle is printed put together: 0.3 mm between neighbouring pieces, the
+ * clearance print-in-place joints use on a 0.4 mm nozzle (0.2–0.3 mm a side for PLA) — at 0.2 mm (the usual 0.1 a side)
+ * the first layer's squish closes the gap and pieces fuse.
+ */
+export const IN_PLACE_FIT = 0.15;
+/** Room (mm) left round the island on the bed when it's printed put together — the plates' BED_MARGIN. */
+export const IN_PLACE_MARGIN = 5;
 
 /** Lines to cut along (boundaries, on the OS grid, metres) and names for the areas between them. */
 export interface IslandCuts {
@@ -74,6 +88,8 @@ export const NO_MARKS: IslandMarks = { lines: [], shapes: [], shown: 0, tooSmall
 export interface IslandPuzzle {
   width: number;
   height: number;
+  /** The grid point (m) at the puzzle's (0, 0): the area's south-west corner, or the land's when printed put together. */
+  origin: { e: number; n: number };
   /** mm per metre across. */
   k: number;
   /** The highest ground (m). */
@@ -115,6 +131,7 @@ export function islandChecks(spec: IslandSpec): string[] {
   if (!(spec.base >= LEAST_BASE && spec.base <= 30)) out.push("The base should be between 1.5 and 30 mm.");
   if (!(spec.relief >= 0 && spec.relief <= 150)) out.push("The highest ground should be between 0 and 150 mm above the base.");
   if (!(spec.fit >= 0 && spec.fit <= 0.5)) out.push("The fit gap should be between 0 and 0.5 mm.");
+  if (spec.inPlace && !(spec.scale <= 1 + 1e-9)) out.push("Printed put together, the whole island has to fit on the bed — the scale can be at most 100%.");
   return out;
 }
 
@@ -225,33 +242,12 @@ function spreadOwners(owner: Int32Array, nx: number, ny: number, land: (c: numbe
 }
 
 /**
- * The puzzle from heights over an area `areaWidth` × `areaHeight` m whose south-west corner is grid point `sw`. Cut
- * along `cuts`' lines when given (and they divide the land), else into pieces of about `spec.piece` mm.
+ * Keep only the land asked for (`isLand` changed in place): every island (land touching the area's edge dropped), the
+ * biggest, or all of it. Throws when there's no land at all.
  */
-export function makeIslandPuzzle(
-  grid: HeightGrid,
-  sw: { e: number; n: number },
-  areaWidth: number,
-  areaHeight: number,
-  spec: IslandSpec,
-  cuts?: IslandCuts,
-  features: MapFeatures = NO_FEATURES,
-): IslandPuzzle {
-  const problems = islandChecks(spec);
-  if (problems.length) throw new Error(problems[0]);
-  const k = Math.min((spec.bed[0] - 10) / areaWidth, (spec.bed[1] - 10) / areaHeight) * spec.scale;
-  const W = areaWidth * k;
-  const H = areaHeight * k;
-  const cell = Math.min(0.6, Math.max(0.25, Math.sqrt((W * H) / 700000)));
-  const nx = Math.ceil(W / cell);
-  const ny = Math.ceil(H / cell);
+function keepLand(isLand: Uint8Array, nx: number, ny: number, land: IslandLand, warnings: string[]) {
   const N = nx * ny;
-  const ground = (x: number, y: number) => heightAt(grid, sw.e + x / k, sw.n + y / k);
-  const warnings: string[] = [];
-
-  // Land, then only the land asked for.
-  const isLand = new Uint8Array(N);
-  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) isLand[j * nx + i] = ground((i + 0.5) * cell, (j + 0.5) * cell) > spec.sea ? 1 : 0;
+  const spec = { land };
   const masses = stretches(nx, ny, (c) => isLand[c] === 1);
   if (!masses.count) throw new Error("There's no land in this area — it's all sea.");
   if (spec.land !== "all") {
@@ -277,6 +273,83 @@ export function makeIslandPuzzle(
     }
     for (let c = 0; c < N; c++) if (isLand[c] && !keep(masses.id[c])) isLand[c] = 0;
   }
+}
+
+/**
+ * The puzzle from heights over an area `areaWidth` × `areaHeight` m whose south-west corner is grid point `sw`. Cut
+ * along `cuts`' lines when given (and they divide the land), else into pieces of about `spec.piece` mm.
+ */
+export function makeIslandPuzzle(
+  grid: HeightGrid,
+  sw: { e: number; n: number },
+  areaWidth: number,
+  areaHeight: number,
+  spec: IslandSpec,
+  cuts?: IslandCuts,
+  features: MapFeatures = NO_FEATURES,
+): IslandPuzzle {
+  const problems = islandChecks(spec);
+  if (problems.length) throw new Error(problems[0]);
+  if (!spec.inPlace) return buildIsland(grid, sw, areaWidth, areaHeight, spec, cuts, features);
+  // Put together: the area is cut down to the land kept (plus a little sea, so "every island" still sees which land
+  // ran off the edge), and the land's own size — not the area's — is what fills the bed at 100%.
+  const box = landBox(grid, sw, areaWidth, areaHeight, spec.sea, spec.land);
+  const pad = Math.max(box.w, box.h) * 0.01 + box.cell;
+  const cropped = { e: sw.e + box.x0 - pad, n: sw.n + box.y0 - pad };
+  return buildIsland(grid, cropped, box.w + 2 * pad, box.h + 2 * pad, spec, cuts, features, [box.w, box.h]);
+}
+
+/** Where the land asked for lies in the area (m from its south-west corner), found on a grid of about 1500 a side. */
+export function landBox(grid: HeightGrid, sw: { e: number; n: number }, areaWidth: number, areaHeight: number, sea: number, land: IslandLand) {
+  const cell = Math.max(areaWidth, areaHeight) / 1500;
+  const nx = Math.max(1, Math.ceil(areaWidth / cell));
+  const ny = Math.max(1, Math.ceil(areaHeight / cell));
+  const isLand = new Uint8Array(nx * ny);
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) isLand[j * nx + i] = heightAt(grid, sw.e + (i + 0.5) * cell, sw.n + (j + 0.5) * cell) > sea ? 1 : 0;
+  keepLand(isLand, nx, ny, land, []);
+  let [i0, j0, i1, j1] = [nx, ny, -1, -1];
+  for (let j = 0; j < ny; j++)
+    for (let i = 0; i < nx; i++)
+      if (isLand[j * nx + i]) {
+        i0 = Math.min(i0, i);
+        i1 = Math.max(i1, i);
+        j0 = Math.min(j0, j);
+        j1 = Math.max(j1, j);
+      }
+  // A cell either side, so nothing on the coast is cut off.
+  const x0 = Math.max(0, (i0 - 1) * cell);
+  const y0 = Math.max(0, (j0 - 1) * cell);
+  const x1 = Math.min(areaWidth, (i1 + 2) * cell);
+  const y1 = Math.min(areaHeight, (j1 + 2) * cell);
+  return { x0, y0, w: x1 - x0, h: y1 - y0, cell };
+}
+
+function buildIsland(
+  grid: HeightGrid,
+  sw: { e: number; n: number },
+  areaWidth: number,
+  areaHeight: number,
+  spec: IslandSpec,
+  cuts: IslandCuts | undefined,
+  features: MapFeatures,
+  /** The size (m) to fit to the bed less its margins, when not the whole area. */
+  fitTo: [number, number] = [areaWidth, areaHeight],
+): IslandPuzzle {
+  const margin = spec.inPlace ? 2 * IN_PLACE_MARGIN : 10;
+  const k = Math.min((spec.bed[0] - margin) / fitTo[0], (spec.bed[1] - margin) / fitTo[1]) * spec.scale;
+  const W = areaWidth * k;
+  const H = areaHeight * k;
+  const cell = Math.min(0.6, Math.max(0.25, Math.sqrt((W * H) / 700000)));
+  const nx = Math.ceil(W / cell);
+  const ny = Math.ceil(H / cell);
+  const N = nx * ny;
+  const ground = (x: number, y: number) => heightAt(grid, sw.e + x / k, sw.n + y / k);
+  const warnings: string[] = [];
+
+  // Land, then only the land asked for.
+  const isLand = new Uint8Array(N);
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) isLand[j * nx + i] = ground((i + 0.5) * cell, (j + 0.5) * cell) > spec.sea ? 1 : 0;
+  keepLand(isLand, nx, ny, spec.land, warnings);
   let high = 0;
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) if (isLand[j * nx + i]) high = Math.max(high, ground((i + 0.5) * cell, (j + 0.5) * cell));
   const label = new Int32Array(N).fill(-1);
@@ -524,7 +597,7 @@ export function makeIslandPuzzle(
   const tabs: IslandTab[] = joined.tabs
     .filter((tb) => indexOf.has(tb.from) && indexOf.has(tb.into))
     .map((tb) => ({ from: indexOf.get(tb.from)!, into: indexOf.get(tb.into)!, at: tb.at, dir: tb.dir, neck: tb.neck, reach: tb.reach }));
-  return { width: W, height: H, k, high, pieces, alongBoundaries, joins, unjoined, loose, warnings, marks, tabs, groundAt: top };
+  return { width: W, height: H, origin: { e: sw.e, n: sw.n }, k, high, pieces, alongBoundaries, joins, unjoined, loose, warnings, marks, tabs, groundAt: top };
 }
 
 /**

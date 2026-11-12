@@ -8,11 +8,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CUSTOM_PRINTER, PRINTERS } from "../model/printBed";
 import { areaProblem, readHeights, zoomFor, type HeightGrid } from "../terrain/elevation";
-import { ISLAND_DEFAULTS, islandChecks, type IslandBuilt, type IslandCuts, type IslandLand, type IslandSpec } from "../terrain/islandPuzzle";
+import { IN_PLACE_FIT, ISLAND_DEFAULTS, islandChecks, type IslandBuilt, type IslandCuts, type IslandLand, type IslandSpec } from "../terrain/islandPuzzle";
 import { BOUNDARY_LEVELS, boundaryQuery, ISLANDS, MARKS_MOST, marksQuery, OVERPASS_URL } from "../terrain/islands";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
 import { boundariesOnGrid, boundaryLevels, featuresOnGrid, featureSummary, levelName, NO_FEATURES, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
-import { allPlatesZip, plate3mf, platesByLevel, platesFor } from "../terrain/puzzle3mf";
+import { allPlatesZip, IN_PLACE_SETTINGS, plate3mf, platesByLevel, platesFor, platesInPlace } from "../terrain/puzzle3mf";
 import { islandBands, mapOnPuzzle, mapRaster, NO_MAP, PLAIN_COLOUR, SEA_BLUE, type ColourSpec, type HeightScale } from "../terrain/colour";
 import { ColourDownloads, ColourPanel, useColoured } from "./PuzzleColour";
 import { downloadFile, safeFileName } from "./download";
@@ -243,12 +243,29 @@ export function IslandPuzzleDialog() {
 
   // Colour bands: pieces at different heights get plates of their own, so a plate changes colour on the same layers.
   const byLevel = colourOn && colour.mode === "bands";
-  const plates = useMemo(() => (puzzle ? (byLevel ? platesByLevel : platesFor)(puzzle.pieces, bed) : []), [puzzle, bed[0], bed[1], bed[2], byLevel]);
+  const inPlace = !!spec.inPlace;
+  // Put together: one plate, every piece where it sits in the finished puzzle (it must fit the bed less its margins).
+  const placed = useMemo(() => (puzzle && inPlace ? platesInPlace(puzzle.pieces, bed) : null), [puzzle, bed[0], bed[1], bed[2], inPlace]);
+  const plates = useMemo(
+    () => (!puzzle ? [] : placed ? (placed.fits ? placed.plates : []) : (byLevel ? platesByLevel : platesFor)(puzzle.pieces, bed)),
+    [puzzle, placed, bed[0], bed[1], bed[2], byLevel],
+  );
+  const settings = inPlace ? IN_PLACE_SETTINGS : undefined;
+  const chooseInPlace = (on: boolean) => {
+    setSpec((s) => ({
+      ...s,
+      inPlace: on,
+      // The usual gaps swap over with the mode; a gap of your own is kept.
+      fit: on && s.fit === ISLAND_DEFAULTS.fit ? IN_PLACE_FIT : !on && s.fit === IN_PLACE_FIT ? ISLAND_DEFAULTS.fit : s.fit,
+      scale: on ? Math.min(s.scale, 1) : s.scale,
+    }));
+    if (on) setExplode(0);
+  };
   const fileName = safeFileName(`${loaded?.area.name ?? "Island"} puzzle`, "Island puzzle");
   // How ground heights sit in the puzzle (base + height × relief / highest), and the map over it, for colouring.
   const scaleKey = puzzle ? [spec.base, spec.relief, puzzle.high].join(",") : "";
   const scale: HeightScale | null = useMemo(() => (puzzle ? { z0: spec.base, h0: 0, mmPerM: spec.relief / Math.max(puzzle.high, 1) } : null), [scaleKey]);
-  const puzzleMap = useMemo(() => (puzzle && loaded ? mapOnPuzzle(features, loaded.area.sw.e, loaded.area.sw.n, puzzle.k) : NO_MAP), [puzzle, features]);
+  const puzzleMap = useMemo(() => (puzzle && loaded ? mapOnPuzzle(features, (puzzle.origin ?? loaded.area.sw).e, (puzzle.origin ?? loaded.area.sw).n, puzzle.k) : NO_MAP), [puzzle, features]);
   const mapSize: [number, number] = puzzle ? [puzzle.width, puzzle.height] : [1, 1];
   const paintMap = useMemo(() => mapRaster(puzzleMap, mapSize[0], mapSize[1]), [puzzleMap]);
   const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap);
@@ -409,11 +426,26 @@ export function IslandPuzzleDialog() {
               {printer.printer === CUSTOM_PRINTER && <option value={CUSTOM_PRINTER}>My own size</option>}
             </select>
           </label>
+          <label className="mountain-row">
+            <span>Print</span>
+            <span>
+              <input type="checkbox" checked={inPlace} onChange={(e) => chooseInPlace(e.target.checked)} /> Print it put together (in place)
+            </span>
+          </label>
+          <p className="muted small">
+            {inPlace
+              ? `The whole island prints on one plate with every piece where it sits in the finished puzzle, so it can be as big as the bed. The gap between pieces is what keeps them apart — nothing is printed there — so it's wider than usual: ${IN_PLACE_FIT} mm each side (${2 * IN_PLACE_FIT} mm between pieces). Print a small test first.`
+              : "Pieces are laid out apart on as many plates as they need. Tick this to print the island put together on one plate instead."}
+          </p>
           <div className="mountain-row">
             <span>Scale</span>
             <span>
-              {numberBox(Math.round(spec.scale * 100), (v) => set("scale", v / 100), 10, 20, 1000, "%")}
-              <span className="muted small"> 100% = the finished puzzle covers the bed ({bed[0]} × {bed[1]} mm)</span>
+              {numberBox(Math.round(spec.scale * 100), (v) => set("scale", v / 100), 10, 20, inPlace ? 100 : 1000, "%")}
+              <span className="muted small">
+                {inPlace
+                  ? ` 100% = the island fills the bed (${bed[0]} × ${bed[1]} mm, less 5 mm round the edge); it can't be bigger`
+                  : ` 100% = the finished puzzle covers the bed (${bed[0]} × ${bed[1]} mm)`}
+              </span>
             </span>
           </div>
           <div className="mountain-row">
@@ -434,7 +466,11 @@ export function IslandPuzzleDialog() {
             <span>Fit gap</span>
             <span>
               {numberBox(spec.fit, (v) => set("fit", v), 0.01, 0, 0.5, "mm each side")}
-              <span className="muted small"> Too loose? Lower it by 0.02–0.05 mm. Too tight? Raise it.</span>
+              <span className="muted small">
+                {inPlace
+                  ? " Printed put together, pieces that come off stuck together need a wider gap (0.2); a loose puzzle a narrower one (0.12)."
+                  : " Too loose? Lower it by 0.02–0.05 mm. Too tight? Raise it."}
+              </span>
             </span>
           </div>
           <div className="mountain-row">
@@ -487,7 +523,7 @@ export function IslandPuzzleDialog() {
                   <p>
                     <strong>{puzzle.pieces.length} pieces</strong>
                     {puzzle.alongBoundaries ? ` cut along ${levelName(usedLevel).toLowerCase()}${named ? ` (${named} named)` : ""}` : ""} — finished{" "}
-                    {Math.round(puzzle.width)} × {Math.round(puzzle.height)} mm, {spec.base} mm thick at the coast and {Math.round(spec.base + spec.relief)} mm
+                    {placed ? `${Math.round(placed.size[0])} × ${Math.round(placed.size[1])}` : `${Math.round(puzzle.width)} × ${Math.round(puzzle.height)}`} mm, {spec.base} mm thick at the coast and {Math.round(spec.base + spec.relief)} mm
                     on the highest ground ({Math.round(puzzle.high)} m). 1 mm is {formatDistance(1 / puzzle.k)} across.
                   </p>
                   <p className="muted">
@@ -502,10 +538,23 @@ export function IslandPuzzleDialog() {
                   ))}
                 </div>
               )}
+              {placed && !placed.fits && (
+                <p className="error-text small">
+                  Put together, the island is {Math.round(placed.size[0])} × {Math.round(placed.size[1])} mm — too big for the bed ({bed[0]} × {bed[1]} mm less 5 mm
+                  round the edge). Lower the scale, or untick “Print it put together”.
+                </p>
+              )}
+              {placed?.fits && (
+                <p className="muted small">
+                  One plate, the pieces put together as above. In Bambu Studio don't use Arrange (it would spread the pieces out); each piece comes in with
+                  no brim and elephant-foot compensation on, so the first layer doesn't join them.
+                  {colour.mode === "full" ? " The full-colour files can't carry those settings: turn the brim off and elephant-foot compensation on yourself." : ""}
+                </p>
+              )}
               {colourOn && colouring && <p className="muted small">Colouring the pieces…</p>}
               {colourOn && colourError && <p className="error-text small">{colourError}</p>}
               {colourOn && puzzle && coloured && scale && plates.length > 0 && (
-                <ColourDownloads spec={colour} coloured={coloured} plates={plates} scale={scale} map={paintMap} fileName={fileName} bedWidth={bed[0]} />
+                <ColourDownloads spec={colour} coloured={coloured} plates={plates} scale={scale} map={paintMap} fileName={fileName} bedWidth={bed[0]} settings={settings} inPlace={inPlace} />
               )}
               {!colourOn && puzzle && plates.length > 0 && (
                 <div className="mountain-downloads">
@@ -516,13 +565,13 @@ export function IslandPuzzleDialog() {
                     <button
                       key={i}
                       className="text-button"
-                      onClick={() => downloadFile(blobOf(plate3mf(p, `${fileName} - plate ${i + 1}`), "model/3mf"), `${fileName} - plate ${i + 1} of ${plates.length}.3mf`)}
+                      onClick={() => downloadFile(blobOf(plate3mf(p, `${fileName} - plate ${i + 1}`, settings), "model/3mf"), `${fileName} - plate ${i + 1} of ${plates.length}.3mf`)}
                       title={p.pieces.map((x) => x.piece.name).join(", ")}
                     >
                       Plate {i + 1} ({p.pieces.length})
                     </button>
                   ))}
-                  <button className="primary-button" onClick={() => downloadFile(blobOf(allPlatesZip(plates, fileName), "application/zip"), `${fileName}.zip`)}>
+                  <button className="primary-button" onClick={() => downloadFile(blobOf(allPlatesZip(plates, fileName, settings), "application/zip"), `${fileName}.zip`)}>
                     All plates (.zip)
                   </button>
                 </div>

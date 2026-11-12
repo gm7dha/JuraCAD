@@ -67,14 +67,45 @@ export function platesFor(pieces: PuzzlePiece[], bed: [number, number, number]):
   return plates;
 }
 
+/**
+ * Every piece where it sits in the finished puzzle, on one plate, the whole puzzle centred on the bed (the island
+ * puzzle printed put together). `fits` says whether it's within the bed less `BED_MARGIN` all round; `size` is the
+ * finished puzzle's footprint (mm).
+ */
+export function platesInPlace(pieces: PuzzlePiece[], bed: [number, number, number]): { plates: Plate[]; size: [number, number]; fits: boolean } {
+  if (!pieces.length) return { plates: [], size: [0, 0], fits: true };
+  let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const p of pieces) {
+    const [a, b, c, d] = footprint(p);
+    [x0, y0, x1, y1] = [Math.min(x0, a), Math.min(y0, b), Math.max(x1, c), Math.max(y1, d)];
+  }
+  const [w, d] = [x1 - x0, y1 - y0];
+  const [dx, dy] = [(bed[0] - w) / 2 - x0, (bed[1] - d) / 2 - y0];
+  const order = [...pieces].sort((a, b) => a.layer - b.layer || a.row - b.row || a.col - b.col);
+  const fits = w <= bed[0] - 2 * BED_MARGIN + 1e-6 && d <= bed[1] - 2 * BED_MARGIN + 1e-6;
+  return { plates: [{ pieces: order.map((p) => ({ piece: p, move: [dx, dy, -p.z0] })) }], size: [w, d], fits };
+}
+
+/**
+ * Bambu Studio's own settings for each piece when the puzzle is printed put together (per-object keys of its
+ * PrintObjectConfig, read from Metadata/model_settings.config): no brim, which would fill the gaps between pieces and
+ * join them, and elephant-foot compensation, which draws the first layer this much (mm) smaller all round so its squish
+ * doesn't close the gaps — 0.15 is Bambu's own 0.20 mm profiles' value.
+ */
+export const IN_PLACE_SETTINGS: Readonly<Record<string, string>> = { brim_type: "no_brim", elefant_foot_compensation: "0.15" };
+
 const xmlEscape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const num = (v: number) => String(Math.round(v * 1e5) / 1e5);
+
+/** An object's own slicer settings as model_settings.config lines (none when not given). */
+const objectSettings = (settings?: Readonly<Record<string, string>>) =>
+  Object.entries(settings ?? {}).map(([key, value]) => `    <metadata key="${xmlEscape(key)}" value="${xmlEscape(value)}"/>`);
 
 /** Filament numbers for the parts. */
 export const FILAMENT = { rock: 1, snow: 2 } as const;
 
 /** The 3MF files' text parts for one plate: the model and Bambu's settings. */
-export function plateFiles(plate: Plate, title: string): { model: string; config: string } {
+export function plateFiles(plate: Plate, title: string, settings?: Readonly<Record<string, string>>): { model: string; config: string } {
   const lines: string[] = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<model unit="millimeter" xml:lang="en-GB" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">',
@@ -105,7 +136,7 @@ export function plateFiles(plate: Plate, title: string): { model: string; config
     for (const p of parts) lines.push(`    <component objectid="${p.id}"/>`);
     lines.push("   </components>", "  </object>");
     items.push(`  <item objectid="${objectId}" transform="1 0 0 0 1 0 0 0 1 ${move.map(num).join(" ")}" printable="1"/>`);
-    config.push(`  <object id="${objectId}">`, `    <metadata key="name" value="${xmlEscape(piece.name)}"/>`, `    <metadata key="extruder" value="${FILAMENT.rock}"/>`);
+    config.push(`  <object id="${objectId}">`, `    <metadata key="name" value="${xmlEscape(piece.name)}"/>`, `    <metadata key="extruder" value="${FILAMENT.rock}"/>`, ...objectSettings(settings));
     for (const p of parts)
       config.push(
         `    <part id="${p.id}" subtype="normal_part">`,
@@ -136,8 +167,8 @@ const RELS = `<?xml version="1.0" encoding="UTF-8"?>
 `;
 
 /** One plate as a .3mf file. */
-export function plate3mf(plate: Plate, title: string): Uint8Array {
-  const { model, config } = plateFiles(plate, title);
+export function plate3mf(plate: Plate, title: string, settings?: Readonly<Record<string, string>>): Uint8Array {
+  const { model, config } = plateFiles(plate, title, settings);
   return zipStored([
     { name: "[Content_Types].xml", data: CONTENT_TYPES },
     { name: "_rels/.rels", data: RELS },
@@ -147,8 +178,8 @@ export function plate3mf(plate: Plate, title: string): Uint8Array {
 }
 
 /** Every plate's .3mf in one .zip. */
-export function allPlatesZip(plates: Plate[], name: string): Uint8Array {
-  return zipStored(plates.map((p, i) => ({ name: `${name} - plate ${i + 1} of ${plates.length}.3mf`, data: plate3mf(p, `${name} - plate ${i + 1}`) })));
+export function allPlatesZip(plates: Plate[], name: string, settings?: Readonly<Record<string, string>>): Uint8Array {
+  return zipStored(plates.map((p, i) => ({ name: `${name} - plate ${i + 1} of ${plates.length}.3mf`, data: plate3mf(p, `${name} - plate ${i + 1}`, settings) })));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -171,7 +202,13 @@ export interface BandPartFile {
  * `paintCode(n)` gives the attribute for filament n. The meshes are written as given (already welded, so the paint
  * stays with its triangle).
  */
-export function bandPlateFiles(plate: Plate, title: string, partsOf: (p: PuzzlePiece) => BandPartFile[], paintCode: (n: number) => string): { model: string; config: string } {
+export function bandPlateFiles(
+  plate: Plate,
+  title: string,
+  partsOf: (p: PuzzlePiece) => BandPartFile[],
+  paintCode: (n: number) => string,
+  settings?: Readonly<Record<string, string>>,
+): { model: string; config: string } {
   const lines: string[] = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<model unit="millimeter" xml:lang="en-GB" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">',
@@ -206,7 +243,7 @@ export function bandPlateFiles(plate: Plate, title: string, partsOf: (p: PuzzleP
     for (const p of parts) lines.push(`    <component objectid="${p.id}"/>`);
     lines.push("   </components>", "  </object>");
     items.push(`  <item objectid="${objectId}" transform="1 0 0 0 1 0 0 0 1 ${move.map(num).join(" ")}" printable="1"/>`);
-    config.push(`  <object id="${objectId}">`, `    <metadata key="name" value="${xmlEscape(piece.name)}"/>`, `    <metadata key="extruder" value="${parts[0].part.filament}"/>`);
+    config.push(`  <object id="${objectId}">`, `    <metadata key="name" value="${xmlEscape(piece.name)}"/>`, `    <metadata key="extruder" value="${parts[0].part.filament}"/>`, ...objectSettings(settings));
     for (const p of parts)
       config.push(
         `    <part id="${p.id}" subtype="normal_part">`,
@@ -224,8 +261,14 @@ export function bandPlateFiles(plate: Plate, title: string, partsOf: (p: PuzzleP
 }
 
 /** One colour-band plate as a .3mf file, compressed (as Bambu Studio's own are). */
-export async function bandPlate3mf(plate: Plate, title: string, partsOf: (p: PuzzlePiece) => BandPartFile[], paintCode: (n: number) => string): Promise<Uint8Array> {
-  const { model, config } = bandPlateFiles(plate, title, partsOf, paintCode);
+export async function bandPlate3mf(
+  plate: Plate,
+  title: string,
+  partsOf: (p: PuzzlePiece) => BandPartFile[],
+  paintCode: (n: number) => string,
+  settings?: Readonly<Record<string, string>>,
+): Promise<Uint8Array> {
+  const { model, config } = bandPlateFiles(plate, title, partsOf, paintCode, settings);
   return zipDeflated([
     { name: "[Content_Types].xml", data: CONTENT_TYPES },
     { name: "_rels/.rels", data: RELS },

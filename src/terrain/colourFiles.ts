@@ -56,11 +56,11 @@ export function bandPuzzle(pieces: PuzzlePiece[], ctx: BandContext): BandedPuzzl
 }
 
 /** A banded plate's .3mf. */
-export function bandPlateFile(plate: Plate, title: string, banded: BandedPuzzle, ctx: BandContext): Promise<Uint8Array> {
+export function bandPlateFile(plate: Plate, title: string, banded: BandedPuzzle, ctx: BandContext, settings?: Readonly<Record<string, string>>): Promise<Uint8Array> {
   const fs = filaments(ctx.spec, ctx.map);
   const label = (n: number) => fs.find((f) => f.n === n)?.uses.join(" and ") ?? `filament ${n}`;
   const partsOf = (p: PuzzlePiece): BandPartFile[] => (banded.parts.get(p) ?? []).map((b) => ({ ...b, label: `${label(b.filament)} (filament ${b.filament})` }));
-  return bandPlate3mf(plate, title, partsOf, paintCode);
+  return bandPlate3mf(plate, title, partsOf, paintCode, settings);
 }
 
 /** Roughly how many filament changes each plate takes. */
