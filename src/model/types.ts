@@ -13,7 +13,7 @@ import type { FinishId } from "./finishes";
 import type { LibraryInsert } from "../library/types";
 
 /** The kinds of feature JuraCAD can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog" | "simplify" | "mateConnector" | "composite";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog" | "simplify" | "mateConnector" | "composite" | "curve";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -68,6 +68,8 @@ export interface GeomPick {
   connector?: string;
   /** The X, Y or Z axis through the origin. */
   axis?: "x" | "y" | "z";
+  /** A curve feature (Helix, Fit spline…): with `end` "a"/"b" one of its ends, else a point or place along it. */
+  curve?: string;
 }
 
 /** Where a Part Studio mate connector sits and which part it belongs to (Onshape's Mate connector feature). */
@@ -266,8 +268,12 @@ export interface Feature {
    * Missing: just `sketchRef`.
    */
   moreAreas?: { sketch: string; areas: AreaPick[] }[];
-  /** Sweep: the sketch whose lines and arcs make the path. */
+  /** Sweep and Curve pattern: the sketch whose lines and arcs make the path, or a curve feature (Helix, Fit spline…). */
   pathRef?: string;
+  /** Sweep and Curve pattern: part edges picked as the path instead (joined end to end), as Onshape lets you. */
+  pathEdges?: TopoPick[];
+  /** Curve features (Onshape's Helix, Projected, Bridging, Composite, Fit spline and Intersection curves): what kind and what they're made from. */
+  curve?: CurveDef;
   /**
    * Sweep: how the profile is carried. `lockOrientation` keeps it facing the
    * same way all along, like Onshape's "Keep profile orientation" (then any
@@ -1169,3 +1175,51 @@ export const MESH_TOLERANCES: Record<MeshQuality | "display", { tolerance: numbe
   normal: { tolerance: 0.02, angularTolerance: 0.2 },
   fine: { tolerance: 0.005, angularTolerance: 0.1 },
 };
+
+/** Onshape's curve features: each makes a curve (not a part) — a line in the view that sweeps and patterns can follow. */
+export type CurveKind = "helix" | "projected" | "bridge" | "composite" | "fitSpline" | "intersection";
+
+/**
+ * A curve feature's settings (sizes are in the feature's params). Followed as the model changes: part faces and edges
+ * by TopoPick (`on`, Feature.picks), points by GeomPick.
+ */
+export interface CurveDef {
+  kind: CurveKind;
+  /** Helix: round an axis ("axis": `axis` and an optional `start` point, else the diameter box), or a round face or edge (`on`). */
+  around?: "axis" | "face";
+  axis?: GeomPick;
+  start?: GeomPick;
+  /** Helix: a round (cylinder or cone) face, or a round edge, to wind round. Fill spline / bridge use GeomPicks instead. */
+  on?: TopoPick;
+  /** Helix: which two of height, turns and pitch are typed (missing = height and turns). */
+  helixBy?: "heightTurns" | "heightPitch" | "turnsPitch";
+  /** Helix: turns clockwise as it rises (seen from above). Missing = anticlockwise (a right-hand thread). */
+  clockwise?: boolean;
+  /** Helix: up the other way along its axis. Projected curve: project the other way only. */
+  flip?: boolean;
+  /** Projected curve: onto picked faces (`Feature.picks`, missing = this) or where two sketches' curves meet ("sketches"; the second is `sketch2`). */
+  project?: "faces" | "sketches";
+  sketch2?: string;
+  /** Bridging curve: the two points it joins (edge ends, curve ends, corners, sketch points). */
+  from?: GeomPick;
+  to?: GeomPick;
+  /** Bridging curve: how smoothly it meets at each end (missing = tangent). */
+  matchFrom?: BridgeMatch;
+  matchTo?: BridgeMatch;
+  /** Bridging curve: set off the other way at an end. */
+  flipFrom?: boolean;
+  flipTo?: boolean;
+  /** Composite curve: other curve features joined in (part edges are in `Feature.picks`). */
+  curves?: string[];
+  /** Fit spline: the points it goes through, in order. */
+  points?: GeomPick[];
+  /** Fit spline: back round to the first point. */
+  closed?: boolean;
+  /** Intersection curve: a plane the picked faces are cut by (missing = the first picked face against the others). */
+  plane?: SketchPlane;
+  /** While editing: what a click picks (bridging "from"/"to", helix "axis"/"start"). Not saved. */
+  picking?: "from" | "to" | "axis" | "start" | "plane";
+}
+
+/** How a bridging curve meets what it joins: just touching, in the same direction, or bending the same too. */
+export type BridgeMatch = "position" | "tangent" | "curvature";

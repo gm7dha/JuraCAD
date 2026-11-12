@@ -29,6 +29,7 @@ export function usedSketches(features: Feature[]): Set<string> {
     if (f.pathRef) used.add(f.pathRef);
     if (f.hole?.sketchRef) used.add(f.hole.sketchRef);
     for (const id of f.sections ?? []) used.add(id);
+    if (f.curve?.project === "sketches" && f.curve.sketch2) used.add(f.curve.sketch2);
   }
   return used;
 }
@@ -51,7 +52,7 @@ export function featureVisible(feature: Feature, features: Feature[]): boolean {
 
 /** Features with an eye in the feature list. */
 export function hasEye(feature: Pick<Feature, "type">): boolean {
-  return feature.type === "sketch" || feature.type === "plane" || feature.type === "mateConnector";
+  return feature.type === "sketch" || feature.type === "plane" || feature.type === "mateConnector" || feature.type === "curve";
 }
 
 /** Show or hide some sketches/planes of the features given (other features are left alone). */

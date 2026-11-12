@@ -784,3 +784,54 @@ export function loftSketches(sections: { plane: SketchPlane; data: SketchData; n
     release(...wires);
   }
 }
+
+/**
+ * Sweep along a ready-made path (a curve feature, or part edges joined end to end): each closed shape of the profile
+ * carried along `spine` (holes stay holes), twisted or kept facing one way as asked. `frenet` follows the path's own
+ * bending (best for a helix: the profile keeps its place round the axis); otherwise the profile turns as little as it can.
+ */
+export function sweepAlongSpine(profilePlane: SketchPlane, profile: SketchData, spine: Wire, areas: AreaPick[] | undefined, control: SweepControl = {}, frenet = false): Shape3D {
+  const { regions, problems } = chosenRegions(profile, areas, "sweep");
+  if (regions.length === 0) throw new Error(`The profile sketch has no closed shapes.${problems.length ? ` ${problems.join(" ")}` : ""}`);
+  const frame = planeFrame(profilePlane);
+  if (liesAlongPath(spine, frame, regions[0].outer.polygon)) throw new Error(PROFILE_ALONG_PATH);
+  const twist = control.lockOrientation ? 0 : control.twist ?? 0;
+  const plain = Math.abs(twist) < 1e-9 && !control.lockOrientation;
+  let guide: Wire | null = null;
+  if (!plain && Math.abs(twist) >= 1e-9) {
+    checkTwistSize(twist);
+    guide = twistGuide(spine, twist);
+  }
+  const startAxis = control.lockOrientation ? { p: frame.origin as Vec3, n: frame.n as Vec3, x: frame.u as Vec3 } : null;
+  const sweepOne = (wire: Wire): Shape3D => {
+    try {
+      if (plain) return genericSweep(wire, spine, { frenet, transitionMode: "round", forceProfileSpineOthogonality: false });
+      return controlledSweep(wire, spine, control, guide, startAxis);
+    } catch {
+      throw new Error("Couldn't sweep the profile along that path. Check the profile sits at the start of the path and is small enough for its bends.");
+    } finally {
+      release(wire);
+    }
+  };
+  try {
+    let result: Shape3D | null = null;
+    for (const region of regions) {
+      let solid = sweepOne(loopWire(region.outer, frame, 0));
+      for (const hole of region.holes) {
+        const cutter = sweepOne(loopWire(hole, frame, 0));
+        const next = solid.cut(cutter);
+        release(solid, cutter);
+        solid = next;
+      }
+      if (!result) result = solid;
+      else {
+        const merged: Shape3D = result.fuse(solid);
+        release(result, solid);
+        result = merged;
+      }
+    }
+    return result!;
+  } finally {
+    if (guide) release(guide);
+  }
+}

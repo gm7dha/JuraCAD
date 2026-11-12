@@ -15,6 +15,7 @@ import { parseMaterials } from "./materials";
 import { parsePartProperties } from "../assembly/properties";
 import { parseAssemblies } from "../assembly/assembly";
 import { parseDrawings } from "../drawing/drawing";
+import { newCurveDef, parseCurveDef } from "./curves";
 import type { Feature, FeatureType, GeomPick, ImportedFile, MateConnectorDef, Operation, JuraCADDocument, PartStudio, PlaneOptions } from "./types";
 import { MAIN_STUDIO } from "./studios";
 import { parseHiddenDatums } from "./visibility";
@@ -161,6 +162,7 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
   if (type === "boolean") feature.booleanDef = { op: "union", targets: [], tools: [], keepTools: false, picking: "targets" };
   if (type === "plane") feature.planeDef = { mode: "offset", ref: { kind: "default", name: "Top" }, axis: "u" };
   // A mate connector starts at the origin, on Top, until something is clicked.
+  if (type === "curve") feature.curve = newCurveDef("helix");
   if (type === "mateConnector") feature.connector = { at: { p: [0, 0, 0] }, plane: { kind: "default", name: "Top" }, base: { origin: [0, 0, 0], x: [1, 0, 0], z: [0, 0, 1] } };
   if (type === "transform") {
     feature.operation = "add";
@@ -469,6 +471,7 @@ export function parseGeomPick(raw: unknown): GeomPick | null {
   if (sl) out.sketchLine = sl;
   if (typeof g.connector === "string") out.connector = g.connector;
   if (g.axis === "x" || g.axis === "y" || g.axis === "z") out.axis = g.axis;
+  if (typeof g.curve === "string") out.curve = g.curve;
   return out;
 }
 
@@ -560,7 +563,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
       params: { ...defaultParams(f.type as FeatureType), ...params },
       ...(typeof f.folder === "string" && f.folder.trim() ? { folder: f.folder.trim().slice(0, 60) } : {}),
       // Shown or hidden with the eye (sketches and planes only; missing = automatic).
-      ...((f.type === "sketch" || f.type === "plane") && typeof f.visible === "boolean" ? { visible: f.visible } : {}),
+      ...((f.type === "sketch" || f.type === "plane" || f.type === "curve") && typeof f.visible === "boolean" ? { visible: f.visible } : {}),
     };
     if (feature.type === "sketch") {
       const sk = f.sketch as Record<string, unknown> | undefined;
@@ -741,6 +744,16 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
     if (feature.type === "mateConnector") {
       const c = parseConnectorDef(f.connector);
       if (c) feature.connector = c;
+    }
+    if (feature.type === "curve") {
+      feature.curve = parseCurveDef(f.curve, { geom: parseGeomPick, pick: parsePick, plane: parsePlane }) ?? newCurveDef("helix");
+      if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
+      if (Array.isArray(f.picks)) feature.picks = f.picks.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null);
+    }
+    // A sweep's or curve pattern's path picked as part edges.
+    if ((feature.type === "sweep" || feature.type === "curvePattern") && Array.isArray(f.pathEdges)) {
+      const edges = f.pathEdges.map(parsePick).filter((p): p is NonNullable<typeof p> => p !== null && p.ref.kind === "edge");
+      if (edges.length) feature.pathEdges = edges;
     }
     if (feature.type === "loft") feature.sections = Array.isArray(f.sections) ? f.sections.filter((x): x is string => typeof x === "string") : [];
     if (feature.type === "loft" && f.loftRuled === true) feature.loftRuled = true;
