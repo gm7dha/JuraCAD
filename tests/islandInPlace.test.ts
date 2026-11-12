@@ -6,11 +6,12 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { gridFrom } from "../src/terrain/elevation";
-import { IN_PLACE_FIT, ISLAND_DEFAULTS, islandChecks, makeIslandPuzzle, type IslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
-import { allPlatesZip, BED_MARGIN, type Plate, IN_PLACE_SETTINGS, plateFiles, platesFor, platesInPlace } from "../src/terrain/puzzle3mf";
+import { IN_PLACE_FIT, ISLAND_DEFAULTS, islandChecks, makeIslandPuzzle, MIN_JOINTS, type IslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
+import { PRINTERS } from "../src/model/printBed";
+import { allPlatesZip, BED_MARGIN, bestRoom, freeRooms, type BedRect, type Plate, IN_PLACE_SETTINGS, plateFiles, platesFor, platesInPlace, towerCorner } from "../src/terrain/puzzle3mf";
 import { islandBands, LAYER_DEFAULT, mapRaster, NO_MAP, SEA_BLUE } from "../src/terrain/colour";
 import { bandPlateFile, bandPuzzle, plateSwaps } from "../src/terrain/colourFiles";
-import { box, outlineSegs, SegGrid, segSegDist, segsCross } from "./support/outlineGeom";
+import { box, collides, outlineSegs, SegGrid, segSegDist, segsCross } from "./support/outlineGeom";
 
 // The lumpy island of tests/islandPuzzle, with a bay and an islet, on 6 × 4 km — sea all round it.
 const W = 6000;
@@ -44,6 +45,26 @@ function outlineGaps(p: IslandPuzzle): { crossings: number; nearest: number } {
   return { crossings, nearest };
 }
 
+/** Each dovetail's piece pulled straight back out of its socket in 0.05 mm steps: how far it goes before it catches. */
+function pullOut(p: IslandPuzzle): { free: number; median: number; most: number } {
+  const O = p.pieces.map((q) => outlineSegs(q.bodies[0]));
+  const G = O.map((s) => new SegGrid(s, 1));
+  const plays: number[] = [];
+  let free = 0;
+  for (const t of p.tabs) {
+    let d = 0;
+    let hit = false;
+    while (d < t.reach + 1 && !hit) {
+      d += 0.05;
+      hit = collides(O[t.from], G[t.into], -t.dir[0] * d, -t.dir[1] * d);
+    }
+    if (hit) plays.push(d);
+    else free++;
+  }
+  plays.sort((a, b) => a - b);
+  return { free, median: plays[Math.floor(plays.length / 2)] ?? 0, most: plays[plays.length - 1] ?? 0 };
+}
+
 /** Every vertex of every piece as it lies on the plate. */
 function plateBox(plate: Plate) {
   let [x0, y0, z0, x1, y1] = [Infinity, Infinity, Infinity, -Infinity, -Infinity];
@@ -65,8 +86,8 @@ describe("island puzzle printed put together", () => {
   const p = makeIslandPuzzle(island, sw, W, H, IN_PLACE);
   const placed = platesInPlace(p.pieces, BED);
 
-  it("uses a wider gap and refuses a scale past 100%", () => {
-    expect(IN_PLACE_FIT).toBe(0.15);
+  it("keeps the usual fit gap and refuses a scale past 100%", () => {
+    expect(IN_PLACE_FIT).toBe(0.1);
     expect(islandChecks({ ...IN_PLACE, scale: 1 })).toEqual([]);
     expect(islandChecks({ ...IN_PLACE, scale: 1.2 }).join(" ")).toMatch(/at most 100%/);
     expect(islandChecks({ ...SPEC, scale: 1.2 })).toEqual([]);
@@ -101,11 +122,25 @@ describe("island puzzle printed put together", () => {
     expect(laidOut.origin).toEqual(sw);
   });
 
-  it("keeps neighbours apart by the wider gap, nothing overlapping", () => {
+  it("keeps neighbours about 0.3 mm apart at its fit gap (0.4 at 0.15), nothing overlapping", () => {
     const g = outlineGaps(p);
     expect(g.crossings).toBe(0);
-    expect(g.nearest).toBeGreaterThan(2 * IN_PLACE_FIT - 0.005);
-    expect(g.nearest).toBeLessThan(2 * IN_PLACE_FIT + 0.6);
+    expect(g.nearest).toBeGreaterThan(0.25);
+    expect(g.nearest).toBeLessThan(0.36);
+    const wider = outlineGaps(makeIslandPuzzle(island, sw, W, H, { ...IN_PLACE, fit: 0.15 }));
+    expect(wider.crossings).toBe(0);
+    expect(wider.nearest).toBeGreaterThan(0.35);
+    expect(wider.nearest).toBeLessThan(0.46);
+  });
+
+  it("holds every piece with at least two dovetails that catch when pulled", () => {
+    for (const q of p.pieces) if (q.neighbours) expect(q.joints, q.name).toBeGreaterThanOrEqual(MIN_JOINTS);
+    expect(p.pieces.reduce((t, q) => t + q.joints, 0)).toBe(2 * p.joins);
+    const plays = pullOut(p);
+    expect(plays.free).toBe(0);
+    // Printed put together the pieces never move, so play only matters once it's taken apart: as laid out.
+    expect(plays.median).toBeLessThanOrEqual(0.5);
+    expect(plays.most).toBeLessThan(0.8);
   });
 
   it("says when the island is too big for the bed", () => {
@@ -138,6 +173,66 @@ describe("island puzzle printed put together", () => {
     // What JuraCAD wrote for this island before the option existed.
     expect(createHash("sha256").update(zip).digest("hex")).toBe(OLD_ZIP_HASH);
     expect(createHash("sha256").update(allPlatesZip(platesFor(off.pieces, BED), "Island")).digest("hex")).toBe(OLD_ZIP_HASH);
+  });
+});
+
+describe("land touching the area's edge, put together", () => {
+  // Land running off the west edge (a mainland), kept with "all" and "biggest".
+  const coast = gridFrom(sw, W, H, 25, (e) => Math.max(0, 200 - ((e - sw.e) / W) * 400));
+  for (const land of ["all", "biggest"] as const)
+    it(`fits the bed at 100% and has no land outside the area (${land})`, () => {
+      const p = makeIslandPuzzle(coast, sw, W, H, { ...IN_PLACE, land });
+      expect(p.origin.e).toBeGreaterThanOrEqual(sw.e);
+      expect(p.origin.n).toBeGreaterThanOrEqual(sw.n);
+      expect(p.origin.e + p.width / p.k).toBeLessThanOrEqual(sw.e + W + 1e-6);
+      expect(p.origin.n + p.height / p.k).toBeLessThanOrEqual(sw.n + H + 1e-6);
+      const placed = platesInPlace(p.pieces, BED, p.room);
+      expect(placed.fits).toBe(true);
+      expect(Math.max(...placed.size)).toBeGreaterThan((BED[0] - 2 * BED_MARGIN) * 0.95);
+      // Every piece's corners within the puzzle (nothing smeared past the area's edge).
+      for (const q of p.pieces) {
+        const v = q.bodies[0].vertices;
+        for (let i = 0; i < v.length; i += 3) {
+          expect(v[i]).toBeGreaterThanOrEqual(-1e-6);
+          expect(v[i]).toBeLessThanOrEqual(p.width + 1e-6);
+        }
+      }
+    });
+});
+
+describe("keeping clear of the printer's corners and the prime tower", () => {
+  const x1 = PRINTERS.find((q) => q.id === "bambu-x1")!;
+  it("knows the X1 / P1's no-print corner and the two-nozzle printers' one-nozzle strip (Bambu's profiles)", () => {
+    expect(x1.bedExclude).toEqual([[0, 0, 18, 28]]);
+    expect(PRINTERS.find((q) => q.id === "bambu-x2d")!.secondNozzleFrom).toBe(20.5);
+    expect(PRINTERS.find((q) => q.id === "bambu-h2d")!.secondNozzleFrom).toBe(25);
+    expect(PRINTERS.find((q) => q.id === "bambu-a1")!.bedExclude).toBeUndefined();
+  });
+  it("finds the free parts of the bed", () => {
+    expect(freeRooms(BED, [])).toEqual([[0, 0, 256, 256]]);
+    const rooms = freeRooms(BED, [[0, 0, 18, 28], towerCorner(BED)]);
+    for (const r of rooms) {
+      expect(r[0] < 18 && r[1] < 28).toBe(false);
+      expect(r[0] < 55 && r[3] > 201).toBe(false);
+    }
+    expect(rooms.map((r) => r.join(","))).toContain("55,0,256,256");
+    expect(rooms.map((r) => r.join(","))).toContain("0,28,256,201");
+    // A wide puzzle goes in the wide room, a tall one in the tall room.
+    expect(bestRoom(rooms, 300, 100)).toEqual([0, 28, 256, 201]);
+    expect(bestRoom(rooms, 100, 300)).toEqual([55, 0, 256, 256]);
+  });
+  it("puts the island in the room it was sized for, clear of the corners kept free", () => {
+    const keepOut: BedRect[] = [...x1.bedExclude!, towerCorner(BED)];
+    const p = makeIslandPuzzle(island, sw, W, H, { ...IN_PLACE, rooms: freeRooms(BED, keepOut) });
+    expect(p.room).toBeDefined();
+    const placed = platesInPlace(p.pieces, BED, p.room);
+    expect(placed.fits).toBe(true);
+    const b = plateBox(placed.plates[0]);
+    for (const [a, c, d, e] of keepOut) expect(b.x0 < d && a < b.x1 && b.y0 < e && c < b.y1, `keeps out of ${[a, c, d, e]}`).toBe(false);
+    expect(b.x0).toBeGreaterThanOrEqual(p.room![0] + BED_MARGIN - 1e-6);
+    expect(b.x1).toBeLessThanOrEqual(p.room![2] - BED_MARGIN + 1e-6);
+    expect(b.y0).toBeGreaterThanOrEqual(p.room![1] + BED_MARGIN - 1e-6);
+    expect(b.y1).toBeLessThanOrEqual(p.room![3] - BED_MARGIN + 1e-6);
   });
 });
 

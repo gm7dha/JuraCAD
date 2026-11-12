@@ -6,13 +6,13 @@
  * in src/terrain/islandPuzzle.ts.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CUSTOM_PRINTER, PRINTERS } from "../model/printBed";
+import { CUSTOM_PRINTER, printerOf, PRINTERS } from "../model/printBed";
 import { areaProblem, readHeights, zoomFor, type HeightGrid } from "../terrain/elevation";
 import { IN_PLACE_FIT, ISLAND_DEFAULTS, islandChecks, type IslandBuilt, type IslandCuts, type IslandLand, type IslandSpec } from "../terrain/islandPuzzle";
 import { BOUNDARY_LEVELS, boundaryQuery, ISLANDS, MARKS_MOST, marksQuery, OVERPASS_URL } from "../terrain/islands";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
 import { boundariesOnGrid, boundaryLevels, featuresOnGrid, featureSummary, levelName, NO_FEATURES, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
-import { allPlatesZip, IN_PLACE_SETTINGS, plate3mf, platesByLevel, platesFor, platesInPlace } from "../terrain/puzzle3mf";
+import { allPlatesZip, freeRooms, IN_PLACE_SETTINGS, plate3mf, platesByLevel, platesFor, platesInPlace, towerCorner, TOWER_ROOM, type BedRect } from "../terrain/puzzle3mf";
 import { islandBands, mapOnPuzzle, mapRaster, NO_MAP, PLAIN_COLOUR, SEA_BLUE, type ColourSpec, type HeightScale } from "../terrain/colour";
 import { ColourDownloads, ColourPanel, useColoured } from "./PuzzleColour";
 import { downloadFile, safeFileName } from "./download";
@@ -210,7 +210,15 @@ export function IslandPuzzleDialog() {
   const needsFetch = detail !== "area" && (!marksMap || (marksMap.fetched === "water" && detail === "all"));
   const canFetch = !!loaded && fresh && Math.max(loaded.area.width, loaded.area.height) <= MARKS_MOST;
 
-  const fullSpec: IslandSpec = { ...spec, bed };
+  // Put together, the island keeps out of the printer's no-print corner, and — in several filaments — out of the prime
+  // tower's corner and the strip only one nozzle reaches.
+  const printerInfo = printerOf(printer.printer);
+  const keepOut: BedRect[] = [
+    ...(printerInfo?.bedExclude ?? []),
+    ...(colourOn ? [towerCorner(bed)] : []),
+    ...(colourOn && printerInfo?.secondNozzleFrom ? [[0, 0, printerInfo.secondNozzleFrom, bed[1]] as BedRect] : []),
+  ];
+  const fullSpec: IslandSpec = spec.inPlace ? { ...spec, bed, rooms: freeRooms(bed, keepOut) } : { ...spec, bed };
   const problems = islandChecks(fullSpec);
   const specKey = JSON.stringify(fullSpec);
   useEffect(() => {
@@ -245,20 +253,14 @@ export function IslandPuzzleDialog() {
   const byLevel = colourOn && colour.mode === "bands";
   const inPlace = !!spec.inPlace;
   // Put together: one plate, every piece where it sits in the finished puzzle (it must fit the bed less its margins).
-  const placed = useMemo(() => (puzzle && inPlace ? platesInPlace(puzzle.pieces, bed) : null), [puzzle, bed[0], bed[1], bed[2], inPlace]);
+  const placed = useMemo(() => (puzzle && inPlace ? platesInPlace(puzzle.pieces, bed, puzzle.room) : null), [puzzle, bed[0], bed[1], bed[2], inPlace]);
   const plates = useMemo(
     () => (!puzzle ? [] : placed ? (placed.fits ? placed.plates : []) : (byLevel ? platesByLevel : platesFor)(puzzle.pieces, bed)),
     [puzzle, placed, bed[0], bed[1], bed[2], byLevel],
   );
   const settings = inPlace ? IN_PLACE_SETTINGS : undefined;
   const chooseInPlace = (on: boolean) => {
-    setSpec((s) => ({
-      ...s,
-      inPlace: on,
-      // The usual gaps swap over with the mode; a gap of your own is kept.
-      fit: on && s.fit === ISLAND_DEFAULTS.fit ? IN_PLACE_FIT : !on && s.fit === IN_PLACE_FIT ? ISLAND_DEFAULTS.fit : s.fit,
-      scale: on ? Math.min(s.scale, 1) : s.scale,
-    }));
+    setSpec((s) => ({ ...s, inPlace: on, scale: on ? Math.min(s.scale, 1) : s.scale }));
     if (on) setExplode(0);
   };
   const fileName = safeFileName(`${loaded?.area.name ?? "Island"} puzzle`, "Island puzzle");
@@ -434,7 +436,7 @@ export function IslandPuzzleDialog() {
           </label>
           <p className="muted small">
             {inPlace
-              ? `The whole island prints on one plate with every piece where it sits in the finished puzzle, so it can be as big as the bed. The gap between pieces is what keeps them apart — nothing is printed there — so it's wider than usual: ${IN_PLACE_FIT} mm each side (${2 * IN_PLACE_FIT} mm between pieces). Print a small test first.`
+              ? `The whole island prints on one plate with every piece where it sits in the finished puzzle, so it can be as big as the bed. The gap between pieces is what keeps them apart — nothing is printed there. At a fit gap of ${IN_PLACE_FIT} mm the narrowest gap between pieces comes out about 0.3 mm, the room print-in-place parts need with a 0.4 mm nozzle. Print a small test first.`
               : "Pieces are laid out apart on as many plates as they need. Tick this to print the island put together on one plate instead."}
           </p>
           <div className="mountain-row">
@@ -443,7 +445,7 @@ export function IslandPuzzleDialog() {
               {numberBox(Math.round(spec.scale * 100), (v) => set("scale", v / 100), 10, 20, inPlace ? 100 : 1000, "%")}
               <span className="muted small">
                 {inPlace
-                  ? ` 100% = the island fills the bed (${bed[0]} × ${bed[1]} mm, less 5 mm round the edge); it can't be bigger`
+                  ? ` 100% = the island fills the bed (${bed[0]} × ${bed[1]} mm, less 5 mm round the edge${keepOut.length ? " and the corners kept free" : ""}); it can't be bigger`
                   : ` 100% = the finished puzzle covers the bed (${bed[0]} × ${bed[1]} mm)`}
               </span>
             </span>
@@ -468,7 +470,7 @@ export function IslandPuzzleDialog() {
               {numberBox(spec.fit, (v) => set("fit", v), 0.01, 0, 0.5, "mm each side")}
               <span className="muted small">
                 {inPlace
-                  ? " Printed put together, pieces that come off stuck together need a wider gap (0.2); a loose puzzle a narrower one (0.12)."
+                  ? " Printed put together: pieces that come off stuck together need a wider gap (0.15 makes about 0.4 mm between them); keep it at 0.1 or more."
                   : " Too loose? Lower it by 0.02–0.05 mm. Too tight? Raise it."}
               </span>
             </span>
@@ -540,14 +542,19 @@ export function IslandPuzzleDialog() {
               )}
               {placed && !placed.fits && (
                 <p className="error-text small">
-                  Put together, the island is {Math.round(placed.size[0])} × {Math.round(placed.size[1])} mm — too big for the bed ({bed[0]} × {bed[1]} mm less 5 mm
-                  round the edge). Lower the scale, or untick “Print it put together”.
+                  Put together, the island is {Math.round(placed.size[0])} × {Math.round(placed.size[1])} mm — too big for the free part of the bed. Lower the scale,
+                  or untick “Print it put together”.
                 </p>
               )}
               {placed?.fits && (
                 <p className="muted small">
                   One plate, the pieces put together as above. In Bambu Studio don't use Arrange (it would spread the pieces out); each piece comes in with
                   no brim and elephant-foot compensation on, so the first layer doesn't join them.
+                  {printerInfo?.bedExclude?.length ? " The front-left corner, where this printer wipes its nozzle, is left free." : ""}
+                  {colourOn
+                    ? ` The back-left corner (${TOWER_ROOM} × ${TOWER_ROOM} mm) is left free for the prime tower Bambu Studio adds for several filaments: if it shows up on the island, drag it into that corner.`
+                    : ""}
+                  {colourOn && printerInfo?.secondNozzleFrom ? ` The ${printerInfo.secondNozzleFrom} mm strip down the left, which only one nozzle reaches, is left free too.` : ""}
                   {colour.mode === "full" ? " The full-colour files can't carry those settings: turn the brim off and elephant-foot compensation on yourself." : ""}
                 </p>
               )}

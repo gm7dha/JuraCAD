@@ -67,12 +67,54 @@ export function platesFor(pieces: PuzzlePiece[], bed: [number, number, number]):
   return plates;
 }
 
+/** A rectangle on the bed: x0, y0, x1, y1 (mm from the front-left corner). */
+export type BedRect = [number, number, number, number];
+
 /**
- * Every piece where it sits in the finished puzzle, on one plate, the whole puzzle centred on the bed (the island
- * puzzle printed put together). `fits` says whether it's within the bed less `BED_MARGIN` all round; `size` is the
- * finished puzzle's footprint (mm).
+ * Room kept free for Bambu Studio's prime tower when the puzzle is put together in several filaments: the back-left
+ * corner (its usual place — x 15, y 220 on a 256 mm bed — and where to drag it otherwise). The tower is 35 mm wide
+ * (Bambu's `prime_tower_width`), with its brim and some depth for many colours: 55 × 55 mm.
  */
-export function platesInPlace(pieces: PuzzlePiece[], bed: [number, number, number]): { plates: Plate[]; size: [number, number]; fits: boolean } {
+export const TOWER_ROOM = 55;
+export const towerCorner = (bed: [number, number, number]): BedRect => [0, bed[1] - TOWER_ROOM, TOWER_ROOM, bed[1]];
+
+/**
+ * The largest rectangles of the bed that keep clear of every `keepOut` (each a candidate place for the puzzle). With
+ * none, the whole bed.
+ */
+export function freeRooms(bed: [number, number, number], keepOut: BedRect[]): BedRect[] {
+  const clip = (v: number, hi: number) => Math.min(hi, Math.max(0, v));
+  const boxes = keepOut.map(([a, b, c, d]): BedRect => [clip(a, bed[0]), clip(b, bed[1]), clip(c, bed[0]), clip(d, bed[1])]).filter(([a, b, c, d]) => c > a && d > b);
+  const xs = [...new Set([0, bed[0], ...boxes.flatMap((b) => [b[0], b[2]])])].sort((a, b) => a - b);
+  const ys = [...new Set([0, bed[1], ...boxes.flatMap((b) => [b[1], b[3]])])].sort((a, b) => a - b);
+  const all: BedRect[] = [];
+  for (let i = 0; i < xs.length; i++)
+    for (let j = i + 1; j < xs.length; j++)
+      for (let k = 0; k < ys.length; k++)
+        for (let l = k + 1; l < ys.length; l++) {
+          const r: BedRect = [xs[i], ys[k], xs[j], ys[l]];
+          if (!boxes.some((b) => r[0] < b[2] && b[0] < r[2] && r[1] < b[3] && b[1] < r[3])) all.push(r);
+        }
+  const inside = (r: BedRect, o: BedRect) => o[0] <= r[0] && o[1] <= r[1] && o[2] >= r[2] && o[3] >= r[3];
+  return all.filter((r) => !all.some((o) => o !== r && inside(r, o) && (o[0] !== r[0] || o[1] !== r[1] || o[2] !== r[2] || o[3] !== r[3])));
+}
+
+/** How much a w × h mm puzzle can be grown to fit a room less `BED_MARGIN` all round. */
+export const roomScale = (r: BedRect, w: number, h: number) => Math.min((r[2] - r[0] - 2 * BED_MARGIN) / w, (r[3] - r[1] - 2 * BED_MARGIN) / h);
+
+/** The room a w × h puzzle can be biggest in (the first on a tie). */
+export function bestRoom(rooms: BedRect[], w: number, h: number): BedRect {
+  let best = rooms[0];
+  for (const r of rooms) if (roomScale(r, w, h) > roomScale(best, w, h) + 1e-9) best = r;
+  return best;
+}
+
+/**
+ * Every piece where it sits in the finished puzzle, on one plate, the whole puzzle centred in `room` (the whole bed
+ * unless given; the island puzzle printed put together). `fits` says whether it's within the room less `BED_MARGIN` all
+ * round; `size` is the finished puzzle's footprint (mm).
+ */
+export function platesInPlace(pieces: PuzzlePiece[], bed: [number, number, number], room: BedRect = [0, 0, bed[0], bed[1]]): { plates: Plate[]; size: [number, number]; fits: boolean } {
   if (!pieces.length) return { plates: [], size: [0, 0], fits: true };
   let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
   for (const p of pieces) {
@@ -80,9 +122,9 @@ export function platesInPlace(pieces: PuzzlePiece[], bed: [number, number, numbe
     [x0, y0, x1, y1] = [Math.min(x0, a), Math.min(y0, b), Math.max(x1, c), Math.max(y1, d)];
   }
   const [w, d] = [x1 - x0, y1 - y0];
-  const [dx, dy] = [(bed[0] - w) / 2 - x0, (bed[1] - d) / 2 - y0];
+  const [dx, dy] = [(room[0] + room[2] - w) / 2 - x0, (room[1] + room[3] - d) / 2 - y0];
   const order = [...pieces].sort((a, b) => a.layer - b.layer || a.row - b.row || a.col - b.col);
-  const fits = w <= bed[0] - 2 * BED_MARGIN + 1e-6 && d <= bed[1] - 2 * BED_MARGIN + 1e-6;
+  const fits = w <= room[2] - room[0] - 2 * BED_MARGIN + 1e-6 && d <= room[3] - room[1] - 2 * BED_MARGIN + 1e-6;
   return { plates: [{ pieces: order.map((p) => ({ piece: p, move: [dx, dy, -p.z0] })) }], size: [w, d], fits };
 }
 

@@ -12,13 +12,23 @@ export interface Printer {
   bothNozzles?: [number, number, number];
   /** A line about the printer for its description (e.g. how two nozzles change the room). */
   note?: string;
+  /**
+   * Corners of the bed nothing may be printed on (x0, y0, x1, y1 mm from the front-left), from Bambu Studio's machine
+   * profiles' `bed_exclude_area` (X1 / P1: 0×0–18×28, where the nozzle is wiped).
+   */
+  bedExclude?: [number, number, number, number][];
+  /**
+   * Two nozzles: the second reaches only from this x (mm) on — Bambu Studio's `extruder_printable_area` (X2D 20.5, H2D 25) —
+   * so a print in several filaments keeps out of the strip left of it.
+   */
+  secondNozzleFrom?: number;
 }
 
 export const PRINTERS: Printer[] = [
-  { id: "bambu-x1", name: "Bambu Lab X1 / P1 series", size: [256, 256, 256] },
+  { id: "bambu-x1", name: "Bambu Lab X1 / P1 series", size: [256, 256, 256], bedExclude: [[0, 0, 18, 28]] },
   { id: "bambu-a1", name: "Bambu Lab A1", size: [256, 256, 256] },
   { id: "bambu-a1-mini", name: "Bambu Lab A1 mini", size: [180, 180, 180] },
-  { id: "bambu-h2d", name: "Bambu Lab H2D", size: [325, 320, 325] },
+  { id: "bambu-h2d", name: "Bambu Lab H2D", size: [325, 320, 325], secondNozzleFrom: 25 },
   {
     // From 3D Printing Industry's launch article: 256 × 256 × 260 with the main nozzle; 235.5 × 256 × 256 for the
     // second nozzle and for both together. Nozzles up to 300 °C, a heated chamber up to 65 °C.
@@ -26,6 +36,7 @@ export const PRINTERS: Printer[] = [
     name: "Bambu Lab X2D",
     size: [256, 256, 260],
     bothNozzles: [235.5, 256, 256],
+    secondNozzleFrom: 20.5,
     note: "Two nozzles: 256 × 256 × 260 mm with the main nozzle; 235.5 × 256 × 256 mm with the second nozzle or both (two colours). Nozzles up to 300 °C, heated chamber up to 65 °C.",
   },
   {

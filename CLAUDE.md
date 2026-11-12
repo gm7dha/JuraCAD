@@ -1167,14 +1167,19 @@
   running, as do settings becoming invalid; a worker that never answers is stopped after `BUILD_LIMIT_MS` 2 min; `IslandBuilt` = the
   puzzle without `groundAt`). The plates' .zip and .3mf are stored, not compressed (`zipStored` has no deflate).
   Printed put together (`IslandSpec.inPlace`, "Print it put together (in place)"; missing = laid out, byte for byte as before):
-  `makeIslandPuzzle` crops the area to the kept land (`landBox`: `keepLand` on a ~1500-a-side grid, + 1% and a cell of sea) and
-  fits the LAND to the bed less 2 × `IN_PLACE_MARGIN` (scale ≤ 100%, `islandChecks`); `IslandPuzzle.origin` = the grid point at
-  (0, 0) (the map is placed from it). Gap `IN_PLACE_FIT` 0.15 a side (0.3 between pieces, as print-in-place joints; the window
-  swaps the default fit with the mode). `platesInPlace` (puzzle3mf.ts): one plate, one move for every piece (centred), `fits`
-  within `BED_MARGIN`. 3MF objects get `IN_PLACE_SETTINGS` (BambuStudio PrintObjectConfig keys read per object from
-  model_settings.config: `brim_type` no_brim, `elefant_foot_compensation` 0.15 = BBL's 0.20 mm profiles) via the optional
-  `settings` of plateFiles/plate3mf/allPlatesZip/bandPlateFiles/bandPlateFile (none = unchanged bytes); no negative parts —
-  the mesh's gap is already "don't print here". Full-colour files carry no settings (said in the window). tests/islandInPlace.
+  `makeIslandPuzzle` crops the area to the kept land (`landBox`: `keepLand` on a ~1500-a-side grid; + 1% and a cell of sea
+  only where the land doesn't reach the area's edge — never past the area) and fits that to the best of `IslandSpec.rooms`
+  (`freeRooms(bed, keepOut)` in puzzle3mf.ts: maximal rectangles clear of the keep-outs; `bestRoom`/`roomScale`, less
+  `BED_MARGIN`; scale ≤ 100%, `islandChecks`); `IslandPuzzle.origin` = the grid point at (0, 0) (the map is placed from it),
+  `.room` the room used. Keep-outs (the dialog): `Printer.bedExclude` (Bambu's `bed_exclude_area`: X1/P1 0×0–18×28; A1, H2D,
+  X2D, H3C none), and with colour on `towerCorner` (back-left `TOWER_ROOM` 55 mm for the prime tower, default x 15 y 220,
+  35 wide) and the strip left of `Printer.secondNozzleFrom` (`extruder_printable_area`: X2D 20.5, H2D 25). `IN_PLACE_FIT` 0.1
+  (the usual): the narrowest mesh gap is then ~0.3 mm (0.4 at 0.15). `platesInPlace(pieces, bed, room)`: one plate, one move
+  for every piece (centred in the room), `fits`. 3MF objects get `IN_PLACE_SETTINGS` (BambuStudio PrintObjectConfig keys read
+  per object from model_settings.config even for a non-Bambu 3MF: `brim_type` no_brim, `elefant_foot_compensation` 0.15 =
+  BBL's 0.20 mm profiles) via the optional `settings` of plateFiles/plate3mf/allPlatesZip/bandPlateFiles/bandPlateFile (none =
+  unchanged bytes); no negative parts — the mesh's gap is already "don't print here". Full-colour files carry no settings
+  (said in the window). Laid-out plates still ignore `bedExclude`. tests/islandInPlace.
   Tests: tests/islandPuzzle (pure; over seeds/sizes on a ragged coast: ≥ 2 joints per piece, outlines from the meshes never
   cross or come within 2·fit, every tab catches when pulled, median play ≤ 0.5 mm — `tests/support/outlineGeom.ts`), tests/islandMarks.
 - Mountain puzzle (a card in the Design library's 3D printing tab under "Puzzles" — `src/library/tools.ts` `LIBRARY_TOOLS`:
