@@ -546,6 +546,34 @@
   `compositeParts` (least 2, as a union; `withoutGone` drops gone ones). Claude: linear/circular_pattern `parts` | `faces` (+ `part`) | `features`,
   `skip`; mirror `faces` (+ `part`); `composite_part` `parts`. Tests: tests/patternTypes (pure), enginePartPattern (counts,
   ids, names, skip, boss/hole/pocket by faces, face mirror, composite export/assembly), mcpPatternTypes.
+- Split face and Modify fillet (Onshape's). Split face = a "split" with `splitDef.mode: "face"` (missing = Split part, exactly as
+  before): `picks` = faces of one part (+ edges when `splitDef.tool` is "edges"); `tool` missing = `splitDef.plane` (its section with
+  each face, `planeCutEdges`), "sketch" = the feature's `sketchRef` (its curves as an `extrudeSurface` symmetric past the parts, sectioned
+  with each face), "edges" = picked edges lying on the faces. `src/kernel/splitFace.ts` `splitFaces`: BRepAlgoAPI_Splitter with the
+  section edges as tools; refused when nothing crosses, no face is added or the volume changes; one part, more faces, so Draft /
+  Move face / colour etc. can take half a face (the halves are ordinary face picks). Dialog: Part / Faces segmented choice in
+  `SplitOptionsField` → `SplitFaceFields`; view clicks by `splitDef.picking` ("faces"/"plane"/"edges"). Modify fillet = feature
+  "modifyFillet": `picks` = rounded faces, `radius` param, `modifyFillet.remove` (take off), `noPropagate` (Onshape's Propagate is on
+  unless set). `src/kernel/modifyFillet.ts` `modifyFillets`: faces' adjacency by edge hash; every piece must blend SMOOTHLY
+  (normals within 1°) into the faces along its long sides (`onSide`: a cylinder's sides run along it, a torus's round it; else
+  `NotAFillet` "…meets the face beside it at a corner") and its ends may meet flat faces or other chain pieces only (a smooth
+  round end → "Tick Propagate", a mitre → "pick the pieces meeting it too"). Propagate follows ends only, to tangent pieces of
+  the same tube radius or to corner blends (balls), never sideways or across mitres. Only what the fillets took away goes back
+  (never a region round them — that filled holes, grooves, pockets and chamfers beside them): each cylinder/torus piece's wedge
+  (its cross-section, arc + tangent lines to their corner, pushed along / spun round; cylinders carried 4 r past ends cut by flat
+  faces — a box end, a slanted end, a chamfer — and trimmed back to them, `within`; tori must end square), fused (outside) or cut
+  (inside corner), plus each corner ball's corner block (within r of each of the three flat faces its neighbours blend into;
+  outside corners only, exactly three faces, else refused). Refused if unsound or a round face is
+  left where a picked one was (`leftovers`). Change radius fillets the recovered edges (on the wedges' corner lines/circles, carried past their ends by
+  the balls' radius, `recoveredEdges`) — refused if OpenCascade's check rejects the result (an r that ends exactly on a hole's rim).
+  Propagate's note names what it also took (`describeExtra`: "4 upright edges and 8 corner pieces where edges meet"). Works on imported STEP/simplified parts (no history).
+  Not BRepAlgoAPI_Defeaturing (missing from this OCCT build — Delete face can't remove blended fillets). Fillet/Chamfer `allEdges`: every edge of the picked parts (equal
+  chamfers only). Not done (OCCT can't): conic/curvature fillet sections, partial fillets, turning tangent propagation off.
+  Dependents: split face needs its sketch (tool sketch only — the plane only for tool plane) and its picks' parts, makes no part.
+  Claude: `modify_fillet` (faces, radius | remove, propagate), `split_face` (faces, plane + offset | sketch), fillet/chamfer `all_edges`.
+  Tests: tests/splitFaceModel (pure), engineSplitFillet (split counts/volume, draft on the top half, radius 2 → 4, removed, hole rim,
+  rounded-rectangle chain, a sharp scoop refused, slanted ends, a fully rounded box off/resized vs direct, mitres, inside corner
+  resized vs direct, holes/grooves/pockets/a chamfer beside fillets left alone (exact volumes), imported STEP, all edges), mcpSplitFillet.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.

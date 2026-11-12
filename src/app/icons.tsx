@@ -141,6 +141,13 @@ export const Icons = {
       <path d="M4 20V10a6 6 0 0 1 6-6h10" />
     </Svg>
   ),
+  ModifyFillet: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 20V12a4 4 0 0 1 4-4h12" />
+      <path d="M4 8V4h4" strokeDasharray="2 2" />
+      <path d="M13 13l6 6m0-4v4h-4" />
+    </Svg>
+  ),
   Chamfer: (p: IconProps) => (
     <Svg {...p}>
       <path d="M4 20V10l6-6h10" />

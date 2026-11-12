@@ -142,6 +142,12 @@ export function summarize(f: Feature, doc: JuraCADDocument, built?: Record<strin
     }
     case "fillet":
       return `fillet radius ${mm(p.radius)} on ${f.picks?.length ?? 0} edge/face pick(s)`;
+    case "modifyFillet":
+      return `modify fillet: ${f.modifyFillet?.remove ? "take off" : `new radius ${mm(p.radius)} on`} ${f.picks?.length ?? 0} rounded face(s)${f.modifyFillet?.noPropagate ? " (only those)" : ""}`;
+    case "split":
+      return f.splitDef?.mode === "face"
+        ? `split ${f.picks?.filter((x) => x.ref.kind === "face").length ?? 0} face(s) along ${f.splitDef.tool === "sketch" ? `the lines of ${nameOf(f.sketchRef)}` : f.splitDef.tool === "edges" ? "picked edges" : planeLabel(f.splitDef.plane)}`
+        : "split (made in the app)";
     case "chamfer":
       return `chamfer ${mm(p.distance)} on ${f.picks?.length ?? 0} edge/face pick(s)`;
     case "shell":
@@ -360,8 +366,8 @@ const KIND_HELP: Record<FeatureKind, string> = {
   revolve: 'revolve: sketch, axis ("vertical" | "horizontal" — the sketch\'s axes through its origin — or {"from":[x,y],"to":[x,y]} naming a line drawn in the sketch), angle (° default 360), symmetric, second_angle (° the other way from the sketch too; angle + second_angle ≤ 360; 0 to turn off), flip, areas, more_sketches (spun round the same axis, which must lie in their planes), thin, thin_other_side, thin_centred, thin_flip (as extrude; the axis line is left out of the wall), operation',
   sweep: 'sweep: sketch (the closed shape, drawn on a plane across the start of the path), path (another sketch: the lines/arcs to follow), twist (° turned along the whole path, default 0; whole turns — 360, 720… — on a closed loop), keep_orientation (true: the shape doesn\'t turn with the path; no twist then), areas, more_sketches (more shapes swept along the same path), thin, thin_other_side, thin_centred, thin_flip (as extrude: the profile curves made into a wall, then swept), operation',
   hole: 'hole: sketch (whose points and circle centres mark the holes — draw it on the face the holes start from, with add_sketch "on_face"), size ("M2"…"M12") with fit ("clearance" default | "tapped"), or diameter for a custom hole; style ("simple" | "counterbore" | "countersink"), end ("through_all" default | "blind" with depth), flip. Custom holes may set counterbore_diameter/counterbore_depth/countersink_diameter/countersink_angle',
-  fillet: "fillet: edges (see edge choices), radius, end_radius (optional, a radius growing along the edge), part (default the latest)",
-  chamfer: "chamfer: edges, distance, and optionally second_distance or angle (°), flip_side, part",
+  fillet: "fillet: edges (see edge choices), radius, end_radius (optional, a radius growing along the edge), all_edges (true: every edge of the part, no edges needed), part (default the latest). Fillets always follow on along edges that carry on smoothly (tangent); conic, curvature-continuous and part-way fillets aren't available",
+  chamfer: "chamfer: edges, distance, and optionally second_distance or angle (°), flip_side, all_edges (equal chamfers only), part",
   shell: "shell: faces to leave open (empty list = hollow inside, closed), thickness, outside (walls grow outwards), part",
   linear_pattern: 'linear_pattern: what to repeat — one of features (names/ids of solid features such as an extrude cut or hole), parts (whole parts; each copy is a new part) or faces (face choices of one part, with "part": every face of a boss, pocket or hole on a flat face — a boss\'s copies are added, a pocket\'s or hole\'s cut); direction ("x"|"y"|"z"), count (including the original), spacing, flip, skip (copy numbers to leave out, the original is 1); for a grid also direction2, count2, spacing2, flip2',
   circular_pattern: 'circular_pattern: features, parts or faces (+ part) as for linear_pattern; axis ("x"|"y"|"z", default "z"), count, angle (° spread over, default 360), center ([x,y,z] a point on the axis), skip',
@@ -372,6 +378,8 @@ const KIND_HELP: Record<FeatureKind, string> = {
   cylinder: "cylinder: diameter, height (Z), x, y, z (centre of its base), operation",
   sphere: "sphere: diameter, x, y, z (its centre), operation",
   plane: `plane (a construction plane to sketch on, mirror across or use in assemblies; Onshape's types): plane_type ("offset" default — from + distance; "angle" — from + angle + tilt_about "across"|"up"; "point" — through point, parallel to from; "point_normal" — through point, square to line; "line_angle" — through line, turned by angle from the upright plane holding it; "three_point" — through points (3); "curve_point" — square to line (an edge) at position 0…1 along it; "fit" — best fit through points (3 or more)), from ("Top"|"Front"|"Right" or a Plane / mate connector name), point, points, line, angle (°), distance, position, flip (turn it over). ${POINT_HELP} ${LINE_HELP} Points and lines on parts follow them when the design changes`,
+  modify_fillet: 'modify_fillet (Onshape\'s Modify fillet — also works on imported or simplified parts): faces (the rounded faces of fillets, cylinder or ring pieces from list_faces), radius (the new radius), or remove: true (take the fillets off, putting the sharp edges back); propagate (default true: also the rounded faces of the same radius that carry on smoothly from them), part',
+  split_face: 'split_face (Onshape\'s Split, type Face: the part keeps its shape, the faces are divided so part of a face can be picked — e.g. Draft only the top half): faces (of one part), plane ("Top"|"Front"|"Right") with offset, or sketch (its lines and curves pushed straight through, square to the sketch), part',
   mate_connector: 'mate_connector (a point with its own X/Y/Z that belongs to a part: mate to it in assemblies with add_mate\'s "connector", sketch on it with add_sketch "plane", move parts by it): at (a point — see plane; or {"edge": "E3", "part": name}: an edge\'s middle with Z along it, a round edge\'s centre with Z along its axis; or {"face": "F2", "part": name}: a flat face\'s centre, Z out of it), or on_plane ("Top"|"Front"|"Right" or a Plane name: at its origin), spot ("start"|"end"|"middle" on an edge), owner (the part it belongs to; default the part it\'s on), flip_z, move ([x, y, z] mm along its own axes), turn ([x, y, z]° about its own axes)',
 };
 

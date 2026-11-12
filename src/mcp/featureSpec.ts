@@ -40,6 +40,8 @@ export const FEATURE_KINDS = {
   sphere: "sphere",
   plane: "plane",
   mate_connector: "mateConnector",
+  modify_fillet: "modifyFillet",
+  split_face: "split",
 } as const satisfies Record<string, FeatureType>;
 export type FeatureKind = keyof typeof FEATURE_KINDS;
 export const KIND_OF: Partial<Record<FeatureType, FeatureKind>> = Object.fromEntries(Object.entries(FEATURE_KINDS).map(([k, v]) => [v, k as FeatureKind]));
@@ -52,8 +54,8 @@ export const KIND_KEYS: Record<FeatureKind, string[]> = {
   revolve: ["sketch", "axis", "angle", "symmetric", "second_angle", "flip", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   sweep: ["sketch", "path", "twist", "keep_orientation", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   hole: ["sketch", "size", "fit", "style", "end", "depth", "diameter", "counterbore_diameter", "counterbore_depth", "countersink_diameter", "countersink_angle", "flip"],
-  fillet: ["part", "edges", "radius", "end_radius"],
-  chamfer: ["part", "edges", "distance", "second_distance", "angle", "flip_side"],
+  fillet: ["part", "edges", "radius", "end_radius", "all_edges"],
+  chamfer: ["part", "edges", "distance", "second_distance", "angle", "flip_side", "all_edges"],
   shell: ["part", "faces", "thickness", "outside"],
   linear_pattern: ["features", "parts", "faces", "part", "direction", "count", "spacing", "flip", "direction2", "count2", "spacing2", "flip2", "skip"],
   circular_pattern: ["features", "parts", "faces", "part", "axis", "count", "angle", "center", "skip"],
@@ -65,6 +67,8 @@ export const KIND_KEYS: Record<FeatureKind, string[]> = {
   sphere: ["diameter", "x", "y", "z"],
   plane: PLANE_KEYS,
   mate_connector: CONNECTOR_KEYS,
+  modify_fillet: ["part", "faces", "radius", "remove", "propagate"],
+  split_face: ["part", "faces", "plane", "offset", "sketch"],
 };
 
 /** Most copies in one direction of a pattern, and in all (bigger takes minutes to build). */
@@ -432,10 +436,18 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
 
     case "fillet":
     case "chamfer": {
-      if (has(a, "edges") || !ctx.editing) {
+      if (has(a, "all_edges")) f.allEdges = bool(a.all_edges, "all_edges") || undefined;
+      if (f.allEdges && !has(a, "edges")) {
+        // Every edge of the part: one pick says which part.
+        if (!ctx.editing || has(a, "part")) {
+          const part = ctx.session.part(ctx.parts, has(a, "part") ? a.part : (f.picks?.[0]?.partId ?? undefined), "part");
+          f.picks = pickFaces(part, ["F1"], "faces");
+        }
+      } else if (has(a, "edges") || !ctx.editing) {
         const part = ctx.session.part(ctx.parts, has(a, "part") ? a.part : (f.picks?.[0]?.partId ?? undefined), "part");
         f.picks = pickEdges(part, list(a.edges, "edges"), "edges");
       }
+      if (f.allEdges && f.chamferType) throw new InputError('"all_edges" works with an equal chamfer only (no second_distance or angle).');
       if (kind === "fillet") {
         param(f, a, "radius", "radius", ctx, { positive: true, required: true });
         param(f, a, "end_radius", "endRadius", ctx, { min: 0 });
@@ -451,6 +463,45 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
         }
         if (has(a, "flip_side")) f.flipSide = bool(a.flip_side, "flip_side") || undefined;
       }
+      break;
+    }
+
+    case "modify_fillet": {
+      if (has(a, "faces") || !ctx.editing) {
+        const part = ctx.session.part(ctx.parts, has(a, "part") ? a.part : (f.picks?.[0]?.partId ?? undefined), "part");
+        f.picks = pickFaces(part, list(a.faces, "faces"), "faces");
+        const flat = f.picks.find((p) => p.ref.kind === "face" && p.ref.surface === "PLANE");
+        if (flat) throw new InputError("faces: pick the rounded faces of fillets (list_faces shows them as cylinder or torus pieces), not flat ones.");
+      }
+      const mf = { ...(f.modifyFillet ?? {}) };
+      if (has(a, "remove")) mf.remove = bool(a.remove, "remove") || undefined;
+      if (has(a, "propagate")) mf.noPropagate = !bool(a.propagate, "propagate") || undefined;
+      if (mf.remove && has(a, "radius")) throw new InputError('"radius" isn\'t used with "remove": true (the fillets are taken off); leave one out.');
+      if (!mf.remove) param(f, a, "radius", "radius", ctx, { positive: true, required: !ctx.editing });
+      const tidied = { ...(mf.remove ? { remove: true } : {}), ...(mf.noPropagate ? { noPropagate: true } : {}) };
+      if (Object.keys(tidied).length) f.modifyFillet = tidied;
+      else delete f.modifyFillet;
+      break;
+    }
+
+    case "split_face": {
+      if (ctx.editing && f.splitDef?.mode !== "face") throw new InputError("This Split cuts a part in two (it was made in the app); split_face can't change it. Edit it in the app instead.");
+      if (has(a, "sketch") && (has(a, "plane") || has(a, "offset"))) throw new InputError('Split along either a "plane" (with "offset") or a "sketch" (its lines, pushed square to the sketch) — not both.');
+      if (has(a, "faces") || !ctx.editing) {
+        const part = ctx.session.part(ctx.parts, has(a, "part") ? a.part : (f.picks?.[0]?.partId ?? undefined), "part");
+        f.picks = pickFaces(part, list(a.faces, "faces"), "faces");
+      }
+      const sp = { ...(f.splitDef ?? { plane: { kind: "default", name: "Right" } as SketchPlane, keep: "both" as const }), mode: "face" as const, picking: "faces" as const };
+      if (has(a, "sketch")) {
+        f.sketchRef = sketchRef(a, ctx, f.sketchRef);
+        sp.tool = "sketch";
+      } else if (has(a, "plane") || has(a, "offset") || !ctx.editing) {
+        if (!has(a, "plane") && !ctx.editing) throw new InputError('Give "plane": "Top", "Front" or "Right" (with "offset" to move it along its normal), or "sketch", to split the faces along.');
+        sp.plane = namedPlane(has(a, "plane") ? a.plane : "Top", a.offset, ctx);
+        delete sp.tool;
+        delete f.sketchRef;
+      }
+      f.splitDef = sp;
       break;
     }
 

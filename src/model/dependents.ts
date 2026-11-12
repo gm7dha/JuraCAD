@@ -57,7 +57,8 @@ function planesOf(f: Feature): SketchPlane[] {
     f.planeDef?.ref,
     f.planeDef?.ref2,
     // Split by a surface part ignores the plane.
-    f.splitDef && !f.splitDef.toolPartId ? f.splitDef.plane : undefined,
+    // (Split face along a sketch or edges ignores it too.)
+    f.splitDef && !f.splitDef.toolPartId && !(f.splitDef.mode === "face" && (f.splitDef.tool ?? "plane") !== "plane") ? f.splitDef.plane : undefined,
     f.mirror && !f.mirror.unset && !f.mirror.planePick && !f.mirror.line ? f.mirror.plane : undefined,
     f.replaceDef?.target,
     f.neutral,
@@ -136,8 +137,11 @@ function usesOf(f: Feature): Uses {
   if (UP_TO_PICK.has(f.extrude?.end ?? "")) needPart(f.extrude?.upTo?.partId);
   needPart(f.extendTo?.target?.partId);
   needPart(f.transform?.partId);
-  needPart(f.splitDef?.partId);
-  needPart(f.splitDef?.toolPartId);
+  // Split face's parts are its picks' (a list below).
+  if (f.splitDef?.mode !== "face") {
+    needPart(f.splitDef?.partId);
+    needPart(f.splitDef?.toolPartId);
+  }
   if (f.mirror) {
     needPart(f.mirror.part);
     if (!f.mirror.unset) {
@@ -194,7 +198,7 @@ function makesSolidPart(f: Feature, makers: Set<string>): boolean {
   if (f.type === "enclose") return true;
   if (isSurfaceFeature(f)) return false;
   // Keeping both pieces adds the front one as a part under the split's id.
-  if (f.type === "split") return f.splitDef?.keep === "both";
+  if (f.type === "split") return f.splitDef?.mode !== "face" && f.splitDef?.keep === "both";
   if (f.type === "mirror" && f.mirror?.part !== undefined) return !f.mirror.join;
   if (f.type === "transform") return !!f.transform?.copy;
   // A part pattern's copies are new parts; a face pattern or mirror changes the part its faces are on.

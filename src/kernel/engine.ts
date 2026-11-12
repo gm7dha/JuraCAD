@@ -62,6 +62,8 @@ import { stepPartCount } from "./stepCount";
 import { importCacheKey, importKey, importReport, importSolids, isImportedSurface } from "./importer";
 import { simplifyShape } from "./simplify";
 import { regionOfFaces } from "./facePattern";
+import { modifyFillets, NotAFillet } from "./modifyFillet";
+import { splitFaces } from "./splitFace";
 import { simplifyReport, type SimplifyLevel, type SimplifySummary } from "../model/simplify";
 import { edgesOf, facesOf, shellsOf, solidsOf } from "./topology";
 import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
@@ -2745,6 +2747,16 @@ export class GeometryEngine {
         if (err) featureErrors[feature.id] = err;
         continue;
       }
+      if (feature.type === "split" && feature.splitDef?.mode === "face") {
+        const err = this.applySplitFace(feature, sketches);
+        if (err) featureErrors[feature.id] = err;
+        continue;
+      }
+      if (feature.type === "modifyFillet") {
+        const err = this.applyModifyFillet(feature);
+        if (err) featureErrors[feature.id] = err;
+        continue;
+      }
       if (feature.type === "split") {
         const r = this.applySplit(feature, partCounter + 1);
         if (r.error) featureErrors[feature.id] = r.error;
@@ -3316,6 +3328,110 @@ export class GeometryEngine {
   }
 
   /** Split a part in two along a plane: both halves as parts, or just one side kept. */
+  /**
+   * Split face (Onshape's Split, "Face"): the picked faces of one part divided along a plane, a sketch's curves
+   * (pushed along the sketch's normal) or picked edges lying on them. The part keeps its shape, with more faces.
+   */
+  private applySplitFace(feature: Feature, sketches: SketchMap): string | null {
+    const sp = feature.splitDef!;
+    const facePicks = (feature.picks ?? []).filter((p) => p.ref.kind === "face");
+    if (facePicks.length === 0) return "Click the faces to split.";
+    const partIds = [...new Set(facePicks.map((p) => p.partId))];
+    if (partIds.length > 1) return "Split face works on one part at a time. Remove the faces picked on the other part.";
+    const part = this.parts.find((p) => p.id === partIds[0]);
+    if (!part) return "The part these faces were on no longer exists. Edit this feature and pick the faces again.";
+    const tool = sp.tool ?? "plane";
+    let faces: Face[];
+    try {
+      faces = findPickedFaces(part.shape, facePicks);
+    } catch (e) {
+      return describeError(e, "Couldn't find the picked faces.");
+    }
+    let cutter: Shape3D | null = null;
+    try {
+      let onFace = false;
+      if (tool === "sketch") {
+        if (!feature.sketchRef) return "Choose the sketch whose lines split the faces.";
+        const sketch = sketches.get(feature.sketchRef);
+        if (!sketch?.sketch?.plane) return "The sketch it uses can't be found (deleted, suppressed, or after this in the list).";
+        const far = 2 * reach(sketch.sketch.plane, this.parts) + 10;
+        try {
+          cutter = extrudeSurface(sketch.sketch.plane, sketch.sketch.data, { depth: far, end: "symmetric", flip: false });
+        } catch (e) {
+          return describeError(e, "The sketch has no lines or curves to split with.");
+        }
+      } else if (tool === "edges") {
+        const edgePicks = (feature.picks ?? []).filter((p) => p.ref.kind === "edge");
+        if (edgePicks.length === 0) return "Click the edges (lying on the faces) to split them along.";
+        const edges: Edge[] = [];
+        for (const id of [...new Set(edgePicks.map((p) => p.partId))]) {
+          const owner = this.parts.find((p) => p.id === id);
+          if (!owner) return "A part the edges were on no longer exists. Edit this feature and pick them again.";
+          edges.push(...findPickedEdges(owner.shape, edgePicks.filter((p) => p.partId === id)));
+        }
+        cutter = makeCompound(edges) as unknown as Shape3D;
+        edges.forEach((e) => e.delete());
+        onFace = true;
+      } else {
+        const frame = planeFrame(sp.plane);
+        const bounds = boundsOf(part.shape);
+        const edges = faces.flatMap((f) => planeCutEdges(f, frame, bounds));
+        if (edges.length === 0) return "The plane doesn't cross the picked faces, so there's nothing to split them along.";
+        cutter = makeCompound(edges) as unknown as Shape3D;
+        edges.forEach((e) => e.delete());
+        onFace = true;
+      }
+      const r = splitFaces(part.shape, faces, cutter, { onFace, surface: !!part.surface });
+      part.shape.delete();
+      part.shape = r.shape;
+      part.featureIds.push(feature.id);
+      return null;
+    } catch (e) {
+      return describeError(e, "Couldn't split those faces.");
+    } finally {
+      cutter?.delete();
+      faces.forEach((f) => f.delete());
+    }
+  }
+
+  /** Modify fillet: the picked rounded faces given a new radius, or taken off (the sharp edges put back). */
+  private applyModifyFillet(feature: Feature): string | null {
+    const def = FEATURE_DEFS.modifyFillet;
+    const remove = !!feature.modifyFillet?.remove;
+    const { values, errors } = resolveParams(feature);
+    const bad = def.params.find((p) => errors[p.key] && !(remove && p.key === "radius"));
+    if (bad) return `${bad.label}: ${errors[bad.key]}`;
+    const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "face");
+    if (picks.length === 0) return "Click the rounded faces (fillets) to change.";
+    const partIds = [...new Set(picks.map((p) => p.partId))];
+    if (partIds.length > 1) return "Modify fillet works on one part at a time. Remove the faces picked on the other part.";
+    const part = this.parts.find((p) => p.id === partIds[0]);
+    if (!part) return "The part these faces were on no longer exists. Edit this feature and pick the faces again.";
+    if (part.surface) return `Modify fillet works on solid parts; ${part.name} is a surface.`;
+    let faces: Face[];
+    try {
+      faces = findPickedFaces(part.shape, picks);
+    } catch (e) {
+      return describeError(e, "Couldn't find the picked faces.");
+    }
+    try {
+      const r = modifyFillets(part.shape, faces, { radius: remove ? undefined : values.radius, propagate: !feature.modifyFillet?.noPropagate });
+      part.shape.delete();
+      part.shape = r.shape;
+      part.featureIds.push(feature.id);
+      if (r.faces > faces.length) {
+        const more = r.faces - faces.length;
+        this.notes[feature.id] = `Also ${remove ? "took off" : "changed"} ${more} rounded face${more === 1 ? "" : "s"} running on smoothly from the ${faces.length === 1 ? "one" : "ones"} picked${r.also ? `: ${r.also}` : ""}. Untick “Propagate” to change only those picked.`;
+      }
+      return null;
+    } catch (e) {
+      if (e instanceof NotAFillet) return e.message;
+      return describeError(e, remove ? "Couldn't take these fillets off." : "Couldn't change these fillets.");
+    } finally {
+      faces.forEach((f) => f.delete());
+    }
+  }
+
   private applySplit(feature: Feature, nextPartNumber: number): { error?: string; newPart?: boolean } {
     const sp = feature.splitDef;
     if (!sp?.partId) return { error: "Click the part to split." };
@@ -5846,7 +5962,8 @@ export class GeometryEngine {
           results.push({ part, shape });
           continue;
         }
-        const chosen = findPickedEdges(part.shape, picks.filter((p) => p.partId === partId));
+        // Every edge of the part (Onshape's picking a whole part), or the picked ones.
+        const chosen = feature.allEdges ? edgesOf(part.shape) : findPickedEdges(part.shape, picks.filter((p) => p.partId === partId));
         // A variable fillet runs from one radius at the start of each edge to another at its end.
         const end = feature.type === "fillet" ? (values.endRadius ?? 0) : 0;
         const radius: number | [number, number] = end > 0 && Math.abs(end - size) > 1e-9 ? [size, end] : size;
