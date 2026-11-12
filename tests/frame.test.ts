@@ -200,3 +200,15 @@ describe("frames in files and Delete with dependents", () => {
     expect(findDependents([sk("s1"), sk("s2"), feat("p", "frame", { frame: { paths: [{ sketch: "s1" }], profile: { kind: "sketch", sketch: "s2" } } })], ["s2"]).dependents).toEqual(["p"]);
   });
 });
+
+describe("clicking path lines", () => {
+  it("leaves a line out of a whole sketch, puts it back, and adds another sketch's line", async () => {
+    const { togglePathLine } = await import("../src/model/frame");
+    const feats = [{ id: "s", type: "sketch", sketch: { data: polySketch([[0, 0], [1, 0], [1, 1]]) } }];
+    const def = { paths: [{ sketch: "s" }], profile: { kind: "flat" as const, size: "20x3" } };
+    const out = togglePathLine(def, feats, "s", "l1");
+    expect(out.paths).toEqual([{ sketch: "s", items: ["l0", "l2"] }]);
+    expect(togglePathLine(out, feats, "s", "l1").paths).toEqual([{ sketch: "s" }]);
+    expect(togglePathLine(def, feats, "t", "x").paths).toEqual([{ sketch: "s" }, { sketch: "t", items: ["x"] }]);
+  });
+});

@@ -3,7 +3,7 @@
  * 12 members with no overlaps, a gusset's volume and trimming to a plane.
  */
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import type { Shape3D } from "replicad";
+import { measureVolume, type Shape3D } from "replicad";
 import { GeometryEngine } from "../src/kernel/engine";
 import type { Feature } from "../src/model/types";
 import type { FrameDef } from "../src/model/frameTypes";
@@ -33,7 +33,7 @@ const shapes = () => (engine as unknown as { parts: { id: string; shape: Shape3D
 function overlap(a: Shape3D, b: Shape3D): number {
   const i = a.clone().intersect(b.clone()) as Shape3D;
   try {
-    return i.volume ?? 0;
+    return measureVolume(i);
   } catch {
     return 0;
   } finally {
@@ -60,6 +60,8 @@ describe("frames (real OCCT)", () => {
     expect(r.parts[0].frame?.ends).toEqual([45, 45]);
     const s = shapes();
     expect(overlap(s[0], s[1])).toBeLessThan(1e-3);
+    // (The overlap measure does see an overlap.)
+    expect(overlap(s[0], s[0])).toBeGreaterThan(1000);
   });
 
   it("butt corners: through members 440 long, the others 260", () => {
@@ -117,5 +119,23 @@ describe("frames (real OCCT)", () => {
     const member1 = r.parts.find((p) => p.id === f.id)!;
     expect(member1.frame!.length).toBeCloseTo(400, 2);
     expect(member1.frame!.ends).toEqual([45, 0]);
+  });
+
+  it("coped round tubes and a trim to another member leave sound parts that don't overlap", () => {
+    const sk = sketchFeature({ kind: "default", name: "Top" }, polySketch([[0, 0], [300, 0], [300, 200], [0, 200]]));
+    const keys = [`${sk.id}/l0+${sk.id}/l3`, `${sk.id}/l0+${sk.id}/l1`, `${sk.id}/l1+${sk.id}/l2`, `${sk.id}/l2+${sk.id}/l3`];
+    const f = frame({ paths: [{ sketch: sk.id }], profile: { kind: "tube", size: "25x2" }, corners: keys.map((key) => ({ key, type: "coped" as const })) });
+    const cross = sketchFeature({ kind: "default", name: "Top" }, polySketch([[150, -50], [150, 250]], false));
+    const g = frame({ paths: [{ sketch: cross.id }], profile: { kind: "tube", size: "20x2" } });
+    const trim: Feature = { ...feature("trimFrame", {}), trimFrame: { parts: [g.id], to: f.id } };
+    const r = build([sk, f, cross, g, trim]);
+    expect(r.featureErrors).toEqual({});
+    expect(checked().every((p) => p.geometryValid)).toBe(true);
+    const s = shapes();
+    for (let i = 0; i < 4; i++) expect(overlap(s[i], s[(i + 1) % 4])).toBeLessThan(1e-3);
+    expect(overlap(s[4], s[0])).toBeLessThan(1e-3);
+    const trimmed = r.parts.find((p) => p.id === g.id)!;
+    expect(trimmed.frame!.ends[1]).toBe("coped");
+    expect(trimmed.frame!.length).toBeLessThan(300);
   });
 });

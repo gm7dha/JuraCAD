@@ -58,7 +58,7 @@ export interface TrimFrameDef {
   plane?: SketchPlane;
   to?: string;
   flip?: boolean;
-  picking?: "members" | "target";
+  picking?: "members" | "target" | "targetPart";
 }
 
 /** Gusset: a triangular plate in the inside corner between two frame members (`parts`). */

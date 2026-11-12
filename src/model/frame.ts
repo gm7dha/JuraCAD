@@ -718,7 +718,7 @@ export function parseTrimFrame(raw: unknown, readPlane: (v: unknown) => SketchPl
     ...(plane ? { plane } : {}),
     ...(typeof r.to === "string" ? { to: r.to } : {}),
     ...(r.flip === true ? { flip: true } : {}),
-    ...(r.picking === "target" || r.picking === "members" ? { picking: r.picking } : {}),
+    ...(r.picking === "target" || r.picking === "members" || r.picking === "targetPart" ? { picking: r.picking } : {}),
   };
 }
 
@@ -749,4 +749,39 @@ export function cutListLines(list: { rows: CutListRow[]; totals: CutListTotal[] 
     ...list.rows.map((r, i) => `${i + 1}. ${r.quantity} × ${r.profile}, ${r.length.toFixed(1)} mm${r.curved ? " along the curve" : ""}, ends ${r.ends}${r.massEach !== undefined ? `, ${kg(r.massEach)} each` : ""} (${r.parts.join(", ")})`),
     ...list.totals.map((t) => `Total ${t.profile}: ${t.quantity} piece${t.quantity === 1 ? "" : "s"}, ${(t.length / 1000).toFixed(3)} m${t.mass !== undefined ? `, ${kg(t.mass)}` : ""}`),
   ];
+}
+
+/**
+ * The corners of a frame's path as they'll be built (type and the member running through), for the dialog: worked out
+ * with a 1 mm square stand-in profile (corners don't depend on the profile), with the members' numbers.
+ */
+export function frameCornersFor(segs: PathSeg[], def: Pick<FrameDef, "noMerge" | "corners">): { corners: FrameCorner[]; members: Member[] } {
+  const square: ProfileShape = { label: "", regions: [{ outer: { kind: "poly", pts: [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]] }, holes: [] }] };
+  const plan = planFrame(segs, def, square, 0);
+  const members = buildMembers(segs, !def.noMerge);
+  if (typeof plan !== "string") return { corners: plan.corners, members };
+  return { corners: findCorners(members).map((c) => ({ ...c, type: "none" as const })), members };
+}
+
+/** The curve id ("sketch/curve") at a member's end, as Butt / Coped's `through` names it. */
+export function endCurveId(m: Member, end: 0 | 1): string {
+  return end === 0 ? m.segs[0].id : m.segs[m.segs.length - 1].id;
+}
+
+/**
+ * A sketch line clicked while a Frame is open: left out of the path if it's on it (a whole sketch becomes "all its
+ * curves but that one"), put back (or the sketch added with just it) if not.
+ */
+export function togglePathLine(def: FrameDef, features: { id: string; type: string; sketch?: { data: SketchData } }[], sketch: string, line: string): FrameDef {
+  const path = def.paths.find((p) => p.sketch === sketch);
+  const all = (features.find((f) => f.id === sketch)?.sketch?.data.curves ?? []).filter((c) => !c.construction && (c.type === "line" || c.type === "arc" || c.type === "circle")).map((c) => c.id);
+  let paths: FrameDef["paths"];
+  if (!path) paths = [...def.paths, { sketch, items: [line] }];
+  else {
+    const items = path.items ?? all;
+    const next = items.includes(line) ? items.filter((x) => x !== line) : [...items, line];
+    const whole = all.every((id) => next.includes(id));
+    paths = next.length ? def.paths.map((p) => (p.sketch === sketch ? (whole ? { sketch } : { sketch, items: next }) : p)) : def.paths.filter((p) => p.sketch !== sketch);
+  }
+  return { ...def, paths };
 }

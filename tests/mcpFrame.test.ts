@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DesignFolder } from "../src/mcp/files";
 import { Session } from "../src/mcp/session";
-import { callTool, TOOLS, type ToolResult } from "../src/mcp/tools";
+import { callTool, type ToolResult } from "../src/mcp/tools";
 
 beforeAll(async () => {
   setOC(await opencascade());
