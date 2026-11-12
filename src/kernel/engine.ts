@@ -69,7 +69,7 @@ import { simplifyShape } from "./simplify";
 import { regionOfFaces } from "./facePattern";
 import { modifyFillets, NotAFillet } from "./modifyFillet";
 import { memberSolid, keepSide } from "./frame";
-import { gussetOutline, memberInfo, planFrame, sketchPathSegments, straightMember, trimmedInfo, type PathSeg, type StraightMember } from "../model/frame";
+import { gussetOutline, usualMaterial, memberInfo, planFrame, sketchPathSegments, straightMember, trimmedInfo, type PathSeg, type StraightMember } from "../model/frame";
 import { builtInProfile, placedProfile, type ProfileShape } from "../model/frameProfiles";
 import type { FrameMemberInfo } from "../model/frameTypes";
 import { splitFaces } from "./splitFace";
@@ -5589,7 +5589,7 @@ export class GeometryEngine {
     }
     plan.members.forEach((_, i) => {
       const id = i === 0 ? feature.id : `${feature.id}~${i + 1}`;
-      const info = memberInfo(plan, i, shape, feature.id);
+      const info = memberInfo(plan, i, shape, feature.id, usualMaterial(def.profile.kind));
       this.frameMembers.set(id, { info, member: straightMember(plan, i, shape), shape });
       this.parts.push({ id, name: `${feature.name} member ${i + 1}`, featureIds: [feature.id], shape: solids[i], frame: info });
     });

@@ -21,6 +21,7 @@ import type { Session } from "./session";
 import { buildSketch } from "./sketchShapes";
 import { applyConnector, applyPlane, basePlane, CONNECTOR_KEYS, PLANE_KEYS } from "./planeSpec";
 import { applyCurve, CURVE_KEYS } from "./curveSpec";
+import { applyFrame, applyGusset, applyTrimFrame, FRAME_KEYS, GUSSET_KEYS, TRIM_KEYS } from "./frameSpec";
 import type { SketchData, SketchLine } from "../sketch/types";
 
 /** The feature kinds Claude can add, by the name used in the tools. */
@@ -44,6 +45,9 @@ export const FEATURE_KINDS = {
   plane: "plane",
   mate_connector: "mateConnector",
   curve: "curve",
+  frame: "frame",
+  trim_frame: "trimFrame",
+  gusset: "gusset",
   modify_fillet: "modifyFillet",
   split_face: "split",
 } as const satisfies Record<string, FeatureType>;
@@ -73,6 +77,9 @@ export const KIND_KEYS: Record<FeatureKind, string[]> = {
   plane: PLANE_KEYS,
   mate_connector: CONNECTOR_KEYS,
   curve: CURVE_KEYS,
+  frame: FRAME_KEYS,
+  trim_frame: TRIM_KEYS,
+  gusset: GUSSET_KEYS,
   modify_fillet: ["part", "faces", "radius", "remove", "propagate"],
   split_face: ["part", "faces", "plane", "offset", "sketch"],
 };
@@ -709,6 +716,15 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
       break;
     case "mate_connector":
       applyConnector(f, a, ctx);
+      break;
+    case "frame":
+      applyFrame(f, a, ctx);
+      break;
+    case "trim_frame":
+      applyTrimFrame(f, a, ctx);
+      break;
+    case "gusset":
+      applyGusset(f, a, ctx);
       break;
     case "curve":
       applyCurve(f, a, ctx);

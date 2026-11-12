@@ -82,4 +82,6 @@ export interface FrameMemberInfo {
   ends: [number | "coped", number | "coped"];
   /** Bent to a curve (its length is along the middle). */
   curved?: boolean;
+  /** The material it's usually made of (materials.ts key), for its weight when the part has none set. */
+  usual?: string;
 }

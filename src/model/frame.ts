@@ -16,8 +16,9 @@
  */
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
-import type { FrameCornerType, FrameDef, FrameMemberInfo } from "./frameTypes";
+import type { FrameCornerType, FrameDef, FrameMemberInfo, GussetDef, TrimFrameDef } from "./frameTypes";
 import { profilePoints, reachAlong, type P2, type ProfileShape } from "./frameProfiles";
+import { massGrams } from "./materials";
 
 export type V3 = [number, number, number];
 
@@ -526,7 +527,7 @@ export function straightMember(plan: FramePlan, i: number, shape: ProfileShape):
 }
 
 /** What a member's cut list line says. */
-export function memberInfo(plan: FramePlan, i: number, shape: ProfileShape, frameId: string): FrameMemberInfo {
+export function memberInfo(plan: FramePlan, i: number, shape: ProfileShape, frameId: string, usual?: string): FrameMemberInfo {
   const p = plan.members[i];
   const sm = straightMember(plan, i, shape);
   const open = !p.member.closed;
@@ -538,6 +539,7 @@ export function memberInfo(plan: FramePlan, i: number, shape: ProfileShape, fram
     length: Math.round(length * 100) / 100,
     ends: [p.ends[0].label, p.ends[1].label],
     ...(sm ? {} : { curved: true }),
+    ...(usual ? { usual } : {}),
   };
 }
 
@@ -594,6 +596,11 @@ export function gussetVolume(size: number, chamfer: number, angleDeg: number, th
 }
 
 /* ---------------------------------------------------------------- cut list */
+
+/** What a profile family is usually made of: aluminium extrusion, steel sections, timber (oak's weight); own sketches PLA. */
+export function usualMaterial(kind: FrameDef["profile"]["kind"]): string {
+  return kind === "extrusion" ? "aluminium" : kind === "timber" ? "oak" : kind === "sketch" ? "pla" : "steel";
+}
 
 export interface CutListPart {
   id: string;
@@ -665,4 +672,81 @@ export function cutListCsv(list: { rows: CutListRow[]; totals: CutListTotal[] })
   lines.push(["Profile", "Pieces", "Total length (mm)", "Total mass (g)"].join(","));
   for (const t of list.totals) lines.push([csvCell(t.profile), String(t.quantity), t.length.toFixed(1), t.mass !== undefined ? t.mass.toFixed(1) : ""].join(","));
   return lines.join("\n") + "\n";
+}
+
+/* ---------------------------------------------------------------- reading files */
+
+const FRAME_KINDS = new Set(["extrusion", "box", "angle", "tube", "flat", "timber"]);
+const ANCHOR_KEYS = new Set(["centre", "top", "bottom", "left", "right", "topLeft", "topRight", "bottomLeft", "bottomRight"]);
+const CORNER_TYPES = new Set(["mitre", "butt", "coped", "none"]);
+const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+
+/** A frame's settings from a saved file (odd values fall back; null when there's nothing usable). */
+export function parseFrameDef(raw: unknown): FrameDef | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const paths = (Array.isArray(r.paths) ? r.paths : [])
+    .filter((p): p is Record<string, unknown> => !!p && typeof p === "object" && typeof (p as Record<string, unknown>).sketch === "string")
+    .map((p) => ({ sketch: p.sketch as string, ...(Array.isArray(p.items) ? { items: strs(p.items) } : {}) }));
+  const pr = (r.profile ?? {}) as Record<string, unknown>;
+  const profile: FrameDef["profile"] =
+    pr.kind === "sketch" && typeof pr.sketch === "string"
+      ? { kind: "sketch", sketch: pr.sketch }
+      : typeof pr.kind === "string" && FRAME_KINDS.has(pr.kind) && typeof pr.size === "string"
+        ? { kind: pr.kind as Exclude<FrameDef["profile"]["kind"], "sketch">, size: pr.size }
+        : { kind: "extrusion", size: "2020" };
+  const corners = (Array.isArray(r.corners) ? r.corners : [])
+    .filter((c): c is Record<string, unknown> => !!c && typeof c === "object")
+    .filter((c) => typeof c.key === "string" && typeof c.type === "string" && CORNER_TYPES.has(c.type))
+    .map((c) => ({ key: c.key as string, type: c.type as FrameCornerType, ...(typeof c.through === "string" ? { through: c.through } : {}) }));
+  return {
+    paths,
+    profile,
+    ...(typeof r.anchor === "string" && ANCHOR_KEYS.has(r.anchor) && r.anchor !== "centre" ? { anchor: r.anchor as FrameDef["anchor"] } : {}),
+    ...(r.mirror === true ? { mirror: true } : {}),
+    ...(r.noMerge === true ? { noMerge: true } : {}),
+    ...(corners.length ? { corners } : {}),
+  };
+}
+
+/** Trim frame's settings from a file (`plane` read by the caller's plane reader). */
+export function parseTrimFrame(raw: unknown, readPlane: (v: unknown) => SketchPlane | null): TrimFrameDef {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const plane = r.plane ? readPlane(r.plane) : null;
+  return {
+    parts: strs(r.parts),
+    ...(plane ? { plane } : {}),
+    ...(typeof r.to === "string" ? { to: r.to } : {}),
+    ...(r.flip === true ? { flip: true } : {}),
+    ...(r.picking === "target" || r.picking === "members" ? { picking: r.picking } : {}),
+  };
+}
+
+export function parseGusset(raw: unknown): GussetDef {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  return { parts: strs(r.parts).slice(0, 2), ...(r.chamfer === true ? { chamfer: true } : {}) };
+}
+
+/** What a frame, trim or gusset needs from other features: sketches (all needed, the path a list) and parts. */
+export function frameUses(f: { frame?: FrameDef; trimFrame?: TrimFrameDef; gusset?: GussetDef }): { pathSketches: string[]; sketches: string[]; parts: string[]; trimParts: string[]; planeRef?: string } {
+  const pathSketches = f.frame ? [...new Set(f.frame.paths.map((p) => p.sketch))] : [];
+  const sketches = f.frame?.profile.kind === "sketch" ? [f.frame.profile.sketch] : [];
+  const parts = [...(f.gusset?.parts ?? []), ...(f.trimFrame?.to ? [f.trimFrame.to] : [])];
+  const plane = f.trimFrame?.plane;
+  return { pathSketches, sketches, parts, trimParts: f.trimFrame?.parts ?? [], ...(plane?.kind === "face" && plane.planeRef ? { planeRef: plane.planeRef } : {}) };
+}
+
+/** The cut list of a Part Studio's parts, weighed with each part's material (or the profile's usual one). */
+export function frameCutList(parts: CutListPart[], materials: Record<string, string> | undefined): { rows: CutListRow[]; totals: CutListTotal[] } {
+  return cutList(parts, (p) => (p.volume !== undefined && p.frame ? massGrams(p.volume, materials?.[p.id] ?? p.frame.usual) : undefined));
+}
+
+/** The cut list as plain lines (for Claude and the dialog's copy). */
+export function cutListLines(list: { rows: CutListRow[]; totals: CutListTotal[] }): string[] {
+  if (!list.rows.length) return ["There are no frame members (make some with a Frame feature)."];
+  const kg = (g: number) => (g >= 1000 ? `${Math.round(g / 10) / 100} kg` : `${Math.round(g)} g`);
+  return [
+    ...list.rows.map((r, i) => `${i + 1}. ${r.quantity} × ${r.profile}, ${r.length.toFixed(1)} mm${r.curved ? " along the curve" : ""}, ends ${r.ends}${r.massEach !== undefined ? `, ${kg(r.massEach)} each` : ""} (${r.parts.join(", ")})`),
+    ...list.totals.map((t) => `Total ${t.profile}: ${t.quantity} piece${t.quantity === 1 ? "" : "s"}, ${(t.length / 1000).toFixed(3)} m${t.mass !== undefined ? `, ${kg(t.mass)}` : ""}`),
+  ];
 }

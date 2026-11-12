@@ -2,7 +2,10 @@
 import { describe, expect, it } from "vitest";
 import { builtInProfile, placedProfile, profileArea, profileBox, PROFILE_KINDS, type ProfileShape } from "../src/model/frameProfiles";
 import { buildMembers, cutList, cutListCsv, gussetOutline, gussetVolume, memberInfo, planFrame, sketchPathSegments, straightMember, trimmedInfo, type FramePlan, type PathSeg } from "../src/model/frame";
-import type { SketchData } from "../src/sketch/types";
+import { emptySketch, type SketchData } from "../src/sketch/types";
+import type { Feature } from "../src/model/types";
+import { emptyDocument, parseDocument } from "../src/model/document";
+import { findDependents } from "../src/model/dependents";
 import { polySketch } from "./support/frameSketch";
 
 const rect = (w: number, h: number) => polySketch([[0, 0], [w, 0], [w, h], [0, h]]);
@@ -170,5 +173,30 @@ describe("trims, gussets and the cut list", () => {
     expect(list.totals).toEqual([{ profile: "2020 aluminium extrusion", quantity: 4, length: 1480, mass: 10.8 }]);
     const csv = cutListCsv(list);
     expect(csv.split("\n")[1]).toBe("1,2,2020 aluminium extrusion,420.0,45° / 45°,2.7,Frame 1 member 1; Frame 1 member 3");
+  });
+});
+
+describe("frames in files and Delete with dependents", () => {
+  const feat = (id: string, type: Feature["type"], extra: Partial<Feature> = {}): Feature => ({ id, name: id, type, operation: "new", suppressed: false, params: {}, ...extra });
+  const sk = (id: string) => feat(id, "sketch", { sketch: { plane: { kind: "default", name: "Top" }, data: emptySketch() } });
+  const reread = (features: Feature[]) => parseDocument(JSON.parse(JSON.stringify({ ...emptyDocument("x"), features })))!.features;
+  const fr = feat("f", "frame", { frame: { paths: [{ sketch: "s1" }, { sketch: "s2", items: ["l1"] }], profile: { kind: "box", size: "40x40x2" }, anchor: "topLeft", mirror: true, noMerge: true, corners: [{ key: "a+b", type: "coped", through: "s1/l0" }] } });
+  const tr = feat("t", "trimFrame", { trimFrame: { parts: ["f~2"], plane: { kind: "default", name: "Right" }, flip: true } });
+  const gu = feat("g", "gusset", { params: { size: "50" }, gusset: { parts: ["f", "f~2"], chamfer: true } });
+  it("reads them back as saved, and old files are untouched", () => {
+    const [, , a, b, c] = reread([sk("s1"), sk("s2"), fr, tr, gu]);
+    expect(a.frame).toEqual(fr.frame);
+    expect(b.trimFrame).toEqual(tr.trimFrame);
+    expect(c.gusset).toEqual(gu.gusset);
+    const plain = reread([sk("s1"), feat("b", "box")]);
+    expect(plain[1].frame).toBeUndefined();
+    expect(Object.keys(plain[1]).sort()).toEqual(["id", "name", "operation", "params", "suppressed", "type"]);
+  });
+  it("Delete with dependents follows sketches and members", () => {
+    const list = [sk("s1"), sk("s2"), fr, tr, gu];
+    expect(findDependents(list, ["s1"]).partial.map((p) => p.id)).toEqual(["f"]);
+    expect(findDependents(list, ["s1", "s2"]).dependents).toEqual(["f", "t", "g"]);
+    expect(findDependents(list, ["f"]).dependents).toEqual(["t", "g"]);
+    expect(findDependents([sk("s1"), sk("s2"), feat("p", "frame", { frame: { paths: [{ sketch: "s1" }], profile: { kind: "sketch", sketch: "s2" } } })], ["s2"]).dependents).toEqual(["p"]);
   });
 });
