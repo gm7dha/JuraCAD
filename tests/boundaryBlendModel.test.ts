@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createFeature, emptyDocument, parseDocument, withoutPicking } from "../src/model/document";
 import { findDependents, withoutGone } from "../src/model/dependents";
-import { blendClick, boundaryClick, setMatch } from "../src/model/surfaceClicks";
+import { blendClick, boundaryClick, setMatch, setOtherFace } from "../src/model/surfaceClicks";
 import { featureForEngine } from "../src/kernel/buildInput";
 import type { Feature } from "../src/model/types";
 import type { TopoPick } from "../src/geometry/topoRef";
@@ -28,6 +28,12 @@ describe("Boundary surface and Face blend: clicks", () => {
     expect(setMatch(def, "u", 0, "tangent").u[0].match).toBe("tangent");
     expect(setMatch(def, "v", 0, "tangent").v[0].match).toBeUndefined();
     expect(setMatch(setMatch(def, "u", 0, "curvature"), "u", 0, undefined).u[0]).toEqual({ edge: edge("p1", 1) });
+    // The other face beside a solid's edge: only for a matched edge, kept while the match changes, dropped with it.
+    expect(setOtherFace(def, "u", 0, true).u[0].otherFace).toBeUndefined();
+    const other = setOtherFace(setMatch(def, "u", 0, "tangent"), "u", 0, true);
+    expect(other.u[0]).toEqual({ edge: edge("p1", 1), match: "tangent", otherFace: true });
+    expect(setMatch(other, "u", 0, "curvature").u[0].otherFace).toBe(true);
+    expect(setMatch(other, "u", 0, undefined).u[0]).toEqual({ edge: edge("p1", 1) });
   });
 
   it("puts faces on side 1 or side 2, and takes them out when clicked again", () => {
@@ -45,11 +51,11 @@ describe("Boundary surface and Face blend: clicks", () => {
 
 describe("Boundary surface and Face blend: files and the engine", () => {
   it("are saved and read back, without what a click picks", () => {
-    const b = { ...feat("b1", "boundary"), boundary: { u: [{ edge: edge("p1"), match: "tangent" as const }, { curve: "c1" }], v: [{ sketch: "s1" }], picking: "v" as const } };
+    const b = { ...feat("b1", "boundary"), boundary: { u: [{ edge: edge("p1"), match: "tangent" as const, otherFace: true }, { curve: "c1" }], v: [{ sketch: "s1" }], picking: "v" as const } };
     const fb = { ...feat("fb1", "faceBlend", { params: { radius: "3" } }), picks: [face("p1")], blend: { side2: [face("p2")], flip2: true, noTrim: true, picking: "side2" as const } };
     const doc = { ...emptyDocument(), features: [withoutPicking(b), withoutPicking(fb)] };
     const back = parseDocument(JSON.parse(JSON.stringify(doc)))!;
-    expect(back.features[0].boundary).toEqual({ u: [{ edge: edge("p1"), match: "tangent" }, { curve: "c1" }], v: [{ sketch: "s1" }] });
+    expect(back.features[0].boundary).toEqual({ u: [{ edge: edge("p1"), match: "tangent", otherFace: true }, { curve: "c1" }], v: [{ sketch: "s1" }] });
     expect(back.features[1].blend).toEqual({ side2: [face("p2")], flip2: true, noTrim: true });
     expect(back.features[1].picks).toEqual([face("p1")]);
     // The engine never sees the picking (so switching sides doesn't rebuild).

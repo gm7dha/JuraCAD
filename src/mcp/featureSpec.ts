@@ -598,7 +598,9 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
             const part = ctx.session.part(ctx.parts, has(o, "part") ? o.part : undefined, `${where}[${i}].part`);
             const [edge] = pickEdges(part, [o.edge], `${where}[${i}].edge`);
             if (!edge || edge.ref.kind !== "edge") throw new InputError(`${where}[${i}].edge: give one edge (an E-number from list_edges).`);
-            return { edge, ...(match === "tangent" || match === "curvature" ? { match } : {}) };
+            const smooth = match === "tangent" || match === "curvature";
+            if (has(o, "other_face") && !smooth) throw new InputError(`${where}[${i}].other_face: only with "match" "tangent" or "curvature".`);
+            return { edge, ...(smooth ? { match } : {}), ...(smooth && has(o, "other_face") && bool(o.other_face, `${where}[${i}].other_face`) ? { otherFace: true } : {}) };
           }
           if (match === "tangent" || match === "curvature") throw new InputError(`${where}[${i}]: "match" is only for part edges (it meets the face beside the edge).`);
           if (has(o, "curve")) return { curve: ctx.session.feature(o.curve, `${where}[${i}].curve`, ["curve"], ctx.doc).id };

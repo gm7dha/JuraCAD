@@ -1297,6 +1297,8 @@ export interface BoundaryCurve {
   sketch?: string;
   /** A part edge's side meets the face beside it smoothly ("tangent") or bending the same ("curvature"). Missing = just through it. */
   match?: "tangent" | "curvature";
+  /** A solid's edge has a face either side: match the other one (missing = the first found; a note names it). */
+  otherFace?: boolean;
 }
 
 /** Boundary surface (Onshape's): curves in two directions round one patch (up to two each way). */

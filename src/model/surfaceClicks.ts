@@ -35,8 +35,8 @@ export function boundaryClick(def: BoundaryDef, c: BoundaryClick): BoundaryDef |
 export function setMatch(def: BoundaryDef, way: "u" | "v", index: number, match: BoundaryCurve["match"]): BoundaryDef {
   const list = def[way].map((c, i) => {
     if (i !== index) return c;
-    const { match: _m, ...rest } = c;
-    return match && c.edge ? { ...rest, match } : rest;
+    const { match: _m, otherFace, ...rest } = c;
+    return match && c.edge ? { ...rest, match, ...(otherFace ? { otherFace } : {}) } : rest;
   });
   return { ...def, [way]: list };
 }
@@ -51,4 +51,14 @@ export function blendClick(draft: Pick<Feature, "picks" | "blend">, pick: TopoPi
   if (blend.side2.some((p) => samePick(p, pick))) return { picks: side1, blend: { ...blend, side2: blend.side2.filter((p) => !samePick(p, pick)) } };
   if (blend.picking === "side2") return { picks: side1, blend: { ...blend, side2: [...blend.side2, clean] } };
   return { picks: [...side1, clean], blend };
+}
+
+/** A matched solid edge's face switched to the other one beside it (or back). */
+export function setOtherFace(def: BoundaryDef, way: "u" | "v", index: number, other: boolean): BoundaryDef {
+  const list = def[way].map((c, i) => {
+    if (i !== index) return c;
+    const { otherFace: _o, ...rest } = c;
+    return other && c.edge && c.match ? { ...rest, otherFace: true } : rest;
+  });
+  return { ...def, [way]: list };
 }

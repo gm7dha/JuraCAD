@@ -5,7 +5,7 @@
 import { useMemo } from "react";
 import { describeRef } from "../geometry/topoRef";
 import { activeFeatures, studioParts, useStore } from "../model/store";
-import { boundaryClick, MOST_EACH_WAY, setMatch } from "../model/surfaceClicks";
+import { boundaryClick, MOST_EACH_WAY, setMatch, setOtherFace } from "../model/surfaceClicks";
 import type { BoundaryCurve, BoundaryDef, FaceBlendDef } from "../model/types";
 import type { TopoPick } from "../geometry/topoRef";
 import { Icons } from "./icons";
@@ -66,6 +66,12 @@ export function BoundaryOptions() {
                     </option>
                   ))}
                 </select>
+              )}
+              {c.edge && c.match && (
+                <label className="check-row" title="A solid's edge has a face on each side: meet the other one. The note under the dialog says which face is used.">
+                  <input type="checkbox" checked={!!c.otherFace} onChange={(e) => set(setOtherFace(def, w, i, e.target.checked))} />
+                  Use the other face
+                </label>
               )}
               <button type="button" className="icon-button small" onClick={() => set({ ...def, [w]: def[w].filter((_, k) => k !== i) })} title="Take it out" aria-label="Remove">
                 <Icons.Cross size={14} />

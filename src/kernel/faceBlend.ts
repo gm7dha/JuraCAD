@@ -284,9 +284,9 @@ export function sewnLoosely(shapes: Shape3D[], tolerance = 1e-2): Shape3D {
  * left (the caller sews them), or null when the cut couldn't be made.
  */
 export function trimUnder(sheet: Shape3D, face: Face, touch: { p: Vec3; under: Vec3 }[], radius: number, closed = false): Face[] | null {
-  const box = sheet.boundingBox;
-  const reach = Math.max(radius, box.width, box.height, box.depth) + 1;
-  box.delete();
+  // Carried on only a little past its ends (enough to cross the face's edge where it ends on one): carried on far, a
+  // curved touching line's straight extensions cut across the face where the blend isn't.
+  const reach = 2 * radius + 1;
   // Only a little way off the face either side: it crosses the face right where the blend touches it.
   const cutter = cutterAlong(touch, face, reach, closed, Math.min(1, radius * 0.25));
   if (!cutter) return null;

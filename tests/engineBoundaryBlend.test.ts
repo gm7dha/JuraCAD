@@ -4,14 +4,14 @@
  * radius, works between separate parts and surfaces (trimmed and joined), rings round a boss, and refuses plainly.
  */
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { makeLine, makePolygon, makeThreePointArc, assembleWire, measureArea, measureDistanceBetween, measureVolume, type Face, type Shape3D } from "replicad";
+import { getOC, makeLine, makePolygon, makeThreePointArc, assembleWire, measureArea, measureDistanceBetween, measureVolume, type Face, type Shape3D } from "replicad";
 import { GeometryEngine } from "../src/kernel/engine";
 import { boundarySurface } from "../src/kernel/boundary";
 import { faceBlend } from "../src/kernel/faceBlend";
-import { edgesOf, facesOf } from "../src/kernel/topology";
+import { edgesOf, facesOf, shellsOf } from "../src/kernel/topology";
 import type { Feature } from "../src/model/types";
 import type { TopoPick } from "../src/geometry/topoRef";
-import { addArc, addLine } from "../src/sketch/ops";
+import { addArc, addCircle, addLine } from "../src/sketch/ops";
 import type { SketchPlane } from "../src/sketch/planes";
 import { emptySketch } from "../src/sketch/types";
 import { extrudeFeature, feature, loadOpenCascade, sketchFeature } from "./support/engineHelpers";
@@ -29,6 +29,65 @@ const shapeOf = (id: string): Shape3D => (engine as unknown as { parts: { id: st
 const top: SketchPlane = { kind: "default", name: "Top" };
 const front: SketchPlane = { kind: "default", name: "Front" };
 type Vec3 = [number, number, number];
+
+/**
+ * How a surface leaves an edge through `at`: the direction across it there (from the end of its v range nearest `at`)
+ * and how much it bends that way (1 / radius), from points a little way in.
+ */
+function leaving(s: Shape3D, at: Vec3): { dir: Vec3; bend: number } {
+  const f = facesOf(s)[0];
+  const P = (u: number, v: number): Vec3 => {
+    const p = f.pointOnSurface(u, v);
+    return [p.x, p.y, p.z];
+  };
+  const d = (a: Vec3, b: Vec3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  // Which parameter runs across the edge, and from which end: the end whose middle is at the edge.
+  const ends: [number, number, (t: number) => [number, number]][] = [
+    [0.5, 0, (t) => [0.5, t]],
+    [0.5, 1, (t) => [0.5, 1 - t]],
+    [0, 0.5, (t) => [t, 0.5]],
+    [1, 0.5, (t) => [1 - t, 0.5]],
+  ];
+  const [, , walk] = ends.map((e) => ({ e, g: d(P(e[0], e[1]), at) })).sort((a, b) => a.g - b.g)[0].e;
+  const at0 = P(...walk(0));
+  const h = 0.003;
+  const p1 = P(...walk(h));
+  const p2 = P(...walk(2 * h));
+  const l = d(p1, at0) || 1;
+  const dir: Vec3 = [(p1[0] - at0[0]) / l, (p1[1] - at0[1]) / l, (p1[2] - at0[2]) / l];
+  // Curvature of the circle through the three points.
+  const a = d(at0, p1), b = d(p1, p2), c = d(at0, p2);
+  const u: Vec3 = [p1[0] - at0[0], p1[1] - at0[1], p1[2] - at0[2]];
+  const w: Vec3 = [p2[0] - at0[0], p2[1] - at0[1], p2[2] - at0[2]];
+  const cr = Math.hypot(u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]);
+  return { dir, bend: (2 * cr) / (a * b * c) };
+}
+
+/** Is a surface sound (OpenCascade's check) and one piece? */
+function soundSurface(s: Shape3D): boolean {
+  const oc = getOC() as unknown as { BRepCheck_Analyzer: new (s: unknown, a: boolean, b: boolean, c: boolean) => { IsValid(): boolean; delete(): void } };
+  const a = new oc.BRepCheck_Analyzer(s.wrapped, true, false, false);
+  const ok = a.IsValid();
+  a.delete();
+  return ok && shellsOf(s).length === 1;
+}
+
+/** How many edges of a surface are used just once by its faces (its open rim; a round face's seam is used twice). */
+function freeEdgeCount(s: Shape3D): number {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const seen: { e: unknown; n: number }[] = [];
+  const ex = new oc.TopExp_Explorer(s.wrapped, oc.TopAbs_ShapeEnum.TopAbs_EDGE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (; ex.More(); ex.Next()) {
+    const e = ex.Current();
+    const hit = seen.find((x) => (x.e as { IsSame(o: unknown): boolean }).IsSame(e));
+    if (hit) hit.n++;
+    else seen.push({ e, n: 1 });
+  }
+  ex.delete();
+  return seen.filter((x) => x.n === 1).length;
+}
 
 /** A face of a built part whose centre is at `c` (within 1e-6 on the given axes). */
 function faceAt(r: ReturnType<typeof build>, partId: string, test: (c: Vec3) => boolean): TopoPick {
@@ -61,6 +120,13 @@ describe("Face blend", () => {
     expect(alone.parts.map((p) => !!p.surface)).toEqual([false, true]);
     expect(measureArea(shapeOf(blend.id))).toBeCloseTo(Math.PI * 10, 4);
     expect(measureVolume(shapeOf(box.id))).toBeCloseTo(2000, 6);
+    expect(r.featureNotes?.[blend.id]).toMatch(/from inside the corner/);
+    // A face of the other side that meets none of side 1's is left out, and said so.
+    const bottom = faceAt(r0, box.id, (c) => Math.abs(c[2]) < 1e-6);
+    const mixed = build([box, { ...blend, blend: { side2: [side, bottom] } }]);
+    expect(mixed.featureErrors).toEqual({});
+    expect(mixed.featureWarnings?.[blend.id]).toMatch(/1 of the picked faces? doesn't meet the other side along an edge, so it was left out/);
+    expect(measureVolume(shapeOf(box.id))).toBeCloseTo(2000 - (4 - Math.PI) * 10, 4);
     // Flipping a side where the faces meet isn't offered.
     expect(build([box, { ...blend, blend: { side2: [side], flip1: true } }]).featureErrors[blend.id]).toMatch(/flipping a side doesn't apply/);
   });
@@ -123,6 +189,69 @@ describe("Face blend", () => {
     expect(measureArea(shapeOf(blend.id))).toBeCloseTo((far ? 70 : 170) + 170 + quarter, 2);
   });
 
+  it("trims a floor and a tube standing on it, on either side of the tube, into one sound surface", () => {
+    const fl = sketchFeature(front, addLine(emptySketch(), { x: -30, y: 0 }, { x: 30, y: 0 }).sketch);
+    const floor: Feature = { ...extrudeFeature(fl.id, 60, { end: "symmetric" }), surface: true };
+    const ring = sketchFeature(top, addCircle(emptySketch(), { x: 0, y: 0 }, 10).sketch);
+    const tube: Feature = { ...extrudeFeature(ring.id, 15), surface: true };
+    const r0 = build([fl, floor, ring, tube]);
+    const blend: Feature = {
+      ...feature("faceBlend", { radius: 2 }),
+      picks: [{ partId: floor.id, ref: r0.parts.find((p) => p.id === floor.id)!.faceRefs[0] }],
+      blend: { side2: [{ partId: tube.id, ref: r0.parts.find((p) => p.id === tube.id)!.faceRefs[0] }] },
+    };
+    // Outside the tube: the floor keeps all but a disc of radius 12, the tube all above z = 2; the blend a quarter-round
+    // ring 2πr((R + r)π/2 − r). Inside (flipped): the floor keeps a disc of radius 8; the ring is 2πr((R − r)π/2 + r).
+    const outside = 3600 - Math.PI * 144 + 2 * Math.PI * 10 * 13 + 2 * Math.PI * 2 * (12 * (Math.PI / 2) - 2);
+    const inside = Math.PI * 64 + 2 * Math.PI * 10 * 13 + 2 * Math.PI * 2 * (8 * (Math.PI / 2) + 2);
+    const areas: number[] = [];
+    const opens: number[] = [];
+    for (const flip2 of [false, true]) {
+      const r = build([fl, floor, ring, tube, { ...blend, blend: { ...blend.blend!, ...(flip2 ? { flip2 } : {}) } }]);
+      expect(r.featureErrors).toEqual({});
+      expect(r.featureWarnings?.[blend.id]).toBeUndefined();
+      expect(r.parts).toHaveLength(1);
+      const s = shapeOf(blend.id);
+      expect(soundSurface(s)).toBe(true);
+      // Open only round the floor's outside (4 edges; inside the tube the floor's disc is joined all round) and the
+      // tube's top circle.
+      const open = freeEdgeCount(s);
+      expect([5, 1]).toContain(open);
+      opens.push(open);
+      expect(r.featureNotes?.[blend.id]).toMatch(/The ball rolls .* Tick Flip/);
+      areas.push(measureArea(s));
+    }
+    // One of each: the bigger surface (outside) is the one open round the floor's 4 edges too.
+    expect([...opens].sort()).toEqual([1, 5]);
+    const big = areas[0] > areas[1] ? 0 : 1;
+    expect(opens[big]).toBe(5);
+    // (Within 0.3%: the round cuts and the blend are fitted through points.)
+    expect(Math.abs(areas[big] / outside - 1)).toBeLessThan(3e-3);
+    expect(Math.abs(areas[1 - big] / inside - 1)).toBeLessThan(3e-3);
+  });
+
+  it("won't leave a surface invalid or a sliver: a half tube on a floor gets the blend on its own, with a note", () => {
+    const fl = sketchFeature(front, addLine(emptySketch(), { x: -30, y: 0 }, { x: 30, y: 0 }).sketch);
+    const floor: Feature = { ...extrudeFeature(fl.id, 60, { end: "symmetric" }), surface: true };
+    const half = sketchFeature(top, addArc(emptySketch(), { x: 10, y: 0 }, { x: -10, y: 0 }, { x: 0, y: 10 }).sketch);
+    const strip: Feature = { ...extrudeFeature(half.id, 15), surface: true };
+    const r0 = build([fl, floor, half, strip]);
+    const blend: Feature = {
+      ...feature("faceBlend", { radius: 2 }),
+      picks: [{ partId: floor.id, ref: r0.parts.find((p) => p.id === floor.id)!.faceRefs[0] }],
+      blend: { side2: [{ partId: strip.id, ref: r0.parts.find((p) => p.id === strip.id)!.faceRefs[0] }] },
+    };
+    for (const flip2 of [false, true]) {
+      const r = build([fl, floor, half, strip, { ...blend, blend: { ...blend.blend!, ...(flip2 ? { flip2 } : {}) } }]);
+      expect(r.featureErrors).toEqual({});
+      expect(r.featureWarnings?.[blend.id]).toMatch(/couldn't be trimmed cleanly/);
+      // The floor and the strip are left whole; the blend is a sound surface of its own.
+      expect(r.parts).toHaveLength(3);
+      expect(measureArea(shapeOf(floor.id))).toBeCloseTo(3600, 3);
+      expect(soundSurface(shapeOf(blend.id))).toBe(true);
+    }
+  });
+
   it("refuses plainly when a ball of that size can't touch both", () => {
     // Two plates 10 apart, facing each other: a ball of radius 2 can't touch both.
     const a = feature("box", { width: 10, depth: 10, height: 2, z: -2 });
@@ -170,27 +299,85 @@ describe("Boundary surface", () => {
     expect(measureArea(two)).toBeCloseTo(measureArea(s), 1);
   });
 
-  it("meets the face beside a part's edge smoothly when asked", () => {
-    // A wall (x = 0, z 0…10) and a line at x = 10 on the ground: from the wall's top edge down to the line.
-    const wall = makePolygon([[0, 0, 0], [0, 10, 0], [0, 10, 10], [0, 0, 10]]) as Face;
-    const topEdge = edgesOf(wall).find((e) => Math.abs(e.startPoint.z - 10) < 1e-9 && Math.abs(e.endPoint.z - 10) < 1e-9)!;
-    const ground = makeLine([10, 0, 0], [10, 10, 0]);
-    const plain = boundarySurface([{ wire: assembleWire([topEdge]) }, { wire: assembleWire([ground]) }], 2, 0);
-    const smooth = boundarySurface([{ wire: assembleWire([topEdge]), face: wall, match: "tangent" }, { wire: assembleWire([ground]) }], 2, 0);
-    const normalNear = (s: Shape3D) => {
-      const f = facesOf(s)[0];
-      const n = f.normalAt([0.01, 5, 10]);
-      return [n.x, n.y, n.z];
-    };
-    // Plain: a flat slope at 45°. Smooth: leaving the wall straight up, so square to x there, like the wall.
-    expect(Math.abs(normalNear(plain)[0])).toBeCloseTo(Math.SQRT1_2, 3);
-    expect(Math.abs(normalNear(smooth)[0])).toBeGreaterThan(0.99);
-    expect(measureDistanceBetween(topEdge, smooth)).toBeLessThan(1e-4);
-    expect(measureDistanceBetween(ground, smooth)).toBeLessThan(1e-4);
-    // Matching curvature too: still through both, still leaving the wall straight up.
-    const curved = boundarySurface([{ wire: assembleWire([topEdge]), face: wall, match: "curvature" }, { wire: assembleWire([ground]) }], 2, 0);
-    expect(Math.abs(normalNear(curved)[0])).toBeGreaterThan(0.99);
-    expect(measureDistanceBetween(topEdge, curved)).toBeLessThan(1e-4);
+  it("carries the face on past its edge (tangent), and bends with it too (curvature), on a long edge as well", () => {
+    for (const L of [10, 40]) {
+      // A wall (x = 0, z 0…10, L long) and a line on the ground at x = 10: from the wall's top edge down to the line.
+      const wall = makePolygon([[0, 0, 0], [0, L, 0], [0, L, 10], [0, 0, 10]]) as Face;
+      const topEdge = edgesOf(wall).find((e) => Math.abs(e.startPoint.z - 10) < 1e-9 && Math.abs(e.endPoint.z - 10) < 1e-9)!;
+      const ground = makeLine([10, 0, 0], [10, L, 0]);
+      const make = (match?: "tangent" | "curvature") =>
+        boundarySurface([{ wire: assembleWire([topEdge]), ...(match ? { face: wall, match } : {}) }, { wire: assembleWire([ground]) }], 2, 0);
+      const plain = make();
+      const smooth = make("tangent");
+      const curved = make("curvature");
+      // Plain: a flat slope at 45°, leaving the edge down and out.
+      expect(leaving(plain, [0, L / 2, 10]).dir[2]).toBeLessThan(-0.7);
+      for (const s of [smooth, curved]) {
+        // Smooth: it carries the wall on — straight up out of the edge — then over to the line; never back over the wall.
+        const { dir } = leaving(s, [0, L / 2, 10]);
+        expect(dir[2]).toBeGreaterThan(0.99);
+        const box = s.boundingBox;
+        expect(box.bounds[1][2]).toBeGreaterThan(10.5);
+        expect(box.bounds[0][0]).toBeGreaterThan(-0.05);
+        expect(box.bounds[0][2]).toBeGreaterThan(-1e-4);
+        expect(measureDistanceBetween(topEdge, s)).toBeLessThan(1e-4);
+        expect(measureDistanceBetween(ground, s)).toBeLessThan(1e-4);
+      }
+      // Straight V sides can't leave the wall going up as well: refused in plain words.
+      const sides = [makeLine([0, 0, 10], [10, 0, 0]), makeLine([0, L, 10], [10, L, 0])].map((e) => ({ wire: assembleWire([e]) }));
+      expect(() => boundarySurface([{ wire: assembleWire([topEdge]), face: wall, match: "tangent" }, { wire: assembleWire([ground]) }, ...sides], 2, 2)).toThrow(/V curves must leave/);
+      // Curvature: the wall is flat, so it starts off without bending; tangent alone bends at once.
+      expect(leaving(curved, [0, L / 2, 10]).bend).toBeLessThan(0.02);
+      expect(leaving(smooth, [0, L / 2, 10]).bend).toBeGreaterThan(0.05);
+    }
+  });
+
+  it("carries a curved face on, and its bend too with curvature", () => {
+    // A quarter-round roof (an arc on Front, centre the origin, radius 10, from x = 10 up to the top at x = 0), 10 deep;
+    // a boundary from its top edge (x = 0, z = 10) to a line on the ground at x = −40.
+    const arc = sketchFeature(front, addArc(emptySketch(), { x: 10, y: 0 }, { x: 0, y: 10 }, { x: 10 * Math.SQRT1_2, y: 10 * Math.SQRT1_2 }).sketch);
+    const roof: Feature = { ...extrudeFeature(arc.id, 10, { end: "symmetric" }), surface: true };
+    const r0 = build([arc, roof]);
+    const topEdge = r0.parts[0].edgeRefs.find((e) => e.kind === "edge" && e.curve === "LINE" && Math.abs(e.mid[2] - 10) < 1e-6 && Math.abs(e.mid[0]) < 1e-6)!;
+    const ground = sketchFeature(top, addLine(emptySketch(), { x: -40, y: -5 }, { x: -40, y: 5 }).sketch);
+    const b = (match: "tangent" | "curvature"): Feature => ({ ...feature("boundary", {}), id: `b_${match}`, boundary: { u: [{ edge: { partId: roof.id, ref: topEdge }, match }, { sketch: ground.id }], v: [] } });
+    const tangent = build([arc, roof, ground, b("tangent")]);
+    expect(tangent.featureErrors).toEqual({});
+    const t = leaving(shapeOf("b_tangent"), [0, 0, 10]);
+    // Leaving the roof's top level, going −x (on past the top, away from the roof).
+    expect(t.dir[0]).toBeLessThan(-0.99);
+    const curvature = build([arc, roof, ground, b("curvature")]);
+    expect(curvature.featureErrors).toEqual({});
+    const c = leaving(shapeOf("b_curvature"), [0, 0, 10]);
+    expect(c.dir[0]).toBeLessThan(-0.99);
+    // Bending down like the roof (radius 10: 0.1 per mm), unlike the tangent one.
+    expect(Math.abs(c.bend - 0.1)).toBeLessThan(0.01);
+    expect(Math.abs(t.bend - 0.1)).toBeGreaterThan(0.05);
+    expect(curvature.featureNotes?.["b_curvature"]).toMatch(/bending with the face that's curved beside U curve 1/);
+  });
+
+  it("uses the face asked for at a solid's edge (either face beside it), and says which", () => {
+    // A block's top-right edge (x = 20, z = 10, along y), and a line on the ground at x = 30.
+    const box = feature("box", { width: 20, depth: 10, height: 10 });
+    const r0 = build([box]);
+    const edge = r0.parts[0].edgeRefs.find((e) => e.kind === "edge" && Math.abs(e.mid[0] - 20) < 1e-6 && Math.abs(e.mid[2] - 10) < 1e-6)!;
+    const ground = sketchFeature(top, addLine(emptySketch(), { x: 30, y: 0 }, { x: 30, y: 10 }).sketch);
+    const b = (otherFace: boolean): Feature => ({ ...feature("boundary", {}), id: "bb", boundary: { u: [{ edge: { partId: box.id, ref: edge }, match: "tangent", ...(otherFace ? { otherFace } : {}) }, { sketch: ground.id }], v: [] } });
+    const first = build([box, ground, b(false)]);
+    expect(first.featureErrors).toEqual({});
+    const d1 = leaving(shapeOf("bb"), [20, 5, 10]).dir;
+    const n1 = first.featureNotes?.bb ?? "";
+    const second = build([box, ground, b(true)]);
+    expect(second.featureErrors).toEqual({});
+    const d2 = leaving(shapeOf("bb"), [20, 5, 10]).dir;
+    const n2 = second.featureNotes?.bb ?? "";
+    // One carries the top on (+x, level), the other the side on (straight up); the notes name them.
+    const flat = (d: number[]) => d[0] > 0.99;
+    const up = (d: number[]) => d[2] > 0.99;
+    expect((flat(d1) && up(d2)) || (up(d1) && flat(d2))).toBe(true);
+    expect(flat(d1) ? n1 : n2).toMatch(/face facing up/);
+    expect(up(d1) ? n1 : n2).toMatch(/face facing \+X/);
+    expect(n1).toMatch(/Use the other face/);
   });
 
   it("is built from part edges, curves and sketches in the engine, as a new surface part", () => {

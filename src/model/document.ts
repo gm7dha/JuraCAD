@@ -819,7 +819,7 @@ function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | null {
           const o = c as Record<string, unknown>;
           const match: Pick<BoundaryCurve, "match"> = o.match === "tangent" || o.match === "curvature" ? { match: o.match } : {};
           const edge = parsePick(o.edge);
-          if (edge && edge.ref.kind === "edge") return [{ edge, ...match }];
+          if (edge && edge.ref.kind === "edge") return [{ edge, ...match, ...(o.otherFace === true && match.match ? { otherFace: true } : {}) }];
           if (typeof o.curve === "string") return [{ curve: o.curve }];
           if (typeof o.sketch === "string") return [{ sketch: o.sketch }];
           return [];
