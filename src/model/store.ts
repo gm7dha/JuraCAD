@@ -376,7 +376,7 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert" | "connector" | "thin" | "loft">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert" | "connector" | "thin" | "loft" | "modifyFillet" | "allEdges">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Part pattern / Composite part: add a part to the open feature's parts, or take it out. */
@@ -979,7 +979,7 @@ export const useStore = create<AppState>((set, get) => {
         if (s.selectedPlane) draft.splitDef = { ...draft.splitDef, plane: { kind: "default", name: s.selectedPlane } };
       }
       // Face features start with the faces selected.
-      if (type === "thicken" || type === "draft" || type === "moveFace" || type === "replaceFace" || type === "deleteFace" || type === "thread" || type === "fullRound" || type === "wrap" || type === "enclose" || type === "offsetSurface") {
+      if (type === "thicken" || type === "draft" || type === "moveFace" || type === "replaceFace" || type === "deleteFace" || type === "modifyFillet" || type === "thread" || type === "fullRound" || type === "wrap" || type === "enclose" || type === "offsetSurface") {
         draft.picks = s.selection
           .filter((item) => item.kind === "face")
           .map((item) => pickFor(s.parts, item))

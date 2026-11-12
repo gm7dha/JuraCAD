@@ -8,6 +8,24 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.62 — Loft like Onshape's
+
+- Loft sections can now be a flat face of a part (click it), one area of a sketch, or a point at either end (cones, pyramids, rounded noses).
+- Choose how the loft leaves its first shape and reaches its last: square to the shape, a rounded tip, or carrying on smoothly from the faces round a face.
+- A guide curve the loft swells or narrows to follow, and a path for it to run along.
+- "Line up the corners myself" fixes twisted lofts; "Close the loop" makes a ring.
+- Claude can make lofts too.
+
+## v0.61 — Split face and Modify fillet
+
+- Split can now divide **faces** of a part (along a plane, a sketch's lines or edges you click) instead of cutting the part, so
+  you can pick just part of a face — for example draft only the top half.
+- New **Modify fillet**: give rounded edges a new radius or take them off (the sharp edge comes back), on imported parts too.
+  With Propagate on it follows the rounding round corners, and says what else it changed. Round faces that aren't fillets are
+  refused, and nearby holes, grooves and chamfers are left alone.
+- Fillet and Chamfer can do **every edge of the part** at once.
+- Claude can use them too.
+
 ## v0.60 — Thin walls; Revolve two ways
 
 - New "Thin wall" option on Extrude, Revolve and Sweep (like Onshape's Thin): a solid wall of a set thickness along a sketch's lines, arcs and circles — open lines make walls, closed shapes make hollow tubes, with sharp corners.
