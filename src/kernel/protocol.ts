@@ -110,6 +110,8 @@ export interface PartMesh {
   surface?: boolean;
   /** Exact volume of a solid part (mm³), from the solid model rather than the display mesh — for weights. */
   volume?: number;
+  /** A frame member: its profile, cut length and end cuts (for the cut list). */
+  frame?: import("../model/frameTypes").FrameMemberInfo;
   /** A composite part: the parts grouped in it (separate solids inside it), shown under it in the Parts list. */
   members?: { id: string; name: string }[];
   /** Part Studio mate connectors this part owns (feature id, name, frame in the Part Studio), offered when it's mated in an assembly. */

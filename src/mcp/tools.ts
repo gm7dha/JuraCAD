@@ -13,6 +13,7 @@ import { describeHole } from "../model/holes";
 import type { Feature, JuraCADDocument } from "../model/types";
 import { describeMore, LINE_HELP, POINT_HELP } from "./planeSpec";
 import { CURVE_HELP } from "./curveSpec";
+import { FRAME_HELP, FRAME_TOOLS, GUSSET_HELP, TRIM_HELP } from "./frameSpec";
 import { describeCurve } from "../model/curves";
 import { SIMPLIFY_LEVELS } from "../model/simplify";
 import { planeFrame, planeLabel } from "../sketch/planes";
@@ -169,6 +170,15 @@ export function summarize(f: Feature, doc: JuraCADDocument, built?: Record<strin
       return f.mirror?.part ? `mirror of a whole part across ${mirrorWay(f, doc)}${f.mirror.join ? ", joined on" : ""}` : `mirror of ${(f.mirror?.sources ?? []).map(nameOf).join(", ")} across ${mirrorWay(f, doc)}`;
     case "boolean":
       return `boolean ${f.booleanDef?.op}`;
+    case "frame": {
+      const fr = f.frame;
+      const prof = fr?.profile.kind === "sketch" ? `the profile in ${nameOf(fr.profile.sketch)}` : `${fr?.profile.kind} ${fr?.profile.size}`;
+      return `frame of ${prof} along ${(fr?.paths ?? []).map((x) => nameOf(x.sketch)).join(", ") || "nothing yet"}${fr?.corners?.length ? `, ${fr.corners.length} corner(s) set by hand` : ""} (one part per member; describe_cut_list for lengths)`;
+    }
+    case "trimFrame":
+      return `trim ${(f.trimFrame?.parts ?? []).length} frame member(s) to ${f.trimFrame?.to ? `part ${f.trimFrame.to}` : f.trimFrame?.plane ? planeLabel(f.trimFrame.plane) : "nothing yet"}${f.trimFrame?.flip ? " (other side kept)" : ""}`;
+    case "gusset":
+      return `gusset ${mm(p.size)} × ${mm(p.thickness)} thick between ${(f.gusset?.parts ?? []).join(" and ")}${f.gusset?.chamfer ? `, corner cut ${mm(p.chamfer)}` : ""}`;
     case "composite":
       return `composite part of ${(f.compositeParts ?? []).join(", ")} (one part made of separate solids)`;
     case "box":
@@ -393,6 +403,9 @@ const KIND_HELP: Record<FeatureKind, string> = {
   split_face: 'split_face (Onshape\'s Split, type Face: the part keeps its shape, the faces are divided so part of a face can be picked — e.g. Draft only the top half): faces (of one part), plane ("Top"|"Front"|"Right") with offset, or sketch (its lines and curves pushed straight through, square to the sketch), part',
   mate_connector: 'mate_connector (a point with its own X/Y/Z that belongs to a part: mate to it in assemblies with add_mate\'s "connector", sketch on it with add_sketch "plane", move parts by it): at (a point — see plane; or {"edge": "E3", "part": name}: an edge\'s middle with Z along it, a round edge\'s centre with Z along its axis; or {"face": "F2", "part": name}: a flat face\'s centre, Z out of it), or on_plane ("Top"|"Front"|"Right" or a Plane name: at its origin), spot ("start"|"end"|"middle" on an edge), owner (the part it belongs to; default the part it\'s on), flip_z, move ([x, y, z] mm along its own axes), turn ([x, y, z]° about its own axes)',
   curve: CURVE_HELP,
+  frame: FRAME_HELP,
+  trim_frame: TRIM_HELP,
+  gusset: GUSSET_HELP,
 };
 
 /** A part (list_faces / list_edges), or with "assembly" and "instance", a copy of one as it sits in an assembly. */
@@ -933,6 +946,7 @@ export const TOOLS: ToolDef[] = [
     },
   },
   ...LASER_TOOLS,
+  ...FRAME_TOOLS,
   ...ASSEMBLY_TOOLS,
   ...ASSEMBLY_EXTRA_TOOLS,
   ...DRAWING_TOOLS,

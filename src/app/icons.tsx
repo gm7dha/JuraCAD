@@ -141,6 +141,31 @@ export const Icons = {
       <path d="M4 20V10a6 6 0 0 1 6-6h10" />
     </Svg>
   ),
+  Frame: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 4h16v16H4z" />
+      <path d="M7 7h10v10H7z" />
+      <path d="M4 4l3 3M20 4l-3 3M4 20l3-3M20 20l-3-3" />
+    </Svg>
+  ),
+  TrimFrame: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 9h12v6H4" />
+      <path d="M18 4v16" strokeDasharray="2 2" />
+    </Svg>
+  ),
+  Gusset: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M4 4v16h16" />
+      <path d="M8 16V9l7 7z" />
+    </Svg>
+  ),
+  CutList: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M5 4h14v16H5z" />
+      <path d="M8 8h8M8 12h8M8 16h5" />
+    </Svg>
+  ),
   ModifyFillet: (p: IconProps) => (
     <Svg {...p}>
       <path d="M4 20V12a4 4 0 0 1 4-4h12" />

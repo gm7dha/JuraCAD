@@ -239,6 +239,48 @@ export function Toolbar() {
           ]}
         />
         <ToolGroupButton
+          id="frames"
+          name="frame"
+          items={[
+            {
+              key: "frame",
+              label: "Frame",
+              icon: <Icons.Frame />,
+              onClick: () => startCreate("frame"),
+              disabled: !ready || !hasSketch,
+              active: editingType === "frame",
+              title: hasSketch ? "Frame — aluminium extrusion, box section, angle, tube or timber along sketch lines, one part per length, corners mitred or butted" : "Sketch the frame's lines first (each line or arc becomes a length)",
+            },
+            {
+              key: "trimFrame",
+              label: "Trim frame",
+              icon: <Icons.TrimFrame />,
+              onClick: () => startCreate("trimFrame"),
+              disabled: !ready || !hasPart,
+              active: editingType === "trimFrame",
+              title: hasPart ? "Trim frame — cut frame members back to a plane, a flat face or another part" : "Make a frame first",
+            },
+            {
+              key: "gusset",
+              label: "Gusset",
+              icon: <Icons.Gusset />,
+              onClick: () => startCreate("gusset"),
+              disabled: !ready || !hasPart,
+              active: editingType === "gusset",
+              title: hasPart ? "Gusset — a triangular plate in the corner between two frame members" : "Make a frame first",
+            },
+            {
+              key: "cutList",
+              label: "Cut list",
+              icon: <Icons.CutList />,
+              onClick: () => useStore.getState().openDialog("cutList"),
+              disabled: false,
+              active: false,
+              title: "Cut list — every frame length to cut, its end angles, how many, and the total of each profile to buy (save as CSV)",
+            },
+          ]}
+        />
+        <ToolGroupButton
           id="curves"
           name="curve"
           items={CURVE_KINDS.map((k) => ({
