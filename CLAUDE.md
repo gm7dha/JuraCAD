@@ -314,7 +314,14 @@
   cut-made face of a part the solve moves from its stored place (`cutFaceMoved`, `settledWithCuts`) is switched off and said ("This
   mate uses a face made by an assembly feature on …") only when it is what moves the part: solved without such mates, a part that
   still goes to the same place (moved by something upstream — the part under it made thicker, a Fasten following it) keeps them;
-  at most three solves. `rememberCutMeshes(assemblies,
+  at most three solves. Drilled copies a Part Studio change moves (the base a plate is fastened to made wider slides it) are
+  stored where the solve now puts them: pure `src/assembly/cutSettle.ts` `settleCutCopies(assemblies, parts, cuts)` (only
+  non-fixed copies the assembly's own features change; same array when nothing moved; cached, a settled state settles to
+  itself) / `settleCutCopiesIn(doc, …)`; the app runs it once per new `parts` when the solver's cut copies for them arrive
+  (`settleAfterRebuild` in assemblyFeatureState.ts, through `changeVersions` — no undo step of its own; skipped while dragging
+  or viewing an old version), the extension's `solve` solves with the settled assemblies (`withSettled`; tools that commit store
+  them). So the solver's copy is cut where the copy is shown and a pin mated into the hole stays in it (tests/engineAssemblyCuts4,
+  the reviewer's probe: base 40 → 46, plate slides 3 mm). `rememberCutMeshes(assemblies,
   parts, cuts)` lets every solve of that state find them without being passed (`rememberedCutMeshes`; the app's `useSolverCuts`
   once the worker answers, the extension's `solverCuts` in `solve`); a state not cut yet takes the app's latest copies
   (`carryCutMeshesOver`; kept for it when its `storedCutInputs` are the same), so edits never make mated parts jump; Accept / add_assembly_feature settle placements first, so
@@ -329,9 +336,19 @@
   App: `src/app/assemblyFeatureState.ts` (own zustand store: cut meshes for the assembly on show, used by Viewport's
   `instanceMeshes` and connectorAt via `cutMeshFor`; the Hole/Cut draft; `acceptAsmCut` asks the worker what it reaches first;
   actions via `changeDocument`), `src/app/AssemblyFeaturesUI.tsx` (toolbar group "Hole"/"Cut", the "Assembly features" list with
-  Parts…/Off/delete and each feature's problem, `AsmCutPanel`, `asmCutPick` first in handleAssemblyPick). Not done:
-  Fillet/Chamfer/Sweep as assembly features, a full sketch editor in assemblies (points/rectangles/circles only), sub-assemblies'
-  own solve used for their stages even when flexible.
+  Parts…/Off/delete and each feature's problem, `AsmCutPanel`, `asmCutPick` first in handleAssemblyPick).
+  Fillet / Chamfer as assembly features (Onshape's): ordinary "fillet"/"chamfer" records whose `picks` have `partId` = the copy's
+  key and `ref` in the PART's own coordinates, picked on the copy as shown (holes drilled here included) — so they go with the
+  copy when a mate moves it; `featureCuts` = has a pick on that key (featureParts unused); `cutsFor` hands each copy only its own
+  picks (`onlyPicksOn`, cached objects); `assemblyEdgeFeature`; engine `cutCopy` takes the copy back to part coordinates for
+  them and runs the Part Studio's own `applyEdgeFeature` on it alone (`edgeFeatureOnCopy`, `this.parts` swapped), `reached` when
+  the volume changed either way. `Assembly.featureNeeds` (fillet id → cuts whose edges it rounds; `edgeNeeds`: picks the plain
+  part hasn't got → the cuts that reached that copy, else earlier fillets; parsed with `parseFeatureParts(…, true)`):
+  `assemblyFeatureDependents` takes them with a deleted cut. `tidyFeatureParts` drops picks on removed copies (`tidyEdgePicks`).
+  App: toolbar Fillet/Chamfer in the assembly-feature group, `AsmCutDraft.edges`/`size`, edge clicks → `toggleAsmEdge`,
+  `acceptAsmEdges`. Claude: add_assembly_feature `kind` "fillet"/"chamfer" with `edges` [{instance, edge|edges}] and
+  `radius`/`distance`. Not done: Sweep as an assembly feature, picked edges drawn highlighted in the view, a full sketch editor
+  in assemblies (points/rectangles/circles only), sub-assemblies' own solve used for their stages even when flexible.
   Edit in context: `doc.contexts` (`EditContext`: studioId, assemblyId, instance key, `parts` = the OTHER parts' {key, partId,
   studioId, placement relative to the edited copy, mirrored}; `hidden`), pure `src/assembly/inContext.ts` (`takeContext` — made or
   taken again for the same assembly+copy, same object when nothing moved —, `updateContext`, `contextProblem`, `setContextHidden`,
@@ -345,11 +362,15 @@
   features build (`partOrContext` in followSketch); so two studios can each be edited in the other's context, and where both use the
   other's parts the one built first says so plainly on its features (`notBuilt`). Viewport: `useShownContextParts` see-through,
   `withContextParts` for planeForFace/Use; clicking one outside a sketch says it's for reference. UI: an instance row's right-click
-  (InstanceMenu) or the toolbar's "In context" → `editInContext`, `ContextBar` (Update context / Hide / Remove). Not done: Claude's
-  tools for contexts; intersect/up-to-face/mates against context parts. Tests: assemblyCutFeatures (pure), engineAssemblyCuts,
+  (InstanceMenu) or the toolbar's "In context" → `editInContext`, `ContextBar` (Update context / Hide / Remove). Claude:
+  `edit_in_context` (make/update, `hidden`; lists where each other part sits from the copy's origin) and `remove_context` (by
+  name or copy) in `src/mcp/contextTools.ts` (tests/mcpContexts). Not done: Claude's own tools using context parts (sketch on /
+  Use them); intersect/up-to-face/mates against context parts. Tests: assemblyCutFeatures (pure), engineAssemblyCuts,
   engineAssemblyCuts2 (a sub-assembly's holes in a parent, structured STEP sharing untouched copies, a cut copy's weight, a pin
   mated into a drilled hole, two studios in each other's context + the real cycle said plainly), engineInContext,
-  mcpAssemblyFeatures (`add_assembly_feature` — keeps the parts it reached —, `delete_assembly_feature`, a pin mated into the hole).
+  mcpAssemblyFeatures (`add_assembly_feature` — keeps the parts it reached —, `delete_assembly_feature`, a pin mated into the hole,
+  the base widened under a drilled plate, fillet/chamfer), engineAssemblyEdges (fillet/chamfer volumes, other copies and a mated
+  pin untouched, a hole's rim bevelled and deleted with the hole), engineAssemblyCuts4.
 - Drawings: `src/drawing/` — `drawing.ts` (document edits, parsing), `cameras.ts` (view directions; first-angle),
   `annotations.ts` (centre marks/lines, section hatching, balloons), `sections.ts` (section cuts drawn on a view:
   cut plane, camera, letters; views are keyed by `viewKey` — the kind, or "section:<id>"), `sheet.ts` (lays the sheet out as simple line/text shapes in sheet mm, y up), `export.ts` (SVG and a hand-written

@@ -35,6 +35,7 @@ import { SHAPE_HELP } from "./sketchShapes";
 import { checkFree, fileNameFor, needFolder, r1, r2, say, writeOut, type ToolDef, type ToolResult } from "./toolKit";
 import { ASSEMBLY_EXTRA_TOOLS } from "./assemblyExtras";
 import { ASSEMBLY_FEATURE_TOOLS } from "./assemblyFeatureTools";
+import { CONTEXT_TOOLS } from "./contextTools";
 import { DRAWING_EXTRA_TOOLS } from "./drawingExtras";
 import { ASSEMBLY_TOOLS, assemblyViews, exportAssemblyBytes, findAssembly, instanceFaces } from "./assemblyTools";
 import { DRAWING_TOOLS } from "./drawingTools";
@@ -957,6 +958,7 @@ export const TOOLS: ToolDef[] = [
   ...ASSEMBLY_TOOLS,
   ...ASSEMBLY_EXTRA_TOOLS,
   ...ASSEMBLY_FEATURE_TOOLS,
+  ...CONTEXT_TOOLS,
   ...DRAWING_TOOLS,
   ...DRAWING_EXTRA_TOOLS,
   ...libraryTools(tryChange),
