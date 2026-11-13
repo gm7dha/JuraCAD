@@ -235,6 +235,62 @@ export function tangentOffset(a: Pick<TangentSide, "kind" | "radius">, b: Pick<T
 /** Looks up a connector's frame on its instance's part, or null if it can't be found any more. */
 export type FrameLookup = (mate: Mate, side: "a" | "b") => Frame | null;
 
+/** An assembly's own copies cut by its own features, by instance id (see SolveOptions.cutMeshes). */
+export type CutMeshes = (assemblyId: string) => Readonly<Record<string, PartMesh>> | undefined;
+
+/** The cut copy of instance `key` of `a` (a "copy/inner" key reaches into the sub-assemblies it names). */
+function cutMeshAt(a: Assembly, key: string, assemblies: readonly Assembly[] | undefined, cuts: CutMeshes | undefined): PartMesh | undefined {
+  if (!cuts) return undefined;
+  const steps = key.split("/");
+  let level: Assembly | undefined = a;
+  for (const id of steps.slice(0, -1)) {
+    const i: Instance | undefined = level?.instances.find((x) => x.id === id);
+    level = i?.subAssembly ? assemblies?.find((x) => x.id === i.subAssembly) : undefined;
+    if (!level) return undefined;
+  }
+  // (A flattened view of flexible copies has ids "copy/inner" of its own: tried as they are first.)
+  return (steps.length > 1 ? cuts(a.id)?.[key] : undefined) ?? (level ? cuts(level.id)?.[steps[steps.length - 1]] : undefined);
+}
+
+const samePlace = (p: Placement, q: Placement): boolean =>
+  p.position.every((v, k) => Math.abs(v - q.position[k]) < 1e-6) &&
+  (p.rotation.every((v, k) => Math.abs(v - q.rotation[k]) < 1e-7) || p.rotation.every((v, k) => Math.abs(v + q.rotation[k]) < 1e-7));
+
+/**
+ * Mates on a face only an assembly feature made (a drilled hole's wall) of a part the solve moves from where the
+ * document has it. The feature's cut stays where it was made in the assembly, so once the part moves the face isn't
+ * there any more: solving with such a mate would only flip between two answers. They're switched off and said instead.
+ */
+function cutFaceMoved(assembly: Assembly, parts: PartMesh[], assemblies: readonly Assembly[] | undefined, cuts: CutMeshes, places: Record<string, Placement>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const m of assembly.mates ?? []) {
+    if (m.suppressed) continue;
+    for (const side of ["a", "b"] as const) {
+      const c = m[side];
+      if (isOrigin(c) || c.path?.length) continue;
+      const instance = assembly.instances.find((i) => i.id === c.instanceId);
+      if (!instance || instance.subAssembly || !cutMeshAt(assembly, instance.id, assemblies, cuts)) continue;
+      const now = places[instance.id];
+      if (!now || samePlace(now, instance.placement)) continue;
+      if (connectorFrameFor(assembly, parts, c, assemblies)) continue;
+      if (!connectorFrameFor(assembly, parts, c, assemblies, [], cuts)) continue;
+      out[m.id] = `This mate uses a face made by an assembly feature on ${instance.name}, and the mate would move ${instance.name} away from where the feature cut it — so the face wouldn't be there any more. Mate the other part to it instead, or fix ${instance.name} where it is.`;
+      break;
+    }
+  }
+  return out;
+}
+
+/** Solve once; if a mate on a cut-made face moves its part, solve again without it and say why (see cutFaceMoved). */
+function settledWithCuts(assembly: Assembly, parts: PartMesh[], options: SolveOptions, solve: (a: Assembly) => SolveResult): SolveResult {
+  const r = solve(assembly);
+  if (!options.cutMeshes) return r;
+  const moved = cutFaceMoved(assembly, parts, options.assemblies, options.cutMeshes, r.placements);
+  if (!Object.keys(moved).length) return r;
+  const again = solve({ ...assembly, mates: (assembly.mates ?? []).map((m) => (moved[m.id] ? { ...m, suppressed: true } : m)) });
+  return { ...again, mateErrors: { ...again.mateErrors, ...moved } };
+}
+
 export interface SolveResult {
   /** Where every instance ends up. */
   placements: Record<string, Placement>;
@@ -290,10 +346,11 @@ export interface SolveOptions {
   /** (Inside the solver) mirrors across faces: each one's plane where the face ended up, worked out by a first pass. */
   facePlanes?: Record<string, MirrorPlane | string>;
   /**
-   * Copies cut by the assembly's own features, by instance id (AssemblyCutsResult meshes): a mate on a face only the
-   * cut copy has (a drilled hole's wall) is found on these. Missing = none.
+   * Copies cut by assembly features, for each assembly (this one and its sub-assemblies): a mate on a face only the
+   * cut copy has (a drilled hole's wall) is found on these. Each assembly's are cut by its own features with its
+   * parts where the document has them (`storedCutInputs` in placed.ts), so they never depend on the solve. Missing = none.
    */
-  cutMeshes?: Readonly<Record<string, PartMesh>>;
+  cutMeshes?: CutMeshes;
   /** (Inside the solver) a flattened assembly's flexible sub-assembly parts (see flexible.ts). */
   flex?: { bodies: Record<string, FlexBody>; patternFrames: Record<string, string> };
 }
@@ -812,10 +869,11 @@ const symmetryOn = (parts: readonly PartMesh[], assemblies?: readonly Assembly[]
 /** Solve using the parts as built now (pass the document's assemblies when it may hold sub-assemblies). */
 export function solveWithParts(assembly: Assembly, parts: PartMesh[], options: SolveOptions = {}): SolveResult {
   // (Flexible sub-assemblies' parts are solved here too; without any, exactly as before.)
-  const r =
-    options.assemblies && hasFlexible(assembly)
-      ? solveFlexibly(assembly, parts, options.assemblies, options, [assembly.id]).result
-      : solveAssembly(assembly, frameLookup(assembly, parts, options.assemblies, options.cutMeshes), { symmetry: symmetryOn(parts, options.assemblies), ...options });
+  const r = settledWithCuts(assembly, parts, options, (a) =>
+    options.assemblies && hasFlexible(a)
+      ? solveFlexibly(a, parts, options.assemblies, options, [a.id]).result
+      : solveAssembly(a, frameLookup(a, parts, options.assemblies, options.cutMeshes), { symmetry: symmetryOn(parts, options.assemblies), ...options }),
+  );
   // A connector on a part inside a sub-assembly: say plainly when the way to it is switched off or gone.
   for (const m of assembly.mates ?? []) {
     if (!r.mateErrors[m.id]) continue;
@@ -834,12 +892,30 @@ export function solveWithParts(assembly: Assembly, parts: PartMesh[], options: S
  * assembly's own mates. `flat` has every place in this assembly's coordinates
  * (for when it's itself used as a sub-assembly).
  */
+/** A flattened assembly's cut copies by its own ids ("copy/inner" ones found in the sub-assemblies of `a` they name). */
+const flatCache = new WeakMap<Assembly, Readonly<Record<string, PartMesh>>>();
+function flatCuts(view: Assembly, a: Assembly, assemblies: readonly Assembly[], cuts: CutMeshes): Readonly<Record<string, PartMesh>> {
+  let out = flatCache.get(view);
+  if (!out) {
+    const all: Record<string, PartMesh> = {};
+    for (const i of view.instances) {
+      const m = cutMeshAt(a, i.id, assemblies, cuts);
+      if (m) all[i.id] = m;
+    }
+    flatCache.set(view, (out = all));
+  }
+  return out;
+}
+
 function solveFlexibly(a: Assembly, parts: readonly PartMesh[], assemblies: readonly Assembly[], options: SolveOptions, within: readonly string[]): { result: SolveResult; flat: Record<string, Placement> } {
-  const view = expandFlexible(a, assemblies, (sub, w) => solvedInside(sub, parts, assemblies, w), within);
+  const cuts = options.cutMeshes;
+  const view = expandFlexible(a, assemblies, (sub, w) => solvedInside(sub, parts, assemblies, w, cuts), within);
+  // (The flattened view's "copy/inner" parts take their cuts from the sub-assembly they're in.)
+  const viewCuts: CutMeshes | undefined = cuts && ((id) => (id === view.assembly.id ? flatCuts(view.assembly, a, assemblies, cuts) : cuts(id)));
   const lookup: FrameLookup = (m, side) => {
     const c = m[side];
     // A flexible copy's own origin: its planes, where the copy is.
-    return isCopyOrigin(c.instanceId) ? originFrame({ ...c, instanceId: ORIGIN_ID }) : connectorFrameFor(view.assembly, parts as PartMesh[], c, assemblies, within);
+    return isCopyOrigin(c.instanceId) ? originFrame({ ...c, instanceId: ORIGIN_ID }) : connectorFrameFor(view.assembly, parts as PartMesh[], c, assemblies, within, viewCuts);
   };
   const raw = solveAssembly(view.assembly, lookup, { symmetry: symmetryOn(parts, assemblies), ...options, flex: { bodies: view.bodies, patternFrames: view.patternFrames } });
   const own = new Set(a.instances.map((i) => i.id));
@@ -903,14 +979,16 @@ function solveFlexibly(a: Assembly, parts: readonly PartMesh[], assemblies: read
 }
 
 /** The parent's own solve of its flexible copies (no mate being edited), by the document's state: each part inside one relative to its copy. */
-const flexCache = new WeakMap<Assembly, WeakMap<readonly PartMesh[], WeakMap<readonly Assembly[], WeakMap<Scope, Record<string, Placement>>>>>();
+const flexCache = new WeakMap<Assembly, WeakMap<readonly PartMesh[], WeakMap<readonly Assembly[], WeakMap<Scope, WeakMap<object, Record<string, Placement>>>>>>();
+/** (The cache key for "no cut copies".) */
+const NO_CUTS = {};
 
 /**
  * Where the parts inside an assembly's flexible copies sit (relative to each
  * copy, by key), as the assembly's own solve puts them. Empty when it has none.
  * Worked out once for each state of the document and parts.
  */
-export function flexibleInner(a: Assembly, parts: readonly PartMesh[], assemblies: readonly Assembly[]): Record<string, Placement> {
+export function flexibleInner(a: Assembly, parts: readonly PartMesh[], assemblies: readonly Assembly[], cuts?: CutMeshes): Record<string, Placement> {
   if (!hasFlexible(a)) return {};
   let byParts = flexCache.get(a);
   if (!byParts) flexCache.set(a, (byParts = new WeakMap()));
@@ -919,8 +997,11 @@ export function flexibleInner(a: Assembly, parts: readonly PartMesh[], assemblie
   let byScope = byAll.get(assemblies);
   if (!byScope) byAll.set(assemblies, (byScope = new WeakMap()));
   const scope = getCurrentScope();
-  let out = byScope.get(scope);
-  if (!out) byScope.set(scope, (out = solveFlexibly(a, parts, assemblies, {}, [a.id]).result.inner ?? {}));
+  let byCuts = byScope.get(scope);
+  if (!byCuts) byScope.set(scope, (byCuts = new WeakMap()));
+  const k = cuts ?? NO_CUTS;
+  let out = byCuts.get(k);
+  if (!out) byCuts.set(k, (out = solveFlexibly(a, parts, assemblies, cuts ? { cutMeshes: cuts } : {}, [a.id]).result.inner ?? {}));
   return out;
 }
 
@@ -951,13 +1032,13 @@ function downFlexible(start: Instance, startKey: string, path: readonly string[]
 }
 
 /** A connector through flexible copies: found on its part, then placed where `places` (by key) says that part is. */
-function frameThroughFlexible(start: Instance, startKey: string, places: Record<string, Placement>, parts: PartMesh[], c: MateConnector, path: readonly string[], assemblies: readonly Assembly[], within: readonly string[]): Frame | null | undefined {
+function frameThroughFlexible(start: Instance, startKey: string, places: Record<string, Placement>, parts: PartMesh[], c: MateConnector, path: readonly string[], assemblies: readonly Assembly[], within: readonly string[], cuts?: CutMeshes): Frame | null | undefined {
   const down = downFlexible(start, startKey, path, assemblies, within);
   if (!down) return undefined;
   const place = places[down.key];
   if (!place) return undefined;
   const { path: _p, ...plain } = c;
-  const f = connectorFrameFor(down.container, parts, { ...plain, instanceId: down.body.id, ...(down.rest.length ? { path: down.rest } : {}) }, assemblies, down.within);
+  const f = connectorFrameFor(down.container, parts, { ...plain, instanceId: down.body.id, ...(down.rest.length ? { path: down.rest } : {}) }, assemblies, down.within, cuts);
   return f ? placeFrame(place, f) : null;
 }
 
@@ -971,7 +1052,7 @@ const flipFrame = (f: Frame): Frame => {
  * each instance shows it (another configuration, or mirrored, or a part inside
  * a sub-assembly, where that sub-assembly's own mates put it).
  */
-export function frameLookup(assembly: Assembly, parts: PartMesh[], assemblies?: readonly Assembly[], cutMeshes?: Readonly<Record<string, PartMesh>>): FrameLookup {
+export function frameLookup(assembly: Assembly, parts: PartMesh[], assemblies?: readonly Assembly[], cutMeshes?: CutMeshes): FrameLookup {
   return (mate, side) => connectorFrameFor(assembly, parts, mate[side], assemblies, [], cutMeshes);
 }
 
@@ -982,7 +1063,7 @@ export function frameLookup(assembly: Assembly, parts: PartMesh[], assemblies?: 
  * `within` lists the assemblies already being looked into (so a loop of
  * sub-assemblies can't go round for ever).
  */
-export function connectorFrameFor(assembly: Assembly, parts: PartMesh[], c: MateConnector, assemblies?: readonly Assembly[], within: readonly string[] = [], cutMeshes?: Readonly<Record<string, PartMesh>>): Frame | null {
+export function connectorFrameFor(assembly: Assembly, parts: PartMesh[], c: MateConnector, assemblies?: readonly Assembly[], within: readonly string[] = [], cutMeshes?: CutMeshes): Frame | null {
   // The assembly's origin: one of its planes.
   if (isOrigin(c)) return originFrame(c);
   // On the part as the instance shows it (which may be another configuration).
@@ -992,14 +1073,17 @@ export function connectorFrameFor(assembly: Assembly, parts: PartMesh[], c: Mate
   if (c.pick2 && c.path2 && instance?.subAssembly) {
     if (c.pick.ref.kind !== "face" || c.pick2.ref.kind !== "face" || c.pick.ref.surface !== "PLANE" || c.pick2.ref.surface !== "PLANE") return null;
     const { pick2, path2, spot: _s, point: _p, ...first } = c;
-    const f1 = connectorFrameFor(assembly, parts, first, assemblies, within);
-    const f2 = connectorFrameFor(assembly, parts, { instanceId: c.instanceId, path: path2, pick: pick2 }, assemblies, within);
+    const f1 = connectorFrameFor(assembly, parts, first, assemblies, within, cutMeshes);
+    const f2 = connectorFrameFor(assembly, parts, { instanceId: c.instanceId, path: path2, pick: pick2 }, assemblies, within, cutMeshes);
     return f1 && f2 ? widthFrame(f1, f2) : null;
   }
   if (instance?.subAssembly) {
     // In a flexible copy, its parts are where this assembly's own solve puts them.
-    const flexible = isFlexible(instance) && assemblies && c.path?.length && !within.length ? frameThroughFlexible(instance, instance.id, flexibleInner(assembly, parts, assemblies), parts, c, c.path, assemblies, [assembly.id]) : undefined;
-    const f = flexible !== undefined ? flexible : frameInside(instance.subAssembly, parts, c, assemblies, within);
+    const flexible =
+      isFlexible(instance) && assemblies && c.path?.length && !within.length
+        ? frameThroughFlexible(instance, instance.id, flexibleInner(assembly, parts, assemblies, cutMeshes), parts, c, c.path, assemblies, [assembly.id], cutMeshes)
+        : undefined;
+    const f = flexible !== undefined ? flexible : frameInside(instance.subAssembly, parts, c, assemblies, within, cutMeshes);
     // A mirrored copy shows the whole sub-assembly flipped across its own YZ plane: so are its connectors.
     return f && instance.mirrored ? flipFrame(f) : f;
   }
@@ -1009,7 +1093,7 @@ export function connectorFrameFor(assembly: Assembly, parts: PartMesh[], c: Mate
   const on = (m: PartMesh) => connectorFrameOnParts([m], { ...c, pick: { ...c.pick, partId: m.id }, ...(c.pick2 ? { pick2: { ...c.pick2, partId: m.id } } : {}) });
   // A face or edge made by the assembly's own features (a drilled hole's wall) is found on the cut copy — only when
   // the part itself hasn't got it, so mates on faces it always had stay exactly where they were.
-  const cut = instance ? cutMeshes?.[instance.id] : undefined;
+  const cut = instance ? cutMeshAt(assembly, instance.id, assemblies, cutMeshes) : undefined;
   const f = mesh ? on(mesh) ?? (cut ? on(cut) : null) : connectorFrameOnParts(parts, c);
   // A mirrored instance shows its part flipped across its own YZ plane: so are its connectors.
   return f && instance?.mirrored ? flipFrame(f) : f;
@@ -1021,7 +1105,7 @@ export function placeFrame(p: Placement, f: Frame): Frame {
 }
 
 /** A connector on a part inside sub-assembly `subId` (its `path` leads to the part), in the sub-assembly's coordinates. */
-function frameInside(subId: string, parts: PartMesh[], c: MateConnector, assemblies: readonly Assembly[] | undefined, within: readonly string[]): Frame | null {
+function frameInside(subId: string, parts: PartMesh[], c: MateConnector, assemblies: readonly Assembly[] | undefined, within: readonly string[], cuts?: CutMeshes): Frame | null {
   const sub = assemblies?.find((a) => a.id === subId);
   const [first, ...rest] = c.path ?? [];
   if (!sub || !first || within.includes(subId)) return null;
@@ -1030,36 +1114,42 @@ function frameInside(subId: string, parts: PartMesh[], c: MateConnector, assembl
   const deeper = within.concat(subId);
   // Through a flexible copy inside it: its parts are solved with the sub-assembly's own (keys "copy/part").
   if (isFlexible(inner) && rest.length && assemblies) {
-    const f = frameThroughFlexible(inner, first, solvedInside(sub, parts, assemblies, deeper), parts, c, rest, assemblies, deeper);
+    const f = frameThroughFlexible(inner, first, solvedInside(sub, parts, assemblies, deeper, cuts), parts, c, rest, assemblies, deeper, cuts);
     if (f !== undefined) return f;
   }
   const { path: _p, ...plain } = c;
-  const f = connectorFrameFor(sub, parts, { ...plain, instanceId: first, ...(rest.length ? { path: rest } : {}) }, assemblies, deeper);
+  const f = connectorFrameFor(sub, parts, { ...plain, instanceId: first, ...(rest.length ? { path: rest } : {}) }, assemblies, deeper, cuts);
   if (!f) return null;
-  return placeFrame(solvedInside(sub, parts, assemblies, deeper)[first] ?? inner.placement, f);
+  return placeFrame(solvedInside(sub, parts, assemblies, deeper, cuts)[first] ?? inner.placement, f);
 }
 
 /** Solved sub-assemblies, by the document's assemblies, the parts as built and the variables' values (all unchanged objects mean the same answer). */
-const insideCache = new WeakMap<readonly Assembly[], WeakMap<readonly PartMesh[], WeakMap<Scope, Map<string, Record<string, Placement>>>>>();
+const insideCache = new WeakMap<readonly Assembly[], WeakMap<readonly PartMesh[], WeakMap<Scope, WeakMap<object, Map<string, Record<string, Placement>>>>>>();
 
 /**
  * Where an assembly's own mates put each of its instances, when it's used as
  * a sub-assembly (it moves as one piece, so this never changes with where it's
  * placed). Worked out once for each state of the document and parts.
  */
-export function solvedInside(sub: Assembly, parts: readonly PartMesh[], assemblies?: readonly Assembly[], within: readonly string[] = [sub.id]): Record<string, Placement> {
+export function solvedInside(sub: Assembly, parts: readonly PartMesh[], assemblies?: readonly Assembly[], within: readonly string[] = [sub.id], cuts?: CutMeshes): Record<string, Placement> {
+  // (With cut copies, a mate on a face its own features made is found on them, as at the top level.)
+  const options: SolveOptions = { assemblies, ...(cuts ? { cutMeshes: cuts } : {}) };
   const solve = () =>
     assemblies && hasFlexible(sub)
-      ? solveFlexibly(sub, parts, assemblies, {}, within).flat
-      : solveAssembly(sub, (m, side) => connectorFrameFor(sub, parts as PartMesh[], m[side], assemblies, within), { symmetry: symmetryOn(parts, assemblies) }).placements;
+      ? solveFlexibly(sub, parts, assemblies, options, within).flat
+      : settledWithCuts(sub, parts as PartMesh[], options, (a) =>
+          solveAssembly(a, (m, side) => connectorFrameFor(a, parts as PartMesh[], m[side], assemblies, within, cuts), { symmetry: symmetryOn(parts, assemblies) }),
+        ).placements;
   if (!assemblies) return solve();
   let byParts = insideCache.get(assemblies);
   if (!byParts) insideCache.set(assemblies, (byParts = new WeakMap()));
   let byScope = byParts.get(parts);
   if (!byScope) byParts.set(parts, (byScope = new WeakMap()));
   const scope = getCurrentScope();
-  let byId = byScope.get(scope);
-  if (!byId) byScope.set(scope, (byId = new Map()));
+  let byCuts = byScope.get(scope);
+  if (!byCuts) byScope.set(scope, (byCuts = new WeakMap()));
+  let byId = byCuts.get(cuts ?? NO_CUTS);
+  if (!byId) byCuts.set(cuts ?? NO_CUTS, (byId = new Map()));
   let out = byId.get(sub.id);
   if (!out) byId.set(sub.id, (out = solve()));
   return out;
