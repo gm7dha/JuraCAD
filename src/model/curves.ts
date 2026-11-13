@@ -25,6 +25,9 @@ export const CURVE_KINDS: readonly CurveKindInfo[] = [
   { kind: "composite", label: "Composite curve", prefix: "Composite curve", description: "Part edges and other curves joined end to end into one curve, for a sweep or a pattern to follow." },
   { kind: "fitSpline", label: "Fit spline", prefix: "Fit spline", description: "A smooth curve through points you click (corners, edge middles, sketch points, mate connectors), in order." },
   { kind: "intersection", label: "Intersection curve", prefix: "Intersection curve", description: "The curve where two faces meet, or where faces are cut by a plane." },
+  { kind: "offset", label: "Offset curve", prefix: "Offset curve", description: "Edges of a face moved a set distance across the face (into it, or out with Other way). Click a face for its whole outline, or edges and the face to move them across." },
+  { kind: "isocline", label: "Isocline", prefix: "Isocline", description: "Where a face slopes at a set angle to a direction (like a draft check): 0° is where the face is upright to it." },
+  { kind: "trim", label: "Trim curve", prefix: "Trim curve", description: "A curve cut back to where it first meets a face, a plane or another curve." },
 ];
 
 export function curveKindInfo(kind: CurveKind | undefined): CurveKindInfo {
@@ -47,6 +50,8 @@ export function newCurveDef(kind: CurveKind): CurveDef {
   if (kind === "fitSpline") return { kind, points: [] };
   if (kind === "composite") return { kind, curves: [] };
   if (kind === "bridge") return { kind, picking: "from" };
+  if (kind === "isocline") return { kind, axis: { p: [0, 0, 0], dir: [0, 0, 1], axis: "z" } };
+  if (kind === "trim") return { kind, curves: [] };
   return { kind };
 }
 
@@ -67,6 +72,8 @@ export function curveParamKeys(def: CurveDef | undefined): string[] {
     return keys;
   }
   if (def.kind === "bridge") return ["bulge"];
+  if (def.kind === "offset") return ["distance"];
+  if (def.kind === "isocline") return ["angle"];
   return [];
 }
 
@@ -212,7 +219,10 @@ export function curveUses(f: Pick<Feature, "curve" | "sketchRef" | "picks">): { 
     geom(def.to);
   }
   if (def.kind === "fitSpline") for (const g of def.points ?? []) geom(g);
-  if (def.kind === "intersection" && def.plane?.kind === "face") {
+  if (def.kind === "isocline") geom(def.axis);
+  // A trim curve can't do without the curve it trims, nor the curve it's cut back to.
+  if (def.kind === "trim") features.push(...(def.curves ?? []).slice(0, 2));
+  if ((def.kind === "intersection" || def.kind === "trim") && def.plane?.kind === "face") {
     if (def.plane.planeRef) features.push(def.plane.planeRef);
     if (def.plane.face) parts.push(def.plane.face.partId);
   }

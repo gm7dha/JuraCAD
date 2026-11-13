@@ -8,6 +8,12 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.72 — More curves, and sketches that use them
+
+- Sketches can Use, snap to and pierce 3D curves (helix, bridging curve, fit spline…), and follow them when they change.
+- New curve types: Offset curve (move edges across a face), Isocline (where a face slopes at a set angle) and Trim curve (cut a curve back to where it meets something).
+- Claude can make the new curves too.
+
 ## v0.71 — Frames along edges and curves, three-way mitres, cut lists on drawings
 
 - Frames can follow part edges and curves (such as a helix), mixed with sketch lines; along a helix the profile keeps facing the middle.

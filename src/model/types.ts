@@ -1326,7 +1326,7 @@ export const MESH_TOLERANCES: Record<MeshQuality | "display", { tolerance: numbe
 };
 
 /** Onshape's curve features: each makes a curve (not a part) — a line in the view that sweeps and patterns can follow. */
-export type CurveKind = "helix" | "projected" | "bridge" | "composite" | "fitSpline" | "intersection";
+export type CurveKind = "helix" | "projected" | "bridge" | "composite" | "fitSpline" | "intersection" | "offset" | "isocline" | "trim";
 
 /**
  * A curve feature's settings (sizes are in the feature's params). Followed as the model changes: part faces and edges
@@ -1344,7 +1344,11 @@ export interface CurveDef {
   helixBy?: "heightTurns" | "heightPitch" | "turnsPitch";
   /** Helix: turns clockwise as it rises (seen from above). Missing = anticlockwise (a right-hand thread). */
   clockwise?: boolean;
-  /** Helix: rise the other way along its axis (round a face: start from its other end). */
+  /**
+   * Helix: rise the other way along its axis (round a face: start from its other end). Offset curve: move out of the
+   * face instead of into it. Isocline: the slope the other way (facing away from the direction). Trim curve: keep the
+   * end part instead of the start part.
+   */
   flip?: boolean;
   /** Projected curve: onto picked faces (`Feature.picks`, missing = this) or where two sketches' curves meet ("sketches"; the second is `sketch2`). */
   project?: "faces" | "sketches";
@@ -1358,16 +1362,23 @@ export interface CurveDef {
   /** Bridging curve: set off the other way at an end. */
   flipFrom?: boolean;
   flipTo?: boolean;
-  /** Composite curve: other curve features joined in (part edges are in `Feature.picks`). */
+  /**
+   * Composite curve: other curve features joined in (part edges are in `Feature.picks`). Trim curve: [the curve to trim,
+   * the curve it's cut back to (optional; else `plane`, else the face in `Feature.picks`)].
+   */
   curves?: string[];
   /** Fit spline: the points it goes through, in order. */
   points?: GeomPick[];
   /** Fit spline: back round to the first point. */
   closed?: boolean;
-  /** Intersection curve: a plane the picked faces are cut by (missing = the first picked face against the others). */
+  /**
+   * Intersection curve: a plane the picked faces are cut by (missing = the first picked face against the others).
+   * Trim curve: a plane to cut the curve back to. Isocline: the direction is `axis` (missing = Z); its faces are `Feature.picks`.
+   * Offset curve: `Feature.picks` = edges to move across a face (and that face; a face alone = its outline).
+   */
   plane?: SketchPlane;
   /** While editing: what a click picks (bridging "from"/"to", helix "axis"/"start"). Not saved. */
-  picking?: "from" | "to" | "axis" | "start" | "plane";
+  picking?: "from" | "to" | "axis" | "start" | "plane" | "curve" | "bound";
 }
 
 /** How a bridging curve meets what it joins: just touching, in the same direction, or bending the same too. */

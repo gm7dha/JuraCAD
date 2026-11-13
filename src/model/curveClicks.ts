@@ -88,6 +88,36 @@ export function curveClick(draft: Pick<Feature, "id" | "curve" | "picks">, c: Cu
       if (c.kind !== "part" || c.pick.ref.kind !== "face") return "Click faces (and, if you like, a plane) to find where they meet.";
       return togglePick(c.pick);
     }
+    case "offset": {
+      if (c.kind !== "part") return "Click a face (for its whole outline), or edges and the face to move them across.";
+      if (c.pick.ref.kind === "edge") return togglePick(c.pick);
+      // One face: a new one takes the place of the old.
+      const list = draft.picks ?? [];
+      const same = list.some((p) => p.partId === c.pick.partId && JSON.stringify(p.ref) === JSON.stringify(c.pick.ref));
+      const edges = list.filter((p) => p.ref.kind === "edge");
+      return { picks: same ? edges : [...edges, { partId: c.pick.partId, ref: c.pick.ref }] };
+    }
+    case "isocline": {
+      if (def.picking === "axis") {
+        if (c.kind === "curve") return "Click a line or a flat face for the direction: an edge, a sketch line, a plane, or a mate connector.";
+        const line = lineFromClick(c);
+        return typeof line === "string" ? line : set({ axis: line, picking: undefined });
+      }
+      if (c.kind !== "part" || c.pick.ref.kind !== "face") return "Click the faces to find the slope on (or choose Direction and click a line).";
+      return togglePick(c.pick);
+    }
+    case "trim": {
+      const list = def.curves ?? [];
+      if (c.kind === "curve") {
+        if (!list[0] || def.picking === "curve") return set({ curves: [c.id, ...list.slice(1)].filter((x, i) => i === 0 || x !== c.id), picking: undefined });
+        if (c.id === list[0]) return "That's the curve being trimmed. Click what to cut it back to: a face, a plane or another curve.";
+        return { curve: { ...def, curves: [list[0], c.id], plane: undefined, picking: undefined }, picks: [] };
+      }
+      if (!list[0] || def.picking === "curve") return "Click the curve to trim first.";
+      if (c.kind === "plane") return { curve: { ...def, curves: [list[0]], plane: c.plane, picking: undefined }, picks: [] };
+      if (c.kind !== "part" || c.pick.ref.kind !== "face") return "Click what to cut the curve back to: a face, a plane or another curve.";
+      return { curve: { ...def, curves: [list[0]], plane: undefined, picking: undefined }, picks: [{ partId: c.pick.partId, ref: c.pick.ref }] };
+    }
     case "projected": {
       if (def.project === "sketches") return "Choose the two sketches in the dialog.";
       if (c.kind !== "part" || c.pick.ref.kind !== "face") return "Click the faces to project the sketch onto.";
