@@ -4,14 +4,15 @@
  * the exploded view's places, and each part placed for the geometry engine.
  * Pure (no store), so the Claude extension uses exactly what the app does.
  */
-import { solveWithParts, type SolveResult } from "./mates";
+import { solvedInside, solveWithParts, type CutMeshes, type SolveResult } from "./mates";
 import { boundsOfVertices, type Box3 } from "./assembly";
 import { addOffsets, explodedPlacements, explodeOffsets, stepOffsets } from "./explode";
-import { IDENTITY, type Placement, type Vec3 } from "./math";
+import { compose, IDENTITY, type Placement, type Vec3 } from "./math";
 import { findMesh, meshIdOf } from "./configured";
-import { kernelInstances, leavesOf, leavesOfTop, topBox, type Leaf } from "./subassembly";
+import { kernelInstances, leavesOf, leavesOfTop, PATH_SEP, topBox, type Leaf } from "./subassembly";
 import type { Assembly } from "../model/types";
-import type { InstanceInput, PartMesh } from "../kernel/protocol";
+import { cutsFor } from "./assemblyFeatures";
+import type { CutStage, InstanceInput, PartMesh } from "../kernel/protocol";
 
 const NO_LEAVES: Leaf[] = [];
 
@@ -56,5 +57,115 @@ export function instancesForKernel(
   shift?: Record<string, Vec3>,
 ): InstanceInput[] {
   const own = (id: string) => assembly.instances.find((i) => i.id === id)?.placement ?? IDENTITY;
-  return kernelInstances(leavesOf(assembly, parts, assemblies, solved.inner), parts, shown ?? solved.placements, (id) => solved.placements[id] ?? own(id), shift);
+  // Assembly features cut the copies they reach — this assembly's and its sub-assemblies' (older assemblies have none:
+  // exactly as before).
+  const cuts = hasAssemblyFeatures(assembly, assemblies) ? cutStager(assembly, parts, assemblies) : undefined;
+  return kernelInstances(leavesOf(assembly, parts, assemblies, solved.inner), parts, shown ?? solved.placements, (id) => solved.placements[id] ?? own(id), shift, cuts);
 }
+
+/** Whether an assembly, or any sub-assembly it uses (at any depth), has features of its own. */
+export function hasAssemblyFeatures(assembly: Assembly, assemblies: readonly Assembly[], within: string[] = [assembly.id]): boolean {
+  if (assembly.features?.length) return true;
+  for (const i of assembly.instances) {
+    if (!i.subAssembly || i.suppressed || within.includes(i.subAssembly)) continue;
+    const sub = assemblies.find((a) => a.id === i.subAssembly);
+    if (sub && hasAssemblyFeatures(sub, assemblies, [...within, sub.id])) return true;
+  }
+  return false;
+}
+
+/**
+ * The cut stages of each part (see CutStage): the assembly's own features where the part is solved to be, then
+ * the features of each sub-assembly it's inside, where it sits in that sub-assembly (by the sub-assembly's own
+ * solve). Undefined for a part nothing cuts.
+ */
+export function cutStager(assembly: Assembly, parts: readonly PartMesh[], assemblies: readonly Assembly[]): (leaf: Leaf, solved: Placement) => CutStage[] | undefined {
+  const inner = new Map<string, Leaf[]>();
+  const leavesIn = (sub: Assembly, within: string[]) => {
+    let list = inner.get(sub.id);
+    if (!list) inner.set(sub.id, (list = leavesOf(sub, parts, assemblies)));
+    return { list, places: solvedInside(sub, parts, assemblies, within) };
+  };
+  return (leaf, solved) => {
+    // (Deepest sub-assembly first, this assembly's own last: each level cuts what the levels inside it left.)
+    const stages: CutStage[] = [];
+    const own = cutsFor(assembly, leaf.key);
+    const path = [leaf.top, ...leaf.path];
+    let level: Assembly = assembly;
+    const within = [assembly.id];
+    for (let d = 0; d < path.length - 1; d++) {
+      const i = level.instances.find((x) => x.id === path[d]);
+      const sub = i?.subAssembly ? assemblies.find((a) => a.id === i.subAssembly) : undefined;
+      if (!sub || within.includes(sub.id)) break;
+      within.push(sub.id);
+      if (sub.features?.length) {
+        const key = path.slice(d + 1).join(PATH_SEP);
+        const features = cutsFor(sub, key);
+        if (features) {
+          const { list, places } = leavesIn(sub, [...within]);
+          const there = list.find((l) => l.key === key);
+          if (there) {
+            const top = places[there.top] ?? sub.instances.find((x) => x.id === there.top)?.placement ?? IDENTITY;
+            const at = there.path.length ? compose(top, there.relative) : top;
+            stages.unshift({ features, at: { position: at.position, rotation: at.rotation }, ...(there.instance.mirrored ? { mirrored: true } : {}) });
+          }
+        }
+      }
+      level = sub;
+    }
+    if (own) stages.push({ features: own, at: { position: solved.position, rotation: solved.rotation }, ...(leaf.instance.mirrored ? { mirrored: true } : {}) });
+    return stages.length ? stages : undefined;
+  };
+}
+
+/**
+ * Whether assembly features cut any part inside a sub-assembly of this
+ * assembly. A STEP file that keeps the structure shares one definition of each
+ * sub-assembly between its copies, so it couldn't show those cuts: such an
+ * assembly is written as a flat list of placed parts instead (with a note).
+ */
+export function cutsInsideSubAssemblies(assembly: Assembly, parts: readonly PartMesh[], assemblies: readonly Assembly[]): boolean {
+  if (!hasAssemblyFeatures(assembly, assemblies)) return false;
+  const stager = cutStager(assembly, parts, assemblies);
+  return leavesOf(assembly, parts, assemblies).some((l) => l.path.length > 0 && !!stager(l, IDENTITY));
+}
+
+/** (Joins an assembly's id and one of its instances' ids in `storedCutInputs`.) */
+export const CUT_KEY = "|";
+
+/**
+ * What the mate solver's cut copies are made from: in every assembly with features, each of its own part copies its
+ * own features cut, with the copy where the document has it (never where a solve moved it — so the cut copies, and
+ * the solve that uses them, depend on the document alone and settle at once). Ids are "<assembly id>|<instance id>".
+ */
+export function storedCutInputs(assemblies: readonly Assembly[], parts: readonly PartMesh[]): InstanceInput[] {
+  const out: InstanceInput[] = [];
+  for (const a of assemblies) {
+    if (!a.features?.length) continue;
+    for (const i of a.instances) {
+      if (i.subAssembly || i.suppressed || !findMesh(parts, meshIdOf(i))) continue;
+      const features = cutsFor(a, i.id);
+      if (!features) continue;
+      const at = { position: i.placement.position, rotation: i.placement.rotation };
+      out.push({ id: `${a.id}${CUT_KEY}${i.id}`, partId: meshIdOf(i), name: i.name, ...at, ...(i.mirrored ? { mirrored: true } : {}), cuts: [{ features, at, ...(i.mirrored ? { mirrored: true } : {}) }] });
+    }
+  }
+  return out;
+}
+
+/** The solver's cut copies (see SolveOptions.cutMeshes) from what the geometry worker made of `storedCutInputs`. */
+export function cutMeshesFrom(meshes: readonly PartMesh[]): CutMeshes {
+  const by = new Map<string, Record<string, PartMesh>>();
+  for (const m of meshes) {
+    const at = m.id.indexOf(CUT_KEY);
+    if (at < 0) continue;
+    const a = m.id.slice(0, at);
+    let list = by.get(a);
+    if (!list) by.set(a, (list = {}));
+    list[m.id.slice(at + 1)] = m;
+  }
+  return (id) => by.get(id);
+}
+
+/** What an export says when it's written flat because of `cutsInsideSubAssemblies`. */
+export const FLAT_STEP_NOTE = "Some parts inside sub-assemblies are cut by assembly features, so the STEP file lists every part on its own (in its place) instead of keeping the sub-assemblies' structure.";

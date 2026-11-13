@@ -5,6 +5,7 @@ import { solveWithParts, type SolveResult } from "../assembly/mates";
 import { withDragChange } from "../assembly/drag";
 import { leavesOf, type Leaf } from "../assembly/subassembly";
 import { activeAssembly, useStore, type MateDraft } from "../model/store";
+import { useAsmFeatures } from "./assemblyFeatureState";
 import type { Assembly, Mate } from "../model/types";
 
 /** The assembly with an open mate dialog's mate in it (once both its connectors are picked). */
@@ -21,12 +22,15 @@ export function useSolvedAssembly(): { assembly: Assembly | null; solved: SolveR
   const draft = useStore((s) => s.mateDraft?.mate ?? null);
   const drag = useStore((s) => s.dragPreview);
   const assemblies = useStore((s) => s.history.present.assemblies);
+  // Copies cut by assembly features (where the document has them): a mate on a face only they have (a drilled hole)
+  // is found on them. Never the copies as shown, which depend on this solve.
+  const cuts = useAsmFeatures((s) => s.solverCuts?.cuts);
   return useMemo(() => {
     if (!assembly) return { assembly: null, solved: null };
     // The mate being edited or dragged keeps its amounts; loops close by moving the others.
     const hold = [...(draft ? [draft.id] : []), ...(drag?.kind === "mate" ? [drag.id] : [])];
-    return { assembly, solved: solveWithParts(withDragChange(withDraftMate(assembly, draft), drag), parts, { hold, assemblies }) };
-  }, [assembly, parts, draft, drag, assemblies]);
+    return { assembly, solved: solveWithParts(withDragChange(withDraftMate(assembly, draft), drag), parts, { hold, assemblies, ...(cuts ? { cutMeshes: cuts } : {}) }) };
+  }, [assembly, parts, draft, drag, assemblies, cuts]);
 }
 
 const NO_LEAVES: Leaf[] = [];

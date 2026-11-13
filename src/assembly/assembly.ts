@@ -28,8 +28,33 @@ export function updateAssembly(doc: JuraCADDocument, id: string, fn: (a: Assembl
   if (!assembliesOf(doc).some((a) => a.id === id)) return doc;
   // Exploded view steps forget parts that any change removed (patterns, Replicate, delete…) —
   // also parts inside sub-assemblies, in every assembly that uses this one.
-  const changed = assembliesOf(doc).map((a) => (a.id === id ? tidyFits(tidyExplodeSteps(fn(a))) : a));
+  const changed = assembliesOf(doc).map((a) => (a.id === id ? tidyFeatureParts(tidyFits(tidyExplodeSteps(fn(a)))) : a));
   return withAssemblies(doc, changed.map((a) => tidyStepPaths(a, changed)));
+}
+
+/**
+ * Assembly features' chosen parts (`featureParts`) whose copy is gone (an instance
+ * deleted) are taken out; a feature left choosing nothing keeps an empty list (it
+ * cuts nothing, as chosen). Entries for features that no longer exist go too.
+ */
+export function tidyFeatureParts(a: Assembly): Assembly {
+  if (!a.featureParts) return a;
+  const tops = new Set(a.instances.map((i) => i.id));
+  const ids = new Set((a.features ?? []).map((f) => f.id));
+  let changed = false;
+  const out: Record<string, string[]> = {};
+  for (const [id, keys] of Object.entries(a.featureParts)) {
+    if (!ids.has(id)) {
+      changed = true;
+      continue;
+    }
+    const kept = keys.filter((k) => tops.has(k.split("/")[0]));
+    if (kept.length !== keys.length) changed = true;
+    out[id] = kept;
+  }
+  if (!changed) return a;
+  const { featureParts: _p, ...plain } = a;
+  return Object.keys(out).length ? { ...plain, featureParts: out } : plain;
 }
 
 /** Next free name: "Assembly 1", "Assembly 2"… */
@@ -473,6 +498,12 @@ export interface BomOptions {
    * deep, as if it were in the assembly itself.
    */
   structured?: boolean;
+  /**
+   * Copies cut by the assembly's own features (their keys: "copy" or "copy/inner/part"): each is its own line,
+   * "Plate (modified in assembly)", as it's no longer the plain part — with the cut copy's volume (mm³) when known,
+   * so its weight is the cut part's (copies cut to the same volume share a line).
+   */
+  modified?: ReadonlyMap<string, number | undefined>;
 }
 
 /** What the parts list can say about the part an instance shows: its material (key) and solid volume (mm³; null for a surface). */
@@ -494,13 +525,15 @@ export function billOfMaterials(
   options: BomOptions = {},
 ): BomRow[] {
   const all = options.assemblies ?? [];
-  const partRow = (rows: Map<string, BomRow>, shown: Instance, count: number, flip = false) => {
+  /** `cut`: the copy is modified in the assembly (its cut volume, when known; null when not cut). */
+  const partRow = (rows: Map<string, BomRow>, shown: Instance, count: number, flip = false, cut: number | undefined | null = null) => {
     // (Inside a mirrored sub-assembly copy, every part is the opposite hand.)
     const i = flip ? { ...shown, mirrored: !shown.mirrored } : shown;
     // A part in another configuration is a different line ("Bracket (Large)").
     const cfgKey = i.configuration && configurationNames[i.configuration] ? `${i.partId}@${i.configuration}` : i.partId;
     // A mirrored copy is the opposite hand: a different part to make.
-    const key = i.mirrored ? `${cfgKey}~mirrored` : cfgKey;
+    const modified = cut !== null;
+    const key = (i.mirrored ? `${cfgKey}~mirrored` : cfgKey) + (modified ? `~modified${cut !== undefined ? `:${Math.round(cut * 1000) / 1000}` : ""}` : "");
     const row = rows.get(key);
     if (row) {
       row.quantity += count;
@@ -509,10 +542,12 @@ export function billOfMaterials(
     const name = partNames[i.partId];
     const base = name ?? i.name.replace(/\s*<\d+>$/, "");
     const cfg = cfgKey !== i.partId ? ` (${configurationNames[i.configuration!]})` : "";
-    const props = name !== undefined ? info?.(i) : null;
+    const own = name !== undefined ? info?.(i) : null;
+    // A cut copy weighs what's left of it.
+    const props = own && modified && cut !== undefined && own.volume !== null ? { ...own, volume: cut } : own;
     rows.set(key, {
       partId: key,
-      name: base + cfg + (i.mirrored ? " (mirrored)" : ""),
+      name: base + cfg + (i.mirrored ? " (mirrored)" : "") + (modified ? " (modified in assembly)" : ""),
       quantity: count,
       missing: name === undefined,
       ...(props ? { material: materialOf(props.material).label } : {}),
@@ -527,27 +562,38 @@ export function billOfMaterials(
     return sub && !within.includes(sub.id) ? sub : null;
   };
   // Flattened: every part, however deep, counted once for each copy of what it's in.
-  const flat = (a: Assembly, count: number, rows: Map<string, BomRow>, within: string[], flip = false) => {
+  const modified = options.modified;
+  const isCut = (prefix: string | null, i: Instance): number | undefined | null => (prefix !== null && modified?.has(prefix + i.id) ? modified.get(prefix + i.id) : null);
+  /** `prefix`: the key so far ("" at the top), null inside a sub-assembly seen from another level (its cuts aren't this assembly's). */
+  const flat = (a: Assembly, count: number, rows: Map<string, BomRow>, within: string[], flip = false, prefix: string | null = "") => {
     // Suppressed parts aren't in the parts list (like Onshape).
     for (const i of a.instances) {
       if (i.suppressed) continue;
       if (i.subAssembly) {
         const sub = subOf(i, within);
-        if (sub) flat(sub, count, rows, [...within, sub.id], flip !== !!i.mirrored);
-      } else partRow(rows, i, count, flip);
+        if (sub) flat(sub, count, rows, [...within, sub.id], flip !== !!i.mirrored, prefix === null ? null : `${prefix}${i.id}/`);
+      } else partRow(rows, i, count, flip, isCut(prefix, i));
     }
     return rows;
   };
   if (!options.structured) return [...flat(assembly, 1, new Map(), [assembly.id]).values()];
 
   // Structured: this level's parts and sub-assemblies, each sub-assembly followed by what's in one of it.
-  const level = (a: Assembly, depth: number, prefix: string, within: string[], flip = false): BomRow[] => {
+  /** `paths`: the keys so far of every copy of this level (one, "", at the top): a part is "modified" when any copy's is. */
+  const level = (a: Assembly, depth: number, prefix: string, within: string[], flip = false, paths: string[] = [""]): BomRow[] => {
     const rows = new Map<string, BomRow>();
-    const inside = new Map<string, { sub: Assembly; flip: boolean }>();
+    const inside = new Map<string, { sub: Assembly; flip: boolean; paths: string[] }>();
+    const cutIn = (i: Instance) => {
+      for (const p of paths) {
+        const c = isCut(p, i);
+        if (c !== null) return c;
+      }
+      return null;
+    };
     for (const i of a.instances) {
       if (i.suppressed) continue;
       if (!i.subAssembly) {
-        partRow(rows, i, 1, flip);
+        partRow(rows, i, 1, flip, cutIn(i));
         continue;
       }
       const sub = subOf(i, within);
@@ -556,10 +602,13 @@ export function billOfMaterials(
       const mirrored = flip !== !!i.mirrored;
       const key = `asm:${sub.id}${mirrored ? "~mirrored" : ""}`;
       const row = rows.get(key);
-      if (row) row.quantity++;
-      else {
+      const here = paths.map((p) => `${p}${i.id}/`);
+      if (row) {
+        row.quantity++;
+        inside.get(key)?.paths.push(...here);
+      } else {
         rows.set(key, { partId: key, name: sub.name + (mirrored ? " (mirrored)" : ""), quantity: 1, missing: false, subAssembly: true });
-        inside.set(key, { sub, flip: mirrored });
+        inside.set(key, { sub, flip: mirrored, paths: here });
       }
     }
     const out: BomRow[] = [];
@@ -572,9 +621,9 @@ export function billOfMaterials(
       }
       const sub = found.sub;
       // What one of it weighs: everything in it (unknown if any part's weight is).
-      const weight = bomTotalMass([...flat(sub, 1, new Map(), [...within, sub.id], found.flip).values()]);
+      const weight = bomTotalMass([...flat(sub, 1, new Map(), [...within, sub.id], found.flip, null).values()]);
       out.push({ ...r, level: depth, item, ...(!weight.partial && weight.grams > 0 ? { massEach: weight.grams } : {}) });
-      out.push(...level(sub, depth + 1, `${item}.`, [...within, sub.id], found.flip));
+      out.push(...level(sub, depth + 1, `${item}.`, [...within, sub.id], found.flip, found.paths));
     });
     return out;
   };

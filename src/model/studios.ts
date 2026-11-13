@@ -13,6 +13,7 @@
  * `partStudios` (which may then be called "main").
  */
 import type { Feature, JuraCADDocument, PartStudio } from "./types";
+import { tidyContexts } from "../assembly/featureParse";
 
 /** Id of the first Part Studio of a document that never had its tabs moved. */
 export const MAIN_STUDIO = "main";
@@ -163,7 +164,8 @@ export function removeStudio(doc: JuraCADDocument, id: string): JuraCADDocument 
   if (doc.configurations?.some((c) => c.suppressed.some((f) => ids.has(f)))) {
     out = { ...out, configurations: doc.configurations.map((c) => (c.suppressed.some((f) => ids.has(f)) ? { ...c, suppressed: c.suppressed.filter((f) => !ids.has(f)) } : c)) };
   }
-  return out;
+  // Edit in context: the contexts shown in it go with it.
+  return tidyContexts(out, studiosOf(out).map((s) => s.id));
 }
 
 /** Which Part Studio a feature (and so the part it made) is in. */

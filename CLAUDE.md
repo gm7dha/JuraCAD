@@ -286,6 +286,70 @@
   solve, `flexibleInner`); the Viewport, `instancesForKernel(…, solved)` and `stepTree(…, inner)` (a product per flexible copy,
   `<sub>@<key>`) pass the live one. `connectorFrameFor` goes through flexible copies with `frameThroughFlexible`. Mirrored copies
   and pattern copies are never flexible. Old documents (no flag) take exactly the old code paths.
+- Assembly features (Onshape's) and Edit in context. Assembly features: `Assembly.features` (ordinary Feature records — sketch,
+  Extrude/Revolve with operation remove, Hole; `isAssemblyFeature`; parsed by document.ts `withAssemblyFeatures` through the same
+  `parseFeatures`, ids unique with the studios') + `Assembly.featureParts` (feature id → leaf keys; missing = every TOP-LEVEL part
+  it reaches — parts inside sub-assemblies only when listed; `tidyFeatureParts` in updateAssembly; pattern copies keep their ids
+  when a pattern is synced, so choices survive; copies a pattern removes drop out). New features made by the app and Claude
+  store the parts they reach at creation (so a bolt mated into the hole later isn't drilled). Pure `src/assembly/assemblyFeatures.ts`
+  (`cutsFor(asm, key)`, `assemblySketch`/`assemblyHole`/`assemblyExtrudeCut`, `deleteAssemblyFeatures` via `findDependents`,
+  `assemblyFeaturesText`, `modifiedCopies`), file-reading bits in `featureParse.ts` (kept light: document.ts imports it). Sketch
+  planes are fixed numbers in each assembly's own coordinates (a clicked face is `planeOnFace` with no `face` pick): the cut stays
+  where it was made; a copy a mate moves is cut where it sits now. `InstanceInput.cuts` = `CutStage[]` (protocol.ts): one stage
+  per assembly level — the deepest sub-assembly's own features first (at the leaf's place in it, by its own solve), out to the
+  assembly's own last (at the leaf's solved place; `cutStager`/`hasAssemblyFeatures` in placed.ts) — each with `at` and
+  `mirrored` (the hand in that level), so sub-assemblies' holes carry up to every parent and an exploded view moves the cut copy
+  on. Through `instancesForKernel`, exports, drawings, the clash check and Claude's tools all get cut shapes. Engine `cutCopy`
+  (part coordinates in and out; per stage: mirror, place, `buildSolid` each tool with `[that placed copy]` as the parts, a box test
+  first, cut — a cut leaving nothing is refused with a note —, back; LRU cache ≤ 48 by part object + stages; failures go to
+  `errors` and, from placeInstances, to exports' `cutNotes` — shown by the Export dialog and export_model). `assemblyCuts` (worker)
+  → meshes (part coordinates), `cut`, `reached` per feature (only features that took material), `errors`. Mates on faces only a
+  cut copy has (a drilled hole's wall): `SolveOptions.cutMeshes` is a `CutMeshes` (assembly id → its own copies cut by its own
+  features, by instance id) → `connectorFrameFor` tries the part first, then the cut copy (`cutMeshAt`, also "copy/inner" keys of
+  flattened flexible views), so mates on faces the part always had stay exactly put; passed down through `frameInside`,
+  `solvedInside`, `flexibleInner` and `solveFlexibly` (cached per CutMeshes), so a sub-assembly's own mate to its own hole holds in
+  its parents and a parent's mate reaches a hole drilled inside one. The solver's copies are cut with each part WHERE THE DOCUMENT
+  HAS IT (`storedCutInputs` → worker `assemblyCuts` → `cutMeshesFrom`; ids "<assembly>|<instance>"), never where a solve put it,
+  so they depend on the design alone and a solve settles at once (the copies shown are cut at the solved place). A mate on a
+  cut-made face of a part the solve moves from its stored place (`cutFaceMoved`, `settledWithCuts`) is switched off and said ("This
+  mate uses a face made by an assembly feature on …") only when it is what moves the part: solved without such mates, a part that
+  still goes to the same place (moved by something upstream — the part under it made thicker, a Fasten following it) keeps them;
+  at most three solves. `rememberCutMeshes(assemblies,
+  parts, cuts)` lets every solve of that state find them without being passed (`rememberedCutMeshes`; the app's `useSolverCuts`
+  once the worker answers, the extension's `solverCuts` in `solve`); a state not cut yet takes the app's latest copies
+  (`carryCutMeshesOver`; kept for it when its `storedCutInputs` are the same), so edits never make mated parts jump; Accept / add_assembly_feature settle placements first, so
+  the stored places are where the cut was made. `findTarget` gives a cut copy's faces as shown (named by the part's id). "Parts…"
+  lists ticks, and "The parts it reaches now" (`reachNow`: every top-level copy tried once, what it really cut kept).
+  Structured STEP: a top-level copy the features may cut gets its own definition ("<part> (modified in assembly)", `cuts`,
+  `plain`/`plainName`), turned back into the shared plain one by the engine's `withPlainUncut` when nothing was removed (`stepTree`'s
+  `cut` set skips them up front when known); when parts INSIDE sub-assemblies are cut (`cutsInsideSubAssemblies`), callers write
+  the flat list instead and say `FLAT_STEP_NOTE`. Parts list: `BomOptions.modified` (key → cut volume) → "(modified in assembly)"
+  lines weighed as cut (copies with the same volume share a line; flattened lists by full key, structured ones by every copy's key at
+  each level — a part inside a sub-assembly is marked when any copy of it is).
+  App: `src/app/assemblyFeatureState.ts` (own zustand store: cut meshes for the assembly on show, used by Viewport's
+  `instanceMeshes` and connectorAt via `cutMeshFor`; the Hole/Cut draft; `acceptAsmCut` asks the worker what it reaches first;
+  actions via `changeDocument`), `src/app/AssemblyFeaturesUI.tsx` (toolbar group "Hole"/"Cut", the "Assembly features" list with
+  Parts…/Off/delete and each feature's problem, `AsmCutPanel`, `asmCutPick` first in handleAssemblyPick). Not done:
+  Fillet/Chamfer/Sweep as assembly features, a full sketch editor in assemblies (points/rectangles/circles only), sub-assemblies'
+  own solve used for their stages even when flexible.
+  Edit in context: `doc.contexts` (`EditContext`: studioId, assemblyId, instance key, `parts` = the OTHER parts' {key, partId,
+  studioId, placement relative to the edited copy, mirrored}; `hidden`), pure `src/assembly/inContext.ts` (`takeContext` — made or
+  taken again for the same assembly+copy, same object when nothing moved —, `updateContext`, `contextProblem`, `setContextHidden`,
+  `removeContext`; `tidyContexts` (run by `removeStudio`), `contextGone` (assembly or copy deleted: plain words in the ContextBar,
+  and `contextInputs` leaves it out), `contextInputs` in featureParse.ts; parts from the edited part's own Part Studio are left out).
+  Engine: `StudioInput.contexts`. Context parts (ids `ctx:<context>:<key>`, `contextPartId`/`contextPartOf`/`isContextPartId`)
+  are placed copies of other studios' built parts, kept per studio in `contextBuilds` (`placeAllContexts` after every rebuild, keyed
+  by the contexts + their source studios' build keys; `RebuildResult.contextParts` + `contextRebuilt` → `keepContextParts`, never in
+  `store.parts`), used for showing, the candidates list (`workOutCandidates` adds them) and useEdge. Only a studio whose features
+  USE them (`usesContext`: a `"partId":"ctx:` in its features) is built after their studios (`sourcesOf`) and sees them while its
+  features build (`partOrContext` in followSketch); so two studios can each be edited in the other's context, and where both use the
+  other's parts the one built first says so plainly on its features (`notBuilt`). Viewport: `useShownContextParts` see-through,
+  `withContextParts` for planeForFace/Use; clicking one outside a sketch says it's for reference. UI: an instance row's right-click
+  (InstanceMenu) or the toolbar's "In context" → `editInContext`, `ContextBar` (Update context / Hide / Remove). Not done: Claude's
+  tools for contexts; intersect/up-to-face/mates against context parts. Tests: assemblyCutFeatures (pure), engineAssemblyCuts,
+  engineAssemblyCuts2 (a sub-assembly's holes in a parent, structured STEP sharing untouched copies, a cut copy's weight, a pin
+  mated into a drilled hole, two studios in each other's context + the real cycle said plainly), engineInContext,
+  mcpAssemblyFeatures (`add_assembly_feature` — keeps the parts it reached —, `delete_assembly_feature`, a pin mated into the hole).
 - Drawings: `src/drawing/` — `drawing.ts` (document edits, parsing), `cameras.ts` (view directions; first-angle),
   `annotations.ts` (centre marks/lines, section hatching, balloons), `sections.ts` (section cuts drawn on a view:
   cut plane, camera, letters; views are keyed by `viewKey` — the kind, or "section:<id>"), `sheet.ts` (lays the sheet out as simple line/text shapes in sheet mm, y up), `export.ts` (SVG and a hand-written

@@ -81,6 +81,12 @@ ctx.onmessage = (event) => {
         case "clashes":
           body = { type: "clashes", result: engine.clashes(request.instances, request.tolerance ?? 0, request.withGaps !== false, request.fitRange ?? 0, request.fitPairs) };
           break;
+        case "assemblyCuts": {
+          const result = engine.assemblyCuts(request.instances);
+          for (const m of result.meshes) transfer.push(m.vertices.buffer, m.normals.buffer, m.triangles.buffer, m.lines.buffer);
+          body = { type: "assemblyCuts", result };
+          break;
+        }
         case "sketchCandidates":
           body = { type: "sketchCandidates", result: engine.sketchCandidatesSince(request.studioId, request.sketchId, request.known) };
           break;

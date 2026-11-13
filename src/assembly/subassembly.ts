@@ -11,7 +11,7 @@
  */
 import { newId } from "../model/document";
 import type { Assembly, Instance, JuraCADDocument } from "../model/types";
-import type { InstanceInput, PartMesh } from "../kernel/protocol";
+import type { CutStage, InstanceInput, PartMesh } from "../kernel/protocol";
 import { mirroredBox, nextInstanceName, placedBox, updateAssembly, usesAssembly, type Box3 } from "./assembly";
 
 export { tidySubAssemblies, usesAssembly } from "./assembly";
@@ -197,6 +197,8 @@ export function kernelInstances(
   fallback: (top: string) => Placement,
   /** Parts inside sub-assemblies moved on their own (an exploded view's steps), by key: how far (mm). */
   shift: Record<string, Vec3> = {},
+  /** Assembly features cutting a part (see placed.ts `cutStages`), given where it's solved to be. */
+  cuts?: (leaf: Leaf, solved: Placement) => CutStage[] | undefined,
 ): InstanceInput[] {
   const out: InstanceInput[] = [];
   for (const l of leaves) {
@@ -206,7 +208,14 @@ export function kernelInstances(
     const placed = l.path.length ? compose(at, l.relative) : at;
     const d = l.path.length ? shift[l.key] : undefined;
     const p = d ? { ...placed, position: [placed.position[0] + d[0], placed.position[1] + d[1], placed.position[2] + d[2]] as Vec3 } : placed;
-    out.push({ id: l.key, partId: meshIdOf(l.instance), name: l.name, position: p.position, rotation: p.rotation, ...(l.instance.mirrored ? { mirrored: true } : {}) });
+    const input: InstanceInput = { id: l.key, partId: meshIdOf(l.instance), name: l.name, position: p.position, rotation: p.rotation, ...(l.instance.mirrored ? { mirrored: true } : {}) };
+    if (cuts) {
+      // Cut where the solve puts it (an exploded view then moves the cut copy on).
+      const home = fallback(l.top);
+      const stages = cuts(l, l.path.length ? compose(home, l.relative) : home);
+      if (stages?.length) input.cuts = stages;
+    }
+    out.push(input);
   }
   return out;
 }

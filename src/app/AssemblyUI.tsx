@@ -32,6 +32,8 @@ import { Icons } from "./icons";
 import { toggleMateAnimation } from "./animateMate";
 import { detectPlatform, shortcut } from "./platform";
 import { startSection } from "./SectionPanel";
+import { AssemblyFeaturesSection, InstanceMenu } from "./AssemblyFeaturesUI";
+import { editInContext, startAsmCut, useAsmFeatures, useModifiedCopies } from "./assemblyFeatureState";
 import { NamedViewsButton } from "./ViewTools";
 
 function ToolButton({ label, icon, onClick, disabled, active, title }: { label: string; icon: ReactNode; onClick?: () => void; disabled?: boolean; active?: boolean; title?: string }) {
@@ -101,6 +103,7 @@ export function AssemblyToolbar() {
   const selected = asm?.instances.filter((i) => selection.includes(i.id)) ?? [];
   const allFixed = selected.length > 0 && selected.every((i) => i.fixed);
   const allSuppressed = selected.length > 0 && selected.every((i) => i.suppressed);
+  const cutDraft = useAsmFeatures((s) => s.draft?.kind ?? null);
 
   return (
     <div className="toolbar" role="toolbar" aria-label="Assembly tools">
@@ -195,6 +198,44 @@ export function AssemblyToolbar() {
       </div>
       <div className="tool-divider" />
       <div className="tool-group">
+        <ToolGroupButton
+          id="asm-features"
+          name="assembly feature"
+          items={[
+            {
+              key: "hole",
+              label: "Hole",
+              icon: <Icons.Hole />,
+              disabled: !asm?.instances.length,
+              active: cutDraft === "hole",
+              onClick: () => startAsmCut("hole"),
+              title: "Hole (in the assembly) — drill through the parts here at once, e.g. two plates mated together. Only this assembly's copies are cut; the parts in their Part Studios don't change",
+            },
+            {
+              key: "cut",
+              label: "Cut",
+              icon: <Icons.Extrude />,
+              disabled: !asm?.instances.length,
+              active: cutDraft === "cut",
+              onClick: () => startAsmCut("cut"),
+              title: "Cut (in the assembly) — an extrude that removes a rectangle or circle through the parts here. Only this assembly's copies are cut",
+            },
+          ]}
+        />
+        <ToolButton
+          label="In context"
+          icon={<Icons.Sketch />}
+          disabled={selected.length !== 1 || !!selected[0]?.subAssembly}
+          onClick={() => selected[0] && editInContext(selected[0].id)}
+          title={
+            selected.length === 1 && !selected[0].subAssembly
+              ? "Edit in context — open this part's Part Studio with the assembly's other parts shown round it, to sketch on and use their edges"
+              : "Select one part first (right-click a part inside a sub-assembly in the list)"
+          }
+        />
+      </div>
+      <div className="tool-divider" />
+      <div className="tool-group">
         {MATE_ORDER.slice(0, 5).map((type) => {
           const Icon = MATE_ICONS[type];
           const enough = (asm?.instances.length ?? 0) >= 2;
@@ -274,10 +315,19 @@ function InstanceRow({ instance, missing, problem }: { instance: Instance; missi
   const colour = useStore((s) => s.history.present.appearance?.[instance.partId] ?? DEFAULT_PART_COLOUR);
   const sub = useStore((s) => (instance.subAssembly ? s.history.present.assemblies?.find((a) => a.id === instance.subAssembly) : undefined));
   const [open, setOpen] = useState(false);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   return (
     <>
     <li
       className={["feature-row", selected && "selected", hidden && "hidden", (missing || problem) && "failed", instance.suppressed && "suppressed"].filter(Boolean).join(" ")}
+      onContextMenu={
+        sub || missing || instance.suppressed
+          ? undefined
+          : (e) => {
+              e.preventDefault();
+              setMenu({ x: e.clientX, y: e.clientY });
+            }
+      }
       onClick={(e) => {
         const s = useStore.getState();
         const additive = isAdditive(e);
@@ -361,6 +411,7 @@ function InstanceRow({ instance, missing, problem }: { instance: Instance; missi
       )}
     </li>
     {sub && open && <SubAssemblyRows sub={sub} prefix={instance.id} depth={1} within={[sub.id]} />}
+    {menu && <InstanceMenu at={menu} partKey={instance.id} onClose={() => setMenu(null)} />}
     </>
   );
 }
@@ -388,10 +439,19 @@ function SubAssemblyRows({ sub, prefix, depth, within }: { sub: Assembly; prefix
 
 function SubRow({ rowKey, name, hidden, depth, colour, inner, within }: { rowKey: string; name: string; hidden: boolean; depth: number; colour: string; inner?: Assembly; within: string[] }) {
   const [open, setOpen] = useState(false);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   return (
     <>
       <li
         className={["feature-row", "nested", hidden && "hidden"].filter(Boolean).join(" ")}
+        onContextMenu={
+          inner
+            ? undefined
+            : (e) => {
+                e.preventDefault();
+                setMenu({ x: e.clientX, y: e.clientY });
+              }
+        }
         style={{ paddingLeft: 12 + 16 * depth }}
         title={inner ? `A copy of ${inner.name} inside it. Double-click to open ${inner.name}.` : "A part inside the sub-assembly. Mate to it by clicking its faces; open the sub-assembly to move it."}
         onDoubleClick={inner ? () => useStore.getState().setActiveTab(inner.id) : undefined}
@@ -423,6 +483,7 @@ function SubRow({ rowKey, name, hidden, depth, colour, inner, within }: { rowKey
         </button>
       </li>
       {inner && open && <SubAssemblyRows sub={inner} prefix={rowKey} depth={depth + 1} within={[...within, inner.id]} />}
+      {menu && <InstanceMenu at={menu} partKey={rowKey} onClose={() => setMenu(null)} />}
     </>
   );
 }
@@ -1007,13 +1068,16 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
   // With sub-assemblies, the parts list can be flattened (every part counted) or structured (each sub-assembly a line, its parts under it).
   const hasSubs = assembly.instances.some((i) => i.subAssembly);
   const [structured, setStructured] = useState(false);
+  // Copies cut by the assembly's own features are lines of their own ("… (modified in assembly)").
+  const modified = useModifiedCopies();
   const bom = useMemo(
     () =>
       billOfMaterials(assembly, partNames, Object.fromEntries((doc.configurations ?? []).map((c) => [c.id, c.name])), bomInfo(parts, doc.materials), doc.partProperties, {
         assemblies: doc.assemblies,
         structured: hasSubs && structured,
+        ...(modified.size ? { modified } : {}),
       }),
-    [assembly, partNames, doc.configurations, parts, doc.materials, doc.partProperties, doc.assemblies, hasSubs, structured],
+    [assembly, partNames, doc.configurations, parts, doc.materials, doc.partProperties, doc.assemblies, hasSubs, structured, modified],
   );
   const partCount = bom.reduce((n, r) => n + (r.subAssembly ? 0 : r.quantity * (r.level ? levelMultiplier(bom, r) : 1)), 0);
   const [editingProps, setEditingProps] = useState<{ partId: string; name: string } | null>(null);
@@ -1039,6 +1103,7 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
       <MatesSection assembly={assembly} />
       <GroupsSection assembly={assembly} />
       <PatternsSection assembly={assembly} />
+      <AssemblyFeaturesSection assembly={assembly} />
       <RelationsSection assembly={assembly} />
       <PositionsSection assembly={assembly} />
       <section className="panel-section parts">

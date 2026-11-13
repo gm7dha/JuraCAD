@@ -17,6 +17,22 @@ export interface InstanceInput {
   rotation: [number, number, number, number];
   /** The part's mirror image (flipped across its own YZ plane before it's placed). */
   mirrored?: boolean;
+  /**
+   * Assembly features cutting this copy (src/assembly/assemblyFeatures.ts), level by level: the sketches and the
+   * Extrude / Revolve (remove) and Hole features. Missing = none.
+   */
+  cuts?: CutStage[];
+}
+
+/**
+ * One assembly level's features cutting a copy (see InstanceInput.cuts): the assembly's own, or those of a
+ * sub-assembly it's inside — each in that level's coordinates, with where the copy sits there (its solved place;
+ * an exploded view moves the cut copy on) and whether it's the part's mirror image there.
+ */
+export interface CutStage {
+  features: Feature[];
+  at: { position: [number, number, number]; rotation: [number, number, number, number] };
+  mirrored?: boolean;
 }
 
 /** A drawing view's lines, in the view's own flat coordinates (mm; x right, y up on the paper). */
@@ -77,6 +93,26 @@ export interface StudioInput {
   partSuffix?: string;
   /** Names for its parts instead of the design's (an old version being compared: its own names). */
   partNames?: Record<string, string>;
+  /**
+   * Edit in context (src/assembly/inContext.ts): other parts of an assembly shown in this Part Studio for reference,
+   * placed relative to the part being edited. Sketches can sit on their faces and use their edges (by their ids here).
+   * Missing = none.
+   */
+  contexts?: ContextInput[];
+}
+
+/** One context's parts, for the engine. */
+export interface ContextInput {
+  id: string;
+  parts: {
+    /** Its id in this Part Studio ("ctx:<context>:<key>"). */
+    id: string;
+    /** The part it shows, and the Part Studio that's in (built first). */
+    partId: string;
+    studioId: string;
+    placement: { position: [number, number, number]; rotation: [number, number, number, number] };
+    mirrored?: boolean;
+  }[];
 }
 
 /** Display mesh for one part, ready to hand to three.js. */
@@ -157,6 +193,10 @@ export interface FlatPatternData {
 
 export interface RebuildResult {
   parts: PartMesh[];
+  /** Edit in context: the context parts of the Part Studios rebuilt (ids "ctx:…", `studioId` the studio they're shown in). Missing = none. */
+  contextParts?: PartMesh[];
+  /** The Part Studios whose context parts are all in `contextParts` (placed again, or now none); the others' are as before. */
+  contextRebuilt?: string[];
   /** Feature ID → plain-English reason it failed. */
   featureErrors: Record<string, string>;
   /** Feature ID → something to tell about a feature that was built (e.g. an extra sketch it left out). Not a failure. */
@@ -241,6 +281,8 @@ export interface ContactMeasure {
 }
 
 export interface ExportResult {
+  /** An assembly's features that couldn't be made or couldn't cut, in plain words (see InstanceInput.cuts). */
+  cutNotes?: string[];
   /** Binary STL file contents. */
   stl: ArrayBuffer;
   triangleCount: number;
@@ -257,8 +299,8 @@ export interface StepTree {
   root: string;
   /** Assemblies by key (an assembly's id): their names and what's in them. */
   assemblies: Record<string, { name: string; components: StepComponent[] }>;
-  /** Part definitions by key: the built part (its mesh id), its name, and whether it's the mirror image. */
-  parts: Record<string, { partId: string; name: string; mirrored?: boolean }>;
+  /** Part definitions by key: the built part (its mesh id), its name, whether it's the mirror image, and (a copy cut by the assembly's own features) its cuts (see InstanceInput.cuts) — when they take nothing away, the engine writes the shared plain definition `plain` (named `plainName`) instead. */
+  parts: Record<string, { partId: string; name: string; mirrored?: boolean; cuts?: CutStage[]; plain?: string; plainName?: string }>;
 }
 
 /** One instance in a STEP assembly: its name, where it sits in its assembly, and the part or sub-assembly it shows (a key). */
@@ -272,12 +314,16 @@ export interface StepComponent {
 }
 
 export interface StepResult {
+  /** An assembly's features that couldn't be made or couldn't cut, in plain words (see InstanceInput.cuts). */
+  cutNotes?: string[];
   /** STEP file contents (exact shapes, millimetres). */
   step: ArrayBuffer;
   partCount: number;
 }
 
 export interface ThreeMfResult {
+  /** An assembly's features that couldn't be made or couldn't cut, in plain words (see InstanceInput.cuts). */
+  cutNotes?: string[];
   /** .3mf file contents. */
   data: ArrayBuffer;
   triangleCount: number;
@@ -317,6 +363,7 @@ export type KernelRequest =
   | { type: "exportStl"; partIds: string[]; quality: MeshQuality; instances?: InstanceInput[] }
   | { type: "exportStep"; partIds: string[]; colours?: Record<string, string>; instances?: InstanceInput[]; tree?: StepTree }
   | { type: "clashes"; instances: InstanceInput[]; tolerance?: number; withGaps?: boolean; fitRange?: number; fitPairs?: [string, string][] }
+  | { type: "assemblyCuts"; instances: InstanceInput[] }
   | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sections?: SectionRequest[]; breakouts?: BreakOutRequest[]; tangent?: boolean }
   | { type: "measure"; picks: TopoPick[] }
   | { type: "measureParts"; partIds: string[] }
@@ -346,7 +393,20 @@ export type KernelResponseBody =
   | { type: "printCheck"; result: PrintPartResult[] }
   | { type: "exportPrint3mf"; result: PrintExportResult }
   | { type: "clashes"; result: ContactMeasure[] }
+  | { type: "assemblyCuts"; result: AssemblyCutsResult }
   | { type: "project"; result: ViewProjection[] };
+
+/** An assembly's copies as its own features cut them (see GeometryEngine.assemblyCuts). */
+export interface AssemblyCutsResult {
+  /** Each cut copy's mesh (id = its key in the assembly), in its part's own coordinates. */
+  meshes: PartMesh[];
+  /** The copies that lost material. */
+  cut: string[];
+  /** Which copies each assembly feature took material from (by feature id). */
+  reached: Record<string, string[]>;
+  /** Assembly features that couldn't be made, by id: why. */
+  errors: Record<string, string>;
+}
 
 /** Messages sent from the main thread to the worker. */
 export type ToWorker = { id: number; request: KernelRequest };

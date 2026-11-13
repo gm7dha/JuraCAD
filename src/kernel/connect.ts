@@ -10,7 +10,8 @@ import type { StudioInput } from "./protocol";
 import type { JuraCADDocument } from "../model/types";
 import { configurationsInUse } from "../assembly/configured";
 import { KernelClient } from "./client";
-import { compareStudioInputs, configuredStudioInputs, featureForEngine, featuresForEngine } from "./buildInput";
+import { keepContextParts } from "../app/assemblyFeatureState";
+import { compareStudioInputs, configuredStudioInputs, featureForEngine, featuresForEngine, withContexts } from "./buildInput";
 
 let client: KernelClient | null = null;
 
@@ -24,7 +25,7 @@ function currentStudios(): StudioInput[] {
   const s = useStore.getState();
   const here = activeStudioId(s);
   const editingIn = s.editing ? here : null;
-  return [...studiosOf(s.history.present).map((st) => ({ ...st, features: featuresForEngine(st.features) })).map((st) => ({
+  return [...studiosOf(s.history.present).map((st) => ({ ...st, features: featuresForEngine(st.features) })).map((st) => withContexts(s.history.present, {
     id: st.id,
     features: convertPreview(
       // Picking parts or faces for the open feature: shown as they were before it (see pickingPreview).
@@ -85,6 +86,8 @@ export function connectKernel(): () => void {
         return;
       }
       s.setRebuildResult(result.parts, result.featureErrors, result.durationMs, result.rebuilt, result.studioOrder, result.sketchLinks, result.featureWarnings, result.featureNotes, result.followed, result.curves);
+      // Edit in context: the other assembly parts shown in each Part Studio (kept apart from the studio's own parts).
+      keepContextParts(result.contextParts, result.contextRebuilt, result.studioOrder);
       // Where each Move / copy's triad goes (kept the same object while nothing changed, so nothing redraws).
       // (Only the Part Studios rebuilt are in the result: the others' are kept.)
       const was = useStore.getState().transformCentres;
@@ -130,6 +133,8 @@ export function connectKernel(): () => void {
   let lastVariables = useStore.getState().history.present.variables;
   let lastPartNames = useStore.getState().history.present.partNames;
   let lastStudios = useStore.getState().history.present.partStudios;
+  let lastContexts = useStore.getState().history.present.contexts;
+  let lastAssemblies = useStore.getState().history.present.assemblies;
   let lastDraft = useStore.getState().editing?.draft ?? null;
   let lastDoc = useStore.getState().history.present;
   /** What this tab last wrote to browser storage (null: write the design and its versions again next time). */
@@ -155,12 +160,17 @@ export function connectKernel(): () => void {
       s.history.present.variables !== lastVariables ||
       s.history.present.partNames !== lastPartNames ||
       s.history.present.partStudios !== lastStudios ||
+      s.history.present.contexts !== lastContexts ||
+      // (A context's assembly or part deleted: its parts stop showing.)
+      (!!s.history.present.contexts?.length && s.history.present.assemblies !== lastAssemblies) ||
       configuredKey(s.history.present) !== lastConfigured ||
       s.versionCompare?.docs !== lastCompared
     ) {
       lastCompared = s.versionCompare?.docs;
       lastConfigured = configuredKey(s.history.present);
       lastStudios = s.history.present.partStudios;
+      lastContexts = s.history.present.contexts;
+      lastAssemblies = s.history.present.assemblies;
       lastPartNames = s.history.present.partNames;
       lastFeatures = s.history.present.features;
       lastVariables = s.history.present.variables;

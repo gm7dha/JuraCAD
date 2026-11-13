@@ -15,10 +15,11 @@ import { parseFinishes } from "./finishes";
 import { parseMaterials } from "./materials";
 import { parsePartProperties } from "../assembly/properties";
 import { parseAssemblies } from "../assembly/assembly";
+import { isAssemblyFeature, parseContexts, parseFeatureParts } from "../assembly/featureParse";
 import { parseDrawings } from "../drawing/drawing";
 import { newCurveDef, parseCurveDef } from "./curves";
 import { parseFrameDef, parseGusset, parseTrimFrame } from "./frame";
-import type { BoundaryCurve, Feature, FeatureType, GeomPick, ImportedFile, LoftCurve, LoftDef, LoftEnd, LoftProfile, MateConnectorDef, Operation, JuraCADDocument, PartStudio, PlaneOptions } from "./types";
+import type { Assembly, BoundaryCurve, Feature, FeatureType, GeomPick, ImportedFile, LoftCurve, LoftDef, LoftEnd, LoftProfile, MateConnectorDef, Operation, JuraCADDocument, PartStudio, PlaneOptions } from "./types";
 import { MAIN_STUDIO } from "./studios";
 import { parseHiddenDatums } from "./visibility";
 import { parseVersions } from "./versions";
@@ -1001,11 +1002,33 @@ export function parseDocument(data: unknown): JuraCADDocument | null {
     ...(partStudios.length ? { partStudios } : {}),
     ...(Object.keys(parsePartNames(d.partNames)).length ? { partNames: parsePartNames(d.partNames) } : {}),
     ...(Object.keys(parsePartProperties(d.partProperties)).length ? { partProperties: parsePartProperties(d.partProperties) } : {}),
-    ...(parseAssemblies(d.assemblies).length ? { assemblies: parseAssemblies(d.assemblies) } : {}),
+    ...(parseAssemblies(d.assemblies).length ? { assemblies: withAssemblyFeatures(parseAssemblies(d.assemblies), d.assemblies, seen) } : {}),
     ...(parseDrawings(d.drawings).length ? { drawings: parseDrawings(d.drawings) } : {}),
     ...configurationsOf(d),
     ...(parseVersions(d.versions).length ? { versions: parseVersions(d.versions) } : {}),
     ...(parseLibraryInserts(d.libraryInserts).length ? { libraryInserts: parseLibraryInserts(d.libraryInserts) } : {}),
+    ...(parseContexts(d.contexts).length ? { contexts: parseContexts(d.contexts) } : {}),
     ...(parseNamedViews(d.namedViews).length ? { namedViews: parseNamedViews(d.namedViews) } : {}),
   };
+}
+
+/**
+ * Assembly features (sketches, cuts and holes made in an assembly) read with the
+ * same checks as a Part Studio's; a broken list is dropped (the assembly opens
+ * without its features rather than not at all). Older files have none.
+ */
+function withAssemblyFeatures(assemblies: Assembly[], raw: unknown, seen: Set<string>): Assembly[] {
+  if (!Array.isArray(raw)) return assemblies;
+  return assemblies.map((a) => {
+    const r = raw.find((x) => x && typeof x === "object" && (x as Record<string, unknown>).id === a.id) as Record<string, unknown> | undefined;
+    if (!r || !Array.isArray(r.features) || !r.features.length) return a;
+    const trial = new Set(seen);
+    const list = parseFeatures(r.features, trial);
+    if (!list) return a;
+    const features = list.filter(isAssemblyFeature);
+    if (!features.length) return a;
+    for (const f of features) seen.add(f.id);
+    const parts = parseFeatureParts(r.featureParts, features);
+    return { ...a, features, ...(parts ? { featureParts: parts } : {}) };
+  });
 }

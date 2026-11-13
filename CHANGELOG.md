@@ -8,6 +8,15 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.69 — Holes and cuts in assemblies, and Edit in context
+
+- New in assemblies: **Hole** and **Cut** drill or cut through the parts in the assembly at once (e.g. two plates mated together). Only that assembly's copies are cut; the parts themselves don't change.
+- Exports, drawings, the clash check and the parts list of the assembly use the cut parts ("… (modified in assembly)").
+- A new **Assembly features** list: choose which parts each cut goes through, switch it off, or delete it.
+- **Edit in context**: right-click a part in an assembly to open its Part Studio with the assembly's other parts shown faint around it. Sketch on them, snap to them and Use their edges. **Update context** picks up where they've moved to.
+- Holes made in a sub-assembly show wherever it's used; you can mate pins and bolts into holes made in the assembly.
+- Claude can drill and cut through parts in an assembly too (`add_assembly_feature`).
+
 ## v0.68 — Pick filter, Select other, named views, copy and paste
 
 - **Pick** (selection filter) next to Fit: choose whether clicks pick faces, edges, whole parts, planes or sketches. Selection boxes follow it too.

@@ -23,6 +23,9 @@ import type { Feature } from "../model/types";
 import { SketchController } from "../sketch/controller";
 import { intersectWith } from "../app/sketchIntersect";
 import { bringInCurvedEdge } from "../app/sketchUseCurve";
+import { cutMeshFor, useAssemblyCuts, useAsmFeatures, useShownContextParts } from "../app/assemblyFeatureState";
+import { asmCutPick } from "../app/AssemblyFeaturesUI";
+import { isContextPartId } from "../assembly/inContext";
 import { planeFrame, planeOnFace, type PlaneFrame, type SketchPlane } from "../sketch/planes";
 import { framesOf, planeAsSketchPlane, planeFeatureFrame } from "../sketch/planeFeature";
 import { resolveParams } from "../model/features";
@@ -60,11 +63,14 @@ const NO_SHIFT: Record<string, [number, number, number]> = {};
  * Each instance shown as a copy of its part's mesh (moved into place with setPlacements); suppressed ones aren't shown.
  * A sub-assembly shows a copy of each part inside it, named by its path ("top/inner/part").
  */
-function instanceMeshes(parts: PartMesh[], leaves: Leaf[]): PartMesh[] {
+function instanceMeshes(parts: PartMesh[], leaves: Leaf[], cut: Record<string, PartMesh> = {}): PartMesh[] {
   const out: PartMesh[] = [];
   for (const l of leaves) {
     const part = findMesh(parts, meshIdOf(l.instance));
-    if (part) out.push({ ...part, id: l.key, name: l.name, featureIds: [] });
+    // A copy cut by the assembly's own features shows its cut shape (in the part's own coordinates, placed as usual).
+    const shown = part && cut[l.key];
+    if (shown) out.push({ ...part, ...shown, id: l.key, name: l.name, featureIds: [] });
+    else if (part) out.push({ ...part, id: l.key, name: l.name, featureIds: [] });
   }
   return out;
 }
@@ -113,7 +119,9 @@ function connectorAt(target: PickTarget | null): MateConnector | null {
   const instance = found?.part;
   const part = instance && findMesh(s.parts, meshIdOf(instance));
   if (!found || !instance || !part) return null;
-  const ref = target.item.kind === "edge" ? part.edgeRefs?.[target.item.index] : part.faceRefs?.[target.item.index];
+  // (A copy cut by the assembly's features is shown cut: the click names its faces and edges.)
+  const shown = cutMeshFor(target.item.partId) ?? part;
+  const ref = target.item.kind === "edge" ? shown.edgeRefs?.[target.item.index] : shown.faceRefs?.[target.item.index];
   if (!ref || (ref.kind === "edge" ? ref.curve : ref.surface) === "UNKNOWN") return null;
   // Picks name the part itself, whichever configuration it's shown in. Where it was clicked is kept
   // (in the part's own coordinates), and a click near an edge's end puts the connector on that corner.
@@ -136,6 +144,8 @@ function ownConnectorAt(key: string): MateConnector | null {
 }
 
 function handleAssemblyPick(target: PickTarget | null, additive: boolean) {
+  // The Hole / Cut dialog open: clicks say where it goes.
+  if (asmCutPick(target)) return;
   const s = useStore.getState();
   if (s.mateDraft && target?.kind === "connector") {
     const c = ownConnectorAt(target.key);
@@ -181,14 +191,22 @@ export function sketchStatus(data: SketchData) {
   return r;
 }
 
+/** The built parts, and the parts shown in context (Edit in context) — what a click in a sketch can name. */
+function withContextParts(parts: PartMesh[]): PartMesh[] {
+  const more = useAsmFeatures.getState().contextParts;
+  return more.length ? [...parts, ...more] : parts;
+}
+
 /** Sketch plane for a picked face, or null if it isn't flat. */
 export function planeForFace(item: SelectionItem): SketchPlane | null {
   const s = useStore.getState();
   const flat = viewportApi.current?.flatFace(item);
   if (!flat) return null;
-  const part = s.parts.find((p) => p.id === item.partId);
+  // (A part shown in context, Edit in context, can be sketched on too.)
+  const all = withContextParts(s.parts);
+  const part = all.find((p) => p.id === item.partId);
   // Remember the face, so its edges can be used in the sketch and the sketch moves with it.
-  const pick = pickFor(s.parts, item);
+  const pick = pickFor(all, item);
   return planeOnFace(flat.normal, flat.point, `Face of ${part?.name ?? "part"}`, pick?.ref.kind === "face" ? pick : undefined);
 }
 
@@ -244,6 +262,11 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     if (message) s.showToast(message, "info");
     return;
   }
+  // Parts shown in context (Edit in context) are for sketches: they can't be picked for features.
+  if (target?.kind === "part" && isContextPartId(target.item.partId) && !s.sketch) {
+    s.showToast("That part is from the assembly, shown for reference: open a sketch to sketch on it or use its edges.", "info");
+    return;
+  }
   // Parts shown flat are just for looking at: their faces and edges aren't the real ones.
   if (s.showFlat && target?.kind === "part" && s.parts.find((p) => p.id === target.item.partId)?.flat) {
     s.showToast("This part is shown flat. Turn Unfold off (in the toolbar) to pick its faces and edges.");
@@ -290,7 +313,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       s.setSketchMessage("Click an edge (not a face) to copy it into the sketch.", "info");
       return;
     }
-    const ref = s.parts.find((p) => p.id === target.item.partId)?.edgeRefs?.[target.item.index];
+    const ref = withContextParts(s.parts).find((p) => p.id === target.item.partId)?.edgeRefs?.[target.item.index];
     if (!ref) return;
     // Straight and round edges are copied in linked to the part (they follow it when it changes).
     const data = s.editing.draft.sketch.data;
@@ -928,12 +951,15 @@ export function Viewport() {
       live = false;
     };
   }, [showFlat, shownParts, assembly]);
+  // Assembly features cut the copies they reach; Edit in context shows the assembly's other parts faint.
+  const { meshes: cutMeshes } = useAssemblyCuts();
+  const contextShown = useShownContextParts();
   const display = useMemo(() => {
-    if (assembly) return instanceMeshes(parts, leaves);
-    if (!showFlat || !flatMeshes || flatMeshes.for !== shownParts) return shownParts;
-    return shownParts.map((p) => flatMeshes.meshes[p.id] ?? p);
+    if (assembly) return instanceMeshes(parts, leaves, cutMeshes);
+    const own = !showFlat || !flatMeshes || flatMeshes.for !== shownParts ? shownParts : shownParts.map((p) => flatMeshes.meshes[p.id] ?? p);
+    return contextShown.length ? [...own, ...contextShown] : own;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [parts, shownParts, instanceKey, showFlat, flatMeshes]);
+  }, [parts, shownParts, instanceKey, showFlat, flatMeshes, cutMeshes, contextShown]);
   const { solved } = useSolvedAssembly();
   const mateDraft = useStore((s) => s.mateDraft?.mate ?? null);
   // An open Mirror across a face: that face lights up.
@@ -1007,7 +1033,10 @@ export function Viewport() {
   const ghosts = useMemo(() => (assembly ? [] : ghostParts(parts, compare, ghostStudio)), [parts, compare, ghostStudio, assembly]);
   useEffect(() => viewportApi.current?.setGhosts(ghosts), [ghosts]);
   const transparentParts = useStore((s) => s.transparentParts);
-  useEffect(() => viewportApi.current?.setTransparent(assembly ? NO_IDS : transparentParts), [transparentParts, assembly]);
+  useEffect(
+    () => viewportApi.current?.setTransparent(assembly ? NO_IDS : contextShown.length ? [...transparentParts, ...contextShown.map((p) => p.id)] : transparentParts),
+    [transparentParts, assembly, contextShown],
+  );
   // Plane features (and the one being made), drawn as squares you can click to sketch on.
   const planeDraft = useStore((s) => (s.editing?.draft.type === "plane" ? s.editing.draft : null));
   const listFeatures = useStore(activeFeatures);

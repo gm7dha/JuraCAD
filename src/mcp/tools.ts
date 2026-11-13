@@ -34,6 +34,7 @@ import { describeChange } from "./live";
 import { SHAPE_HELP } from "./sketchShapes";
 import { checkFree, fileNameFor, needFolder, r1, r2, say, writeOut, type ToolDef, type ToolResult } from "./toolKit";
 import { ASSEMBLY_EXTRA_TOOLS } from "./assemblyExtras";
+import { ASSEMBLY_FEATURE_TOOLS } from "./assemblyFeatureTools";
 import { DRAWING_EXTRA_TOOLS } from "./drawingExtras";
 import { ASSEMBLY_TOOLS, assemblyViews, exportAssemblyBytes, findAssembly, instanceFaces } from "./assemblyTools";
 import { DRAWING_TOOLS } from "./drawingTools";
@@ -932,9 +933,9 @@ export const TOOLS: ToolDef[] = [
         const asm = findAssembly(s, a.assembly);
         const path = folder.pathFor(a.filename === undefined ? fileNameFor(`${s.doc.name} ${asm.name}`) : text(a.filename, "filename"), [ext], "file");
         checkFree(s, path, a.overwrite);
-        const { bytes, count } = await exportAssemblyBytes(s, asm, format);
+        const { bytes, count, notes } = await exportAssemblyBytes(s, asm, format);
         writeOut(s, path, bytes);
-        return say(`Exported ${asm.name} (${count} part${count === 1 ? "" : "s"}, each in its place) to ${path} (${Math.max(1, Math.round(bytes.length / 1024))} KB).`);
+        return say(`Exported ${asm.name} (${count} part${count === 1 ? "" : "s"}, each in its place) to ${path} (${Math.max(1, Math.round(bytes.length / 1024))} KB).`, ...notes);
       }
       const b = s.build();
       if (!b.parts.length) throw new InputError("There's nothing to export yet: no parts.");
@@ -955,6 +956,7 @@ export const TOOLS: ToolDef[] = [
   ...FRAME_TOOLS,
   ...ASSEMBLY_TOOLS,
   ...ASSEMBLY_EXTRA_TOOLS,
+  ...ASSEMBLY_FEATURE_TOOLS,
   ...DRAWING_TOOLS,
   ...DRAWING_EXTRA_TOOLS,
   ...libraryTools(tryChange),
