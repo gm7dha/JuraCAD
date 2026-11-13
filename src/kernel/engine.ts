@@ -45,7 +45,7 @@ import type { SketchData } from "../sketch/types";
 import { crossingOutlineNote } from "../sketch/offsetCheck";
 import { followLinks, linkProblem, shapeIsClosed, projectEdge, type RefEdge, type SketchLinkInfo } from "../sketch/links";
 import { edgePierceRefs, pierceSamples, remembered, edgePierces, edgePoint3, nearestPlace, seeEdge, seeShape, seeShapeAll, seeSketchCurve, type Conic3, sketchCurvePierces, sketchPierceRefs, sketchPointAt, sketchRefs, type CurveShape3, type SourceSketch } from "../sketch/projected";
-import { isPartLink, type CurveLink, type PartLink, type SketchCurve } from "../sketch/types";
+import { isPartLink, type CurveLink, type PartLink, type SketchCurve, type SketchPoint } from "../sketch/types";
 import { openChain, profileSheet } from "../sheetmetal/profile";
 import { convertToSheet, type SolidEdge, type SolidFace } from "../sheetmetal/convert";
 import { chainLoops, cornerBreakCut, findSheetCorner, findSheetEdge, flatPattern, flatPoint, foldSheet, jogSpacing, mapSegments, outlinePoints, sideAreas, turnBetween, wallOnPlane, type CornerBreak, type FlangeSpec, type FoldedSheet, type P2, type SheetSpec } from "../sheetmetal/sheet";
@@ -2655,6 +2655,156 @@ export class GeometryEngine {
   }
 
   /**
+   * Links from a sketch to curve features' edges, found again (see followSketch): per curve feature, edge k when every
+   * link to it still fits its edge k; else each matched to the nearest edge of the right kind — ends only from open
+   * edges, centres only from round ones, never a closed edge's seam — after the move (per axis scale and shift) that
+   * the links which do fit show, so a curve that grew is followed; a link with nothing near enough is lost (null).
+   */
+  private followCurveLinks(
+    data: SketchData,
+    linked: SketchCurve[],
+    linkedPts: SketchPoint[],
+    frame: PlaneFrame,
+    links: Record<string, RefEdge | null>,
+    pointLinks: Record<string, [number, number] | null>,
+    done: Set<string>,
+    sameKind: (c: { type: string }, e: RefEdge | null) => RefEdge | null,
+    shaped: (c: SketchCurve, e: RefEdge | null, edge: Edge) => RefEdge | null,
+  ): void {
+    type P = [number, number];
+    const parse = (item: string): { k: number; end?: "a" | "b" | "c" } => {
+      const m = /^e(\d+)(?:\.([abc]))?$/.exec(item);
+      return m ? { k: Number(m[1]), ...(m[2] ? { end: m[2] as "a" | "b" | "c" } : {}) } : { k: -1 };
+    };
+    const pos = (id: string): P | null => {
+      const q = data.points.find((x) => x.id === id);
+      return q ? [q.x, q.y] : id === "origin" ? [0, 0] : null;
+    };
+    const d2 = (a: P, b: P) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+    // What each use of a curve feature compares: its points where the sketch has them, and for a candidate edge the
+    // matching points (null: that edge can't be it) and the value to use.
+    interface Use {
+      id: string;
+      k: number;
+      old: P[];
+      fit: (got: { seen: RefEdge | null; edge: Edge; ref: EdgeRef }) => { at: P[]; value: RefEdge | P } | null;
+      pierce?: true;
+      set: (v: RefEdge | P | null) => void;
+    }
+    const byCurve = new Map<string, Use[]>();
+    const add = (curveId: string, u: Use) => byCurve.set(curveId, [...(byCurve.get(curveId) ?? []), u]);
+    const closedRef = (r: EdgeRef) => Math.hypot(r.a[0] - r.b[0], r.a[1] - r.b[1], r.a[2] - r.b[2]) < 1e-6;
+    for (const c of linked) {
+      const link = (c as { link?: CurveLink }).link;
+      if (!link || isPartLink(link) || !this.curves.has(link.sketch)) continue;
+      const { k } = parse(link.item);
+      const round = c.type === "circle" || c.type === "ellipse" || (c.type === "spline" && c.closed);
+      const ids = c.type === "line" ? [c.p1, c.p2] : c.type === "arc" ? [c.start, c.end] : c.type === "circle" || c.type === "ellipse" ? [c.center] : c.type === "spline" ? (c.closed ? [] : [c.points[0], c.points[c.points.length - 1]]) : [];
+      add(link.sketch, {
+        id: c.id,
+        k,
+        old: ids.map(pos).filter((x): x is P => !!x),
+        fit: (got) => {
+          const seen = got.seen ? sameKind(c, shaped(c, got.seen, got.edge)) : null;
+          if (!seen) return null;
+          if (round) return { at: seen.centre ? [seen.centre] : [], value: seen };
+          if (closedRef(got.ref)) return null;
+          return { at: [seen.a, seen.b], value: seen };
+        },
+        set: (v) => (links[c.id] = v as RefEdge | null),
+      });
+    }
+    for (const p of linkedPts) {
+      const link = p.link;
+      if (!link || "partId" in link || !this.curves.has(link.sketch)) continue;
+      const { k, end } = parse(link.item);
+      add(link.sketch, {
+        id: p.id,
+        k,
+        old: [[p.x, p.y]],
+        ...(link.end === "pierce" ? { pierce: true as const } : {}),
+        fit: (got) => {
+          if (link.end === "pierce") {
+            const walk = remembered(edgeAt(got.edge));
+            const at = nearestPlace(edgePierces(frame, walk, got.ref.curve === "LINE" ? 1 : pierceSamples(walk, edgeSpans(got.edge))), [p.x, p.y]);
+            return at ? { at: [at], value: at } : null;
+          }
+          if ((end === "a" || end === "b") && closedRef(got.ref)) return null;
+          if (end === "c" && got.ref.curve !== "CIRCLE") return null;
+          const q = edgePoint3(got.ref, end === "a" ? "a" : end === "b" ? "b" : end === "c" ? "centre" : "mid");
+          if (!q) return null;
+          const at = toSketch(frame, q);
+          return { at: [at], value: at };
+        },
+        set: (v) => (pointLinks[p.id] = v as P | null),
+      });
+    }
+    for (const [curveId, uses] of byCurve) {
+      const built = this.curves.get(curveId)!;
+      const { byItem } = this.curveFeatureRefs(curveId, "", built.wires, frame);
+      try {
+        const atK = uses.map((u) => {
+          const got = byItem.get(u.k);
+          return got ? u.fit(got) : null;
+        });
+        if (atK.every((x) => x !== null)) {
+          uses.forEach((u, i) => {
+            u.set(atK[i]!.value);
+            done.add(u.id);
+          });
+          continue;
+        }
+        // The move the links that still fit show: per axis, a scale and shift (or just a shift, or nothing).
+        const pairs: [P, P][] = [];
+        uses.forEach((u, i) => {
+          const f = atK[i];
+          if (f && f.at.length === u.old.length) u.old.forEach((o, j) => pairs.push([o, f.at[j]]));
+        });
+        const axisMap = (ax: 0 | 1): ((x: number) => number) => {
+          if (!pairs.length) return (x) => x;
+          const xs = pairs.map((q) => q[0][ax]);
+          const ys = pairs.map((q) => q[1][ax]);
+          const mx = xs.reduce((s2, x) => s2 + x, 0) / xs.length;
+          const my = ys.reduce((s2, y) => s2 + y, 0) / ys.length;
+          let sxx = 0;
+          let sxy = 0;
+          xs.forEach((x, i) => {
+            sxx += (x - mx) ** 2;
+            sxy += (x - mx) * (ys[i] - my);
+          });
+          const k = sxx > 1e-6 ? sxy / sxx : 1;
+          return (x) => my + k * (x - mx);
+        };
+        const mx = axisMap(0);
+        const my = axisMap(1);
+        const moved = (o: P): P => [mx(o[0]), my(o[1])];
+        uses.forEach((u) => {
+          done.add(u.id);
+          if (u.pierce) {
+            const got = byItem.get(u.k);
+            const f = got ? u.fit(got) : null;
+            u.set(f ? f.value : null);
+            return;
+          }
+          const want = u.old.map(moved);
+          let best: { score: number; value: RefEdge | P; size: number; k: number } | null = null;
+          for (const [i, got] of byItem) {
+            const f = u.fit(got);
+            if (!f || f.at.length !== want.length) continue;
+            const score = !want.length ? 0 : want.length === 2 ? Math.min(d2(want[0], f.at[0]) + d2(want[1], f.at[1]), d2(want[0], f.at[1]) + d2(want[1], f.at[0])) / 2 : d2(want[0], f.at[0]);
+            const r = got.ref;
+            const size = Math.max(Math.hypot(r.a[0] - r.b[0], r.a[1] - r.b[1], r.a[2] - r.b[2]), 2 * Math.hypot(r.mid[0] - r.a[0], r.mid[1] - r.a[1], r.mid[2] - r.a[2]));
+            if (!best || score < best.score - 1e-9 || (Math.abs(score - best.score) <= 1e-9 && i === u.k)) best = { score, value: f.value, size, k: i };
+          }
+          u.set(best && best.score <= Math.max(0.5, 0.3 * best.size) ? best.value : null);
+        });
+      } finally {
+        this.freeCurveRefs(byItem);
+      }
+    }
+  }
+
+  /**
    * A curve feature's edges (in its wires' order: item "e<k>"), each as a reference seen square-on to a sketch — the
    * same as a part edge, but `source` names the curve feature (`{sketch: <curve id>, item: "e<k>"}`, its ends
    * "e<k>.a"/"e<k>.b", a round edge's centre "e<k>.c"), so links to it are SketchItemLinks that follow the curve and
@@ -2870,85 +3020,12 @@ export class GeometryEngine {
       const f = sketches.get(id);
       return f?.sketch?.plane ? { id, name: f.name, plane: f.sketch.plane, data: f.sketch.data } : null;
     };
-    // Curves and points following a curve feature (built earlier in the list): its edge "e<k>" — the same number again,
-    // unless another of its edges is clearly nearer where the sketch has it (the curve's pieces came out in another
-    // order): then that one; and lost when neither is near (`chooseNear`).
-    const curveItem = (link: { sketch: string; item: string }): { k: number; end?: "a" | "b" | "c" } | null => {
-      if (!this.curves.has(link.sketch)) return null;
-      const m = /^e(\d+)(?:\.([abc]))?$/.exec(link.item);
-      return m ? { k: Number(m[1]), ...(m[2] ? { end: m[2] as "a" | "b" | "c" } : {}) } : { k: -1 };
-    };
-    type CurveGot = { seen: RefEdge | null; edge: Edge; ref: EdgeRef };
+    // Curves and points following a curve feature (built earlier in the list): its edge "e<k>". When every link to
+    // that curve still fits its edge k (there's an edge k of the right kind — an open one for ends, a round one for
+    // centres) the numbers are trusted, however much the curve moved or grew. Otherwise (its pieces changed) each is
+    // matched to the nearest edge of the right kind, measured after the move the fitting links show (`followCurves`).
     const curveLinked = new Set<string>();
-    const followCurve = (link: { sketch: string; item: string }, use: (byItem: Map<number, CurveGot>, k: number, end?: "a" | "b" | "c") => void): boolean => {
-      const ci = curveItem(link);
-      if (!ci) return false;
-      const built = this.curves.get(link.sketch)!;
-      const { byItem } = this.curveFeatureRefs(link.sketch, "", built.wires, frame);
-      try {
-        use(byItem, ci.k, ci.end);
-      } finally {
-        this.freeCurveRefs(byItem);
-      }
-      return true;
-    };
-    const d2 = (a: [number, number], b: [number, number]) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-    const pos = (id: string): [number, number] | null => {
-      const q = sk.data.points.find((x) => x.id === id);
-      return q ? [q.x, q.y] : id === "origin" ? [0, 0] : null;
-    };
-    /** Of the candidates (each with how far it is from where the sketch has it), the one to follow, or null (lost). */
-    const chooseNear = <T>(cands: { k: number; value: T; score: number; size: number }[], k: number): T | null => {
-      if (!cands.length) return null;
-      const nearest = cands.reduce((x, y) => (y.score < x.score ? y : x));
-      const same = cands.find((x) => x.k === k);
-      if (same && same.score <= 1.5 * nearest.score + 1e-6) return same.value;
-      if (nearest.score <= Math.max(0.5, 0.3 * nearest.size)) return nearest.value;
-      return null;
-    };
-    for (const c of linked) {
-      const link = (c as { link: CurveLink }).link;
-      if (isPartLink(link)) continue;
-      const done = followCurve(link, (byItem, k) => {
-        // Where the sketch has this curve now: its ends, or its centre.
-        const ids = c.type === "line" ? [c.p1, c.p2] : c.type === "arc" ? [c.start, c.end] : c.type === "circle" || c.type === "ellipse" ? [c.center] : c.type === "spline" ? [c.points[0], c.points[c.points.length - 1]] : [];
-        const here = ids.map(pos).filter((x): x is [number, number] => !!x);
-        const cands: { k: number; value: RefEdge; score: number; size: number }[] = [];
-        for (const [i, got] of byItem) {
-          const seen = got.seen ? sameKind(c, shaped(c, got.seen, got.edge)) : null;
-          if (!seen) continue;
-          const there: [number, number][] = c.type === "circle" || c.type === "ellipse" ? [seen.centre ?? seen.mid] : [seen.a, seen.b];
-          let score = 0;
-          if (here.length === 2 && there.length === 2) score = Math.min(d2(here[0], there[0]) + d2(here[1], there[1]), d2(here[0], there[1]) + d2(here[1], there[0])) / 2;
-          else if (here.length && there.length) score = d2(here[0], there[0]);
-          cands.push({ k: i, value: seen, score, size: Math.max(d2(seen.a, seen.b), 2 * (seen.radius ?? 0)) });
-        }
-        links[c.id] = chooseNear(cands, k);
-      });
-      if (done) curveLinked.add(c.id);
-    }
-    for (const p of linkedPts) {
-      const link = p.link!;
-      if ("partId" in link) continue;
-      const done = followCurve(link, (byItem, k, end) => {
-        if (link.end === "pierce") {
-          const got = byItem.get(k);
-          if (!got) return void (pointLinks[p.id] = null);
-          const walk = remembered(edgeAt(got.edge));
-          pointLinks[p.id] = nearestPlace(edgePierces(frame, walk, got.ref.curve === "LINE" ? 1 : pierceSamples(walk, edgeSpans(got.edge))), [p.x, p.y]);
-          return;
-        }
-        const cands: { k: number; value: [number, number]; score: number; size: number }[] = [];
-        for (const [i, got] of byItem) {
-          const at = edgePoint3(got.ref, end === "a" ? "a" : end === "b" ? "b" : end === "c" ? "centre" : "mid");
-          if (!at) continue;
-          const q = toSketch(frame, at);
-          cands.push({ k: i, value: q, score: d2(q, [p.x, p.y]), size: Math.hypot(got.ref.a[0] - got.ref.b[0], got.ref.a[1] - got.ref.b[1], got.ref.a[2] - got.ref.b[2]) });
-        }
-        pointLinks[p.id] = chooseNear(cands, k);
-      });
-      if (done) curveLinked.add(p.id);
-    }
+    this.followCurveLinks(sk.data, linked, linkedPts, frame, links, pointLinks, curveLinked, sameKind, shaped);
     for (const c of linked) {
       const link = (c as { link: CurveLink }).link;
       if (isPartLink(link) || curveLinked.has(c.id)) continue;

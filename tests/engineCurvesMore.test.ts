@@ -266,23 +266,81 @@ describe("Sketches using curve features", () => {
     const r3 = engine.rebuild([sk2]);
     expect(Object.values(r3.sketchLinks![sk.id].links).every((l) => l === null)).toBe(true);
   });
-  it("follows the nearer edge when the number points elsewhere (the pieces came out in another order)", () => {
+  const holedOffset = (width: number, withHole: boolean) => {
+    const box = { ...feature("box", { width, depth: 30, height: 10 }), id: "box", name: "Box" };
+    const hole = { ...feature("cylinder", { diameter: 6, height: 10, x: 12, y: 15 }, "remove"), id: "hole", name: "Hole" };
+    const parts = withHole ? [box, hole] : [box];
+    const top = engine.rebuild(parts).parts[0].faceRefs.find((f) => f.surface === "PLANE" && f.normal[2] > 0.99)!;
+    const oc = { ...curve({ kind: "offset" }, { distance: 2 }, { picks: [{ partId: "box", ref: top }] }), id: "oc", name: "Offset" };
+    return [...parts, oc];
+  };
+
+  it("follows every edge it uses when the part grows a lot (40 → 120), with and without a hole", () => {
+    for (const withHole of [true, false]) {
+      engine?.dispose();
+      engine = new GeometryEngine();
+      const sk = { ...sketchFeature({ kind: "default", name: "Top" }, emptySketch()), id: "sk" };
+      const before = holedOffset(40, withHole);
+      engine.rebuild([...before, sk]);
+      const refs = engine.sketchCandidates("main", sk.id)!.filter((e) => e.source?.sketch === "oc" && !e.pierce);
+      expect(refs.length).toBe(withHole ? 5 : 4);
+      let data = sk.sketch!.data;
+      const points: { id: string; item: string }[] = [];
+      for (const e of refs) {
+        const used = linkEdge(data, e, false);
+        expect(used.error).toBeUndefined();
+        data = used.sketch;
+        if (e.kind === "line") {
+          const pt = linkPoint(data, e, "a");
+          expect(pt.error).toBeUndefined();
+          data = pt.sketch;
+          points.push({ id: pt.pointId, item: e.source!.ends!.a! });
+        }
+      }
+      const linkedSk = { ...sk, sketch: { ...sk.sketch!, data } };
+      for (const width of [80, 120]) {
+        const after = holedOffset(width, withHole);
+        engine.rebuild([...after, sk]);
+        const now = engine.sketchCandidates("main", sk.id)!.filter((e) => e.source?.sketch === "oc" && !e.pierce);
+        const r = engine.rebuild([...after, linkedSk]);
+        const info = r.sketchLinks![sk.id];
+        expect(Object.values(info.links).every((l) => l !== null)).toBe(true);
+        for (const { id, item } of points) {
+          const at = info.pointLinks![id]!;
+          expect(at).toBeTruthy();
+          const edge = now.find((e) => e.source!.item === item.split(".")[0])!;
+          expect(Math.hypot(at[0] - edge.a[0], at[1] - edge.a[1])).toBeLessThan(1e-6);
+        }
+        // The right line now runs at x = width − 2.
+        expect(points.some(({ id }) => Math.abs(info.pointLinks![id]![0] - (width - 2)) < 1e-6)).toBe(true);
+      }
+    }
+  });
+
+  it("matches by nearness when an edge number no longer fits (a line pointed at a circle)", () => {
     engine = new GeometryEngine();
-    const box = feature("box", { width: 40, depth: 30, height: 10 });
-    const top = engine.rebuild([box]).parts[0].faceRefs.find((f) => f.surface === "PLANE" && f.normal[2] > 0.99)!;
-    const oc = curve({ kind: "offset" }, { distance: 5 }, { picks: [{ partId: box.id, ref: top }] });
-    const sk = sketchFeature({ kind: "default", name: "Top" }, emptySketch());
-    engine.rebuild([box, oc, sk]);
-    const refs = engine.sketchCandidates("main", sk.id)!.filter((e) => e.source?.sketch === oc.id && e.kind === "line");
-    expect(refs.length).toBe(4);
-    const used = linkEdge(sk.sketch!.data, refs[0], false);
+    const feats = holedOffset(40, true);
+    const sk = { ...sketchFeature({ kind: "default", name: "Top" }, emptySketch()), id: "sk" };
+    engine.rebuild([...feats, sk]);
+    const refs = engine.sketchCandidates("main", sk.id)!.filter((e) => e.source?.sketch === "oc" && !e.pierce);
+    const lineRef = refs.find((e) => e.kind === "line")!;
+    const circleRef = refs.find((e) => e.kind === "circle")!;
+    const used = linkEdge(sk.sketch!.data, lineRef, false);
     const line = used.sketch.curves.find((c) => c.id === used.curveId)!;
-    const wrong = refs.find((e) => e.source!.item !== refs[0].source!.item && Math.abs(e.a[0] - refs[0].a[0]) + Math.abs(e.a[1] - refs[0].a[1]) > 10)!;
-    const data = { ...used.sketch, curves: used.sketch.curves.map((c) => (c === line ? { ...c, link: { sketch: oc.id, item: wrong.source!.item } } : c)) };
-    const r = engine.rebuild([box, oc, { ...sk, sketch: { ...sk.sketch!, data } }]);
+    const data = { ...used.sketch, curves: used.sketch.curves.map((c) => (c === line ? { ...c, link: { sketch: "oc", item: circleRef.source!.item } } : c)) };
+    const r = engine.rebuild([...feats, { ...sk, sketch: { ...sk.sketch!, data } }]);
     const got = r.sketchLinks![sk.id].links[line.id]!;
     expect(got).toBeTruthy();
     const near = (a: [number, number], b: [number, number]) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6;
-    expect((near(got.a, refs[0].a) && near(got.b, refs[0].b)) || (near(got.a, refs[0].b) && near(got.b, refs[0].a))).toBe(true);
+    expect((near(got.a, lineRef.a) && near(got.b, lineRef.b)) || (near(got.a, lineRef.b) && near(got.b, lineRef.a))).toBe(true);
+  });
+
+  it("refuses a hole's outline grown round the moved outer outline (a 16 × 6 inside an R15 circle)", () => {
+    engine = new GeometryEngine();
+    const box = feature("box", { width: 40, depth: 30, height: 10 });
+    const hole = feature("cylinder", { diameter: 6, height: 10, x: 20, y: 15 }, "remove");
+    const top = engine.rebuild([box, hole]).parts[0].faceRefs.find((f) => f.surface === "PLANE" && f.normal[2] > 0.99)!;
+    const oc = curve({ kind: "offset" }, { distance: 12 }, { picks: [{ partId: box.id, ref: top }] });
+    expect(engine.rebuild([box, hole, oc]).featureErrors[oc.id]).toMatch(/grows past|off the face|into each other/);
   });
 });

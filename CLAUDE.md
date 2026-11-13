@@ -729,18 +729,22 @@
   `curveUses` needs both curves). Sketches use curve features like part edges: `curveFeatureRefs` gives each edge of its
   wires as a `RefEdge` with `source` {sketch: <curve id>, item "e<k>", ends "e<k>.a"/".b"/".c"} (+ shape, + pierce places), so
   links are ordinary SketchItemLinks (old files unchanged; Delete with dependents counts them as "references brought in");
-  `workOutCandidates` offers curves before the sketch (from `StudioBuild.curves`), `followSketch`'s `followCurve` (when
-  `this.curves` has the id; else the old sketch lookup) re-finds the edge by `chooseNear`: edge k unless another is clearly
-  nearer where the sketch has it (≤ 1.5 × the nearest keeps k — a multi-loop offset, isocline or composite whose pieces come out
-  in another order follows the right one), else the nearest within 0.3 × its size (≥ 0.5 mm), else lost (null); Pierce points
-  stay on edge k. The controller's `skipRef` treats a curve as shown unless its eye is off. Not done: surface sweeps along
+  `workOutCandidates` offers curves before the sketch (from `StudioBuild.curves`); `followCurveLinks` (engine; links whose
+  id `this.curves` has, else the old sketch lookup) takes each curve feature's links together: when every one still fits its
+  edge k (an edge k of the right kind — sameKind for curves, an open edge for ends a/b, a round one for centre c) the numbers are
+  trusted however far the curve moved or grew; otherwise each is matched to the nearest edge of the right kind — ends only from
+  open edges, centres only from round ones, never a closed edge's seam point — after the per-axis scale + shift that the links
+  still fitting show (none: no move), within 0.3 × the edge's size (≥ 0.5 mm), else lost (null); Pierce points stay on edge k.
+  Whole-face inward offsets on flat faces also check nesting (`checkNesting`: each moved hole inside a moved outer outline and
+  none round it — roles by the way round the loops run, or from which source loop they came). The controller's `skipRef` treats a curve as shown unless its eye is off. Not done: surface sweeps along
   curves; trimming an offset that runs off its face (it's refused). Tests: tests/curves, curveClicks (pure), engineCurves
   (helix length/pitch/taper/face, spring volume, ellipse of a slanted cut, projected onto a ball, fit spline, bridge, sweep along
   an edge, composite, curve pattern on a helix), mcpCurves; tests/curvesMore (pure; an old helix saves byte for byte), engineCurvesMore
   (box top 5 mm in/out, an L of edges in (60 mm, cut back) and out (rounded), an L with a corner across a cylinder, a hole's
   outline growing off the face refused, ball isocline at 45° = R/√2 circle and on a cut ball up to the cut, helix trimmed by a
-  plane/a face/only touching at its start, a sketch using/piercing a helix and following it, a wrong edge number followed to the
-  nearer edge), mcpCurvesMore.
+  plane/a face/only touching at its start, a sketch using/piercing a helix and following it, every edge of an offset (with and
+  without a hole) followed as the box grows 40 → 80 → 120, a number that no longer fits matched by nearness, a hole grown round
+  the outline refused), mcpCurvesMore.
 - Frames (Onshape's Frame, Trim frame, Gusset, Cut list): feature types "frame" (`Feature.frame`, `FrameDef` in
   model/frameTypes.ts: `paths` = sketches, all their lines/arcs/circles or `items`; `profile` = a built-in family + size key
   ("custom" = the width/height/wall params) or `{kind:"sketch"}` (its closed regions' polygons); `anchor` (9 points of the

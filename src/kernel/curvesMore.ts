@@ -4,7 +4,7 @@
  * meets a face, a plane or another curve). The contouring itself is pure, in geometry/isoContour.ts.
  */
 import { assembleWire, cast, getOC, type Edge, type Face, type Shape3D, type Wire } from "replicad";
-import { clipRun, contourRuns, joinRuns, thinRun, type P2 } from "../geometry/isoContour";
+import { clipRun, contourRuns, insidePieces, joinRuns, thinRun, type P2 } from "../geometry/isoContour";
 import { chainEdges, interpolatedEdge, takeVec, wirePolyline } from "./curves";
 import { nearestOnFace } from "./faceBlend";
 import { edgesOf } from "./topology";
@@ -318,6 +318,60 @@ function checkInside(face: Face, wires: Wire[]): void {
         throw new Error("At that distance the moved outlines run into each other. Use a smaller distance.");
 }
 
+/**
+ * A flat face's whole outline moved in: the moved outer outline(s) (anticlockwise seen from outside the face) must
+ * still hold every moved hole outline (clockwise), and no outer outline may sit inside a hole — else a hole has grown
+ * past the outline (a big circle swallowing a small rectangle), which is refused.
+ */
+function checkNesting(face: Face, wires: Wire[], roles?: ("outer" | "hole")[]): void {
+  const n = unit(takeVec(face.normalAt()));
+  const u = unit(Math.abs(n[0]) < 0.9 ? cross(n, [1, 0, 0]) : cross(n, [0, 1, 0]));
+  const v = cross(n, u);
+  const loops = wires.map((w) => {
+    const pts = wireSamples(w).map((p): P2 => [dot(p, u), dot(p, v)]);
+    let area = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % pts.length];
+      area += a[0] * b[1] - b[0] * a[1];
+    }
+    const pieces = pts.map((p, i): [P2, P2] => [p, pts[(i + 1) % pts.length]]);
+    return { pts, area: area / 2, pieces };
+  });
+  // Which is which: as given (each from the face's outer outline or a hole's), else by the way round it runs.
+  const outers = loops.filter((l, i) => (roles ? roles[i] === "outer" : l.area > 0));
+  const holes = loops.filter((l, i) => (roles ? roles[i] === "hole" : l.area < 0));
+  const inside = (pts: P2[], of: { pieces: [P2, P2][] }) => pts.every((p) => insidePieces(p, of.pieces) || nearPieces(p, of.pieces));
+  const bad = () => {
+    throw new Error("At that distance a hole's outline grows past the face's outline. Use a smaller distance.");
+  };
+  if (holes.length && !outers.length) bad();
+  for (const h of holes) if (!outers.some((o) => inside(h.pts, o))) bad();
+  for (const o of outers) for (const h of holes) if (inside(o.pts, h)) bad();
+}
+
+/** A shape's bounding box. */
+function boxOf(sh: { boundingBox: { bounds: unknown; delete(): void } }): [Vec3, Vec3] {
+  const b = sh.boundingBox;
+  try {
+    return b.bounds as [Vec3, Vec3];
+  } finally {
+    b.delete();
+  }
+}
+
+/** Is a point on (within a micron of) any of these pieces? */
+function nearPieces(p: P2, pieces: [P2, P2][]): boolean {
+  for (const [a, b] of pieces) {
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const l2 = dx * dx + dy * dy;
+    const t = l2 > 0 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2)) : 0;
+    if (Math.hypot(a[0] + dx * t - p[0], a[1] + dy * t - p[1]) < 1e-3) return true;
+  }
+  return false;
+}
+
 /** Do two shapes touch or cross? */
 function shapesTouch(a: { wrapped: unknown }, b: { wrapped: unknown }): boolean {
   const oc = getOC() as any;
@@ -347,7 +401,10 @@ export function offsetOnFace(face: Face, edges: Edge[], d: number, out: boolean)
       const exact = planarExactOffset(face, face, d, out);
       if (exact) {
         outWires.push(...exact);
-        if (!out) checkInside(face, outWires);
+        if (!out) {
+          checkInside(face, outWires);
+          checkNesting(face, outWires);
+        }
         return outWires;
       }
     }
@@ -370,17 +427,29 @@ export function offsetOnFace(face: Face, edges: Edge[], d: number, out: boolean)
         return true;
       });
     }
+    const wholeFace = !edges.length;
     const wires = chainEdges(list);
+    const roles: ("outer" | "hole")[] = [];
     try {
-      for (const w of wires) {
+      // (The face's own outline: its biggest loop is the outside, the rest holes.)
+      const sizes = wires.map((w) => {
+        const [lo, hi] = boxOf(w);
+        return Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+      });
+      const biggest = sizes.indexOf(Math.max(...sizes));
+      wires.forEach((w, i) => {
         const exact = flat ? planarExactOffset(face, w, d, out, !w.isClosed) : null;
-        if (exact) outWires.push(...exact);
-        else outWires.push(walkedOffset(face, w, d, out));
-      }
+        const made = exact ?? [walkedOffset(face, w, d, out)];
+        outWires.push(...made);
+        made.forEach(() => roles.push(i === biggest ? "outer" : "hole"));
+      });
     } finally {
       wires.forEach((w) => w.delete());
     }
-    if (!out) checkInside(face, outWires);
+    if (!out) {
+      checkInside(face, outWires);
+      if (wholeFace && flat) checkNesting(face, outWires, roles);
+    }
     return outWires;
   } catch (e) {
     outWires.forEach((w) => w.delete());
