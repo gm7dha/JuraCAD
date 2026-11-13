@@ -46,6 +46,11 @@ export interface TopoPick {
    * apart faces that look the same, such as the inside and outside of a pipe.
    */
   at?: Vec3;
+  /**
+   * (Assembly Fillets / Chamfers) `ref` is in the assembly's coordinates, not the part's: an edge only the
+   * assembly's own cut made (a drilled hole's rim), which stays where it was made while the copy moves.
+   */
+  placed?: true;
 }
 
 const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -212,7 +217,7 @@ export function parsePick(data: unknown): TopoPick | null {
     Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === "number" && Number.isFinite(x)) ? (v as Vec3) : null;
   const rel = vec(ref.rel);
   const at = vec(d.at);
-  const pick = (r: TopoRef): TopoPick => ({ partId: d.partId as string, ref: r, ...(at ? { at } : {}) });
+  const pick = (r: TopoRef): TopoPick => ({ partId: d.partId as string, ref: r, ...(at ? { at } : {}), ...(d.placed === true ? { placed: true } : {}) });
   if (ref.kind === "edge" && typeof ref.curve === "string") {
     const a = vec(ref.a);
     const b = vec(ref.b);

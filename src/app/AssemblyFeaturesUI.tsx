@@ -13,7 +13,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 
-import { assemblyFeatureDependents, assemblyFeaturesOf } from "../assembly/assemblyFeatures";
+import { assemblyFeatureDependents, assemblyFeaturesOf, isAssemblyEdgeFeature } from "../assembly/assemblyFeatures";
 import { applyPlacement, compose, rotate, type Vec3 } from "../assembly/math";
 import { solveWithParts } from "../assembly/mates";
 import { findMesh, meshIdOf } from "../assembly/configured";
@@ -37,6 +37,7 @@ import {
   hideContext,
   reachNow,
   setAsmFeatureParts,
+  toggleAsmEdge,
   toggleAsmFeatureSuppressed,
   updateContextNow,
   useAsmFeatures,
@@ -59,17 +60,34 @@ export function AssemblyFeaturesSection({ assembly }: { assembly: Assembly }) {
       <h3>
         Assembly features <span className="count">({list.length})</span>
       </h3>
-      <p className="dialog-hint">Cut only in this assembly — the parts in their Part Studios don't change.</p>
+      <p className="dialog-hint">Made only in this assembly — the parts in their Part Studios don't change.</p>
       <ul className="feature-list">
         {list.map((f) => {
           const error = errors?.[f.id];
           const chosen = assembly.featureParts?.[f.id];
           const cuts = reached?.[f.id] ?? [];
-          const title = f.type === "sketch" ? "A sketch in the assembly (its holes and cuts use it)" : `${f.type === "hole" ? "Hole" : "Cut"} — ${chosen ? (chosen.length ? `only ${chosen.map(nameOf).join(", ")}` : "no parts chosen") : "every part it reaches"}${cuts.length ? `. Cutting: ${cuts.map(nameOf).join(", ")}` : ""}`;
+          const edges = isAssemblyEdgeFeature(f);
+          const on = [...new Set((f.picks ?? []).map((p) => p.partId))];
+          const title =
+            f.type === "sketch"
+              ? "A sketch in the assembly (its holes and cuts use it)"
+              : edges
+                ? `${f.type === "fillet" ? `Fillet, radius ${f.params.radius}` : `Chamfer, ${f.params.distance}`} — ${on.length ? `${f.picks!.length} edge${f.picks!.length === 1 ? "" : "s"} of ${on.map(nameOf).join(", ")}` : "no edges left (their parts were removed)"}`
+                : `${f.type === "hole" ? "Hole" : "Cut"} — ${chosen ? (chosen.length ? `only ${chosen.map(nameOf).join(", ")}` : "no parts chosen") : "every part it reaches"}${cuts.length ? `. Cutting: ${cuts.map(nameOf).join(", ")}` : ""}`;
           return (
             <li key={f.id} className={["feature-row", f.suppressed && "suppressed", error && "failed"].filter(Boolean).join(" ")} title={error ?? title}>
               <span className="feature-icon" aria-hidden="true">
-                {f.type === "sketch" ? <Icons.Sketch size={15} /> : f.type === "hole" ? <Icons.Hole size={15} /> : <Icons.Extrude size={15} />}
+                {f.type === "sketch" ? (
+                  <Icons.Sketch size={15} />
+                ) : f.type === "hole" ? (
+                  <Icons.Hole size={15} />
+                ) : f.type === "fillet" ? (
+                  <Icons.Fillet size={15} />
+                ) : f.type === "chamfer" ? (
+                  <Icons.Chamfer size={15} />
+                ) : (
+                  <Icons.Extrude size={15} />
+                )}
               </span>
               <span className="feature-name">{f.name}</span>
               {error && (
@@ -77,7 +95,7 @@ export function AssemblyFeaturesSection({ assembly }: { assembly: Assembly }) {
                   <Icons.Warning size={16} />
                 </span>
               )}
-              {f.type !== "sketch" && (
+              {f.type !== "sketch" && !edges && (
                 <button className="text-button small" onClick={() => setChoosing(choosing === f.id ? null : f.id)} aria-expanded={choosing === f.id} title="Choose which parts it cuts">
                   Parts…
                 </button>
@@ -94,7 +112,7 @@ export function AssemblyFeaturesSection({ assembly }: { assembly: Assembly }) {
                   deleteAsmFeatures([f.id]);
                 }}
                 aria-label={`Delete ${f.name}`}
-                title="Delete (a sketch takes its holes and cuts with it)"
+                title="Delete (a sketch takes its holes and cuts with it; a hole or cut takes fillets of the edges it made)"
               >
                 <Icons.Trash size={15} />
               </button>
@@ -206,6 +224,7 @@ export function AsmCutPanel() {
   const [busy, setBusy] = useState(false);
   if (!draft || !asm) return null;
   const hole = draft.kind === "hole";
+  const edgeKind = draft.kind === "fillet" || draft.kind === "chamfer";
   const accept = () => {
     if (busy) return;
     setBusy(true);
@@ -222,9 +241,9 @@ export function AsmCutPanel() {
     );
   };
   return (
-    <div className="feature-dialog instance-panel" role="region" aria-label={hole ? "Hole in the assembly" : "Cut in the assembly"}>
+    <div className="feature-dialog instance-panel" role="region" aria-label={`${KIND_NAMES[draft.kind]} in the assembly`}>
       <header className="feature-dialog-header">
-        <span className="feature-dialog-title">{hole ? "Hole" : "Cut"} (in this assembly)</span>
+        <span className="feature-dialog-title">{KIND_NAMES[draft.kind]} (in this assembly)</span>
         <span className="feature-dialog-actions">
           <button type="button" className="dialog-ok" onClick={accept} disabled={busy} title={busy ? "Working…" : "Accept"} aria-label="Accept">
             <Icons.Tick size={18} />
@@ -234,6 +253,22 @@ export function AsmCutPanel() {
           </button>
         </span>
       </header>
+      {edgeKind ? (
+        <div className="feature-dialog-body">
+          <p className="dialog-hint">
+            {draft.edges.length
+              ? `${draft.edges.length} edge${draft.edges.length === 1 ? "" : "s"} picked. Click more edges to add them, or a picked one again to take it out.`
+              : `Click the edges of parts to ${draft.kind === "fillet" ? "round" : "bevel"} — holes drilled in this assembly too. Only this assembly's copies change; the parts in their Part Studios don't.`}
+          </p>
+          <LengthBox label={draft.kind === "fillet" ? "Radius" : "Distance"} value={draft.size} onCommit={(v) => changeAsmCut({ size: v })} />
+          {draft.edges.length > 0 && (
+            <button className="text-button small" onClick={() => changeAsmCut({ edges: [] })}>
+              Clear the edges
+            </button>
+          )}
+          {problem && <div className="param-message error">{problem}</div>}
+        </div>
+      ) : (
       <div className="feature-dialog-body">
         <p className="dialog-hint">
           {draft.plane
@@ -280,9 +315,12 @@ export function AsmCutPanel() {
         <p className="dialog-hint">It cuts the parts it reaches now. Afterwards, “Parts…” in the Assembly features list changes which.</p>
         {problem && <div className="param-message error">{problem}</div>}
       </div>
+      )}
     </div>
   );
 }
+
+const KIND_NAMES = { hole: "Hole", cut: "Cut", fillet: "Fillet", chamfer: "Chamfer" } as const;
 
 const flipX = (v: Vec3): Vec3 => [-v[0], v[1], v[2]];
 
@@ -296,6 +334,16 @@ export function asmCutPick(target: PickTarget | null): boolean {
   if (!draft) return false;
   const s = useStore.getState();
   const asm = activeAssembly(s);
+  if (asm && (draft.kind === "fillet" || draft.kind === "chamfer")) {
+    // An edge of a copy, as shown (a hole drilled here has its own): kept in the part's own coordinates.
+    if (target?.kind !== "part" || target.item.kind !== "edge") return true;
+    const key = target.item.partId;
+    const leaf = leavesOf(asm, s.parts, s.history.present.assemblies ?? []).find((l) => l.key === key);
+    const shown = cutMeshFor(key) ?? (leaf && findMesh(s.parts, meshIdOf(leaf.instance)));
+    const ref = shown?.edgeRefs[target.item.index];
+    if (ref) toggleAsmEdge(key, ref);
+    return true;
+  }
   if (!asm || target?.kind !== "part" || target.item.kind !== "face" || !target.point) return true;
   const key = target.item.partId;
   const assemblies = s.history.present.assemblies ?? [];

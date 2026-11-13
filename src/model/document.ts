@@ -857,7 +857,7 @@ export function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | n
     }
     if (feature.type === "import" && isSimplifyLevel(f.simplify)) feature.simplify = f.simplify;
     if (feature.type === "composite") feature.compositeParts = ids(f.compositeParts);
-    if (feature.type === "frame") feature.frame = parseFrameDef(f.frame) ?? { paths: [], profile: { kind: "extrusion", size: "2020" } };
+    if (feature.type === "frame") feature.frame = parseFrameDef(f.frame, parsePick) ?? { paths: [], profile: { kind: "extrusion", size: "2020" } };
     if (feature.type === "trimFrame") feature.trimFrame = parseTrimFrame(f.trimFrame, parsePlane);
     if (feature.type === "gusset") feature.gusset = parseGusset(f.gusset);
     if (feature.type === "deletePart") {
@@ -1029,6 +1029,7 @@ function withAssemblyFeatures(assemblies: Assembly[], raw: unknown, seen: Set<st
     if (!features.length) return a;
     for (const f of features) seen.add(f.id);
     const parts = parseFeatureParts(r.featureParts, features);
-    return { ...a, features, ...(parts ? { featureParts: parts } : {}) };
+    const needs = parseFeatureParts(r.featureNeeds, features, true);
+    return { ...a, features, ...(parts ? { featureParts: parts } : {}), ...(needs ? { featureNeeds: needs } : {}) };
   });
 }

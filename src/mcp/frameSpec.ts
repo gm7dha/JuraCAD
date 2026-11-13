@@ -5,39 +5,77 @@
 import type { Feature } from "../model/types";
 import type { FrameCornerChoice, FrameDef, FrameProfileKind } from "../model/frameTypes";
 import { PROFILE_KINDS, ANCHORS } from "../model/frameProfiles";
-import { frameLayout, frameCutList, cutListCsv, cutListLines, sketchPathSegments, type PathSeg } from "../model/frame";
+import { builtEdgeKey, edgeKeyFor, frameLayout, frameCutList, cutListCsv, cutListLines, sketchPathSegments, type PathSeg } from "../model/frame";
 import { amount, bool, InputError, list, noExtras, oneOf, text, xyz, type Obj } from "./args";
+import { pickEdges } from "./picks";
 import { basePlane } from "./planeSpec";
 import type { SpecContext } from "./featureSpec";
 import { say, type ToolDef } from "./toolKit";
 
 const has = (a: Obj, k: string) => a[k] !== undefined && a[k] !== null;
 
-export const FRAME_KEYS = ["sketches", "profile", "size", "width", "height", "wall", "profile_sketch", "anchor", "mirror", "angle", "gap", "merge_tangent", "corners"];
+export const FRAME_KEYS = ["sketches", "edges", "edge_part", "curves", "profile", "size", "width", "height", "wall", "profile_sketch", "anchor", "mirror", "angle", "gap", "merge_tangent", "corners"];
 export const TRIM_KEYS = ["members", "plane", "to_part", "flip"];
 export const GUSSET_KEYS = ["members", "size", "thickness", "chamfer", "other_side"];
 
 const KINDS = PROFILE_KINDS.map((k) => k.kind);
 
-export const FRAME_HELP = `frame (Onshape's Frame: a profile along sketch lines and arcs, each length its own part, corners mitred where two meet and butted where three meet or one ends on another's side): sketches (the sketches whose lines/arcs/circles make the path; construction lines left out), profile (${KINDS.map((k) => `"${k}"`).join(" | ")}, or "sketch" with profile_sketch: a sketch with the closed cross-section), size (${PROFILE_KINDS.map((k) => `${k.kind}: ${k.sizes.map((s) => s.key).join(", ")}${k.custom ? ', or "custom" with width/height/wall' : ""}`).join("; ")}), anchor (which point of the profile sits on the path: ${ANCHORS.map((a) => a.key).join(", ")}), mirror, angle (° turned about the path), gap (mm left at mitres and butt joints), merge_tangent (default true: lines and arcs carrying on smoothly are one member), corners ([{"at":[x,y,z], "type":"mitre"|"butt"|"coped"|"none", "through": member number that runs through for butt/coped}]). Profiles stand with their height along the sketch's normal. describe_cut_list lists the lengths to cut`;
+export const FRAME_HELP = `frame (Onshape's Frame: a profile along sketch lines and arcs, part edges or curves, each length its own part, corners mitred where two meet and butted where three meet or one ends on another's side): sketches (the sketches whose lines/arcs/circles make the path; construction lines left out), edges (part edges to follow too — E-numbers from list_edges, on edge_part), curves (curve features to follow too, e.g. a helix for a handrail: the profile keeps facing its middle), profile (${KINDS.map((k) => `"${k}"`).join(" | ")}, or "sketch" with profile_sketch: a sketch with the closed cross-section), size (${PROFILE_KINDS.map((k) => `${k.kind}: ${k.sizes.map((s) => s.key).join(", ")}${k.custom ? ', or "custom" with width/height/wall' : ""}`).join("; ")}), anchor (which point of the profile sits on the path: ${ANCHORS.map((a) => a.key).join(", ")}), mirror, angle (° turned about the path), gap (mm left at mitres and butt joints), merge_tangent (default true: lines and arcs carrying on smoothly are one member), corners ([{"at":[x,y,z], "type":"mitre"|"butt"|"coped"|"none", "through": member number that runs through for butt/coped}]; "mitre" also where three or more meet at a real corner, such as a cube's: each cut halfway to every other). Profiles stand with their height along the sketch's normal. describe_cut_list lists the lengths to cut`;
 export const TRIM_HELP = 'trim_frame (Onshape\'s Trim frame): members (frame member part names), and plane ("Top"|"Front"|"Right", a Plane name, or {"point":[x,y,z],"normal":[x,y,z]}) — keeps the side with more of each member, or the other with flip — or to_part (cut where each member meets that part, keeping the biggest piece)';
 export const GUSSET_HELP = "gusset (Onshape's Gusset): members (two frame member parts meeting at a corner), size (mm along each, default 60), thickness (default 5), chamfer (mm: cut the inside corner off; 0 = none), other_side (where one member ends on the other's side: the plate goes the other way along it)";
 
-/** The path's segments, as the dialog sees them (sketch planes as saved). */
-function pathSegments(def: FrameDef, ctx: SpecContext): PathSeg[] {
+/**
+ * The path's segments, as the dialog sees them (sketch planes as saved). Part edges and curves are found by the
+ * engine: the frame is built once first, as it will be without corner choices, so their corners can be set in the same call.
+ */
+function pathSegments(def: FrameDef, ctx: SpecContext, f: Feature): PathSeg[] {
   const segs: PathSeg[] = [];
   for (const p of def.paths) {
-    const sk = ctx.doc.features.find((f) => f.id === p.sketch);
+    const sk = ctx.doc.features.find((x) => x.id === p.sketch);
     if (sk?.sketch?.plane) segs.push(...sketchPathSegments(sk.id, sk.sketch.plane, sk.sketch.data, p.items).segs);
+  }
+  if (def.edges?.length || def.curves?.length) {
+    const { corners: _c, ...plain } = def;
+    const trial: Feature = { ...f, frame: plain };
+    const list = ctx.doc.features.some((x) => x.id === f.id) ? ctx.doc.features.map((x) => (x.id === f.id ? trial : x)) : [...ctx.doc.features, trial];
+    const built = ctx.session.build(list);
+    const err = built.errors[f.id];
+    if (err) throw new InputError(`The frame can't be made, so its corners can't be set: ${err}`);
+    segs.push(...(built.framePaths?.[f.id] ?? []));
   }
   return segs;
 }
 
 export function applyFrame(f: Feature, a: Obj, ctx: SpecContext): void {
   const def: FrameDef = { ...(f.frame ?? { paths: [], profile: { kind: "extrusion", size: "2020" } }) };
-  if (has(a, "sketches")) def.paths = list(a.sketches, "sketches").map((r, i) => ({ sketch: ctx.session.feature(r, `sketches[${i}]`, ["sketch"], ctx.doc).id }));
-  else if (!ctx.editing) throw new InputError('A frame needs "sketches": the sketches whose lines and arcs it follows.');
-  if (!def.paths.length) throw new InputError('"sketches" needs at least one sketch.');
+  if (has(a, "sketches")) def.paths = list(a.sketches, "sketches", { allowEmpty: true }).map((r, i) => ({ sketch: ctx.session.feature(r, `sketches[${i}]`, ["sketch"], ctx.doc).id }));
+  if (has(a, "edges")) {
+    const picked = list(a.edges, "edges", { allowEmpty: true });
+    if (picked.length) {
+      if (!has(a, "edge_part")) throw new InputError('"edges" needs "edge_part": the part the edges are on.');
+      const part = ctx.session.part(ctx.parts, a.edge_part, "edge_part");
+      const edges = pickEdges(part, picked, "edges").filter((p) => p.ref.kind === "edge");
+      if (!edges.length) throw new InputError("edges: give edges (E-numbers from list_edges), not faces.");
+      // Each with its lasting name (the same edge keeps the name it had, so its member keeps its colour and mates).
+      // An edge the frame already follows (as found again in the last build, if its part has changed since) keeps its name.
+      const before = def.edges;
+      const pieces = before?.length && ctx.editing ? ctx.session.build().framePaths?.[f.id] : undefined;
+      const keys: string[] = [];
+      def.edges = edges.map((e) => {
+        const kept = builtEdgeKey(before, pieces, e) ?? before?.find((b) => b.partId === e.partId && JSON.stringify(b.ref) === JSON.stringify(e.ref))?.key;
+        const key = kept && !keys.includes(kept) ? kept : edgeKeyFor(e, keys);
+        keys.push(key);
+        return { ...e, key };
+      });
+    } else delete def.edges;
+  }
+  if (has(a, "curves")) {
+    const curves = [...new Set(list(a.curves, "curves", { allowEmpty: true }).map((r, i) => ctx.session.feature(r, `curves[${i}]`, ["curve"], ctx.doc).id))];
+    if (curves.length) def.curves = curves;
+    else delete def.curves;
+  }
+  if (!def.paths.length && !def.edges?.length && !def.curves?.length)
+    throw new InputError('A frame needs a path: "sketches" (whose lines and arcs it follows), "edges" (part edges, on "edge_part") and/or "curves" (curve features such as a helix).');
   if (has(a, "profile")) {
     const kind = oneOf(a.profile, [...KINDS, "sketch"] as const, "profile");
     if (kind === "sketch") {
@@ -71,7 +109,7 @@ export function applyFrame(f: Feature, a: Obj, ctx: SpecContext): void {
     else def.noMerge = true;
   }
   if (has(a, "corners")) {
-    const segs = pathSegments(def, ctx);
+    const segs = pathSegments(def, ctx, f);
     const { members, corners } = frameLayout(segs, { noMerge: def.noMerge });
     const chosen: FrameCornerChoice[] = list(a.corners, "corners", { allowEmpty: true }).map((raw, i) => {
       if (!raw || typeof raw !== "object") throw new InputError(`corners[${i}] should be {"at":[x,y,z],"type":…}.`);
@@ -80,7 +118,7 @@ export function applyFrame(f: Feature, a: Obj, ctx: SpecContext): void {
       const near = corners.map((k) => ({ k, d: Math.hypot(k.at[0] - x, k.at[1] - y, k.at[2] - z) })).sort((p, q) => p.d - q.d)[0];
       if (!near || near.d > 1) throw new InputError(`corners[${i}]: there's no corner of the frame at (${x}, ${y}, ${z}). Its corners are at ${corners.map((k) => `(${k.at.map((v) => Math.round(v * 100) / 100).join(", ")})`).join(", ") || "nowhere (no members meet)"}.`);
       const type = oneOf(c.type, ["mitre", "butt", "coped", "none"] as const, `corners[${i}].type`);
-      if (!near.k.choices.includes(type)) throw new InputError(`corners[${i}]: a mitre needs exactly two members meeting; use "butt", "coped" or "none" there.`);
+      if (!near.k.choices.includes(type)) throw new InputError(`corners[${i}]: a mitre can't be made there (members carry straight on, or meet too sharply); use "butt", "coped" or "none".`);
       let through: string | undefined;
       if (has(c, "through")) {
         const n = amount(c.through, `corners[${i}].through`, ctx.scope, { integer: true, unit: "" }).value - 1;

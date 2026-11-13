@@ -14,6 +14,8 @@ import { addPage, addedSheetMessage, changePage, pageIds, pageOf, removePage } f
 import { SHEETS, toSheet } from "../drawing/sheet";
 import { GDT_CHARACTERISTICS, nextDatumLetter } from "../drawing/symbols";
 import { newId } from "../model/document";
+import { studiosOf } from "../model/studios";
+import { cutListNote, NO_MEMBERS } from "../drawing/cutListTable";
 import type { Drawing, DrawingNote, DrawingSymbol, GdtCharacteristic } from "../model/types";
 import { amount, bool, InputError, list, noExtras, object, oneOf, text } from "./args";
 import { assembliesOf } from "./assemblyTools";
@@ -111,16 +113,40 @@ export const DRAWING_EXTRA_TOOLS: ToolDef[] = [
     name: "add_drawing_note",
     title: "Add a note or symbol to a drawing",
     description:
-      `Add a note or a drawing symbol to a sheet. "text": a note (several lines with \\n). "symbol": {"kind": "datum", "letter": "A"} (a datum feature symbol; letter default the next free one), {"kind": "gdt", "characteristic": one of ${CHARACTERISTICS.join(", ")}, "tolerance": 0.05, "diameter": true for a round zone, "datums": ["A", "B"]} (a geometric tolerance frame), or {"kind": "finish", "ra": 1.6, "machined": true} (a surface finish mark). "pointing_at": {"view": "front", "point": [x, y, z]} draws a leader to that point (a model point seen from the view, or [across, up] in the view's own mm; symbols usually have one). "at": [x, y] where it goes, in sheet mm from the paper's bottom-left corner (its top-left corner for a note); default a little up and right of what it points at, or bottom-left of the sheet. Weld symbols aren't in JuraCAD yet.`,
+      `Add a note or a drawing symbol to a sheet. "text": a note (several lines with \\n). "symbol": {"kind": "datum", "letter": "A"} (a datum feature symbol; letter default the next free one), {"kind": "gdt", "characteristic": one of ${CHARACTERISTICS.join(", ")}, "tolerance": 0.05, "diameter": true for a round zone, "datums": ["A", "B"]} (a geometric tolerance frame), or {"kind": "finish", "ra": 1.6, "machined": true} (a surface finish mark). "cut_list": true puts a Cut list table instead — the frame members' lengths (item, how many, profile, length, end cuts and the total per profile), kept up to date; it lists the sheet's part's Part Studio or the sheet's assembly, or "studio" (a Part Studio name). One per sheet. "pointing_at": {"view": "front", "point": [x, y, z]} draws a leader to that point (a model point seen from the view, or [across, up] in the view's own mm; symbols usually have one). "at": [x, y] where it goes, in sheet mm from the paper's bottom-left corner (its top-left corner for a note); default a little up and right of what it points at, or bottom-left of the sheet. Weld symbols aren't in JuraCAD yet.`,
     inputSchema: {
       type: "object",
-      properties: { drawing: DRAWING_REF, sheet: SHEET_REF, text: { type: "string" }, symbol: { type: "object" }, pointing_at: { type: "object" }, at: { type: "array", items: {} } },
+      properties: { drawing: DRAWING_REF, sheet: SHEET_REF, text: { type: "string" }, symbol: { type: "object" }, cut_list: { type: "boolean" }, studio: { type: "string" }, pointing_at: { type: "object" }, at: { type: "array", items: {} } },
     },
     run: async (s, a) => {
-      noExtras(a, ["drawing", "sheet", "text", "symbol", "pointing_at", "at"], "add_drawing_note");
+      noExtras(a, ["drawing", "sheet", "text", "symbol", "cut_list", "studio", "pointing_at", "at"], "add_drawing_note");
       const d = findDrawing(s, a.drawing);
       const pageId = pageIdFor(d, a.sheet);
-      if ((a.text === undefined) === (a.symbol === undefined)) throw new InputError('Give either "text" (a note) or "symbol" (a datum, gdt or finish symbol).');
+      if (a.cut_list !== undefined && bool(a.cut_list, "cut_list")) {
+        if (a.text !== undefined || a.symbol !== undefined || a.pointing_at !== undefined) throw new InputError('A cut list is a table on its own: leave out "text", "symbol" and "pointing_at".');
+        const page = pageOf(d, pageId);
+        if ((page.notes ?? []).some((n) => n.cutList)) throw new InputError("That sheet already has a cut list (describe_drawing lists it). Delete it first with delete_drawing_item to put another.");
+        let studio: string | undefined;
+        if (a.studio !== undefined) {
+          const want = text(a.studio, "studio").trim().toLowerCase();
+          const found = studiosOf(s.wholeDoc()).find((st) => st.name.toLowerCase() === want || st.id === a.studio);
+          if (!found) throw new InputError(`studio: there's no Part Studio called "${a.studio}". There are: ${studiosOf(s.wholeDoc()).map((st) => st.name).join(", ")}.`);
+          studio = found.id;
+        }
+        const [W, H] = SHEETS[page.sheet];
+        let at: P2 = [20, H - 20];
+        if (a.at !== undefined) {
+          if (!Array.isArray(a.at) || a.at.length !== 2) throw new InputError("at should be [x, y] in sheet mm from the paper's bottom-left corner (the table's top-left corner), e.g. [20, 180].");
+          at = [round1(amount(a.at[0], "at[0]", s.scope()).value), round1(amount(a.at[1], "at[1]", s.scope()).value)];
+        }
+        if (at[0] < 0 || at[0] > W || at[1] < 0 || at[1] > H) throw new InputError(`at (${at.join(", ")}) is off the paper: ${page.sheet} is ${W} × ${H} mm.`);
+        const changed = changePage(d, pageId, (p) => putNote(p, cutListNote(newId("nt"), at, studio)));
+        const sh = await commitDrawing(s, updateDrawing(s.doc, d.id, () => changed), changed, pageId, "add it");
+        const rows = sh.info.cutList ?? [];
+        const n = (sh.page.notes ?? []).length;
+        return say(`Added a cut list (N${n}) at (${at.join(", ")}): ${rows.length > 1 && rows[1][2] !== NO_MEMBERS ? `${rows.length - 1} lines.` : "no frame members to list yet."}`, ...rows.slice(1).map((r) => r.filter(Boolean).join(" | ")), "Look at the sheet with view_drawing.");
+      }
+      if ((a.text === undefined) === (a.symbol === undefined)) throw new InputError('Give either "text" (a note), "symbol" (a datum, gdt or finish symbol) or "cut_list": true.');
       const allNotes = pageIds(d).flatMap((id) => pageOf(d, id).notes ?? []);
       const symbol = a.symbol === undefined ? undefined : symbolOf(a.symbol, allNotes);
       const words = a.text === undefined ? "" : text(a.text, "text").slice(0, 2000);

@@ -8,6 +8,21 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.71 — Frames along edges and curves, three-way mitres, cut lists on drawings
+
+- Frames can follow part edges and curves (such as a helix), mixed with sketch lines; along a helix the profile keeps facing the middle.
+- Where three or more frame lengths meet (a cube's corner), the corner can be mitred.
+- New Cut list table for drawings: the frame lengths, how many, profile and end cuts, kept up to date (also in PDF, SVG and DXF).
+- Claude can do all three (frame `edges`/`curves`, three-way `"mitre"` corners, `add_drawing_note` `cut_list`).
+
+## v0.70 — Assembly fillets, chamfers and Edit in context for Claude
+
+- A pin mated into a hole drilled in an assembly now stays in the hole when a Part Studio change moves the drilled part.
+- New Fillet and Chamfer in assemblies: round or bevel edges of the parts there (holes drilled in the assembly too), in that assembly only.
+- Deleting an assembly hole also deletes the fillet or chamfer of its rim (and only of its own rim).
+- An older file with assembly holes may show as unsaved right after opening, if its drilled parts get moved to where their mates now put them.
+- Claude can make assembly fillets and chamfers, and set up and remove Edit in context.
+
 ## v0.69 — Holes and cuts in assemblies, and Edit in context
 
 - New in assemblies: **Hole** and **Cut** drill or cut through the parts in the assembly at once (e.g. two plates mated together). Only that assembly's copies are cut; the parts themselves don't change.

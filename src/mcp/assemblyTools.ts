@@ -15,6 +15,7 @@ import { defaultFitRange, FIT_KIND_LABELS, fitFor, fitRangeFor, judgeFits, mateP
 import { DEFAULT_FITS, type PrintFits } from "../model/printSettings";
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { applyPlacement, compose, eulerDegFromQuat, IDENTITY, quatFromEulerDeg, rotate, type Placement, type Vec3 } from "../assembly/math";
+import { settleCutCopies } from "../assembly/cutSettle";
 import { MATE_ORDER, MATE_TYPES, nextMateName, rememberCutMeshes, rememberedCutMeshes, solveWithParts, type CutMeshes, type SolveResult } from "../assembly/mates";
 import { isOrigin, originConnector, ORIGIN_PLANES, type OriginPlane } from "../assembly/origin";
 import { cutMeshesFrom, cutsInsideSubAssemblies, explodeAssembly, FLAT_STEP_NOTE, hasAssemblyFeatures, instancesForKernel, partBox, storedCutInputs } from "../assembly/placed";
@@ -61,11 +62,26 @@ function insertableParts(s: Session): PartMesh[] {
 }
 
 export function solve(s: Session, asm: Assembly, hold: string[] = [], doc = s.doc): SolveResult {
-  const assemblies = assembliesOf(doc);
+  const stored = assembliesOf(doc);
   // A mate on a face made by assembly features (a drilled hole) is found on the cut copies — cut where the document
-  // has the parts, as the app does, so the answer depends on the design alone (one solve, never flipping).
-  const cutMeshes = solverCuts(s, assemblies);
-  return solveWithParts(asm, builtParts(s), { assemblies, hold, ...(cutMeshes ? { cutMeshes } : {}) });
+  // has the parts, as the app does, so the answer depends on the design alone (one solve, never flipping). Drilled
+  // copies a Part Studio change moved are first taken where the solve now puts them (settleCutCopies, as the app does
+  // after each rebuild), so the solver's copies are cut where they're shown; tools that commit store them there.
+  const first = solverCuts(s, stored);
+  const assemblies = first ? settleCutCopies(stored, builtParts(s), first) : stored;
+  const cutMeshes = assemblies === stored ? first : solverCuts(s, assemblies);
+  return solveWithParts(withSettled(asm, stored, assemblies), builtParts(s), { assemblies, hold, ...(cutMeshes ? { cutMeshes } : {}) });
+}
+
+/** `asm` (maybe a changed copy of one of `stored`) with the drilled copies `settled` moved. */
+function withSettled(asm: Assembly, stored: readonly Assembly[], settled: readonly Assembly[]): Assembly {
+  if (settled === stored) return asm;
+  const was = stored.find((a) => a.id === asm.id);
+  const now = settled.find((a) => a.id === asm.id);
+  if (!was || !now || was === now) return asm;
+  if (asm === was) return now;
+  const moved = new Map(now.instances.filter((i, k) => i !== was.instances[k]).map((i) => [i.id, i.placement]));
+  return moved.size ? { ...asm, instances: asm.instances.map((i) => (moved.has(i.id) && i.placement === was.instances.find((j) => j.id === i.id)?.placement ? { ...i, placement: moved.get(i.id)! } : i)) } : asm;
 }
 
 /** The mate solver's cut copies for these assemblies (see storedCutInputs), worked out once per design and build. */

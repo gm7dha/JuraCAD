@@ -9,6 +9,7 @@ import { setStandard, usualThird, withoutFit } from "../drawing/drawing";
 import { changePage } from "../drawing/pages";
 import { isRectCrop, withoutCrop } from "../drawing/crop";
 import { CsvError, MAX_CSV_CHARS, parseCsv } from "../drawing/tables";
+import { cutListNote } from "../drawing/cutListTable";
 import { applyTemplate, putTemplate, templateFrom, type DrawingTemplate } from "../drawing/templates";
 import { defaultTemplateId, loadTemplates, saveTemplates, setDefaultTemplateId } from "../drawing/templateStorage";
 import { MAX_TITLE_FIELDS, SHEETS } from "../drawing/sheet";
@@ -272,4 +273,20 @@ export function pickCsvTable(changeShownPage: (fn: (d: Drawing) => Drawing) => v
       () => useStore.getState().showToast("That file couldn't be read.", "error"),
     );
   });
+}
+
+/** Put a Cut list table (the frame members' lengths, filled in each time) on the sheet on show: one per sheet. */
+export function addCutListTable(changeShownPage: (fn: (d: Drawing) => Drawing) => void) {
+  const s = useStore.getState();
+  let had = false;
+  changeShownPage((d) => {
+    if (d.notes?.some((n) => n.cutList)) {
+      had = true;
+      return d;
+    }
+    const [, H] = SHEETS[d.sheet];
+    return { ...d, notes: [...(d.notes ?? []), cutListNote(newId("nt"), [20, H - 20])] };
+  });
+  if (had) s.showToast("This sheet already has a cut list. Drag it to move it; Delete removes it.");
+  else s.showToast("Put a cut list on the sheet: the frame members' lengths, kept up to date. Drag it to move it; Delete removes it.", "success");
 }

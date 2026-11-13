@@ -55,6 +55,8 @@ export interface Build {
   followed?: Record<string, FollowedFrame>;
   /** Curve features (Helix, Fit spline…) as lines (see RebuildResult.curves). */
   curves?: Record<string, number[][]>;
+  /** Frames' path pieces from part edges and curves (see RebuildResult.framePaths). */
+  framePaths?: RebuildResult["framePaths"];
 }
 
 /**
@@ -202,7 +204,7 @@ export class Session {
   }
 
   private keepBuild(key: string, r: RebuildResult): Build {
-    this.built = { parts: r.parts.filter((p) => !p.configuration), errors: r.featureErrors, warnings: r.featureWarnings ?? {}, notes: r.featureNotes ?? {}, links: r.sketchLinks ?? {}, ...(r.followed ? { followed: r.followed } : {}), ...(r.curves ? { curves: r.curves } : {}) };
+    this.built = { parts: r.parts.filter((p) => !p.configuration), errors: r.featureErrors, warnings: r.featureWarnings ?? {}, notes: r.featureNotes ?? {}, links: r.sketchLinks ?? {}, ...(r.followed ? { followed: r.followed } : {}), ...(r.curves ? { curves: r.curves } : {}), ...(r.framePaths ? { framePaths: r.framePaths } : {}) };
     this.builtKey = key;
     return this.built;
   }

@@ -166,6 +166,8 @@ export interface SheetInfo {
   balloonGroup?: string;
   /** Views of other parts: the tapped hole sizes for each (by the id of its base view); `taps` is the sheet's part's. */
   groupTaps?: Record<string, TapSize[]>;
+  /** The rows of the sheet's Cut list table (see cutListTable.ts), when it has one. */
+  cutList?: string[][];
 }
 
 /** A view's size on paper at scale 1 (detail views are drawn `zoom` times bigger). */
@@ -901,6 +903,13 @@ function layoutAt(drawing: Drawing, projections: Projections, info: SheetInfo, s
   // Notes: lines of text from their top-left corner.
   const notes: SheetLayout["notes"] = [];
   for (const note of drawing.notes ?? []) {
+    if (note.cutList) {
+      // Worked out from the frame members each time (lengths with a decimal comma when asked).
+      const drawn = tablePrims(note.at, info.cutList ?? [["Cut list"]]);
+      prims.push(...comma(drawn.prims));
+      notes.push({ id: note.id, box: drawn.box });
+      continue;
+    }
     if (note.table) {
       const drawn = tablePrims(note.at, note.table);
       prims.push(...drawn.prims);
