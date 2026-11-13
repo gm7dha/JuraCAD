@@ -635,14 +635,15 @@ function buildIsland(
 /**
  * The map's features worth pressing into an island at `k` mm per metre: lines at least `LEAST_MARK_LINE` long, lochs
  * at least `LEAST_MARK_WATER` mm², buildings at least half `BUILDING_LEAST` across (groundMarks draws those a little
- * bigger so they print; smaller ones at an island's scale would be specks).
+ * bigger so they print; smaller ones at an island's scale would be specks) — or bigger, a feature's own `least` (hill
+ * routes, lochs and reservoirs when only those are kept).
  */
 export function featuresForIsland(f: MapFeatures, k: number): { features: MapFeatures; tooSmall: number } {
   let tooSmall = 0;
   const lines = f.lines.filter((l) => {
     let len = 0;
     for (let i = 1; i < l.pts.length; i++) len += Math.hypot(l.pts[i][0] - l.pts[i - 1][0], l.pts[i][1] - l.pts[i - 1][1]);
-    const ok = len * k >= LEAST_MARK_LINE;
+    const ok = len * k >= Math.max(LEAST_MARK_LINE, l.least ?? 0);
     if (!ok) tooSmall++;
     return ok;
   });
@@ -655,7 +656,7 @@ export function featuresForIsland(f: MapFeatures, k: number): { features: MapFea
         const [p, q] = [ring[i], ring[(i + 1) % ring.length]];
         a += p[0] * q[1] - q[0] * p[1];
       }
-      ok = (Math.abs(a) / 2) * k * k >= LEAST_MARK_WATER;
+      ok = (Math.abs(a) / 2) * k * k >= Math.max(LEAST_MARK_WATER, s.least ?? 0);
     } else {
       const xs = ring.map((p) => p[0]);
       const ys = ring.map((p) => p[1]);

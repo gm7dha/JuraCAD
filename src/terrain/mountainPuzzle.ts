@@ -22,7 +22,7 @@
 import { insideGap, offsetPolygon } from "../library/outlines";
 import { heightAt, type HeightGrid } from "./elevation";
 import { groundMarks } from "./groundMarks";
-import { NO_FEATURES, type MapFeatures } from "./osm";
+import { featuresAtScale, NO_FEATURES, type MapFeatures } from "./osm";
 import { triangulate, type P2 } from "./triangulate";
 
 export interface MountainSpec {
@@ -961,7 +961,7 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
   const zOf = (h: number) => base + (h - layout.low) * k * spec.exaggeration;
   const plain = (x: number, y: number) => zOf(heightAt(grid, layout.e0 + x / k, layout.n0 + y / k));
   // Paths, rivers, lochs and buildings from a map, pressed into the ground.
-  const marks = groundMarks(features, layout.e0, layout.n0, k, cols * cube, rows * cube, plain);
+  const marks = groundMarks(featuresAtScale(features, k).features, layout.e0, layout.n0, k, cols * cube, rows * cube, plain);
   const Z = marks.empty ? plain : (x: number, y: number) => marks.apply(x, y, plain(x, y));
   const snowZ = spec.snowline === null ? Infinity : zOf(spec.snowline);
   // Samples along each side of a top piece: about one per height-data point (finer for map marks), 8 to 48 (64).

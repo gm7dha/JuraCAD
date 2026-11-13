@@ -24,7 +24,8 @@ import {
   type PuzzlePiece,
 } from "../terrain/mountainPuzzle";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
-import { featuresOnGrid, featureSummary, NO_FEATURES, osmArea, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
+import { HILL_RULE, PATH_CHOICES, ROAD_CHOICES, TIDY_MARKS, WATER_CHOICES, type MarkChoice } from "../terrain/mapMarks";
+import { featuresAtScale, featuresOnGrid, featureSummary, NO_FEATURES, osmArea, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail, type OsmLineKind } from "../terrain/osm";
 import { PEAKS } from "../terrain/peaks";
 import { blurred, greyFromRgba, photoGrid, photoReadSize, type PhotoPixels } from "../terrain/photoRelief";
 import { allPlatesZip, plate3mf, platesByLevel, platesFor } from "../terrain/puzzle3mf";
@@ -41,9 +42,45 @@ type Source = "peak" | "ref" | "picture" | "osm";
 /** What the three map choices put on a printed puzzle. */
 export const DETAILS: [OsmDetail, string][] = [
   ["area", "Just the area"],
-  ["water", "Paths, rivers and lochs"],
+  ["water", "Paths and lochs"],
   ["all", "Everything: roads and buildings too"],
 ];
+
+/** How a map line is drawn in the windows' top views: paths red, roads near-black, rivers blue — all thin. */
+export function markStroke(kind: OsmLineKind): { colour: string; width: number } {
+  if (kind === "river" || kind === "stream") return { colour: "rgba(40,100,200,0.9)", width: kind === "river" ? 1.4 : 1 };
+  if (kind === "road") return { colour: "rgba(31,31,31,0.9)", width: 1 };
+  return { colour: "rgba(210,42,30,0.95)", width: 1 };
+}
+
+/** The three "which marks" choices (lochs, paths, roads) and the hill-route rule in words. */
+export function MarkChoices({ choice, onChange, roads }: { choice: MarkChoice; onChange: (c: MarkChoice) => void; roads: boolean }) {
+  const row = <K extends keyof MarkChoice>(key: K, label: string, options: [MarkChoice[K], string][]) => (
+    <label className="mountain-row">
+      <span>{label}</span>
+      <select value={choice[key]} onChange={(e) => onChange({ ...choice, [key]: e.target.value as MarkChoice[K] })}>
+        {options.map(([id, text]) => (
+          <option key={id} value={id}>
+            {text}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+  return (
+    <>
+      {row("water", "Water", WATER_CHOICES)}
+      {row("paths", "Paths", PATH_CHOICES)}
+      {roads && row("roads", "Roads", ROAD_CHOICES)}
+      <p className="muted small">
+        {choice.paths === "hills" ? `${HILL_RULE} ` : ""}
+        {choice.water === "standing" ? "Only lochs, lakes and reservoirs big enough to see are shown — no rivers or streams. " : ""}
+        {roads && choice.roads === "trunk" ? "Only motorways and trunk roads are shown. " : ""}
+        Paths and roads are thin lines (0.6 mm), so they print neatly.
+      </p>
+    </>
+  );
+}
 
 interface Area {
   sw: GridPoint;
@@ -127,6 +164,7 @@ export function MountainPuzzleDialog() {
   const [osm, setOsm] = useState<{ name: string; data: OsmData } | null>(null);
   const [osmError, setOsmError] = useState<string | null>(null);
   const [detail, setDetail] = useState<OsmDetail>("water");
+  const [marks, setMarks] = useState<MarkChoice>(TIDY_MARKS);
 
   const [printer, setPrinter] = useState(() => loadPrinter());
   const bed = printerBed(printer);
@@ -154,7 +192,10 @@ export function MountainPuzzleDialog() {
   }, [photoMode, photo, smooth, relief, invert, spec.cube, spec.scale, bed[0], bed[1]]);
   const loaded = photoMode ? photoLoaded : mapLoaded;
   const area = areaFrom(source, peakId, ref, km, corners, osm);
-  const features: MapFeatures = useMemo(() => (source === "osm" && osm ? featuresOnGrid(osm.data, detail) : NO_FEATURES), [source, osm, detail]);
+  const features: MapFeatures = useMemo(
+    () => (source === "osm" && osm ? featuresOnGrid(osm.data, detail, marks, mapLoaded?.grid) : NO_FEATURES),
+    [source, osm, detail, marks, mapLoaded],
+  );
   const areaReady = typeof area !== "string";
   const fresh = areaReady && sameArea(loaded?.area ?? null, area);
 
@@ -209,7 +250,7 @@ export function MountainPuzzleDialog() {
   // How ground heights sit in the puzzle, and the map drawn over it, for colouring.
   const scaleKey = puzzle ? [baseFor(puzzle.spec), puzzle.layout.low, puzzle.layout.k * puzzle.spec.exaggeration].join(",") : "";
   const scale: HeightScale | null = useMemo(() => (puzzle ? { z0: baseFor(puzzle.spec), h0: puzzle.layout.low, mmPerM: puzzle.layout.k * puzzle.spec.exaggeration } : null), [scaleKey]);
-  const puzzleMap = useMemo(() => (puzzle ? mapOnPuzzle(features, puzzle.layout.e0, puzzle.layout.n0, puzzle.layout.k) : NO_MAP), [puzzle, features]);
+  const puzzleMap = useMemo(() => (puzzle ? mapOnPuzzle(featuresAtScale(features, puzzle.layout.k).features, puzzle.layout.e0, puzzle.layout.n0, puzzle.layout.k) : NO_MAP), [puzzle, features]);
   const mapSize: [number, number] = puzzle ? [puzzle.layout.cols * puzzle.spec.cube, puzzle.layout.rows * puzzle.spec.cube] : [1, 1];
   const paintMap = useMemo(() => mapRaster(puzzleMap, mapSize[0], mapSize[1]), [puzzleMap]);
   const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap);
@@ -349,11 +390,12 @@ export function MountainPuzzleDialog() {
                   ))}
                 </select>
               </label>
+              {detail !== "area" && <MarkChoices choice={marks} onChange={setMarks} roads={detail === "all"} />}
               {osm && (
                 <p className="muted small">
                   {detail === "area"
                     ? "Just the area the map covers."
-                    : `${featureSummary(features)[0].toUpperCase()}${featureSummary(features).slice(1)}: paths and rivers become shallow grooves in the ground, lochs flat water${detail === "all" ? ", buildings small blocks" : ""}.`}
+                    : `${featureSummary(features)[0].toUpperCase()}${featureSummary(features).slice(1)}: paths${detail === "all" ? " and roads" : ""} become thin, shallow grooves in the ground, lochs flat water${detail === "all" ? ", buildings small blocks" : ""}.`}
                   {detail === "all" && " Names are too small to print on the ground, so they're left off (the laser version in JuraCUT engraves them)."}
                 </p>
               )}
@@ -637,19 +679,20 @@ function TopView({ grid, area, puzzle, picture, features }: { grid: HeightGrid; 
         }
       ctx.putImageData(pix, 0, 0);
     }
-    // The map's lochs, buildings and lines on top.
-    for (const shape of features.shapes) {
+    // The map's lochs, buildings and lines on top (once the puzzle's made, only those big enough to print).
+    const shown = puzzle ? featuresAtScale(features, puzzle.layout.k).features : features;
+    for (const shape of shown.shapes) {
       ctx.beginPath();
       for (const ring of shape.rings) ring.forEach(([e, n], i) => (i ? ctx.lineTo(...toPx(e, n)) : ctx.moveTo(...toPx(e, n))));
       ctx.fillStyle = shape.kind === "water" ? "rgba(60,120,200,0.8)" : "rgba(60,50,40,0.9)";
       ctx.fill("evenodd");
     }
-    for (const line of features.lines) {
+    for (const line of shown.lines) {
       ctx.beginPath();
       line.pts.forEach(([e, n], i) => (i ? ctx.lineTo(...toPx(e, n)) : ctx.moveTo(...toPx(e, n))));
-      ctx.strokeStyle = line.kind === "river" || line.kind === "stream" ? "rgba(40,100,200,0.9)" : line.kind === "road" ? "rgba(200,60,40,0.9)" : "rgba(120,60,20,0.9)";
-      ctx.lineWidth = line.kind === "river" || line.kind === "road" ? 1.6 : 1;
-      ctx.setLineDash(line.kind === "path" ? [3, 2] : []);
+      const stroke = markStroke(line.kind);
+      ctx.strokeStyle = stroke.colour;
+      ctx.lineWidth = stroke.width;
       ctx.stroke();
     }
     ctx.setLineDash([]);

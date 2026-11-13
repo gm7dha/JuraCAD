@@ -8,14 +8,19 @@ import type { MapFeatures, OsmLineKind } from "./osm";
 
 type XY = [number, number];
 
-/** Groove width and depth (mm on the puzzle) for each kind of line. */
+/**
+ * Groove width and depth (mm on the puzzle) for each kind of line. Paths, tracks and roads are thin, shallow lines —
+ * about one and a half nozzle widths on a 0.4 mm nozzle, a layer and a half deep — so they read as a neat line.
+ */
 export const GROOVES: Record<OsmLineKind, { width: number; depth: number }> = {
-  path: { width: 1.0, depth: 0.5 },
-  track: { width: 1.3, depth: 0.5 },
-  road: { width: 1.8, depth: 0.6 },
+  path: { width: 0.6, depth: 0.3 },
+  track: { width: 0.6, depth: 0.3 },
+  road: { width: 0.6, depth: 0.3 },
   stream: { width: 1.0, depth: 0.6 },
   river: { width: 1.6, depth: 0.8 },
 };
+/** Lines narrower than this (mm) are flat-bottomed in the middle. */
+export const THIN_LINE = 1;
 /** How far water sits below the lowest of its shore (mm). */
 export const WATER_DROP = 0.5;
 /** Buildings stand this high (mm), and at least this big across, so they print. */
@@ -63,7 +68,8 @@ export function groundMarks(f: MapFeatures, e0: number, n0: number, k: number, w
           const t = L2 > 0 ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / L2)) : 0;
           const r = Math.hypot(x - a[0] - t * dx, y - a[1] - t * dy);
           if (r >= hw) continue;
-          const d = depth * (0.5 + 0.5 * Math.cos((Math.PI * r) / hw));
+          // Thin lines keep their full depth over the middle half, so a coarse mesh still finds the groove.
+          const d = w < THIN_LINE ? (r <= hw / 2 ? depth : depth * (0.5 + 0.5 * Math.cos((Math.PI * (2 * r - hw)) / hw))) : depth * (0.5 + 0.5 * Math.cos((Math.PI * r) / hw));
           const c = j * nx + i;
           if (d > groove[c]) groove[c] = d;
         }

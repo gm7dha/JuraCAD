@@ -4,6 +4,8 @@
  * move them onto the OS grid (metres east/north), keeping only as much as asked for. OSM has no heights: those still
  * come from the height tiles. Shared, unchanged, by JuraCAD's and JuraCUT's Mountain puzzles.
  */
+import type { HeightGrid } from "./elevation";
+import { ALL_MARKS, tidyMarks, type MarkChoice } from "./mapMarks";
 import { latLonToGrid, type GridPoint, type LatLon } from "./osGrid";
 
 type XY = [number, number];
@@ -18,9 +20,13 @@ export type OsmNameKind = "peak" | "hut" | "water" | "place";
 export interface OsmData {
   /** The box it was exported from (degrees), or null when the file doesn't say. */
   bounds: { south: number; west: number; north: number; east: number } | null;
-  lines: { kind: OsmLineKind; name?: string; pts: LatLon[] }[];
-  /** Closed shapes: the first ring is the outline, any more are islands in it. */
-  shapes: { kind: OsmShapeKind; name?: string; rings: LatLon[][] }[];
+  /**
+   * Lines, with their `highway` type when they're one (footway, track, trunk…) and `hike` when they're part of a
+   * walking route (route=hiking/foot/walking) or graded as a mountain path (sac_scale).
+   */
+  lines: { kind: OsmLineKind; name?: string; pts: LatLon[]; highway?: string; hike?: true }[];
+  /** Closed shapes: the first ring is the outline, any more are islands in it. `flowing`: a river's or canal's water, not a loch's. */
+  shapes: { kind: OsmShapeKind; name?: string; rings: LatLon[][]; flowing?: true }[];
   names: { kind: OsmNameKind; text: string; at: LatLon }[];
   /** Council, county and parish boundaries (`admin_level`: 4 nations, 6 counties and council areas, 8 districts, 10 parishes). */
   boundaries: { level: number; pts: LatLon[] }[];
@@ -30,12 +36,17 @@ export interface OsmData {
   nodes: number;
   /** Woods and forests (outline first, then clearings), when the map has any — only coloured, never pressed into the ground. */
   woods?: LatLon[][][];
+  /** Outlines of towns' streets and parks (residential, shops, industry, parks, gardens, golf courses), when the map has any — hill routes leave them out. */
+  builtUp?: LatLon[][];
 }
 
-/** The map's things on the OS grid (metres). */
+/**
+ * The map's things on the OS grid (metres). `least` (when set): the smallest it's worth printing — a line's length
+ * on the puzzle (mm), a shape's area there (mm²); what's smaller at the puzzle's scale is left off.
+ */
 export interface MapFeatures {
-  lines: { kind: OsmLineKind; pts: XY[] }[];
-  shapes: { kind: OsmShapeKind; rings: XY[][] }[];
+  lines: { kind: OsmLineKind; pts: XY[]; least?: number }[];
+  shapes: { kind: OsmShapeKind; rings: XY[][]; least?: number }[];
   names: { kind: OsmNameKind; text: string; at: XY }[];
   /** Woods (rings, outline first), for full-colour prints only; missing when there are none. */
   woods?: XY[][][];
@@ -90,6 +101,18 @@ function shapeKind(t: Tags): OsmShapeKind | null {
   if (t.building && t.building !== "no") return "building";
   return null;
 }
+
+/** Water that flows (a river's or canal's area), as opposed to a loch, lake or reservoir. */
+const FLOWING = new Set(["river", "stream", "canal", "ditch", "drain", "wastewater", "rapids", "lock", "moat", "fish_pass", "stream_pool"]);
+const isFlowing = (t: Tags) => t.waterway === "riverbank" || t.waterway === "dock" || FLOWING.has(t.water ?? "");
+
+/** Towns' streets and parks: residential, shops and industry, parks, gardens, playing fields, golf courses. */
+const BUILT_UP_LANDUSE = new Set(["residential", "commercial", "retail", "industrial", "recreation_ground", "cemetery", "village_green", "allotments", "garages"]);
+const BUILT_UP_LEISURE = new Set(["park", "garden", "golf_course", "playground", "recreation_ground", "pitch", "sports_centre", "stadium"]);
+const isBuiltUp = (t: Tags) => BUILT_UP_LANDUSE.has(t.landuse ?? "") || BUILT_UP_LEISURE.has(t.leisure ?? "") || !!t.golf;
+
+/** Walking route relations. */
+const isWalkingRoute = (t: Tags) => t.type === "route" && ["hiking", "foot", "walking"].includes(t.route ?? "");
 
 /** Woods and forests: coloured on full-colour prints, nothing else. */
 const isWood = (t: Tags) => t.natural === "wood" || t.landuse === "forest";
@@ -200,11 +223,24 @@ export function readOsm(text: string): OsmData {
       const pts = pointsOf(ways.get(id)?.refs ?? []);
       if (pts.length >= 2) data.boundaries.push({ level, pts });
     }
-  for (const { refs, tags } of ways.values()) {
+  // Ways on walking routes.
+  const onRoute = new Set<string>();
+  for (const { members, tags } of relations) if (isWalkingRoute(tags)) for (const x of members) if (x.type === "way") onRoute.add(x.ref);
+  for (const [id, { refs, tags }] of ways) {
     const kind = lineKind(tags);
     if (kind) {
       const pts = pointsOf(refs);
-      if (pts.length >= 2) data.lines.push({ kind, name: tags.name, pts });
+      if (pts.length >= 2) {
+        const line: OsmData["lines"][number] = { kind, name: tags.name, pts };
+        if (tags.highway) line.highway = tags.highway;
+        if (onRoute.has(id) || (tags.sac_scale && tags.sac_scale !== "no")) line.hike = true;
+        data.lines.push(line);
+      }
+      continue;
+    }
+    if (isBuiltUp(tags) && !isWood(tags) && !shapeKind(tags) && refs.length >= 4 && refs[0] === refs[refs.length - 1]) {
+      const ring = pointsOf(refs);
+      if (ring.length === refs.length) (data.builtUp ??= []).push(ring);
       continue;
     }
     if (isWood(tags) && refs.length >= 4 && refs[0] === refs[refs.length - 1]) {
@@ -215,13 +251,14 @@ export function readOsm(text: string): OsmData {
     const shape = shapeKind(tags);
     if (shape && refs.length >= 4 && refs[0] === refs[refs.length - 1]) {
       const ring = pointsOf(refs);
-      if (ring.length === refs.length) data.shapes.push({ kind: shape, name: tags.name, rings: [ring] });
+      if (ring.length === refs.length) data.shapes.push(shapeOf(shape, tags, [ring]));
     }
   }
   for (const { members, tags } of relations) {
     const wood = tags.type === "multipolygon" && isWood(tags);
     const shape = tags.type === "multipolygon" ? shapeKind(tags) : null;
-    if (!shape && !wood) continue;
+    const built = tags.type === "multipolygon" && !shape && !wood && isBuiltUp(tags);
+    if (!shape && !wood && !built) continue;
     const ringsOf = (role: (r: string) => boolean) =>
       joinRings(members.filter((x) => x.type === "way" && role(x.role)).map((x) => ways.get(x.ref)?.refs ?? []))
         .map(pointsOf)
@@ -231,8 +268,9 @@ export function readOsm(text: string): OsmData {
     // Each outline with the islands that lie in it.
     for (const outer of outers) {
       const holes = inners.filter((h) => insideLatLon(h[0], outer));
-      if (shape) data.shapes.push({ kind: shape, name: tags.name, rings: [outer, ...holes] });
-      else (data.woods ??= []).push([outer, ...holes]);
+      if (shape) data.shapes.push(shapeOf(shape, tags, [outer, ...holes]));
+      else if (wood) (data.woods ??= []).push([outer, ...holes]);
+      else (data.builtUp ??= []).push(outer);
     }
   }
   for (const { at, tags } of nodeTags) {
@@ -240,6 +278,12 @@ export function readOsm(text: string): OsmData {
     if (kind) data.names.push({ kind, text: kind === "peak" ? peakText(tags) : tags.name, at });
   }
   return data;
+}
+
+function shapeOf(kind: OsmShapeKind, tags: Tags, rings: LatLon[][]): OsmData["shapes"][number] {
+  const s: OsmData["shapes"][number] = { kind, name: tags.name, rings };
+  if (kind === "water" && isFlowing(tags)) s.flowing = true;
+  return s;
 }
 
 function insideLatLon(p: LatLon, ring: LatLon[]): boolean {
@@ -321,13 +365,28 @@ function namePoint(ring: XY[]): XY {
   return best;
 }
 
-/** What `detail` asks for, on the OS grid: "area" nothing; "water" paths, tracks, rivers, streams and lochs; "all" roads, buildings and names too. */
-export function featuresOnGrid(data: OsmData, detail: OsmDetail): MapFeatures {
+/**
+ * What `detail` asks for, on the OS grid: "area" nothing; "water" paths, tracks, rivers, streams and lochs; "all" roads,
+ * buildings and names too. `choice` (missing: everything, the old way) can keep it tidy — lochs and reservoirs only, main
+ * hill routes only (judged on `grid`'s heights), main trunk roads only: see mapMarks.ts.
+ */
+export function featuresOnGrid(data: OsmData, detail: OsmDetail, choice: MarkChoice = ALL_MARKS, grid?: HeightGrid): MapFeatures {
   if (detail === "area") return NO_FEATURES;
   const all = detail === "all";
-  const lines = data.lines.filter((l) => all || l.kind !== "road").map((l) => ({ kind: l.kind, pts: l.pts.map(onGrid) }));
-  const kept = data.shapes.filter((s) => all || s.kind === "water");
-  const shapes = kept.map((s) => ({ kind: s.kind, rings: s.rings.map((r) => r.map(onGrid)) }));
+  const tidy = choice.water !== "all" || choice.paths !== "all" || choice.roads !== "all";
+  const picked = tidy
+    ? tidyMarks(
+        data.lines.filter((l) => all || l.kind !== "road").map((l) => ({ kind: l.kind, pts: l.pts.map(onGrid), highway: l.highway, hike: l.hike })),
+        (data.builtUp ?? []).map((r) => r.map(onGrid)),
+        choice,
+        grid,
+      )
+    : null;
+  const lines: MapFeatures["lines"] = picked ?? data.lines.filter((l) => all || l.kind !== "road").map((l) => ({ kind: l.kind, pts: l.pts.map(onGrid) }));
+  const kept = data.shapes.filter((s) => (all || s.kind === "water") && !(s.kind === "water" && s.flowing && choice.water !== "all"));
+  const shapes: MapFeatures["shapes"] = kept.map((s) =>
+    s.kind === "water" && choice.water !== "all" ? { kind: s.kind, rings: s.rings.map((r) => r.map(onGrid)), least: LEAST_LOCH } : { kind: s.kind, rings: s.rings.map((r) => r.map(onGrid)) },
+  );
   const names: MapFeatures["names"] = [];
   if (all) {
     for (const n of data.names) names.push({ kind: n.kind, text: n.text, at: onGrid(n.at) });
@@ -337,6 +396,45 @@ export function featuresOnGrid(data: OsmData, detail: OsmDetail): MapFeatures {
   }
   const woods = data.woods?.map((w) => w.map((r) => r.map(onGrid)));
   return woods?.length ? { lines, shapes, names, woods } : { lines, shapes, names };
+}
+
+/** Lochs and reservoirs smaller than this on the printed puzzle (mm²) are left off when only those are kept: about 4 × 4 mm. */
+export const LEAST_LOCH = 16;
+
+/**
+ * Features worth printing at `k` mm per metre: those with a `least` (see MapFeatures) smaller than it on the puzzle
+ * are left off, and counted.
+ */
+export function featuresAtScale(f: MapFeatures, k: number): { features: MapFeatures; tooSmall: number } {
+  let tooSmall = 0;
+  const lines = f.lines.filter((l) => {
+    if (!l.least) return true;
+    const ok = lineLength(l.pts) * k >= l.least;
+    if (!ok) tooSmall++;
+    return ok;
+  });
+  const shapes = f.shapes.filter((s) => {
+    if (!s.least) return true;
+    const ok = ringArea(s.rings[0]) * k * k >= s.least;
+    if (!ok) tooSmall++;
+    return ok;
+  });
+  return { features: lines.length === f.lines.length && shapes.length === f.shapes.length ? f : { ...f, lines, shapes }, tooSmall };
+}
+
+export function lineLength(pts: XY[]): number {
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  return len;
+}
+
+export function ringArea(ring: XY[]): number {
+  let a = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const [p, q] = [ring[i], ring[(i + 1) % ring.length]];
+    a += p[0] * q[1] - q[0] * p[1];
+  }
+  return Math.abs(a) / 2;
 }
 
 /** What boundaries a map has, coarsest first: [admin_level, how many lines]. */
@@ -364,7 +462,7 @@ export function featureSummary(f: MapFeatures): string {
   const parts = [
     count(f.lines.filter((l) => l.kind === "path" || l.kind === "track").length, "path or track", "paths and tracks"),
     count(f.lines.filter((l) => l.kind === "river" || l.kind === "stream").length, "river or stream", "rivers and streams"),
-    count(f.shapes.filter((s) => s.kind === "water").length, "loch", "lochs"),
+    count(f.shapes.filter((s) => s.kind === "water").length, "loch or reservoir", "lochs and reservoirs"),
     count(f.lines.filter((l) => l.kind === "road").length, "road", "roads"),
     count(f.shapes.filter((s) => s.kind === "building").length, "building", "buildings"),
     count(f.names.length, "name", "names"),

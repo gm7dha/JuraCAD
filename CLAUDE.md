@@ -1515,6 +1515,24 @@
   (≥ `BUILDING_LEAST` across), on a ≥ 0.25 mm grid; `makeMountainPuzzle(…, features)` wraps the ground height with it
   (so `full`, snow and every mesh see it) and samples top pieces finer (≤ 64 a side). Names aren't printed. Tests:
   tests/osm.test.ts (sample file in tests/support/osmSample.ts).
+  Tidy marks (both puzzles, the owner's wish; pure `src/terrain/mapMarks.ts`): `MarkChoice` {water standing|all, paths
+  hills|all, roads trunk|all}, `TIDY_MARKS` the windows' default (`MarkChoices` in MountainPuzzleDialog.tsx, shared with the
+  island window, says the rule — `HILL_RULE`), `ALL_MARKS` = the old behaviour and `featuresOnGrid`'s default (so old callers
+  and tests are unchanged). osm.ts keeps per line `highway` and `hike` (a member of a route=hiking/foot/walking relation, or
+  sac_scale), per water shape `flowing` (riverbank, water=river/canal…), and `builtUp` outer rings (residential/shops/
+  industry, parks, gardens, golf). `featuresOnGrid(data, detail, choice, grid)`: standing water drops waterway lines and flowing
+  areas and gives lochs `least` = `LEAST_LOCH` 16 mm²; trunk keeps motorway/trunk (no links); hills = `hillRoutes`: path/
+  bridleway/track only (`NOT_HILL` footway, steps, cycleway…), not ≥ half in `builtUp` (box grid lookup), pieces joined
+  through shared points straightest pair first, never turning > 90° (`joinRoutes`), kept if `hike` or climbing ≥ `HILL_CLIMB`
+  150 m, or ≥ `HIGH_CLIMB` 50 m into the top `HIGH_GROUND` 30% of the grid's range (`heightsAlong`); no grid = hike only; each
+  route one line with `least` = `LEAST_ROUTE` 10 mm. `MapFeatures` lines/shapes may carry `least` (on-puzzle mm / mm²):
+  `featuresAtScale(f, k)` (mountain build, its preview and colour map) and `featuresForIsland` honour it. `GROOVES`
+  path/track/road 0.6 wide × 0.3 deep, flat-bottomed over the middle half below `THIN_LINE` 1 mm (rivers unchanged); top views
+  draw paths red, roads near-black, solid (`markStroke`). `marksQuery(…, choice)` fetches path|bridleway|track, built-up
+  ways, natural=water/landuse=reservoir (+ multipolygons), waterways only for "all", motorway|trunk unless all roads, and walking
+  route relations bare (`->.hr`, output without their members); `fetchCovers` says when a fetch needs repeating. Filament
+  changes go by layers painted lines cross, not their number (one path up the summit ≈ a change per layer it climbs), so tidy
+  marks cut paint a lot and changes less (tests/mapMarksSwaps). Tests: tests/mapMarks (pure, `hillOsm` in osmSample.ts).
 - Puzzle colours (Island and Mountain puzzle windows' "Colour" choice; `src/app/PuzzleColour.tsx`: `ColourPanel`, `useColoured`,
   `ColourDownloads`; the photo puzzle stays plain): pure `src/terrain/colour.ts` + `colourFiles.ts`. Colouring runs in
   `src/app/puzzleColour.worker.ts` (`ColourRunner`: a new job while one runs restarts the worker; pieces sent only when new) over

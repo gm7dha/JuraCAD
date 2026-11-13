@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { weld } from "../src/geometry/threeMf";
 import { areaProblem, gridFrom, MAX_TILES, tilesFor, zoomFor } from "../src/terrain/elevation";
 import { BOUNDARY_LEVELS, boundaryQuery, ISLANDS, marksQuery } from "../src/terrain/islands";
+import { ALL_MARKS } from "../src/terrain/mapMarks";
 import { boundariesOnGrid, boundaryLevels, readOsm } from "../src/terrain/osm";
 import { distanceTransform, ISLAND_DEFAULTS, islandChecks, makeIslandPuzzle, MIN_JOINTS, type IslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
 import type { Body } from "../src/terrain/mountainPuzzle";
@@ -257,7 +258,8 @@ describe("islands and boundaries", () => {
   });
   it("asks OpenStreetMap for paths, rivers and lochs (roads too for everything), and not for Great Britain", () => {
     const [arran, gb] = [ISLANDS[1], ISLANDS[0]];
-    const water = marksQuery(arran.sw, arran.width, arran.height, "water")!;
+    // Everything chosen (the tidy choice leaves rivers out: tests/mapMarks).
+    const water = marksQuery(arran.sw, arran.width, arran.height, "water", ALL_MARKS)!;
     expect(water).toContain('way["waterway"');
     expect(water).toContain('"natural"="water"');
     expect(water).not.toContain("motorway");

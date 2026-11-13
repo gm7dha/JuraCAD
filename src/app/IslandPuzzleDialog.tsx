@@ -1,15 +1,16 @@
 /**
  * Island puzzle: pick an island (or all of Great Britain, or any area by grid reference), fetch its heights, cut its land
  * into interlocking pieces — of about a chosen size, or along county / parish boundaries fetched from OpenStreetMap — and
- * download the pieces as print plates (3MF). "From the map" presses paths, rivers and lochs (and roads and buildings) from
+ * download the pieces as print plates (3MF). "From the map" presses hill paths and lochs (and trunk roads and buildings) from
  * OpenStreetMap into the ground, fetched for the island or read from a map file. Nothing goes into the design. The maths is
  * in src/terrain/islandPuzzle.ts.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CUSTOM_PRINTER, printerOf, PRINTERS } from "../model/printBed";
 import { areaProblem, readHeights, zoomFor, type HeightGrid } from "../terrain/elevation";
-import { IN_PLACE_FIT, ISLAND_DEFAULTS, islandChecks, type IslandBuilt, type IslandCuts, type IslandLand, type IslandSpec } from "../terrain/islandPuzzle";
-import { BOUNDARY_LEVELS, boundaryQuery, ISLANDS, MARKS_MOST, marksQuery, OVERPASS_URL } from "../terrain/islands";
+import { featuresForIsland, IN_PLACE_FIT, ISLAND_DEFAULTS, islandChecks, type IslandBuilt, type IslandCuts, type IslandLand, type IslandSpec } from "../terrain/islandPuzzle";
+import { BOUNDARY_LEVELS, boundaryQuery, fetchCovers, ISLANDS, MARKS_MOST, marksQuery, OVERPASS_URL, type MarksFetched } from "../terrain/islands";
+import { TIDY_MARKS, type MarkChoice } from "../terrain/mapMarks";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
 import { boundariesOnGrid, boundaryLevels, featuresOnGrid, featureSummary, levelName, NO_FEATURES, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
 import { allPlatesZip, IN_PLACE_SETTINGS, plate3mf, platesByLevel, platesFor, platesInPlace, TOWER_ROOM, towerWhere, type BedRect } from "../terrain/puzzle3mf";
@@ -18,7 +19,7 @@ import { ColourDownloads, ColourPanel, useColoured } from "./PuzzleColour";
 import { downloadFile, safeFileName } from "./download";
 import type { IslandJob, IslandReply } from "./islandPuzzle.worker";
 import { Modal } from "./Modal";
-import { DETAILS, Mountain3D } from "./MountainPuzzleDialog";
+import { DETAILS, MarkChoices, markStroke, Mountain3D } from "./MountainPuzzleDialog";
 import { openMountain } from "./mountainState";
 import { loadTerrainTile } from "./mountainTiles";
 import { loadPrinter, printerBed, savePrinter } from "./printerSetting";
@@ -85,7 +86,8 @@ export function IslandPuzzleDialog() {
   const [mapError, setMapError] = useState<string | null>(null);
   // "From the map": what to press into the ground, and the map it comes from (fetched, or a file).
   const [detail, setDetail] = useState<OsmDetail>("area");
-  const [marksMap, setMarksMap] = useState<{ name: string; data: OsmData; fetched: OsmDetail | null } | null>(null);
+  const [marks, setMarks] = useState<MarkChoice>(TIDY_MARKS);
+  const [marksMap, setMarksMap] = useState<{ name: string; data: OsmData; fetched: MarksFetched | null } | null>(null);
   const [marksBusy, setMarksBusy] = useState(false);
   const [marksError, setMarksError] = useState<string | null>(null);
 
@@ -155,7 +157,7 @@ export function IslandPuzzleDialog() {
   const getMarks = async () => {
     if (!loaded || detail === "area") return;
     const { sw, width, height } = loaded.area;
-    const query = marksQuery(sw, width, height, detail);
+    const query = marksQuery(sw, width, height, detail, marks);
     if (!query) return;
     setMarksBusy(true);
     setMarksError(null);
@@ -167,10 +169,10 @@ export function IslandPuzzleDialog() {
       } catch {
         throw new Error("Couldn't reach OpenStreetMap's map service — check you're online, or use a map file.");
       }
-      const data = await overpassMap(res, "paths, rivers and lochs");
+      const data = await overpassMap(res, "paths, lochs and roads");
       // Heights for another area were fetched meanwhile: this map is for the old one.
       if (loadedKey.current !== asked) return;
-      setMarksMap({ name: "OpenStreetMap", data, fetched: detail });
+      setMarksMap({ name: "OpenStreetMap", data, fetched: { detail, choice: marks } });
     } catch (e) {
       setMarksError(e instanceof OsmError ? e.message : e instanceof Error ? e.message : String(e));
     } finally {
@@ -207,9 +209,13 @@ export function IslandPuzzleDialog() {
   const usedLevel = levels.some(([l]) => l === level) ? level : levels.length ? levels[levels.length - 1][0] : level;
   const cuts: IslandCuts | undefined = useMemo(() => (cutBy === "boundaries" && map ? boundariesOnGrid(map.data, usedLevel) : undefined), [cutBy, map, usedLevel]);
 
-  const features: MapFeatures = useMemo(() => (detail !== "area" && marksMap ? featuresOnGrid(marksMap.data, detail) : NO_FEATURES), [detail, marksMap]);
-  // Fetched for "Paths, rivers and lochs" only: "Everything" needs the roads too.
-  const needsFetch = detail !== "area" && (!marksMap || (marksMap.fetched === "water" && detail === "all"));
+  const features: MapFeatures = useMemo(
+    () => (detail !== "area" && marksMap ? featuresOnGrid(marksMap.data, detail, marks, loaded?.grid) : NO_FEATURES),
+    [detail, marksMap, marks, loaded],
+  );
+  // Fetched for less than is asked for now ("Everything" needs the roads, rivers and every path need fetching too).
+  const fetchedTooLittle = detail !== "area" && !!marksMap?.fetched && !fetchCovers(marksMap.fetched, detail, marks);
+  const needsFetch = detail !== "area" && (!marksMap || fetchedTooLittle);
   const canFetch = !!loaded && fresh && Math.max(loaded.area.width, loaded.area.height) <= MARKS_MOST;
 
   // Put together, the island is sized on Bambu Studio's own bed (it centres the file there) and keeps out of the printer's
@@ -279,7 +285,7 @@ export function IslandPuzzleDialog() {
   // How ground heights sit in the puzzle (base + height × relief / highest), and the map over it, for colouring.
   const scaleKey = puzzle ? [spec.base, spec.relief, puzzle.high].join(",") : "";
   const scale: HeightScale | null = useMemo(() => (puzzle ? { z0: spec.base, h0: 0, mmPerM: spec.relief / Math.max(puzzle.high, 1) } : null), [scaleKey]);
-  const puzzleMap = useMemo(() => (puzzle && loaded ? mapOnPuzzle(features, (puzzle.origin ?? loaded.area.sw).e, (puzzle.origin ?? loaded.area.sw).n, puzzle.k) : NO_MAP), [puzzle, features]);
+  const puzzleMap = useMemo(() => (puzzle && loaded ? mapOnPuzzle(featuresForIsland(features, puzzle.k).features, (puzzle.origin ?? loaded.area.sw).e, (puzzle.origin ?? loaded.area.sw).n, puzzle.k) : NO_MAP), [puzzle, features]);
   const mapSize: [number, number] = puzzle ? [puzzle.width, puzzle.height] : [1, 1];
   const paintMap = useMemo(() => mapRaster(puzzleMap, mapSize[0], mapSize[1]), [puzzleMap]);
   const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap);
@@ -403,6 +409,7 @@ export function IslandPuzzleDialog() {
           </label>
           {detail !== "area" && (
             <>
+              <MarkChoices choice={marks} onChange={setMarks} roads={detail === "all"} />
               {canFetch || !loaded ? (
                 <button className="text-button mountain-fetch" onClick={getMarks} disabled={!loaded || !fresh || marksBusy}>
                   {marksBusy ? "Getting the map…" : needsFetch ? "Get them from OpenStreetMap" : "Get them again from OpenStreetMap"}
@@ -417,12 +424,12 @@ export function IslandPuzzleDialog() {
               {!loaded && <p className="muted small">Get the heights first.</p>}
               {marksError && <p className="error-text small">{marksError}</p>}
               <p className="muted small">
-                Paths and rivers become shallow grooves in the ground, lochs flat water{detail === "all" ? ", roads wider grooves and buildings small blocks (buildings only from a map file — fetched, a town would be too much)" : ""}. Rivers stop at the coast; grooves are kept shallow on the dovetails and narrow strips so nothing gets weak.
+                Paths{detail === "all" ? " and roads" : ""} become thin, shallow grooves in the ground, lochs flat water{detail === "all" ? ", buildings small blocks (buildings only from a map file — fetched, a town would be too much)" : ""}. Marks stop at the coast; grooves are kept shallow on the dovetails and narrow strips so nothing gets weak.
               </p>
               {marksMap && (
                 <p className="muted small">
                   {marksMap.name}: {featureSummary(features)}.{puzzle?.marks.tooSmall ? ` ${puzzle.marks.tooSmall} too small to show at this scale are left off.` : ""}
-                  {marksMap.fetched === "water" && detail === "all" ? " Get them again for the roads." : ""}
+                  {fetchedTooLittle ? " Get them again for what you've added." : ""}
                 </p>
               )}
             </>
@@ -716,9 +723,9 @@ function IslandTopView({ puzzle }: { puzzle: IslandBuilt | null }) {
     for (const line of puzzle.marks.lines) {
       ctx.beginPath();
       line.pts.forEach((p, i) => (i ? ctx.lineTo(...px(p)) : ctx.moveTo(...px(p))));
-      ctx.strokeStyle = line.kind === "river" || line.kind === "stream" ? "rgba(40,100,200,0.9)" : line.kind === "road" ? "rgba(200,60,40,0.9)" : "rgba(120,60,20,0.9)";
-      ctx.lineWidth = line.kind === "river" || line.kind === "road" ? 1.6 : 1;
-      ctx.setLineDash(line.kind === "path" ? [3, 2] : []);
+      const stroke = markStroke(line.kind);
+      ctx.strokeStyle = stroke.colour;
+      ctx.lineWidth = stroke.width;
       ctx.stroke();
     }
     ctx.restore();

@@ -61,7 +61,7 @@ describe("Reading an OpenStreetMap file", () => {
     const name = all.names.find((n) => n.kind === "water")!.at;
     expect(name[0]).toBeGreaterThan(201000 + 2800);
     expect(name[0]).toBeLessThan(201000 + 3500);
-    expect(featureSummary(water)).toBe("1 path or track, 1 river or stream, 1 loch");
+    expect(featureSummary(water)).toBe("1 path or track, 1 river or stream, 1 loch or reservoir");
     // On the grid within a metre of where they were put.
     const p = water.lines.find((l) => l.kind === "path")!.pts[1];
     expect(Math.abs(p[0] - 202500)).toBeLessThan(1);

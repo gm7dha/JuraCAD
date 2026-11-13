@@ -436,7 +436,7 @@ export function ColourDownloads({
         {swaps.some((n) => n > MANY_SWAPS) && (
           <p className="mountain-warn small">
             {swaps.filter((n) => n > MANY_SWAPS).length === 1 ? "A plate needs" : "Some plates need"} over {MANY_SWAPS} filament changes — each one flushes
-            filament, so that's a long, wasteful print. Fewer bands, or paths and roads switched off, bring it down.
+            filament, so that's a long, wasteful print. Fewer bands, "Main hill routes only" and "Main trunk roads only" under From the map, or paths and roads switched off, bring it down.
           </p>
         )}
       </>
