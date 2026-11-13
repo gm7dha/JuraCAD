@@ -758,8 +758,29 @@
   clicking a sketch line while a Frame is open leaves it out / puts it back (lineDraftId), Trim frame's Members / To a plane
   or face / To a part, Gusset picks 2 parts. Dependents: path sketches a list, profile sketch / gusset parts / trim target
   needed, trim members a list, trim plane via planesOf; frames and gussets make solid parts. Claude: add_feature "frame" /
-  "trim_frame" / "gusset" and `describe_cut_list` (csv) in `src/mcp/frameSpec.ts`. Not done: part edges and curve features as
-  paths, cut list on drawings, mitres where 3+ meet, gussets off the middle plane, Ts on arcs. Tests: tests/frame (pure),
+  "trim_frame" / "gusset" and `describe_cut_list` (csv) in `src/mcp/frameSpec.ts`. Not done: gussets off the middle plane, Ts on
+  arcs or curves, copes against curved members (Trim frame to one uses its part).
+  - More paths: `FrameDef.edges` (TopoPicks, segment ids `edgeSegId` "<part>/e<k>", k = place in the list) and `.curves` (curve
+    feature ids, `curveSegId` "<curve>/<wire>.<edge>"), mixed with sketch paths (missing = none; old files unchanged). Engine
+    `framePathPieces` samples each edge (`pointAt`/`tangentAt`, tangents turned to run with the points) → pure `edgeSegment`:
+    a line, an arc (all samples on one circle in one plane) or a `CurveSeg` (samples + exact length; `normals` when the curve
+    is `frenet`, a helix — then `n` = the binormal, so the profile's across faces the axis); `withPathNormal` gives a group's
+    lines/curves the plane they share (facing +Z, else +Y, else +X; else Z). `carryCurve` carries the profile's axes: kept at
+    the same angle to `normals`, else rotation-minimising (double reflection, exactly undone going back). Curve members are
+    `pipeLoop`s (MakePipeShell, Frenet or CorrectedFrenet — the same as the pure frames for flat curves and helices) along the
+    real edge (`FrameSpines`, by seg id; `reversed` walks it back), holes swept and cut. `RebuildResult.framePaths` →
+    `store.framePaths` (connect.ts) / `Build.framePaths` give the dialog's and Claude's corners those pieces. Clicks: an edge
+    (Viewport, not the frame's own) → `togglePathEdge`, a curve (geomPick) → `togglePathCurve`. Dependents: the path is one list
+    of sketches + curves + edges' parts (`frameUses` pathCurves/pathParts; `withoutGone` drops gone ones).
+  - Mitres where 3+ meet: `findCorners` offers "mitre" when `mitreable` (no straight-on pair, `sharpestPair` ≥ SHARPEST); each
+    end is cut by the halfway plane to every other member there (two members: exactly the old mitre), extended by the most any
+    plane needs, labelled with the largest angle. A cube corner of s × s: 3 s²(L − s/6), no overlaps. Butt stays the usual.
+  - Cut list on drawings: `DrawingNote.cutList` ({studio?}) → `src/drawing/cutListTable.ts` (`sheetCutList`: the studio named,
+    else the sheet's part's studio, else one piece per copy in the sheet's assembly; `cutListRows` = heading, a line per
+    length, a total per profile) → `SheetInfo.cutList` (sheetInfo) → drawn by layoutSheet with `tablePrims` (decimal comma
+    applied), so SVG/PDF/DXF carry it. Toolbar "Cut list" (`addCutListTable`, one per sheet), panel `CutListNoteProperties`;
+    Claude's add_drawing_note `cut_list` (+ `studio`); describe_drawing lists its rows. Tests: tests/frameMore (pure),
+    engineFrameMore (box top edges, sketch + edge, helix rail, circle edge, fit spline, cube corner), mcpFrameMore. Tests: tests/frame (pure),
   engineFrame (volumes, butt pairs, the 2040 cube, split-post T both orders and unmerged, +, rails each side of a post and at an
   angle, lines drawn either way, an L across sketches, copes 290/280, stable ids, gussets at a corner and a T, trims), mcpFrame.
 - Split face and Modify fillet (Onshape's). Split face = a "split" with `splitDef.mode: "face"` (missing = Split part, exactly as

@@ -3,8 +3,9 @@
  * arc, the pieces of a merged run fused), lengthened at its ends where a corner needs it, then cut by the corner's
  * half-spaces, and coped members cut to the member running through. The planning is pure, in model/frame.ts.
  */
-import { assembleWire, basicFaceExtrusion, makeBox, makeCircle, makeFace, makeLine, revolution, Vector, type Shape3D, type Wire } from "replicad";
-import { dot, segLength, segTangent, type Axes, type MemberPlan, type PathSeg, type V3 } from "../model/frame";
+import { assembleWire, basicFaceExtrusion, cast, getOC, isShape3D, makeBox, makeCircle, makeFace, makeLine, revolution, Vector, type Shape3D, type Wire } from "replicad";
+import { dot, segLength, segTangent, type Axes, type CurveSeg, type MemberPlan, type PathSeg, type V3 } from "../model/frame";
+import { reversedWire } from "./curves";
 import type { ProfileLoop, ProfileShape } from "../model/frameProfiles";
 
 const add = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -72,8 +73,72 @@ function prism(shape: ProfileShape, from: V3, dir: V3, { x, y }: Axes, length: n
   return fuseAll(solids);
 }
 
-function segmentSolid(shape: ProfileShape, s: PathSeg, f: Axes): Shape3D {
+/**
+ * The real edges of curve segments (part edges, curve features), by segment id, each as a one-edge wire in the
+ * edge's own direction (the caller owns them). A segment walked the other way (`reversed`) goes along it backwards.
+ */
+export type FrameSpines = Map<string, Wire>;
+
+/** One closed loop of the profile pushed along a curve's real edge (OpenCascade's pipe shell). */
+function pipeLoop(loop: Wire, spine: Wire, frenet: boolean): Shape3D {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const oc = getOC() as any;
+  const pipe = new oc.BRepOffsetAPI_MakePipeShell(spine.wrapped);
+  try {
+    // Frenet: the profile keeps its place relative to the curve's bending (a helix); else it turns as little as it can.
+    pipe.SetMode(frenet);
+    pipe.Add(loop.wrapped, false, false);
+    pipe.Build();
+    if (!pipe.IsDone()) throw new Error("not built");
+    pipe.MakeSolid();
+    const shape = cast(pipe.Shape());
+    if (!isShape3D(shape)) throw new Error("not a solid");
+    return shape;
+  } finally {
+    pipe.delete();
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+/** The profile swept along a curve segment's real edge, starting with axes `f` at its start. */
+function curveSolid(shape: ProfileShape, s: CurveSeg, f: Axes, spines: FrameSpines | undefined): Shape3D {
+  const edge = spines?.get(s.id);
+  if (!edge) throw new Error("A curved part of the path couldn't be found. Edit the frame and pick it again.");
+  const spine = s.reversed ? reversedWire(edge) : edge;
+  try {
+    const pieces: Shape3D[] = [];
+    for (const r of shape.regions) {
+      const outer = loopWire(r.outer, s.a, f.x, f.y, false);
+      let solid: Shape3D;
+      try {
+        solid = pipeLoop(outer, spine, !!s.normals);
+      } finally {
+        outer.delete();
+      }
+      for (const h of r.holes) {
+        const hw = loopWire(h, s.a, f.x, f.y, false);
+        let hole: Shape3D;
+        try {
+          hole = pipeLoop(hw, spine, !!s.normals);
+        } finally {
+          hw.delete();
+        }
+        const next = solid.cut(hole) as Shape3D;
+        solid.delete();
+        hole.delete();
+        solid = next;
+      }
+      pieces.push(solid);
+    }
+    return fuseAll(pieces);
+  } finally {
+    if (spine !== edge) spine.delete();
+  }
+}
+
+function segmentSolid(shape: ProfileShape, s: PathSeg, f: Axes, spines?: FrameSpines): Shape3D {
   if (s.kind === "line") return prism(shape, s.a, segTangent(s, false), f, segLength(s));
+  if (s.kind === "curve") return curveSolid(shape, s, f, spines);
   const { x, y } = f;
   const faces = profileFaces(shape, s.a, x, y);
   const solids = faces.map((f) => {
@@ -100,7 +165,7 @@ function behind(n: V3, o: V3, size: number): Shape3D {
 }
 
 /** One member's solid, before any cope. */
-export function memberSolid(plan: MemberPlan, shape: ProfileShape): Shape3D {
+export function memberSolid(plan: MemberPlan, shape: ProfileShape, spines?: FrameSpines): Shape3D {
   const m = plan.member;
   const [e0, e1] = m.closed ? [0, 0] : [plan.ends[0].extend, plan.ends[1].extend];
   let solid: Shape3D;
@@ -116,7 +181,7 @@ export function memberSolid(plan: MemberPlan, shape: ProfileShape): Shape3D {
       const t = segTangent(first, false);
       pieces.push(prism(shape, add(first.a, mul(t, -e0)), t, plan.frames[0], e0));
     }
-    m.segs.forEach((s, k) => pieces.push(segmentSolid(shape, s, plan.frames[k])));
+    m.segs.forEach((s, k) => pieces.push(segmentSolid(shape, s, plan.frames[k], spines)));
     if (e1 > 0) {
       const t = segTangent(last, true);
       pieces.push(prism(shape, last.b, t, plan.frames[plan.frames.length - 1], e1));

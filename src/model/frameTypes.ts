@@ -3,6 +3,7 @@
  * frameProfiles.ts (pure); the solids are made in kernel/frame.ts.
  */
 import type { SketchPlane } from "../sketch/planes";
+import type { TopoPick } from "../geometry/topoRef";
 
 /** A sketch's lines and arcs used as the path: all of them (missing `items`) or just these curve ids. Construction lines are never used. */
 export interface FramePath {
@@ -22,6 +23,7 @@ export type FrameProfile = { kind: FrameProfileKind; size: string } | { kind: "s
 /** Which point of the profile sits on the path (its middle, a corner or the middle of a side of its outline's box). */
 export type FrameAnchor = "centre" | "top" | "bottom" | "left" | "right" | "topLeft" | "topRight" | "bottomLeft" | "bottomRight";
 
+/** Where three or more members meet, "mitre" cuts each by the halfway planes to every other one (a cube's corner). */
 export type FrameCornerType = "mitre" | "butt" | "coped" | "none";
 
 /**
@@ -46,6 +48,13 @@ export interface FrameDef {
   /** Keep curves that carry on smoothly as separate members (Onshape's "Merge tangent segments" turned off). */
   noMerge?: boolean;
   corners?: FrameCornerChoice[];
+  /**
+   * Part edges followed too (found again on each rebuild; joined end to end with each other and the sketch lines). A
+   * member along one is named by its place in this list ("<part>/e<k>"). Missing = none (older files).
+   */
+  edges?: TopoPick[];
+  /** Curve features (a Helix, Bridging curve…) followed too, each edge of each piece a length. Missing = none. */
+  curves?: string[];
 }
 
 /**

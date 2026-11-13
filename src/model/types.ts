@@ -981,6 +981,8 @@ export interface DrawingNote {
   leader?: [number, number];
   /** A table (from a CSV file) instead of text: rows of cells, the first row its heading. */
   table?: string[][];
+  /** A Cut list table of frame members instead of text, filled in afresh each time (`studio`: which Part Studio's; missing = the sheet's part's). See drawing/cutListTable.ts. */
+  cutList?: { studio?: string };
 }
 
 /** Geometric tolerance characteristics (GD&T). */

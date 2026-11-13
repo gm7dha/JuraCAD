@@ -22,6 +22,7 @@ import { hostKindOf, viewKey } from "../drawing/sections";
 import { addViewOf, keyGroup, rekeyed, splitKey, toggleProjected, viewParts, removeViewOf } from "../drawing/viewParts";
 import type { ViewProjection } from "../kernel/protocol";
 import { newId } from "../model/document";
+import { studioName } from "../model/studios";
 import type { Dimension, Drawing, JuraCADDocument, ViewHost, ViewKind } from "../model/types";
 import { setLengthUnit } from "../model/units";
 import { amount, bool, InputError, list, noExtras, object, oneOf, text, xyz, type Obj } from "./args";
@@ -301,7 +302,7 @@ export function sheetLines(s: Session, d: Drawing, sh: Sheet): string[] {
     const where = dim.type === "angle" && r.c && r.d ? ` between ${fmt2(r.a)}–${fmt2(r.b ?? r.a)} and ${fmt2(r.c)}–${fmt2(r.d)}${dim.reflex ? ", outside" : ""}` : dim.b ? ` from ${fmt2(r.a)} to ${fmt2(r.b ?? r.a)}` : ` at ${fmt2(r.a)}`;
     return `- D${k + 1} ${viewName(page, dim.view)}: ${label} (${dim.type === "arcLength" ? "arc length" : dim.type}${dim.type === "ordinate" ? (dim.axis === "v" ? " up" : " across") : ""}${where})${r.found ? "" : " — LOST: what it measured isn't there any more"}`;
   });
-  const notes = (page.notes ?? []).map((n, k) => `- N${k + 1}: ${n.symbol ? describeSymbol(n.symbol) : n.table ? tableText(n.table) : `note "${n.text.replace(/\n/g, " / ")}"`} at (${r2(n.at[0])}, ${r2(n.at[1])})${n.leader ? `, its leader pointing to (${r2(n.leader[0])}, ${r2(n.leader[1])})` : ""}`);
+  const notes = (page.notes ?? []).map((n, k) => `- N${k + 1}: ${n.symbol ? describeSymbol(n.symbol) : n.cutList ? `cut list${n.cutList.studio ? ` of ${studioName(s.wholeDoc(), n.cutList.studio)}` : ""} — ${tableText(sh.info.cutList ?? [])}` : n.table ? tableText(n.table) : `note "${n.text.replace(/\n/g, " / ")}"`} at (${r2(n.at[0])}, ${r2(n.at[1])})${n.leader ? `, its leader pointing to (${r2(n.leader[0])}, ${r2(n.leader[1])})` : ""}`);
   const t = page.title;
   const title = [t.title && `title "${t.title}"`, t.partNumber && `part number "${t.partNumber}"`, t.material && `material "${t.material}"`, t.drawnBy && `drawn by "${t.drawnBy}"`, t.company && `company "${t.company}"`, t.notes && `notes "${t.notes.replace(/\n/g, " / ")}"`].filter(Boolean);
   return [

@@ -205,6 +205,8 @@ export interface RebuildResult {
   featureNotes?: Record<string, string>;
   /** Move / copy features → the point they turn about, before the move (the part's centre, or the origin): where the 3D view draws the triad. */
   transformCentres?: Record<string, [number, number, number]>;
+  /** Frames: the path pieces they follow from part edges and curve features, as built (for the dialog's corners). Missing = none. */
+  framePaths?: Record<string, import("../model/frame").PathSeg[]>;
   /** Milliseconds the rebuild took in the worker. */
   durationMs: number;
   /** Part Studios that were rebuilt (`parts` holds only theirs); the others are as before. */

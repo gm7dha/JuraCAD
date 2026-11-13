@@ -16,6 +16,7 @@
  */
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
+import type { TopoPick } from "../geometry/topoRef";
 import type { FrameCornerType, FrameDef, FrameMemberInfo, GussetDef, TrimFrameDef } from "./frameTypes";
 import { profilePoints, reachAlong, type P2, type ProfileShape } from "./frameProfiles";
 import { massGrams } from "./materials";
@@ -42,22 +43,96 @@ const STRAIGHT_DEG = 0.5;
 /** A path curve in 3D: a line from a to b, or an arc from a turning `angle` (radians, > 0) about `axis` through `c`. */
 export type PathSeg =
   | { kind: "line"; id: string; a: V3; b: V3; n: V3 }
-  | { kind: "arc"; id: string; a: V3; b: V3; c: V3; axis: V3; angle: number; r: number; n: V3 };
+  | { kind: "arc"; id: string; a: V3; b: V3; c: V3; axis: V3; angle: number; r: number; n: V3 }
+  | CurveSeg;
+
+/**
+ * Any other curve (a part's curved edge, or a piece of a curve feature such as a helix), as samples along it: points,
+ * unit tangents and its exact length. The solid follows the real edge (kernel/frame.ts); the samples carry the
+ * profile's axes along it — turning as little as it can, or with `normals` (the curve's own bending, for a helix)
+ * keeping its place relative to them. `reversed` = walked the other way from the edge it came from.
+ */
+export interface CurveSeg {
+  kind: "curve";
+  id: string;
+  a: V3;
+  b: V3;
+  n: V3;
+  pts: V3[];
+  tans: V3[];
+  length: number;
+  closed?: boolean;
+  normals?: V3[];
+  reversed?: boolean;
+}
 
 /** Where a segment is going at its start (t = 0) or end (t = 1). */
 export function segTangent(s: PathSeg, atEnd: boolean): V3 {
   if (s.kind === "line") return unit(sub(s.b, s.a));
+  if (s.kind === "curve") return atEnd ? s.tans[s.tans.length - 1] : s.tans[0];
   const p = atEnd ? s.b : s.a;
   return unit(cross(s.axis, sub(p, s.c)));
 }
 
 export function segLength(s: PathSeg): number {
-  return s.kind === "line" ? dist(s.a, s.b) : s.r * s.angle;
+  return s.kind === "line" ? dist(s.a, s.b) : s.kind === "curve" ? s.length : s.r * s.angle;
 }
+
+/** A whole circle or a closed curve: a member on its own, with no ends. */
+export const isLoopSeg = (s: PathSeg) => (s.kind === "arc" && s.angle >= 2 * Math.PI - 1e-9) || (s.kind === "curve" && !!s.closed);
 
 function reversedSeg(s: PathSeg): PathSeg {
   if (s.kind === "line") return { ...s, a: s.b, b: s.a };
+  if (s.kind === "curve")
+    return {
+      ...s,
+      a: s.b,
+      b: s.a,
+      pts: [...s.pts].reverse(),
+      tans: [...s.tans].reverse().map((t) => mul(t, -1)),
+      ...(s.normals ? { normals: [...s.normals].reverse() } : {}),
+      ...(s.reversed ? { reversed: undefined } : { reversed: true }),
+    };
   return { ...s, a: s.b, b: s.a, axis: mul(s.axis, -1) };
+}
+
+/** Householder reflection of v in the plane square to u (u·u = c). */
+const reflect = (v: V3, u: V3, c: number): V3 => (c > 1e-24 ? sub(v, mul(u, (2 / c) * dot(u, v))) : v);
+
+/**
+ * The profile's axes carried along a curve segment, from its start to its end (or back): kept at the same angle to the
+ * curve's own bending (`normals`), else turned as little as possible (double reflection, Wang et al. 2008 — exactly
+ * undone going back).
+ */
+function carryCurve(s: CurveSeg, f: Axes, back: boolean): Axes {
+  const T = s.tans;
+  const last = T.length - 1;
+  if (s.normals) {
+    const [i, j] = back ? [last, 0] : [0, last];
+    const N0 = s.normals[i];
+    const B0 = cross(T[i], N0);
+    const th = Math.atan2(dot(f.x, B0), dot(f.x, N0));
+    const N1 = s.normals[j];
+    const B1 = cross(T[j], N1);
+    const x = unit(add(mul(N1, Math.cos(th)), mul(B1, Math.sin(th))));
+    return { x, y: cross(T[j], x) };
+  }
+  const P = s.pts;
+  let r = f.x;
+  const step = (i: number, fwd: boolean) => {
+    const v1 = sub(P[i + 1], P[i]);
+    const c1 = dot(v1, v1);
+    const tL = reflect(T[i], v1, c1);
+    const v2 = sub(T[i + 1], tL);
+    const c2 = dot(v2, v2);
+    r = fwd ? reflect(reflect(r, v1, c1), v2, c2) : reflect(reflect(r, v2, c2), v1, c1);
+  };
+  if (!back) for (let i = 0; i < last; i++) step(i, true);
+  else for (let i = last - 1; i >= 0; i--) step(i, false);
+  const t = back ? T[0] : T[last];
+  // Kept square to the path (sampling leaves a tiny lean).
+  const x = unit(sub(r, mul(t, dot(r, t))));
+  return { x, y: cross(t, x) };
 }
 
 /** The lines, arcs and circles of a sketch in 3D (construction lines left out), and what was left out. */
@@ -101,6 +176,102 @@ export function sketchPathSegments(sketchId: string, plane: SketchPlane, data: S
   return { segs, skipped };
 }
 
+/** A point of a circle through three points (its centre), or null when they're in a line. */
+function circumcentre(a: V3, b: V3, c: V3): V3 | null {
+  const u = sub(b, a);
+  const v = sub(c, a);
+  const w = cross(u, v);
+  const ww = dot(w, w);
+  if (ww < 1e-18) return null;
+  const k = add(mul(cross(w, u), dot(v, v)), mul(cross(v, w), dot(u, u)));
+  return add(a, mul(k, 1 / (2 * ww)));
+}
+
+/**
+ * One edge (of a part, or of a curve feature) as a path segment, from points and unit tangents sampled evenly along
+ * it (the same direction as the points run) and its exact length: a line when it's straight, an arc when it's part
+ * of (or a whole) circle, else a curve carrying the samples. `frenet` keeps the profile turning with the curve's own
+ * bending (a helix). `n` (the "sketch normal" the profile's up starts from) is filled in by `withPathNormal`.
+ */
+export function edgeSegment(id: string, pts: V3[], tans: V3[], length: number, opts: { frenet?: boolean } = {}): PathSeg | null {
+  if (pts.length < 2 || !(length > JOIN_TOL)) return null;
+  const a = pts[0];
+  const b = pts[pts.length - 1];
+  const closed = dist(a, b) < JOIN_TOL;
+  const tol = Math.max(1e-6, length * 1e-7) * 10;
+  const n0: V3 = [0, 0, 1];
+  if (!closed) {
+    const t = unit(sub(b, a));
+    const off = Math.max(...pts.map((p) => len(sub(sub(p, a), mul(t, dot(sub(p, a), t))))));
+    if (off < tol && Math.abs(dist(a, b) - length) < tol * 10) return { kind: "line", id, a, b, n: n0 };
+  }
+  // A circle or part of one: every sample the same distance from a centre, in one plane.
+  const m = pts.length;
+  const c = closed ? circumcentre(pts[0], pts[Math.floor(m / 3)], pts[Math.floor((2 * m) / 3)]) : circumcentre(a, pts[Math.floor(m / 2)], b);
+  if (c) {
+    const r = dist(a, c);
+    const axis0 = unit(cross(sub(pts[1], c), sub(pts[Math.max(2, Math.floor(m / 2))], c)));
+    const axis = dot(cross(axis0, sub(a, c)), tans[0]) >= 0 ? axis0 : mul(axis0, -1);
+    const round = pts.every((p) => Math.abs(dist(p, c) - r) < tol * 10 && Math.abs(dot(sub(p, c), axis)) < tol * 10);
+    if (round && len(axis) > 0.5) {
+      let angle = 2 * Math.PI;
+      if (!closed) {
+        const u = unit(sub(a, c));
+        const w = cross(axis, u);
+        const q = sub(b, c);
+        angle = Math.atan2(dot(q, w), dot(q, u));
+        if (angle <= 1e-9) angle += 2 * Math.PI;
+      }
+      if (Math.abs(r * angle - length) < Math.max(1e-3, length * 1e-4)) return { kind: "arc", id, a, b: closed ? a : b, c, axis, angle, r, n: axis };
+    }
+  }
+  const seg: CurveSeg = { kind: "curve", id, a, b: closed ? a : b, n: n0, pts, tans, length, ...(closed ? { closed: true } : {}) };
+  if (opts.frenet) {
+    // The curve's own bending: the part of the tangent's change square to it.
+    const normals = tans.map((t, i) => {
+      const d = sub(tans[Math.min(m - 1, i + 1)], tans[Math.max(0, i - 1)]);
+      return unit(sub(d, mul(t, dot(d, t))));
+    });
+    if (normals.every((x) => len(x) > 0.5)) {
+      seg.normals = normals;
+      // Up starts across the bending (a helix's rail stands along its axis, its side facing the middle).
+      seg.n = cross(tans[0], normals[0]);
+    }
+  }
+  return seg;
+}
+
+/**
+ * The "sketch normal" for path pieces not from a sketch (part edges, curves), so profiles stand as they would in a
+ * sketch: the plane they lie in when they all lie in one (turned to face up, else +Y, else +X), else straight up (Z).
+ * Arcs keep their own axis, and curves following their bending keep theirs.
+ */
+export function withPathNormal(segs: PathSeg[]): PathSeg[] {
+  const pts = segs.flatMap((s) => (s.kind === "curve" ? s.pts : s.kind === "arc" ? [s.a, s.b, add(s.c, mul(unit(sub(s.a, s.c)), -s.r)), s.c] : [s.a, s.b]));
+  let n: V3 = [0, 0, 1];
+  if (pts.length >= 3) {
+    const p0 = pts[0];
+    const p1 = pts.reduce((best, p) => (dist(p, p0) > dist(best, p0) ? p : best), p0);
+    const e = unit(sub(p1, p0));
+    const off = (p: V3) => len(sub(sub(p, p0), mul(e, dot(sub(p, p0), e))));
+    const p2 = pts.reduce((best, p) => (off(p) > off(best) ? p : best), p0);
+    const size = Math.max(dist(p1, p0), 1);
+    const c = unit(cross(sub(p1, p0), sub(p2, p0)));
+    if (len(c) > 0.5 && off(p2) > size * 1e-6 && pts.every((p) => Math.abs(dot(sub(p, p0), c)) < size * 1e-6 + 1e-6)) {
+      n = Math.abs(c[2]) > 1e-9 ? (c[2] < 0 ? mul(c, -1) : c) : Math.abs(c[1]) > 1e-9 ? (c[1] < 0 ? mul(c, -1) : c) : c[0] < 0 ? mul(c, -1) : c;
+    }
+  }
+  const facing = (v: V3): V3 => {
+    const lead = Math.abs(v[2]) > 1e-9 ? v[2] : Math.abs(v[1]) > 1e-9 ? v[1] : v[0];
+    return lead < 0 ? mul(v, -1) : v;
+  };
+  return segs.map((s) => {
+    if (s.kind === "line" || (s.kind === "curve" && !s.normals)) return { ...s, n };
+    if (s.kind === "arc") return { ...s, n: Math.abs(dot(s.axis, n)) > 1 - 1e-9 ? n : facing(s.axis) };
+    return s;
+  });
+}
+
 /** A profile frame: across (x) and up (y), square to the path. */
 export interface Axes {
   x: V3;
@@ -134,6 +305,7 @@ export function segFrames(m: Member): Axes[] {
   let f = m.start;
   for (const s of m.segs) {
     if (s.kind === "arc") f = { x: rotate(f.x, s.axis, s.angle), y: rotate(f.y, s.axis, s.angle) };
+    else if (s.kind === "curve") f = carryCurve(s, f, false);
     out.push(f);
   }
   return out;
@@ -145,6 +317,7 @@ function startFromEnd(m: Member, at: Axes): Axes {
   for (let i = m.segs.length - 1; i >= 0; i--) {
     const s = m.segs[i];
     if (s.kind === "arc") f = { x: rotate(f.x, s.axis, -s.angle), y: rotate(f.y, s.axis, -s.angle) };
+    else if (s.kind === "curve") f = carryCurve(s, f, true);
   }
   return f;
 }
@@ -203,7 +376,7 @@ export function buildMembers(segs: PathSeg[], merge: boolean): Member[] {
   segs.forEach((s, i) => {
     for (const end of [0, 1] as const) {
       const p = end === 0 ? s.a : s.b;
-      if (s.kind === "arc" && s.angle >= 2 * Math.PI - 1e-9) continue;
+      if (isLoopSeg(s)) continue;
       const n = nodes.find((x) => dist(x.p, p) < JOIN_TOL);
       if (n) n.ends.push({ i, end });
       else nodes.push({ p, ends: [{ i, end }] });
@@ -273,7 +446,7 @@ export function buildMembers(segs: PathSeg[], merge: boolean): Member[] {
   for (const i of order) {
     if (used.has(i)) continue;
     const s = segs[i];
-    if (s.kind === "arc" && s.angle >= 2 * Math.PI - 1e-9) {
+    if (isLoopSeg(s)) {
       used.add(i);
       members.push(asMember([s], [i], true));
       continue;
@@ -555,9 +728,26 @@ export function findCorners(members: Member[]): { corners: Omit<FrameCorner, "ty
     }
     let angle: number | undefined;
     if (g.ends.length === 2) angle = (Math.acos(Math.max(-1, Math.min(1, dot(dirs[0], dirs[1])))) * 180) / Math.PI;
-    out.push({ key: cornerKey(ids), at: g.at, ends: g.ends, ...(angle !== undefined ? { angle } : {}), choices: g.ends.length === 2 ? ["mitre", "butt", "coped", "none"] : ["butt", "coped", "none"] });
+    // Three or more: a mitre too where every pair meets at a real corner (none carrying straight on, none too sharp).
+    const mitres = g.ends.length === 2 || mitreable(dirs);
+    out.push({ key: cornerKey(ids), at: g.at, ends: g.ends, ...(angle !== undefined ? { angle } : {}), choices: mitres ? ["mitre", "butt", "coped", "none"] : ["butt", "coped", "none"] });
   }
   return { corners: out, notes };
+}
+
+/** The smallest angle (degrees) between any two of these directions out of a corner. */
+export function sharpestPair(dirs: V3[]): number {
+  let least = 180;
+  for (let a = 0; a < dirs.length; a++)
+    for (let b = a + 1; b < dirs.length; b++) least = Math.min(least, (Math.acos(Math.max(-1, Math.min(1, dot(dirs[a], dirs[b])))) * 180) / Math.PI);
+  return least;
+}
+
+/** Can three or more members be mitred together here: no two carrying straight on, none meeting too sharply. */
+export function mitreable(dirs: V3[]): boolean {
+  if (dirs.length < 3) return dirs.length === 2;
+  for (let a = 0; a < dirs.length; a++) for (let b = a + 1; b < dirs.length; b++) if (dot(dirs[a], dirs[b]) < -COS_STRAIGHT) return false;
+  return sharpestPair(dirs) >= SHARPEST;
 }
 
 /** The usual type of a corner: a mitre between two members (none if they carry straight on), a butt joint otherwise. */
@@ -611,7 +801,7 @@ export function frameLayout(segs: PathSeg[], def: Pick<FrameDef, "noMerge" | "co
  * placed profile and a gap (mm). A plain message when it can't be made.
  */
 export function planFrame(segs: PathSeg[], def: Pick<FrameDef, "noMerge" | "corners">, shape: ProfileShape, gap: number): FramePlan | string {
-  if (!segs.length) return "Pick the sketch lines or arcs for the frame to follow.";
+  if (!segs.length) return "Pick the sketch lines or arcs (or part edges, or curves) for the frame to follow.";
   const { members, corners, notes } = frameLayout(segs, def);
   const plans: MemberPlan[] = members.map((m) => ({
     member: m,
@@ -632,20 +822,24 @@ export function planFrame(segs: PathSeg[], def: Pick<FrameDef, "noMerge" | "corn
     if (c.type === "none") continue;
     if (c.angle !== undefined && c.angle < SHARPEST) return `Two members meet at a very sharp corner (${Math.round(c.angle)}°). Set that corner to None, or change the path.`;
     if (c.type === "mitre") {
-      const [ea, eb] = c.ends;
-      const da = outOf(members[ea.member], ea.end);
-      const db = outOf(members[eb.member], eb.end);
-      const m = unit(sub(da, db));
-      for (const [e, n, d] of [
-        [ea, m, da],
-        [eb, mul(m, -1), db],
-      ] as const) {
+      // Each end cut along the plane halfway between it and every other member there (two: one plane each; a cube's
+      // corner: two each, so the three meet without overlapping).
+      const dirs = c.ends.map((e) => outOf(members[e.member], e.end));
+      if (dirs.length > 2 && sharpestPair(dirs) < SHARPEST) return `Members meet at a very sharp corner (${Math.round(sharpestPair(dirs))}°). Set that corner to Butt or None, or change the path.`;
+      c.ends.forEach((e, i) => {
+        const d = dirs[i];
         const cut = plans[e.member].ends[e.end];
-        const mq = reachOf(axesAt(e.member, e.end), n);
-        cut.extend = Math.max(cut.extend, Math.max(0, (mq - gap / 2) / dot(n, d)) + 1);
-        cut.cuts.push({ n, o: add(c.at, mul(n, gap / 2)) });
-        cut.label = angleFromSquare(n, d);
-      }
+        let label = 0;
+        dirs.forEach((o, j) => {
+          if (j === i) return;
+          const n = unit(sub(d, o));
+          const mq = reachOf(axesAt(e.member, e.end), n);
+          cut.extend = Math.max(cut.extend, Math.max(0, (mq - gap / 2) / dot(n, d)) + 1);
+          cut.cuts.push({ n, o: add(c.at, mul(n, gap / 2)) });
+          label = Math.max(label, angleFromSquare(n, d));
+        });
+        cut.label = label;
+      });
       continue;
     }
     // Butt or coped: `through` runs on; the others stop at its side (coped: at its middle, then cut to its outline).
@@ -882,6 +1076,7 @@ export function centreLine(p: MemberPlan): V3[] {
   if (!m.closed && p.ends[0].extend > 0) pts.push(add(m.segs[0].a, mul(t0, -p.ends[0].extend)));
   for (const s of m.segs) {
     if (s.kind === "line") pts.push(s.a);
+    else if (s.kind === "curve") pts.push(...s.pts.slice(0, -1));
     else {
       const n = Math.max(8, Math.ceil(s.angle / (Math.PI / 64)));
       for (let k = 0; k < n; k++) pts.push(add(s.c, rotate(sub(s.a, s.c), s.axis, (s.angle * k) / n)));
@@ -1084,7 +1279,7 @@ const CORNER_TYPES = new Set(["mitre", "butt", "coped", "none"]);
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 
 /** A frame's settings from a saved file (odd values fall back; null when there's nothing usable). */
-export function parseFrameDef(raw: unknown): FrameDef | null {
+export function parseFrameDef(raw: unknown, readPick?: (v: unknown) => TopoPick | null): FrameDef | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   const paths = (Array.isArray(r.paths) ? r.paths : [])
@@ -1101,6 +1296,8 @@ export function parseFrameDef(raw: unknown): FrameDef | null {
     .filter((c): c is Record<string, unknown> => !!c && typeof c === "object")
     .filter((c) => typeof c.key === "string" && typeof c.type === "string" && CORNER_TYPES.has(c.type))
     .map((c) => ({ key: c.key as string, type: c.type as FrameCornerType, ...(typeof c.through === "string" ? { through: c.through } : {}) }));
+  const edges = readPick && Array.isArray(r.edges) ? r.edges.map(readPick).filter((p): p is TopoPick => !!p && p.ref.kind === "edge") : [];
+  const curves = [...new Set(strs(r.curves))];
   return {
     paths,
     profile,
@@ -1108,6 +1305,8 @@ export function parseFrameDef(raw: unknown): FrameDef | null {
     ...(r.mirror === true ? { mirror: true } : {}),
     ...(r.noMerge === true ? { noMerge: true } : {}),
     ...(corners.length ? { corners } : {}),
+    ...(edges.length ? { edges } : {}),
+    ...(curves.length ? { curves } : {}),
   };
 }
 
@@ -1130,12 +1329,14 @@ export function parseGusset(raw: unknown): GussetDef {
 }
 
 /** What a frame, trim or gusset needs from other features: sketches (all needed, the path a list) and parts. */
-export function frameUses(f: { frame?: FrameDef; trimFrame?: TrimFrameDef; gusset?: GussetDef }): { pathSketches: string[]; sketches: string[]; parts: string[]; trimParts: string[]; planeRef?: string } {
+export function frameUses(f: { frame?: FrameDef; trimFrame?: TrimFrameDef; gusset?: GussetDef }): { pathSketches: string[]; pathCurves: string[]; pathParts: string[]; sketches: string[]; parts: string[]; trimParts: string[]; planeRef?: string } {
   const pathSketches = f.frame ? [...new Set(f.frame.paths.map((p) => p.sketch))] : [];
+  const pathCurves = f.frame?.curves ?? [];
+  const pathParts = (f.frame?.edges ?? []).map((e) => e.partId);
   const sketches = f.frame?.profile.kind === "sketch" ? [f.frame.profile.sketch] : [];
   const parts = [...(f.gusset?.parts ?? []), ...(f.trimFrame?.to ? [f.trimFrame.to] : [])];
   const plane = f.trimFrame?.plane;
-  return { pathSketches, sketches, parts, trimParts: f.trimFrame?.parts ?? [], ...(plane?.kind === "face" && plane.planeRef ? { planeRef: plane.planeRef } : {}) };
+  return { pathSketches, pathCurves, pathParts, sketches, parts, trimParts: f.trimFrame?.parts ?? [], ...(plane?.kind === "face" && plane.planeRef ? { planeRef: plane.planeRef } : {}) };
 }
 
 /** The cut list of a Part Studio's parts, weighed with each part's material (or the profile's usual one). */
@@ -1176,3 +1377,24 @@ export function togglePathLine(def: FrameDef, features: { id: string; type: stri
   }
   return { ...def, paths };
 }
+
+/** A part edge clicked while a Frame is open: followed by the frame (added to its edges), or left out again. */
+export function togglePathEdge(def: FrameDef, pick: TopoPick, same: (a: TopoPick, b: TopoPick) => boolean): FrameDef {
+  const list = def.edges ?? [];
+  const at = list.findIndex((e) => same(e, pick));
+  const edges = at >= 0 ? list.filter((_, i) => i !== at) : [...list, { partId: pick.partId, ref: pick.ref }];
+  const { edges: _old, ...rest } = def;
+  return edges.length ? { ...rest, edges } : rest;
+}
+
+/** A curve feature clicked while a Frame is open: followed (added) or left out again. */
+export function togglePathCurve(def: FrameDef, curve: string): FrameDef {
+  const list = def.curves ?? [];
+  const curves = list.includes(curve) ? list.filter((c) => c !== curve) : [...list, curve];
+  const { curves: _old, ...rest } = def;
+  return curves.length ? { ...rest, curves } : rest;
+}
+
+/** Ids of path segments from part edges ("<part>/e<k>", k = the edge's place in `def.edges`) and curve features ("<curve>/<piece>.<edge>"). */
+export const edgeSegId = (partId: string, k: number) => `${partId}/e${k}`;
+export const curveSegId = (curveId: string, wire: number, edge: number) => `${curveId}/${wire}.${edge}`;
