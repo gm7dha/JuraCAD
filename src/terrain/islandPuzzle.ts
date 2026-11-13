@@ -307,6 +307,8 @@ export interface FilledHoles {
   level: Float64Array;
   /** Patches left as sea (`fill` said no). */
   kept: number;
+  /** Their cells (1), so nothing fills them later. */
+  keptCells: Uint8Array;
 }
 
 /**
@@ -365,7 +367,9 @@ export function fillEnclosed(
   }
   for (let c = 0; c < N; c++) if (patches.id[c] >= 0) isLand[c] = 1;
   for (let p = 0; p < patches.count; p++) if (!Number.isFinite(level[p])) level[p] = 0;
-  return { patch: patches.id, count: patches.count, level, kept: found.count - count };
+  const keptCells = new Uint8Array(N);
+  for (let c = 0; c < N; c++) if (found.id[c] >= 0 && renumber[found.id[c]] < 0) keptCells[c] = 1;
+  return { patch: patches.id, count: patches.count, level, kept: found.count - count, keptCells };
 }
 
 /**
@@ -756,11 +760,20 @@ function buildIsland(
     piece.set(before);
     joined = joinPieces(piece, nx, ny, cell, neck, spec);
   }
-  const { joints, made: joins, unjoined, loose } = joined;
   // Bits of a piece too thin for its outline (between two boundary lines running close together, at a corner of a wiggly
   // one, beside a dovetail) would print as loose crumbs with a gap round them: they go to the piece beside them instead.
-  // Dovetails are left alone; who touches whom is counted again.
-  if (giveAwayCrumbs(piece, nx, ny, cell, spec.fit, joined.tabs)) joined.touching = touchingOf(piece, nx, ny);
+  // A knob already cut off from its piece (a loose plug in its socket) goes to the piece round it, and that dovetail is
+  // dropped; others are left alone. Who touches whom, and the dovetails, are counted again.
+  const crumbs = giveAwayCrumbs(piece, nx, ny, cell, spec.fit, joined.tabs, holes.keptCells);
+  if (crumbs.moved) joined.touching = touchingOf(piece, nx, ny);
+  if (crumbs.dropped.length) {
+    joined.tabs = joined.tabs.filter((tb) => !crumbs.dropped.includes(tb));
+    joined.made = joined.tabs.length;
+    joined.joints = new Map<number, number>();
+    for (const tb of joined.tabs) for (const q of [tb.from, tb.into]) joined.joints.set(q, (joined.joints.get(q) ?? 0) + 1);
+    warnings.push(`${crumbs.dropped.length} ${crumbs.dropped.length === 1 ? "dovetail was" : "dovetails were"} too thin at the neck to hold, so ${crumbs.dropped.length === 1 ? "it was" : "they were"} left out.`);
+  }
+  const { joints, made: joins, unjoined, loose } = joined;
   if (joined.weak.length) warnings.push(`${joined.weak.length} ${joined.weak.length === 1 ? "piece has" : "pieces have"} fewer than two dovetails — try another pattern number or piece size.`);
   if (loose) warnings.push(`${loose} small ${loose === 1 ? "islet is a loose piece" : "islets are loose pieces"}, with nothing to join to.`);
 
@@ -1080,22 +1093,135 @@ function tabHolds(piece: Int32Array, nx: number, ny: number, cell: number, fit: 
  * the cells round it left alone, and it's tried again (else nothing moves). Returns whether anything moved. Pieces with
  * no crumbs are left exactly as they were.
  */
-export function giveAwayCrumbs(piece: Int32Array, nx: number, ny: number, cell: number, fit: number, tabs: Joined["tabs"]): boolean {
+export function giveAwayCrumbs(
+  piece: Int32Array,
+  nx: number,
+  ny: number,
+  cell: number,
+  fit: number,
+  tabs: Joined["tabs"],
+  /** Sea kept inside the land (never filled). */
+  keptSea: Uint8Array = new Uint8Array(nx * ny),
+): { moved: boolean; dropped: Joined["tabs"] } {
+  // A knob already cut off from its own piece's body (it would print as a loose plug): its dovetail is dropped and its
+  // cells are free to go.
+  const dropped = tabs.filter((tb) => knobCutOff(piece, nx, ny, cell, fit, tb));
+  const live = tabs.filter((tb) => !dropped.includes(tb));
   const zone = new Uint8Array(nx * ny);
-  markTabZone(zone, nx, ny, cell, tabs, 0);
+  markTabZone(zone, nx, ny, cell, live, 0);
   const was = piece.slice();
-  for (let attempt = 0; attempt < 4; attempt++) {
-    if (!crumbsAway(piece, nx, ny, cell, fit, zone)) return false;
-    const broken = tabs.filter((tb) => !tabHolds(piece, nx, ny, cell, fit, tb));
-    if (!broken.length) return true;
+  const partsWere = new Map<number, number>();
+  for (let attempt = 0; attempt < 6; attempt++) {
+    if (!crumbsAway(piece, nx, ny, cell, fit, zone, keptSea)) return { moved: false, dropped: [] };
+    const broken = live.filter((tb) => !tabHolds(piece, nx, ny, cell, fit, tb));
+    // No piece may come apart where it didn't before (cells taken from behind a knob's neck would cut it off).
+    const split = changedPieces(was, piece).filter((q) => {
+      if (!partsWere.has(q)) partsWere.set(q, meshPartCount(was, nx, ny, cell, fit, q, boxOf(was, nx, q)));
+      const box = boxOf(piece, nx, q);
+      return box !== null && meshPartCount(piece, nx, ny, cell, fit, q, box) > partsWere.get(q)!;
+    });
+    if (!broken.length && !split.length) return { moved: true, dropped };
+    const moved: number[] = [];
+    for (let c = 0; c < piece.length; c++) if (piece[c] !== was[c] && (split.includes(was[c]) || split.includes(piece[c]))) moved.push(c);
     piece.set(was);
     markTabZone(zone, nx, ny, cell, broken, 2 * fit + 3 * cell + 0.6);
+    // The cells whose move split a piece, and those round them, are left alone next time.
+    for (const c of moved) {
+      const [i, j] = [c % nx, Math.floor(c / nx)];
+      for (let b = Math.max(0, j - 3); b <= Math.min(ny - 1, j + 3); b++) for (let a = Math.max(0, i - 3); a <= Math.min(nx - 1, i + 3); a++) zone[b * nx + a] = 1;
+    }
   }
-  return false;
+  return { moved: false, dropped: [] };
+}
+
+/** The pieces whose cells differ between two labellings. */
+function changedPieces(a: Int32Array, b: Int32Array): number[] {
+  const out = new Set<number>();
+  for (let c = 0; c < a.length; c++) if (a[c] !== b[c]) for (const q of [a[c], b[c]]) if (q >= 0) out.add(q);
+  return [...out];
+}
+
+/** Piece `id`'s box of cells [i0, j0, i1, j1], or null if it has none. */
+function boxOf(piece: Int32Array, nx: number, id: number): number[] | null {
+  let [i0, j0, i1, j1] = [Infinity, Infinity, -1, -1];
+  for (let c = 0; c < piece.length; c++)
+    if (piece[c] === id) {
+      const [i, j] = [c % nx, Math.floor(c / nx)];
+      [i0, j0, i1, j1] = [Math.min(i0, i), Math.min(j0, j), Math.max(i1, i), Math.max(j1, j)];
+    }
+  return i1 < 0 ? null : [i0, j0, i1, j1];
+}
+
+/** Is a dovetail's knob no longer part of its piece's main body in the mesh (a loose plug in the socket)? */
+function knobCutOff(piece: Int32Array, nx: number, ny: number, cell: number, fit: number, tb: Joined["tabs"][number]): boolean {
+  const box = boxOf(piece, nx, tb.from);
+  if (!box) return true;
+  const body = mainBody(piece, nx, ny, cell, fit, tb.from, box);
+  const shape = tabShape(tb.neck);
+  const t: XY = [tb.dir[1], -tb.dir[0]];
+  // The knob: beyond the stem.
+  let knob = 0;
+  let inBody = 0;
+  const R = Math.ceil((shape.head + shape.reach) / cell) + 2;
+  const [ci, cj] = [Math.floor(tb.at[0] / cell), Math.floor(tb.at[1] / cell)];
+  for (let j = Math.max(0, cj - R); j <= Math.min(ny - 1, cj + R); j++)
+    for (let i = Math.max(0, ci - R); i <= Math.min(nx - 1, ci + R); i++) {
+      const c = j * nx + i;
+      if (piece[c] !== tb.from) continue;
+      const [x, y] = [(i + 0.5) * cell - tb.at[0], (j + 0.5) * cell - tb.at[1]];
+      const [u, v] = [x * t[0] + y * t[1], x * tb.dir[0] + y * tb.dir[1]];
+      if (v <= shape.stem || !shape.inside(u, v)) continue;
+      if (body.core(c)) {
+        knob++;
+        if (body.main(c)) inBody++;
+      }
+    }
+  return knob > 0 && inBody === 0;
+}
+
+/** Piece `id`'s mesh samples inside its outline, and which belong to its biggest separate part. */
+function mainBody(piece: Int32Array, nx: number, ny: number, cell: number, fit: number, id: number, box: number[]) {
+  const [i0, j0] = [box[0] - 2, box[1] - 2];
+  const [w, h] = [box[2] - box[0] + 5, box[3] - box[1] + 5];
+  const mine = new Uint8Array(w * h);
+  const other = new Uint8Array(w * h);
+  for (let j = 0; j < h; j++)
+    for (let i = 0; i < w; i++) {
+      const [a, b] = [i + i0, j + j0];
+      const m = a >= 0 && b >= 0 && a < nx && b < ny && piece[b * nx + a] === id;
+      mine[j * w + i] = m ? 1 : 0;
+      other[j * w + i] = m ? 0 : 1;
+    }
+  const dOut = distanceTransform(other, w, h);
+  const dIn = distanceTransform(mine, w, h);
+  const f = new Float64Array(w * h);
+  const inside = new Uint8Array(w * h);
+  for (let c = 0; c < w * h; c++) {
+    f[c] = (mine[c] ? Math.sqrt(dOut[c]) - Math.SQRT1_2 : -(Math.sqrt(dIn[c]) - 0.5)) * cell - fit;
+    inside[c] = f[c] > 0 ? 1 : 0;
+  }
+  const parts = meshParts(inside, f, w, h);
+  const size = new Int32Array(parts.count);
+  for (let c = 0; c < w * h; c++) if (parts.id[c] >= 0) size[parts.id[c]]++;
+  const main = parts.count ? size.indexOf(Math.max(...size)) : -1;
+  const local = (g: number) => {
+    const [i, j] = [(g % nx) - i0, Math.floor(g / nx) - j0];
+    return i < 0 || j < 0 || i >= w || j >= h ? -1 : j * w + i;
+  };
+  return {
+    core: (g: number) => {
+      const c = local(g);
+      return c >= 0 && inside[c] === 1;
+    },
+    main: (g: number) => {
+      const c = local(g);
+      return c >= 0 && parts.id[c] === main;
+    },
+  };
 }
 
 /** One go of `giveAwayCrumbs`, leaving `zone` alone: whether anything moved. */
-function crumbsAway(piece: Int32Array, nx: number, ny: number, cell: number, fit: number, zone: Uint8Array): boolean {
+function crumbsAway(piece: Int32Array, nx: number, ny: number, cell: number, fit: number, zone: Uint8Array, keptSea: Uint8Array): boolean {
   const N = nx * ny;
   const most = CRUMB_MOST / (cell * cell);
   let movedAny = false;
@@ -1135,21 +1261,32 @@ function crumbsAway(piece: Int32Array, nx: number, ny: number, cell: number, fit
       const core = new Uint8Array(w * h);
       for (let c = 0; c < w * h; c++) core[c] = f[c] > 0 ? 1 : 0;
       const parts = meshParts(core, f, w, h);
-      // Holes in its outline: outside samples the box's edge can't reach. One holding only thin bits of other pieces (a
-      // strip of a neighbour poking in, which prints as nothing, leaving a slot right through) is given to this piece.
+      // Holes in its outline: outside samples the box's edge can't reach. Unless it's sea kept inside the land, or holds the
+      // body of another piece (an islet piece), it's given to this piece: thin bits of other pieces poking in (which print
+      // as nothing, leaving a slot right through), a bit of another piece cut off from its body (a loose plug), a pinhole.
       const reached = outsideFromEdge(core, f, w, h);
       const holes = stretches(w, h, (c) => !core[c] && !reached[c]);
       if (holes.count) {
         const holeCells: number[][] = Array.from({ length: holes.count }, () => []);
         for (let c = 0; c < w * h; c++) if (holes.id[c] >= 0) holeCells[holes.id[c]].push(c);
+        const bodies = new Map<number, ReturnType<typeof mainBody>>();
+        const bodyOf = (q: number) => {
+          let b = bodies.get(q);
+          if (!b) bodies.set(q, (b = mainBody(piece, nx, ny, cell, fit, q, boxOf(piece, nx, q)!)));
+          return b;
+        };
         for (const hole of holeCells) {
           const gifts: number[] = [];
           let keep = false;
           for (const c of hole) {
             const g = (Math.floor(c / w) + j0) * nx + (c % w) + i0;
+            if (g < 0 || g >= N || (c % w) + i0 < 0 || (c % w) + i0 >= nx) {
+              keep = true;
+              continue;
+            }
             const q = piece[g];
             if (q === id) continue;
-            if (q < 0 || zone[g] || !thinAt(piece, nx, ny, cell, fit, g)) keep = true;
+            if (zone[g] || (q < 0 ? keptSea[g] === 1 : bodyOf(q).main(g))) keep = true;
             else gifts.push(g);
           }
           if (keep || !gifts.length) continue;

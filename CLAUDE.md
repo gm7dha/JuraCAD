@@ -1571,6 +1571,14 @@
   painting): a knob joined through a strip too thin to print fell out of the owner's Arran print, leaving keyholes. Islands with no holes or crumbs are byte-identical (18 settings checked against
   the old code: 14 the same; the 4 that changed each had a crumb or a slot through a piece in the old mesh). tests/islandHoles (meshes pinned to the old code's hashes;
   15 mm pieces, pattern 1: every tab catches; a low ragged coast over sizes/patterns: every piece one shell, every tab catches).
+  Plugs and pinholes (v0.75): a hole in a piece's outline is given to it whole — thin cells of others, a bit of another
+  piece cut off from its body (`mainBody`), sea that isn't kept (`FilledHoles.keptCells`), a pinhole — unless it's kept
+  sea, holds another piece's body (an islet piece) or a live tab's knob. A dovetail whose knob is no longer in its piece's
+  main body (`knobCutOff`: a loose plug in the socket) is dropped first (note "… too thin at the neck to hold"; joints/joins
+  recounted) so its knob goes to the piece round it. A move that would leave any piece in more bits than before is undone
+  and those cells left alone (`changedPieces`, `meshPartCount`). tests/islandOneSolid (heavy, own file): the reviewer's very
+  flat coast (25 mm, pattern 1: the plug) and low ragged one (25 mm, pattern 2: pinholes), and lumpy/ragged/low × 15/25/35/60
+  mm × patterns 1–3, every piece one outer loop and no hole, every tab catching; those 36 builds are byte-identical to v0.74.
   Tests: tests/islandPuzzle (pure; over seeds/sizes on a ragged coast: ≥ 2 joints per piece, outlines from the meshes never
   cross or come within 2·fit, every tab catches when pulled, median play ≤ 0.5 mm — `tests/support/outlineGeom.ts`), tests/islandMarks.
 - Mountain puzzle (a card in the Design library's 3D printing tab under "Puzzles" — `src/library/tools.ts` `LIBRARY_TOOLS`:
