@@ -35,7 +35,7 @@ import { downloadFile, safeFileName } from "./download";
 import { Modal } from "./Modal";
 import { openMountain, useMountain } from "./mountainState";
 import { loadTerrainTile } from "./mountainTiles";
-import { loadPrinter, printerBed, savePrinter } from "./printerSetting";
+import { amsSlotsOf, loadPrinter, printerBed, savePrinter } from "./printerSetting";
 
 type Source = "peak" | "ref" | "picture" | "osm";
 
@@ -267,7 +267,7 @@ export function MountainPuzzleDialog() {
   const mapSize: [number, number] = puzzle ? [puzzle.layout.cols * puzzle.spec.cube, puzzle.layout.rows * puzzle.spec.cube] : [1, 1];
   const paintMap = useMemo(() => mapRaster(puzzleMap, mapSize[0], mapSize[1]), [puzzleMap]);
   const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap);
-  const usualBands = () => (puzzle ? mountainBands(puzzle.layout.low, puzzle.layout.high, snowline) : mountainBands(0, 1000, snowline));
+  const usualBands = (n = 4) => (puzzle ? mountainBands(puzzle.layout.low, puzzle.layout.high, snowline, n) : mountainBands(0, 1000, snowline, n));
   const fileName = safeFileName(`${loaded?.area.name ?? "Mountain"} puzzle`, "Mountain puzzle");
   const set = <K extends keyof typeof spec>(key: K, value: (typeof spec)[K]) => setSpec((s) => ({ ...s, [key]: value }));
   const numberBox = (value: number, onChange: (v: number) => void, step: number, min: number, max: number, unit: string) => (
@@ -521,6 +521,8 @@ export function MountainPuzzleDialog() {
             spec={colour}
             setSpec={setColour}
             usual={usualBands}
+            slots={amsSlotsOf(printer)}
+            setSlots={(n) => setPrinter(savePrinter({ amsSlots: n }))}
             usualBase={null}
             usualWater={WATER_BLUE}
             has={paintMap}

@@ -22,7 +22,9 @@ import {
   type MapHas,
   PATH_RED,
   ROAD_BLACK,
+  usualBandCount,
 } from "../terrain/colour";
+import { SpoolPick } from "./SpoolPick";
 import type { ColourJob, ColourReply } from "../terrain/colourJob";
 import { allItems, bandPlateFile, colour3mfFiles, colourObjFiles, colourWrl, MANY_SWAPS, plateItems, plateSwaps, zipDeflated, type BandedPuzzle } from "../terrain/colourFiles";
 import type { PuzzlePiece } from "../terrain/mountainPuzzle";
@@ -52,11 +54,13 @@ export function ColourPanel({
   has,
   roadsAsked = false,
   ground,
+  slots,
+  setSlots,
 }: {
   spec: ColourSpec;
   setSpec: (s: ColourSpec) => void;
-  /** The usual bands for the ground loaded now. */
-  usual: () => ColourBand[];
+  /** The usual bands for the ground loaded now, `count` of them (4, or up to 6 with two AMS units). */
+  usual: (count: number) => ColourBand[];
   usualBase: string | null;
   usualWater: string;
   /** What the map loaded now has to colour: lochs and rivers, footpaths and tracks, roads. */
@@ -65,10 +69,30 @@ export function ColourPanel({
   roadsAsked?: boolean;
   /** The ground's lowest and highest (m), for the hint. */
   ground: [number, number] | null;
+  /** Filament slots in the AMS units (4 or 8), kept with the printer settings. */
+  slots: 4 | 8;
+  setSlots: (n: 4 | 8) => void;
 }) {
+  // As many usual bands as fit beside the base, water, paths and roads the map needs.
+  const usualCount = (s: ColourSpec) => {
+    const others = new Set<string>();
+    if (s.base) others.add(s.base.toLowerCase());
+    if (s.water && has.water) others.add(s.water.toLowerCase());
+    if (s.paths && has.paths) others.add(s.paths.toLowerCase());
+    if (s.roads && has.roads) others.add(s.roads.toLowerCase());
+    return usualBandCount(slots, others.size);
+  };
   const choose = (mode: ColourMode) => {
     if (mode === "plain" || spec.bands.length) return setSpec({ ...spec, mode });
-    setSpec({ ...spec, mode, bands: usual(), base: usualBase, water: usualWater, paths: PATH_RED, roads: ROAD_BLACK });
+    const next: ColourSpec = { ...spec, mode, base: usualBase, water: usualWater, paths: PATH_RED, roads: ROAD_BLACK };
+    setSpec({ ...next, bands: usual(usualCount(next)) });
+  };
+  /** A colour picked from Bambu's list (code) or your own (no code). */
+  const picked = (s: ColourSpec, hex: string, code?: string): ColourSpec => {
+    const spools = { ...s.spools };
+    if (code) spools[hex.toLowerCase()] = code;
+    else delete spools[hex.toLowerCase()];
+    return { ...s, spools: Object.keys(spools).length ? spools : undefined };
   };
   const band = (i: number, change: Partial<ColourBand>) => setSpec({ ...spec, bands: spec.bands.map((b, k) => (k === i ? { ...b, ...change } : b)) });
   const add = () => {
@@ -99,6 +123,15 @@ export function ColourPanel({
         </select>
       </label>
       {spec.mode === "bands" && (
+        <label className="mountain-row">
+          <span>Filament slots</span>
+          <select value={slots} onChange={(e) => setSlots(Number(e.target.value) === 8 ? 8 : 4)} aria-label="Filament slots" title="Kept with your printer settings">
+            <option value={4}>4 (one AMS)</option>
+            <option value={8}>8 (two AMS units)</option>
+          </select>
+        </label>
+      )}
+      {spec.mode === "bands" && (
         <p className="muted small">
           Each piece is split into a part per colour band, each set to its own filament, so Bambu Studio opens it ready to print
           with an AMS. Band edges are moved onto whole layers, so colours change from one layer to the next.
@@ -115,7 +148,12 @@ export function ColourPanel({
         <div className="colour-bands">
           {spec.bands.map((b, i) => (
             <div key={i} className="colour-band">
-              <input type="color" value={b.colour} onChange={(e) => band(i, { colour: e.target.value })} aria-label={`${b.name} colour`} title="Pick the colour" />
+              <SpoolPick
+                value={b.colour}
+                chosen={spec.spools?.[b.colour.toLowerCase()]}
+                label={b.name}
+                onPick={(hex, code) => setSpec(picked({ ...spec, bands: spec.bands.map((x, k) => (k === i ? { ...x, colour: hex } : x)) }, hex, code))}
+              />
               <input className="colour-band-name" value={b.name} onChange={(e) => band(i, { name: e.target.value })} aria-label={`Band ${i + 1} name`} />
               {i === 0 ? (
                 <span className="muted small">from the lowest ground</span>
@@ -139,7 +177,7 @@ export function ColourPanel({
                 + Add a band
               </button>
             )}
-            <button className="text-button" onClick={() => setSpec({ ...spec, bands: usual() })}>
+            <button className="text-button" onClick={() => setSpec({ ...spec, bands: usual(usualCount(spec)) })}>
               Usual colours and heights
             </button>
           </div>
@@ -147,22 +185,22 @@ export function ColourPanel({
           <label className="mountain-check">
             <input type="checkbox" checked={spec.base !== null} onChange={(e) => setSpec({ ...spec, base: e.target.checked ? usualBase ?? "#5a4a3a" : null })} /> The base (below the
             ground) in its own colour
-            {spec.base !== null && <input type="color" value={spec.base} onChange={(e) => setSpec({ ...spec, base: e.target.value })} aria-label="Base colour" />}
+            {spec.base !== null && <SpoolPick value={spec.base} chosen={spec.spools?.[spec.base.toLowerCase()]} label="the base" onPick={(hex, code) => setSpec(picked({ ...spec, base: hex }, hex, code))} />}
           </label>
           <label className="mountain-check">
             <input type="checkbox" checked={spec.water !== null} onChange={(e) => setSpec({ ...spec, water: e.target.checked ? usualWater : null })} /> Lochs and rivers from
             the map {inColour(spec.water, usualWater, "blue")}
-            {spec.water !== null && <input type="color" value={spec.water} onChange={(e) => setSpec({ ...spec, water: e.target.value })} aria-label="Water colour" />}
+            {spec.water !== null && <SpoolPick value={spec.water} chosen={spec.spools?.[spec.water.toLowerCase()]} label="water" onPick={(hex, code) => setSpec(picked({ ...spec, water: hex }, hex, code))} />}
           </label>
           <label className="mountain-check">
             <input type="checkbox" checked={!!spec.paths} onChange={(e) => setSpec({ ...spec, paths: e.target.checked ? PATH_RED : null })} /> Footpaths and tracks
             from the map {inColour(spec.paths, PATH_RED, "red")}
-            {!!spec.paths && <input type="color" value={spec.paths} onChange={(e) => setSpec({ ...spec, paths: e.target.value })} aria-label="Paths colour" />}
+            {!!spec.paths && <SpoolPick value={spec.paths} chosen={spec.spools?.[spec.paths.toLowerCase()]} label="paths" onPick={(hex, code) => setSpec(picked({ ...spec, paths: hex }, hex, code))} />}
           </label>
           <label className="mountain-check">
             <input type="checkbox" checked={!!spec.roads} onChange={(e) => setSpec({ ...spec, roads: e.target.checked ? ROAD_BLACK : null })} /> Roads from the map{" "}
             {inColour(spec.roads, ROAD_BLACK, "black")}
-            {!!spec.roads && <input type="color" value={spec.roads} onChange={(e) => setSpec({ ...spec, roads: e.target.value })} aria-label="Roads colour" />}
+            {!!spec.roads && <SpoolPick value={spec.roads} chosen={spec.spools?.[spec.roads.toLowerCase()]} label="roads" onPick={(hex, code) => setSpec(picked({ ...spec, roads: hex }, hex, code))} />}
           </label>
           {(spec.water !== null || !!spec.paths || !!spec.roads) && !hasMap && (
             <p className="muted small">Load the map's paths, rivers and lochs (From the map; roads with "Everything") to colour them.</p>
@@ -200,6 +238,7 @@ export function ColourPanel({
                 {fs.map((f) => (
                   <span key={f.n} className="colour-filament">
                     <span className="colour-swatch" style={{ background: f.colour }} /> {f.n} {f.uses.join(", ")}
+                    {f.spool ? <span className="muted"> — {f.spool}</span> : null}
                   </span>
                 ))}
               </p>
@@ -211,7 +250,7 @@ export function ColourPanel({
             </p>
           ))}
           {!problems.length &&
-            colourWarnings(spec, has, ground).map((w) => (
+            colourWarnings(spec, has, ground, slots).map((w) => (
               <p key={w} className="mountain-warn small">
                 {w}
               </p>

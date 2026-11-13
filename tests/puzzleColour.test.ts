@@ -354,8 +354,8 @@ describe("full colour", () => {
       expect(Math.max(p1, p2, p3)).toBeLessThan(colours);
     }
     expect(model).toContain('xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02"');
-    // Some river blue on the ground.
-    expect(model).toContain('<m:color color="#3C7CC0"/>');
+    // Some river blue on the ground (WATER_BLUE, PLA Basic Cyan #0086d6, rounded to 4s).
+    expect(model).toContain('<m:color color="#0088D8"/>');
 
     const { obj, mtl, png } = colourObjFiles(items, "Island puzzle");
     const vs = obj.split("\n").filter((l) => l.startsWith("v ")).length;
@@ -638,7 +638,8 @@ describe("red paths and black roads", () => {
         if (!up) continue;
         if (kind === MapKind.Path || kind === MapKind.Track) {
           red++;
-          expect(r > 150 && g < 70 && b < 70, `path corner ${r},${g},${b}`).toBe(true);
+          // PLA Basic Red (#c12e1f), hill-shaded.
+          expect(r > 120 && g < 70 && b < 70, `path corner ${r},${g},${b}`).toBe(true);
         } else if (kind === MapKind.Road) {
           black++;
           expect(Math.max(r, g, b), `road corner ${r},${g},${b}`).toBeLessThan(50);

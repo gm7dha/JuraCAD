@@ -22,7 +22,7 @@ import { Modal } from "./Modal";
 import { DETAILS, MarkChoices, markStroke, Mountain3D } from "./MountainPuzzleDialog";
 import { openMountain } from "./mountainState";
 import { loadTerrainTile } from "./mountainTiles";
-import { loadPrinter, printerBed, savePrinter } from "./printerSetting";
+import { amsSlotsOf, loadPrinter, printerBed, savePrinter } from "./printerSetting";
 
 /** The widest area (m): all of Great Britain. */
 const MOST = 1_300_000;
@@ -506,7 +506,9 @@ export function IslandPuzzleDialog() {
           <ColourPanel
             spec={colour}
             setSpec={setColour}
-            usual={() => islandBands(puzzle?.high ?? 500)}
+            usual={(n) => islandBands(puzzle?.high ?? 500, n)}
+            slots={amsSlotsOf(printer)}
+            setSlots={(n) => setPrinter(savePrinter({ amsSlots: n }))}
             usualBase={SEA_BLUE}
             usualWater={SEA_BLUE}
             has={paintMap}
