@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { eventTime, GestureTracker, gestureOptions, reachFor, slopFor, TouchRouter, type Gesture } from "../src/viewport/gestures";
+import { eventTime, GestureTracker, gestureOptions, longPressWanted, reachFor, slopFor, TouchRouter, type Gesture } from "../src/viewport/gestures";
 
 const types = (gs: Gesture[]) => gs.map((g) => g.type);
 
@@ -199,5 +199,24 @@ describe("a hand resting on the screen while the pen draws", () => {
     expect(r.route(99)).toBe("other");
     r.reset();
     expect(r.count).toBe(0);
+  });
+});
+
+describe("long press on a Move / copy triad handle", () => {
+  it("is off there, so a finger resting on a handle and then dragging moves the handle (never turns the view)", () => {
+    expect(longPressWanted({ dragEnabled: false, selectOther: true, sketching: false, onTriad: false })).toBe(true);
+    expect(longPressWanted({ dragEnabled: false, selectOther: true, sketching: false, onTriad: true })).toBe(false);
+    expect(longPressWanted({ dragEnabled: true, selectOther: true, sketching: false, onTriad: true })).toBe(false);
+    expect(longPressWanted({ dragEnabled: false, selectOther: true, sketching: true, onTriad: false })).toBe(false);
+    expect(longPressWanted({ dragEnabled: false, selectOther: false, sketching: false, onTriad: false })).toBe(false);
+    // With long press off, a finger held still 900 ms then moved is an ordinary drag (the triad's), not a held drag.
+    const g = new GestureTracker(gestureOptions("touch", longPressWanted({ dragEnabled: false, selectOther: true, sketching: false, onTriad: true })));
+    g.down(1, 100, 100, 0);
+    expect(g.longPressDue).toBeNull();
+    expect(g.tick(900)).toEqual([]);
+    const moved = types(g.move(1, 140, 100, 950));
+    expect(moved).toContain("dragStart");
+    expect(moved).not.toContain("holdDrag");
+    expect(types(g.up(1, 140, 100, 1000))).toContain("dragEnd");
   });
 });

@@ -1,7 +1,10 @@
 import { rectOf, shapeInBox, type Rect } from "./boxSelect";
+import { allows, boxPicks, NO_FILTER, partHitAs, type SelectFilter } from "./selectionFilter";
+import type { OtherHit } from "./selectOther";
+import type { CameraState } from "../model/namedViews";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { eventTime, GestureTracker, gestureOptions, reachFor, TouchRouter, type Gesture } from "./gestures";
+import { eventTime, GestureTracker, gestureOptions, longPressWanted, reachFor, TouchRouter, type Gesture } from "./gestures";
 import { addHeld, additive, shiftHeld } from "./touchKeys";
 
 import type { PartMesh } from "../kernel/protocol";
@@ -85,6 +88,8 @@ const FRUSTUM_HEIGHT = 200;
 const EDGE_PICK_PIXELS = 6;
 /** Pointer movement (pixels) above which a click becomes a drag. */
 const CLICK_SLOP = 4;
+/** How long (ms) the mouse button is held still on the view before Select other opens (Onshape's click and hold). */
+const HOLD_MS = 800;
 
 interface PartObjects {
   data: PartMesh;
@@ -96,7 +101,14 @@ interface PartObjects {
 
 /** What's under the pointer: a face/edge of a part, or one of the default planes. */
 export type PickTarget =
-  | { kind: "part"; item: SelectionItem; point?: [number, number, number]; /** The same point in the part's own coordinates (before it's placed in an assembly). */ local?: [number, number, number] }
+  | {
+      kind: "part";
+      item: SelectionItem;
+      point?: [number, number, number];
+      /** The same point in the part's own coordinates (before it's placed in an assembly). */ local?: [number, number, number];
+      /** The selection filter asks for whole parts: this face or edge stands for its whole part. */
+      whole?: true;
+    }
   | { kind: "plane"; plane: PlaneName }
   /** A Plane feature (by its feature id). */
   | { kind: "customPlane"; id: string }
@@ -188,6 +200,15 @@ export interface SceneCallbacks {
   onDragCancel?: () => void;
   /** A selection box dragged on empty space: the parts it chose (`additive` with Shift/Ctrl/Cmd held). */
   onBoxSelect?: (partIds: string[], additive: boolean) => void;
+  /** A selection box while the selection filter asks for faces and/or edges only: those it chose. */
+  onBoxSelectItems?: (items: SelectionItem[], additive: boolean) => void;
+  /**
+   * Select other (Onshape's click-and-hold, or a right-click without dragging; a long press on a touch screen):
+   * everything under the pointer at (x, y) in the view, nearest first; `at` = the place in the window (CSS px).
+   */
+  onSelectOther?: (hits: OtherHit[], at: { x: number; y: number }) => void;
+  /** The press that opened Select other moved on (the view turns): close the list. */
+  onSelectOtherCancel?: () => void;
   /**
    * Move / copy's triad: a drag began on one of its handles (`size`: the triad's size in mm as drawn now; `shift`:
    * no snapping). Return false to ignore it. Then each move (with Shift as it is now), and the end or (a second
@@ -317,7 +338,7 @@ export class SceneManager {
    * What one finger (or the pen) is doing: drawing in the sketch (`sent`: the sketch tools have had its press),
    * pressing on the view cube, or (`holdDrag`) dragging a part after a long press in an assembly.
    */
-  private touchStroke: { sketch: boolean; cube: boolean; sent: boolean; holdDrag: boolean; triad?: TriadHandle | null; triadOn?: boolean } | null = null;
+  private touchStroke: { sketch: boolean; cube: boolean; sent: boolean; holdDrag: boolean; triad?: TriadHandle | null; triadOn?: boolean; /** A long press opened Select other. */ menu?: boolean } | null = null;
   /** Move / copy's triad (null: none shown), drawn in `triadGroup`, with each handle's materials for highlighting. */
   private triad: Triad | null = null;
   private readonly triadGroup = new THREE.Group();
@@ -584,6 +605,152 @@ export class SceneManager {
   /** Ids of the parts (or assembly instances) on show, and what their faces look like. */
   shownParts(): { id: string; faceRefs: PartMesh["faceRefs"] }[] {
     return [...this.parts.values()].map((p) => ({ id: p.data.id, faceRefs: p.data.faceRefs }));
+  }
+
+  /**
+   * The selection filter (see selectionFilter.ts): what clicks, hovering and box selection may pick. `wholeParts`:
+   * whole parts may be picked now (nothing open); else "Parts" lets a tool have the faces and edges as usual.
+   */
+  setSelectFilter(filter: SelectFilter, wholeParts: boolean): void {
+    this.filter = filter;
+    this.wholeParts = wholeParts;
+    if (this.hover || this.hoverWhole) {
+      this.hover = null;
+      this.hoverWhole = null;
+      this.applyHighlights();
+    }
+  }
+  private filter: SelectFilter = NO_FILTER;
+  private wholeParts = false;
+  private hoverWhole: string | null = null;
+
+  /** The camera as it is (or is heading), as plain numbers — for a named view. */
+  cameraState(): CameraState {
+    const v = this.saveView();
+    return { dir: v.dir.toArray() as [number, number, number], target: v.target.toArray() as [number, number, number], zoom: v.zoom, up: v.up.toArray() as [number, number, number] };
+  }
+
+  /** Turn and zoom to a saved camera (a named view). */
+  goToCamera(c: CameraState, animate = true): void {
+    this.animateTo({ dir: new THREE.Vector3(...c.dir), target: new THREE.Vector3(...c.target), zoom: c.zoom, up: new THREE.Vector3(...c.up) }, animate);
+  }
+
+  /** Light up what a row of the Select other list would pick (null: nothing). */
+  previewPick(t: PickTarget | null): void {
+    this.hover = t?.kind === "part" && !t.whole ? t.item : null;
+    this.hoverWhole = t?.kind === "part" && t.whole ? t.item.partId : null;
+    this.applyHighlights();
+    const plane = t?.kind === "plane" ? t.plane : null;
+    if (plane !== this.hoverPlane) {
+      this.hoverPlane = plane;
+      this.applyPlaneHighlights();
+    }
+    const custom = t?.kind === "customPlane" ? t.id : null;
+    if (custom !== this.hoverCustomPlane) {
+      this.hoverCustomPlane = custom;
+      this.setCustomPlanes(this.customPlaneData);
+    }
+    const line = t?.kind === "sketchLine" ? this.pickLines.find((l) => l.sketch === t.id && l.line === t.line) ?? null : null;
+    if (line !== this.hoverLine) {
+      this.hoverLine = line;
+      this.drawReference();
+    }
+    const curve = t?.kind === "curve" ? t.id : null;
+    if (curve !== this.hoverCurve) {
+      this.hoverCurve = curve;
+      this.colourCurves();
+    }
+    const set = t?.kind === "sketchArea" ? (this.pickAreas?.sets.findIndex((a) => a.sketch === t.sketch) ?? -1) : -1;
+    this.setHoverArea(t?.kind === "sketchArea" && set >= 0 ? { set, index: t.index } : null);
+  }
+
+  /** Everything under the screen point (CSS px in the view), for Select other: faces, edges, areas, curves and planes, each with how far along the ray. */
+  otherHitsAt(x: number, y: number): OtherHit[] {
+    const ndc = new THREE.Vector2((x / this.width) * 2 - 1, -(y / this.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    this.raycaster.params.Line = { threshold: EDGE_PICK_PIXELS * this.worldPerPixel() };
+    const meshes: THREE.Object3D[] = [];
+    const lines: THREE.Object3D[] = [];
+    for (const p of this.parts.values()) {
+      if (!p.mesh.visible) continue;
+      meshes.push(p.mesh);
+      lines.push(p.lines);
+    }
+    const kept = (h: THREE.Intersection) => !this.section || this.section.distanceToPoint(h.point) >= -1e-6;
+    const v3 = (v: THREE.Vector3) => v.toArray() as [number, number, number];
+    const out: OtherHit[] = [];
+    for (const h of this.raycaster.intersectObjects(meshes, false)) {
+      if (!kept(h) || h.faceIndex === undefined || h.faceIndex === null) continue;
+      const partId = h.object.userData.partId as string;
+      const tri = h.faceIndex * 3;
+      const index = (this.parts.get(partId)?.data.faceGroups ?? []).findIndex((g) => tri >= g.start && tri < g.start + g.count);
+      if (index >= 0) out.push({ kind: "face", partId, index, distance: h.distance, point: v3(h.point), local: v3(h.object.worldToLocal(h.point.clone())) });
+    }
+    if (!this.facesOnly)
+      for (const h of this.raycaster.intersectObjects(lines, false)) {
+        if (!kept(h)) continue;
+        const partId = h.object.userData.partId as string;
+        const vertex = h.index ?? -1;
+        const index = (this.parts.get(partId)?.data.edgeGroups ?? []).findIndex((g) => vertex >= g.start && vertex < g.start + g.count);
+        if (index >= 0) out.push({ kind: "edge", partId, index, distance: h.distance, point: v3(h.point), local: v3(h.object.worldToLocal(h.point.clone())) });
+      }
+    const area = this.areaUnderPointer();
+    if (area && this.pickAreas) out.push({ kind: "sketchArea", sketch: this.pickAreas.sets[area.set].sketch, index: area.index, distance: area.distance });
+    for (const h of this.curveGroup.children.length ? this.raycaster.intersectObjects(this.curveGroup.children, false) : [])
+      out.push({ kind: "curve", id: h.object.userData.curve as string, distance: h.distance, point: v3(h.point) });
+    for (const h of this.raycaster.intersectObjects(this.customPlanesGroup.children.map((g) => g.children[0]), false))
+      out.push({ kind: "customPlane", id: h.object.userData.customPlane as string, distance: h.distance });
+    const squares: THREE.Object3D[] = [];
+    for (const [name, pl] of this.planes) if (!this.hiddenDatums.has(name)) squares.push(pl.square);
+    for (const h of this.raycaster.intersectObjects(squares, false)) out.push({ kind: "plane", plane: h.object.userData.plane as string, distance: h.distance });
+    // Mate connectors (while the tool open takes one) and sketch lines (while a mirror or pattern wants one).
+    if (this.connectorPicking && this.connectorMarks.length) {
+      const key = this.connectorAt(x, y, 1, () => true);
+      const mark = key ? this.connectorMarks.find((m) => m.key === key) : null;
+      if (mark) out.push({ kind: "connector", key: mark.key, distance: new THREE.Vector3(...mark.origin).sub(this.raycaster.ray.origin).dot(this.raycaster.ray.direction) });
+    }
+    const line = this.nearestPickLine(EDGE_PICK_PIXELS * this.worldPerPixel());
+    if (line) out.push({ kind: "sketchLine", sketch: line.line.sketch, line: line.line.line, distance: line.distance });
+    return out;
+  }
+
+  /** Faces and/or edges chosen by a box on screen (px): wholly inside, or (crossing) any part of them. */
+  itemsInBox(r: Rect, crossing: boolean, faces: boolean, edges: boolean): SelectionItem[] {
+    const out: SelectionItem[] = [];
+    const v = new THREE.Vector3();
+    for (const p of this.parts.values()) {
+      if (!p.mesh.visible) continue;
+      p.mesh.updateMatrixWorld();
+      const screen = (attr: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, m: THREE.Matrix4, i: number, into: number[]) => {
+        v.fromBufferAttribute(attr, i).applyMatrix4(m).project(this.camera);
+        into.push(((v.x + 1) / 2) * this.width, ((1 - v.y) / 2) * this.height);
+      };
+      if (faces) {
+        const geo = p.mesh.geometry;
+        const pos = geo.getAttribute("position");
+        const idx = geo.getIndex();
+        (p.data.faceGroups ?? []).forEach((g, index) => {
+          const points: number[] = [];
+          const segments: number[] = [];
+          for (let k = g.start; k + 2 < g.start + g.count; k += 3) {
+            const tri: number[] = [];
+            for (let j = 0; j < 3; j++) screen(pos, p.mesh.matrixWorld, idx ? idx.getX(k + j) : k + j, tri);
+            points.push(...tri);
+            segments.push(tri[0], tri[1], tri[2], tri[3], tri[2], tri[3], tri[4], tri[5], tri[4], tri[5], tri[0], tri[1]);
+          }
+          if (shapeInBox(r, points, segments, crossing)) out.push({ partId: p.data.id, kind: "face", index });
+        });
+      }
+      if (edges) {
+        const pos = p.lines.geometry.getAttribute("position");
+        (p.data.edgeGroups ?? []).forEach((g, index) => {
+          const points: number[] = [];
+          for (let k = g.start; k < g.start + g.count; k++) screen(pos, p.lines.matrixWorld, k, points);
+          if (shapeInBox(r, points, points, crossing)) out.push({ partId: p.data.id, kind: "edge", index });
+        });
+      }
+    }
+    return out;
   }
 
   /** While a tool only takes faces (Thread, Draft…): clicks and hovering go to the face, never an edge on it. */
@@ -1317,6 +1484,7 @@ export class SceneManager {
   dispose(): void {
     cancelAnimationFrame(this.frame);
     if (this.longPressTimer) clearTimeout(this.longPressTimer);
+    this.cancelHold();
     if (this.longPressFrame !== null) cancelAnimationFrame(this.longPressFrame);
     this.longPressTimer = null;
     this.gestures.reset();
@@ -1619,14 +1787,15 @@ export class SceneManager {
     // With a section on, ignore anything in the part that's cut away.
     const kept = (h: THREE.Intersection) => !this.section || this.section.distanceToPoint(h.point) >= -1e-6;
     // A sketch area (while an Extrude, Revolve or Sweep is open): before parts, unless the extrude's end is being picked.
-    const area = this.areaUnderPointer();
+    const filter = this.filter;
+    const area = allows(filter, "sketch") ? this.areaUnderPointer() : null;
     const areaTarget = area ? ({ kind: "sketchArea", sketch: this.pickAreas!.sets[area.set].sketch, index: area.index } as const) : null;
     if (areaTarget && this.pickAreas?.mode === "first") return areaTarget;
     const faceHit = this.raycaster.intersectObjects(meshes, false).find(kept);
     const edgeHit = this.raycaster.intersectObjects(lines, false).find(kept);
     // A mate connector's middle (when the tool open takes one) wins over the faces and edges round it — unless it's
     // hidden behind the part.
-    if (this.connectorPicking && this.connectorMarks.length && !(this.connectorPicking === "notOnRound" && faceHit && this.roundFaceHit(faceHit))) {
+    if (this.connectorPicking && this.connectorMarks.length && allows(filter, "plane") && !(this.connectorPicking === "notOnRound" && faceHit && this.roundFaceHit(faceHit))) {
       const ray = this.raycaster.ray;
       const key = this.connectorAt(x, y, reach, (o) => !faceHit || new THREE.Vector3(...o).sub(ray.origin).dot(ray.direction) <= faceHit.distance + threshold * 2);
       if (key) return { kind: "connector", key };
@@ -1649,31 +1818,51 @@ export class SceneManager {
     }
 
     // A curve feature, unless it's hidden behind a face.
-    if (this.curveGroup.children.length) {
+    if (this.curveGroup.children.length && allows(filter, "sketch")) {
       const hit = this.raycaster.intersectObjects(this.curveGroup.children, false)[0];
       if (hit && (!faceHit || hit.distance <= faceHit.distance + threshold * 2)) return { kind: "curve", id: hit.object.userData.curve as string, point: hit.point.toArray() as [number, number, number] };
     }
     // A sketch line (while a mirror or pattern wants one), unless it's hidden behind a face.
-    const line = this.nearestPickLine(threshold);
+    const line = allows(filter, "sketch") ? this.nearestPickLine(threshold) : null;
     if (line && (!faceHit || line.distance <= faceHit.distance + threshold * 2)) return { kind: "sketchLine", id: line.line.sketch, line: line.line.line };
 
     // Prefer an edge when it's not hidden behind the face we hit (unless only faces are wanted).
-    if (edgeHit && !this.facesOnly && (!faceHit || edgeHit.distance <= faceHit.distance + threshold * 2)) {
+    // (The selection filter: an edge only when edges may be picked, or stand for their part.)
+    const edgeAs = partHitAs(filter, "edge", this.wholeParts);
+    if (edgeHit && !this.facesOnly && edgeAs && (!faceHit || edgeHit.distance <= faceHit.distance + threshold * 2)) {
       const partId = edgeHit.object.userData.partId as string;
       const groups = this.parts.get(partId)?.data.edgeGroups ?? [];
       const vertex = edgeHit.index ?? -1;
       const index = groups.findIndex((g) => vertex >= g.start && vertex < g.start + g.count);
-      if (index >= 0) return { kind: "part", item: { partId, kind: "edge", index }, point: edgeHit.point.toArray() as [number, number, number], local: edgeHit.object.worldToLocal(edgeHit.point.clone()).toArray() as [number, number, number] };
+      if (index >= 0)
+        return {
+          kind: "part",
+          item: { partId, kind: "edge", index },
+          point: edgeHit.point.toArray() as [number, number, number],
+          local: edgeHit.object.worldToLocal(edgeHit.point.clone()).toArray() as [number, number, number],
+          ...(edgeAs === "whole" ? { whole: true as const } : {}),
+        };
     }
     if (faceHit && faceHit.faceIndex !== undefined && faceHit.faceIndex !== null) {
+      const faceAs = partHitAs(filter, "face", this.wholeParts);
+      // Filtered out: nothing is picked here (the face still hides what's behind it).
+      if (!faceAs) return null;
       const partId = faceHit.object.userData.partId as string;
       const groups = this.parts.get(partId)?.data.faceGroups ?? [];
       const triIndex = faceHit.faceIndex * 3;
       const index = groups.findIndex((g) => triIndex >= g.start && triIndex < g.start + g.count);
-      if (index >= 0) return { kind: "part", item: { partId, kind: "face", index }, point: faceHit.point.toArray() as [number, number, number], local: faceHit.object.worldToLocal(faceHit.point.clone()).toArray() as [number, number, number] };
+      if (index >= 0)
+        return {
+          kind: "part",
+          item: { partId, kind: "face", index },
+          point: faceHit.point.toArray() as [number, number, number],
+          local: faceHit.object.worldToLocal(faceHit.point.clone()).toArray() as [number, number, number],
+          ...(faceAs === "whole" ? { whole: true as const } : {}),
+        };
     }
 
     if (areaTarget && this.pickAreas?.mode !== "nearest") return areaTarget;
+    if (!allows(filter, "plane")) return null;
     // Nothing on a part: try the planes (nearest first) — Plane features, then the default planes.
     const custom = this.raycaster.intersectObjects(this.customPlanesGroup.children.map((g) => g.children[0]), false)[0];
     if (custom) return { kind: "customPlane", id: custom.object.userData.customPlane as string };
@@ -2172,6 +2361,7 @@ export class SceneManager {
         if (whole) return 2;
         if (this.selection.some((s) => s.partId === id && s.kind === kind && s.index === index)) return 2;
         if (this.hover && this.hover.partId === id && this.hover.kind === kind && this.hover.index === index) return 1;
+        if (this.hoverWhole === id) return 1;
         return 0;
       };
       p.mesh.geometry.groups.forEach((g, i) => (g.materialIndex = state("face", i)));
@@ -2225,6 +2415,19 @@ export class SceneManager {
       this.drag = hit?.kind === "part" ? { target: hit, started: false, refused: false } : null;
       this.lastDragDebug = `press hit ${hit ? (hit.kind === "part" ? hit.item.partId : hit.kind === "plane" ? hit.plane : hit.kind === "sketchArea" ? "sketch area" : hit.kind === "connector" ? hit.key : hit.id) : "nothing"}`;
     }
+    this.cancelHold();
+    this.holdFired = false;
+    this.holdMoved = false;
+    if (e.button === 0 && this.callbacks.onSelectOther && !this.sketchController && !this.dragEnabled && !this.viewCube.contains(x, y, this.width)) {
+      // Held still: Select other (everything under the pointer, to choose from).
+      this.holdTimer = setTimeout(() => {
+        this.holdTimer = null;
+        if (this.openSelectOther(x, y)) {
+          this.holdFired = true;
+          this.endBox();
+        }
+      }, HOLD_MS);
+    }
     if (e.button === 2) {
       // Ctrl + right-drag pans, as in Onshape (⌘ + right-drag too, for Macs).
       this.controls.mouseButtons.RIGHT = e.ctrlKey || e.metaKey ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
@@ -2243,6 +2446,17 @@ export class SceneManager {
       const { x, y } = this.localPoint(e);
       this.callbacks.onTriadMove?.(this.rayAt(x, y), shiftHeld(e));
       return;
+    }
+    if ((this.holdTimer || this.holdFired) && this.pointerDown && (e.buttons & 1) === 1) {
+      const { x, y } = this.localPoint(e);
+      if (Math.hypot(x - this.pointerDown.x, y - this.pointerDown.y) > CLICK_SLOP) {
+        this.cancelHold();
+        // Held, the list opened, then dragged on (turning the view): the list goes.
+        if (this.holdFired && !this.holdMoved) {
+          this.holdMoved = true;
+          this.callbacks.onSelectOtherCancel?.();
+        }
+      }
     }
     const orbit = this.orbit;
     if (orbit && orbit.id === e.pointerId) {
@@ -2305,6 +2519,7 @@ export class SceneManager {
   };
 
   private onPointerLeave = () => {
+    this.cancelHold();
     this.pendingMove = null;
     this.sketchController?.pointerLeave();
     this.viewCube.setHover(null, null, this.width);
@@ -2351,6 +2566,11 @@ export class SceneManager {
     if (this.orbit?.id === e.pointerId) {
       this.orbit = null;
       if (this.renderer.domElement.hasPointerCapture(e.pointerId)) this.renderer.domElement.releasePointerCapture(e.pointerId);
+      // A right-click that didn't turn the view: Select other (as in Onshape's right-click menu).
+      const down = this.pointerDown;
+      this.pointerDown = null;
+      const { x, y } = this.localPoint(e);
+      if (down?.button === 2 && Math.hypot(x - down.x, y - down.y) <= CLICK_SLOP && !this.sketchController && !this.dragEnabled && !this.viewCube.contains(x, y, this.width)) this.openSelectOther(x, y);
       return;
     }
     if (this.triadDrag?.pointerId === e.pointerId) {
@@ -2361,6 +2581,15 @@ export class SceneManager {
       this.renderer.domElement.style.cursor = "";
       this.callbacks.onTriadEnd?.();
       this.colourTriad();
+      return;
+    }
+    this.cancelHold();
+    if (this.holdFired) {
+      // The press opened Select other: letting go picks nothing.
+      this.holdFired = false;
+      this.pointerDown = null;
+      this.drag = null;
+      this.endBox();
       return;
     }
     const down = this.pointerDown;
@@ -2378,7 +2607,10 @@ export class SceneManager {
       this.endBox();
       if (box.shown) {
         if (this.renderer.domElement.hasPointerCapture(e.pointerId)) this.renderer.domElement.releasePointerCapture(e.pointerId);
-        this.callbacks.onBoxSelect?.(this.partsInBox(rectOf(box.x, box.y, box.cx, box.cy), box.cx < box.x), box.additive);
+        const r = rectOf(box.x, box.y, box.cx, box.cy);
+        const picks = boxPicks(this.filter);
+        if (!picks.parts && this.callbacks.onBoxSelectItems) this.callbacks.onBoxSelectItems(this.itemsInBox(r, box.cx < box.x, picks.faces, picks.edges), box.additive);
+        else this.callbacks.onBoxSelect?.(this.partsInBox(r, box.cx < box.x), box.additive);
         return;
       }
     }
@@ -2418,7 +2650,9 @@ export class SceneManager {
       this.touchKind = e.pointerType;
       // A long press only where it does something: picking up a part in an assembly. (Elsewhere a still press
       // then a drag just turns the view, and in a sketch it must still draw.)
-      const longPress = this.dragEnabled && !this.sketchController && this.touchTiming.longPressMs;
+      const onTriad = !this.sketchController && !this.viewCube.contains(x, y, this.width) && !!this.triadHandleAt(x, y, reachFor(e.pointerType));
+      const wanted = longPressWanted({ dragEnabled: this.dragEnabled, selectOther: !!this.callbacks.onSelectOther, sketching: !!this.sketchController, onTriad });
+      const longPress = wanted && this.touchTiming.longPressMs;
       this.gestures.options = { ...gestureOptions(e.pointerType, longPress), doubleTapMs: this.touchTiming.doubleTapMs };
       this.animation = null;
     }
@@ -2546,12 +2780,22 @@ export class SceneManager {
         break;
       }
       case "longPress": {
-        if (!st || st.sketch || st.cube || !this.dragEnabled) break;
+        if (!st || st.sketch || st.cube) break;
+        // A Part Studio: a long press opens Select other (a drag after it still turns the view).
+        if (!this.dragEnabled) {
+          if (!st.triad && this.openSelectOther(g.x, g.y)) st.menu = true;
+          break;
+        }
         const hit = this.pickAt(g.x, g.y, reachFor(this.touchKind));
         if (hit?.kind === "part") st.holdDrag = this.callbacks.onDragStart?.(hit, this.rayAt(g.x, g.y), false) ?? false;
         break;
       }
       case "holdDrag":
+        // The finger moves on after Select other opened: the list goes (it mustn't sit over a turning view).
+        if (st?.menu) {
+          st.menu = false;
+          this.callbacks.onSelectOtherCancel?.();
+        }
         // Held on a part: it moves; held anywhere else, the drag turns the view as usual.
         if (st?.holdDrag) this.callbacks.onDragMove?.(this.rayAt(g.x, g.y));
         else if (st && !st.cube && !st.sketch) this.orbitBy(g.dx, g.dy);
@@ -2629,6 +2873,28 @@ export class SceneManager {
     this.panBy(-(x - this.width / 2) * k, -(y - this.height / 2) * k);
   }
 
+  private holdTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The mouse press now down opened Select other (its release mustn't pick). */
+  private holdFired = false;
+  /** …and then the pointer moved on with the button still down. */
+  private holdMoved = false;
+
+  private cancelHold(): void {
+    if (this.holdTimer) clearTimeout(this.holdTimer);
+    this.holdTimer = null;
+  }
+
+  /** Ask for the Select other list at (x, y) in the view; false when there's nothing there. */
+  private openSelectOther(x: number, y: number): boolean {
+    const cb = this.callbacks.onSelectOther;
+    if (!cb) return false;
+    const hits = this.otherHitsAt(x, y);
+    if (!hits.length) return false;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    cb(hits, { x: rect.left + x, y: rect.top + y });
+    return true;
+  }
+
   private processHover(): void {
     const move = this.pendingMove;
     if (!move) return;
@@ -2644,7 +2910,12 @@ export class SceneManager {
     // While sketching, the sketch tools handle hover themselves.
     const hit = overCube || this.sketchController || handle ? null : this.pickAt(move.x, move.y);
     this.renderer.domElement.style.cursor = overCube && this.viewCube.pick(move.x, move.y, this.width) ? "pointer" : handle ? "grab" : "";
-    const partHit = hit?.kind === "part" ? hit.item : null;
+    const partHit = hit?.kind === "part" && !hit.whole ? hit.item : null;
+    const wholeHit = hit?.kind === "part" && hit.whole ? hit.item.partId : null;
+    if (wholeHit !== this.hoverWhole) {
+      this.hoverWhole = wholeHit;
+      this.applyHighlights();
+    }
     const planeHit = hit?.kind === "plane" ? hit.plane : null;
     const customHit = hit?.kind === "customPlane" ? hit.id : null;
     const lineHit = hit?.kind === "sketchLine" ? this.pickLines.find((l) => l.sketch === hit.id && l.line === hit.line) ?? null : null;

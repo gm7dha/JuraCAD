@@ -2,6 +2,7 @@ import type { AreaPick } from "../sketch/areas";
 import type { FastenerKind } from "./fasteners";
 import type { TopoPick } from "../geometry/topoRef";
 import type { Variable } from "./variables";
+import type { NamedView } from "./namedViews";
 import type { Configuration } from "./configurations";
 import type { HoleFit, HoleKind } from "./holes";
 import type { FitName, PrintFits } from "./printSettings";
@@ -596,6 +597,8 @@ export interface JuraCADDocument {
   versions?: DesignVersion[];
   /** Designs inserted from the Design library (so their sizes can be changed again). Optional: older saves have none. */
   libraryInserts?: LibraryInsert[];
+  /** Cameras saved under a name, per Part Studio or assembly (see namedViews.ts). Optional: older saves have none. */
+  namedViews?: NamedView[];
 }
 
 /**
