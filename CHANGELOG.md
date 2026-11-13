@@ -8,6 +8,13 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.68 — Pick filter, Select other, named views, copy and paste
+
+- **Pick** (selection filter) next to Fit: choose whether clicks pick faces, edges, whole parts, planes or sketches. Selection boxes follow it too.
+- **Select other**: right-click without dragging, or hold the mouse still, to list everything under the pointer, nearest first. Hover a row to see it, click to pick it. On an iPad or other touch screen, a long press in a Part Studio opens it.
+- **Views**: save the way you're looking at the model under a name, and go back to it later. Each Part Studio and assembly has its own views, saved in the file. You can also use them in Save a picture.
+- **Copy and paste features**: Ctrl+C and Ctrl+V in the feature list work in the same Part Studio, another Part Studio or another design. Sketches come along with the features made from them, and missing variables are offered.
+
 ## v0.67 — Drawing extras
 
 - **Crop view**: crop a drawing view to a rectangle or a shape you click round; lines, dimensions and marks outside are hidden.
