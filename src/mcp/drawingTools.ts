@@ -7,7 +7,7 @@
  * there exactly as Claude made it.
  */
 import { DETAIL_HOSTS, addDetail } from "../drawing/details";
-import { addDrawing, renameDrawing, SHEET_SIZES, toggleView, updateDrawing, VIEW_KINDS, VIEW_LABELS, withoutFit } from "../drawing/drawing";
+import { addDrawing, renameDrawing, SHEET_SIZES, toggleView, updateDrawing, VIEW_KINDS, VIEW_LABELS, withoutFit, withProjection, numberInspections } from "../drawing/drawing";
 import { autoDimensionSheet, rowOffset, rowSide, type Side } from "../drawing/autoDimension";
 import { projectPoint, VIEW_CAMERAS, viewUp } from "../drawing/cameras";
 import { angleGeometry, arcOf, chamferLabel, chamferSize, dimLabel, dimPoint, measureDim, resolveDim, snapPoints } from "../drawing/dimensions";
@@ -18,7 +18,7 @@ import { changePage, pageIds, pageOf, nextLetterOnAnySheet } from "../drawing/pa
 import { addSection, fromRel, sectionGeometry, SECTION_HOSTS, toRel } from "../drawing/sections";
 import { dimStyle, drawingViewKeys, fitDrawing, layoutSheet, offSheetMessage, scaleLabel, STANDARD_SCALES, type PlacedView, type Projections, type SheetInfo, type SheetLayout } from "../drawing/sheet";
 import { drawingSubject, finishProjections, projectionPlan, sheetInfo, sheetParts, viewScales, withViewParts, type DrawingSubject } from "../drawing/sheetSource";
-import { hostKindOf } from "../drawing/sections";
+import { hostKindOf, viewKey } from "../drawing/sections";
 import { addViewOf, keyGroup, rekeyed, splitKey, toggleProjected, viewParts, removeViewOf } from "../drawing/viewParts";
 import type { ViewProjection } from "../kernel/protocol";
 import { newId } from "../model/document";
@@ -301,7 +301,7 @@ export function sheetLines(s: Session, d: Drawing, sh: Sheet): string[] {
     const where = dim.type === "angle" && r.c && r.d ? ` between ${fmt2(r.a)}–${fmt2(r.b ?? r.a)} and ${fmt2(r.c)}–${fmt2(r.d)}${dim.reflex ? ", outside" : ""}` : dim.b ? ` from ${fmt2(r.a)} to ${fmt2(r.b ?? r.a)}` : ` at ${fmt2(r.a)}`;
     return `- D${k + 1} ${viewName(page, dim.view)}: ${label} (${dim.type === "arcLength" ? "arc length" : dim.type}${dim.type === "ordinate" ? (dim.axis === "v" ? " up" : " across") : ""}${where})${r.found ? "" : " — LOST: what it measured isn't there any more"}`;
   });
-  const notes = (page.notes ?? []).map((n, k) => `- N${k + 1}: ${n.symbol ? describeSymbol(n.symbol) : `note "${n.text.replace(/\n/g, " / ")}"`} at (${r2(n.at[0])}, ${r2(n.at[1])})${n.leader ? `, its leader pointing to (${r2(n.leader[0])}, ${r2(n.leader[1])})` : ""}`);
+  const notes = (page.notes ?? []).map((n, k) => `- N${k + 1}: ${n.symbol ? describeSymbol(n.symbol) : n.table ? tableText(n.table) : `note "${n.text.replace(/\n/g, " / ")}"`} at (${r2(n.at[0])}, ${r2(n.at[1])})${n.leader ? `, its leader pointing to (${r2(n.leader[0])}, ${r2(n.leader[1])})` : ""}`);
   const t = page.title;
   const title = [t.title && `title "${t.title}"`, t.partNumber && `part number "${t.partNumber}"`, t.material && `material "${t.material}"`, t.drawnBy && `drawn by "${t.drawnBy}"`, t.company && `company "${t.company}"`, t.notes && `notes "${t.notes.replace(/\n/g, " / ")}"`].filter(Boolean);
   return [
@@ -309,11 +309,32 @@ export function sheetLines(s: Session, d: Drawing, sh: Sheet): string[] {
     views.length ? `Views (points in each view's own mm):\n${views.join("\n")}` : "No views yet: add some with edit_drawing \"views\".",
     dims.length ? `Dimensions (delete_drawing_item takes these numbers):\n${dims.join("\n")}` : "No dimensions yet (auto_dimension adds the usual ones; add_dimension adds one).",
     notes.length ? `Notes and symbols (sheet mm from the bottom-left corner):\n${notes.join("\n")}` : null,
+    styleLine(d, page),
     sh.info.bom?.length ? `Parts list on the sheet: ${sh.info.bom.map((b) => `${b.item}. ${b.name} × ${b.quantity}`).join("; ")}.` : null,
     `Title block: ${title.length ? title.join(", ") : "nothing filled in yet"} (date ${sh.info.date}).`,
     sh.layout.tooBig ? "PROBLEM: the views don't fit the paper even at the smallest scale. Choose bigger paper (edit_drawing \"paper\")." : null,
     off ? `PROBLEM: ${off}` : null,
   ].filter((x): x is string => !!x);
+}
+
+/** A table from a CSV file as describe_drawing gives it: its size and its rows (cells between |), the first rows if long. */
+function tableText(rows: string[][]): string {
+  const cols = Math.max(0, ...rows.map((r) => r.length));
+  const shown = rows.slice(0, 12).map((r) => `[${r.map((c) => c.replace(/\|/g, "/")).join(" | ")}]`);
+  return `table (${rows.length} row${rows.length === 1 ? "" : "s"} × ${cols} column${cols === 1 ? "" : "s"}, the first the heading): ${shown.join(" ")}${rows.length > 12 ? ` … and ${rows.length - 12} more rows` : ""}`;
+}
+
+/** The drawing's standard, number style, own title block entries, revisions and cropped views, when any are set. */
+function styleLine(d: Drawing, page: Drawing): string | null {
+  const bits = [
+    d.standard === "ansi" ? "standard ANSI" : null,
+    d.decimalComma ? "decimal comma" : null,
+    d.inspection ? "inspection balloons" : null,
+    d.fields?.length ? `title block entries ${d.fields.map((f) => `${f.label} "${f.value}"`).join(", ")}` : null,
+    d.revisions?.length ? `revisions ${d.revisions.map((r) => `${r.rev} (${r.date}${r.by ? `, by ${r.by}` : ""}${r.approved ? `, approved ${r.approved}` : ""}): ${r.description}`).join("; ")}` : null,
+    page.views.some((v) => v.crop) ? `cropped views: ${page.views.filter((v) => v.crop).map((v) => viewName(page, viewKey(v))).join(", ")}` : null,
+  ].filter(Boolean);
+  return bits.length ? `Style: ${bits.join("; ")}.` : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -382,8 +403,8 @@ function applySettings(s: Session, d: Drawing, pageId: string, a: Obj): Drawing 
   if (a.other_parts !== undefined) out = applyOtherParts(s, out, pageId, a.other_parts);
   if (a.projection !== undefined) {
     const proj = oneOf(a.projection, ["first", "third"] as const, "projection");
-    const { projection: _p, ...rest } = withoutFit(out);
-    out = proj === "third" ? { ...rest, projection: "third" } : rest;
+    // (Every sheet's lined-up views go back to their places for it, as in the app.)
+    out = withProjection(out, proj === "third");
   }
   if (a.hidden_lines !== undefined) out = { ...out, hiddenLines: bool(a.hidden_lines, "hidden_lines") };
   if (a.exploded !== undefined) {
@@ -483,7 +504,9 @@ const SETTINGS_SCHEMA = {
  * Lay the changed drawing out and keep the change only if it works: refused
  * (nothing changed) if its views can't be made, or `problem` finds fault.
  */
-export async function commitDrawing(s: Session, next: JuraCADDocument, d: Drawing, pageId: string, verb: string, problem?: (sh: Sheet) => string | null): Promise<Sheet> {
+export async function commitDrawing(s: Session, given: JuraCADDocument, d: Drawing, pageId: string, verb: string, problem?: (sh: Sheet) => string | null): Promise<Sheet> {
+  // (New dimensions get their inspection numbers when the drawing has inspection balloons.)
+  const next = updateDrawing(given, d.id, numberInspections);
   const after = drawingsOf(next).find((x) => x.id === d.id)!;
   let sh: Sheet;
   try {

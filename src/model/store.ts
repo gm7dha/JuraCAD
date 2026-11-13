@@ -1,4 +1,6 @@
 import { sketchFromDxf, type LinkedSketch } from "../link/receive";
+import { defaultTemplate } from "../drawing/templateStorage";
+import { applyTemplate } from "../drawing/templates";
 import { deleteItems } from "../sketch/ops";
 import { followLinks, pruneReferences, type RefEdge, type SketchLinkInfo } from "../sketch/links";
 import { isExtraId, keepSketchExtras, withoutEmptyExtras } from "../sketch/sketchText";
@@ -65,7 +67,7 @@ import { setPartProperties as setPartPropertiesIn } from "../assembly/properties
 import { moveFeature as moveFeatureIn } from "./reorder";
 import { DEFAULT_MATERIAL } from "./materials";
 import { chooseFinish, setColourIn, type FinishId } from "./finishes";
-import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameDrawing as renameDrawingIn, updateDrawing } from "../drawing/drawing";
+import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameDrawing as renameDrawingIn, updateDrawing, numberInspections } from "../drawing/drawing";
 import { withDragChange, type DragChange } from "../assembly/drag";
 import type { Placement } from "../assembly/math";
 import { importName } from "./importFile";
@@ -132,7 +134,7 @@ export interface Editing {
 }
 
 /** Drawing tools: select, the smart Dimension, baseline / chain / ordinate runs, and section. */
-export type DrawingTool = "select" | "dimension" | "baseline" | "chain" | "ordinate" | "section" | "auxiliary" | "breakout" | "shorten" | "note" | "detail" | "holeCallout" | "chamfer" | "arcLength" | "datum" | "fcf" | "finish";
+export type DrawingTool = "select" | "crop" | "cropShape" | "dimension" | "baseline" | "chain" | "ordinate" | "section" | "auxiliary" | "breakout" | "shorten" | "note" | "detail" | "holeCallout" | "chamfer" | "arcLength" | "datum" | "fcf" | "finish";
 
 export type SketchTool =
   | "select"
@@ -1658,13 +1660,19 @@ export const useStore = create<AppState>((set, get) => {
       const asm = activeAssembly(s);
       const source = asm ? { kind: "assembly" as const, id: asm.id } : partId ? { kind: "part" as const, id: partId } : null;
       const id = newId("d");
-      change((doc) => addDrawingTo(doc, id, source));
+      // (A new drawing starts from the template chosen for new drawings, if any.)
+      const template = defaultTemplate();
+      change((doc) => {
+        const added = addDrawingTo(doc, id, source);
+        return template ? updateDrawing(added, id, (d) => applyTemplate(d, template)) : added;
+      });
       set({ activeTab: id, asmSelection: [], selection: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, editingPattern: null, dialog: null });
     },
 
     changeDrawing: (fn) => {
       const d = activeDrawing(get());
-      if (d) change((doc) => updateDrawing(doc, d.id, fn));
+      // (With inspection balloons on, new dimensions get the next numbers — numberInspections.)
+      if (d) change((doc) => updateDrawing(doc, d.id, (x) => numberInspections(fn(x))));
     },
 
     renameDrawing: (id, name) => change((doc) => renameDrawingIn(doc, id, name)),
