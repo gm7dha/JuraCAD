@@ -15,9 +15,9 @@ import { defaultFitRange, FIT_KIND_LABELS, fitFor, fitRangeFor, judgeFits, mateP
 import { DEFAULT_FITS, type PrintFits } from "../model/printSettings";
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { applyPlacement, compose, eulerDegFromQuat, IDENTITY, quatFromEulerDeg, rotate, type Placement, type Vec3 } from "../assembly/math";
-import { MATE_ORDER, MATE_TYPES, nextMateName, solveWithParts, type SolveResult } from "../assembly/mates";
+import { MATE_ORDER, MATE_TYPES, nextMateName, rememberCutMeshes, rememberedCutMeshes, solveWithParts, type CutMeshes, type SolveResult } from "../assembly/mates";
 import { isOrigin, originConnector, ORIGIN_PLANES, type OriginPlane } from "../assembly/origin";
-import { cutsInsideSubAssemblies, explodeAssembly, FLAT_STEP_NOTE, hasAssemblyFeatures, instancesForKernel, partBox } from "../assembly/placed";
+import { cutMeshesFrom, cutsInsideSubAssemblies, explodeAssembly, FLAT_STEP_NOTE, hasAssemblyFeatures, instancesForKernel, partBox, storedCutInputs } from "../assembly/placed";
 import { stepPartOffsets } from "../assembly/explode";
 import { ownConnectorPick } from "../assembly/connectors";
 import { stepTree } from "../assembly/stepTree";
@@ -62,15 +62,28 @@ function insertableParts(s: Session): PartMesh[] {
 
 export function solve(s: Session, asm: Assembly, hold: string[] = [], doc = s.doc): SolveResult {
   const assemblies = assembliesOf(doc);
-  const base = solveWithParts(asm, builtParts(s), { assemblies, hold });
-  // A mate on a face made by the assembly's own features (a drilled hole) is found on the cut copies.
-  const cutMeshes = cutMeshesOf(s, asm, assemblies, base);
-  return cutMeshes ? solveWithParts(asm, builtParts(s), { assemblies, hold, cutMeshes }) : base;
+  // A mate on a face made by assembly features (a drilled hole) is found on the cut copies — cut where the document
+  // has the parts, as the app does, so the answer depends on the design alone (one solve, never flipping).
+  const cutMeshes = solverCuts(s, assemblies);
+  return solveWithParts(asm, builtParts(s), { assemblies, hold, ...(cutMeshes ? { cutMeshes } : {}) });
 }
 
-/** The copies an assembly's features cut, by key, in the part's own coordinates (undefined when none are). */
+/** The mate solver's cut copies for these assemblies (see storedCutInputs), worked out once per design and build. */
+export function solverCuts(s: Session, assemblies: readonly Assembly[]): CutMeshes | undefined {
+  if (!assemblies.some((a) => a.features?.length)) return undefined;
+  const parts = builtParts(s);
+  const known = rememberedCutMeshes(assemblies, parts);
+  if (known) return known;
+  const inputs = storedCutInputs(assemblies, parts);
+  const cuts = cutMeshesFrom(inputs.length ? s.withWholeEngine((e) => e.assemblyCuts(inputs)).meshes : []);
+  rememberCutMeshes(assemblies, parts, cuts);
+  return cuts;
+}
+
+/** The copies an assembly's features cut as shown (where the solve puts them), by key, in the part's own coordinates (undefined when none are). */
 export function cutMeshesOf(s: Session, asm: Assembly, assemblies: readonly Assembly[] = assembliesOf(s.doc), solved?: SolveResult): Record<string, PartMesh> | undefined {
   if (!hasAssemblyFeatures(asm, assemblies)) return undefined;
+  solverCuts(s, assemblies);
   const parts = builtParts(s);
   const r = s.withWholeEngine((e) => e.assemblyCuts(instancesForKernel(asm, parts, assemblies, solved ?? solveWithParts(asm, parts, { assemblies }))));
   return r.meshes.length ? Object.fromEntries(r.meshes.map((m) => [m.id, m])) : undefined;

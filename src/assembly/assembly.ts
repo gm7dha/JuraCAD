@@ -579,13 +579,21 @@ export function billOfMaterials(
   if (!options.structured) return [...flat(assembly, 1, new Map(), [assembly.id]).values()];
 
   // Structured: this level's parts and sub-assemblies, each sub-assembly followed by what's in one of it.
-  const level = (a: Assembly, depth: number, prefix: string, within: string[], flip = false): BomRow[] => {
+  /** `paths`: the keys so far of every copy of this level (one, "", at the top): a part is "modified" when any copy's is. */
+  const level = (a: Assembly, depth: number, prefix: string, within: string[], flip = false, paths: string[] = [""]): BomRow[] => {
     const rows = new Map<string, BomRow>();
-    const inside = new Map<string, { sub: Assembly; flip: boolean }>();
+    const inside = new Map<string, { sub: Assembly; flip: boolean; paths: string[] }>();
+    const cutIn = (i: Instance) => {
+      for (const p of paths) {
+        const c = isCut(p, i);
+        if (c !== null) return c;
+      }
+      return null;
+    };
     for (const i of a.instances) {
       if (i.suppressed) continue;
       if (!i.subAssembly) {
-        partRow(rows, i, 1, flip, depth === 0 ? isCut("", i) : null);
+        partRow(rows, i, 1, flip, cutIn(i));
         continue;
       }
       const sub = subOf(i, within);
@@ -594,10 +602,13 @@ export function billOfMaterials(
       const mirrored = flip !== !!i.mirrored;
       const key = `asm:${sub.id}${mirrored ? "~mirrored" : ""}`;
       const row = rows.get(key);
-      if (row) row.quantity++;
-      else {
+      const here = paths.map((p) => `${p}${i.id}/`);
+      if (row) {
+        row.quantity++;
+        inside.get(key)?.paths.push(...here);
+      } else {
         rows.set(key, { partId: key, name: sub.name + (mirrored ? " (mirrored)" : ""), quantity: 1, missing: false, subAssembly: true });
-        inside.set(key, { sub, flip: mirrored });
+        inside.set(key, { sub, flip: mirrored, paths: here });
       }
     }
     const out: BomRow[] = [];
@@ -612,7 +623,7 @@ export function billOfMaterials(
       // What one of it weighs: everything in it (unknown if any part's weight is).
       const weight = bomTotalMass([...flat(sub, 1, new Map(), [...within, sub.id], found.flip, null).values()]);
       out.push({ ...r, level: depth, item, ...(!weight.partial && weight.grams > 0 ? { massEach: weight.grams } : {}) });
-      out.push(...level(sub, depth + 1, `${item}.`, [...within, sub.id], found.flip));
+      out.push(...level(sub, depth + 1, `${item}.`, [...within, sub.id], found.flip, found.paths));
     });
     return out;
   };

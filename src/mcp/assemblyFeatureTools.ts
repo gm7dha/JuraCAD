@@ -5,7 +5,7 @@
  * change; only this assembly's copies are cut (src/assembly/assemblyFeatures.ts).
  */
 import { addAssemblyFeatures, assemblyExtrudeCut, assemblyFeaturesOf, assemblyHole, assemblySketch, deleteAssemblyFeatures, setFeatureParts } from "../assembly/assemblyFeatures";
-import { updateAssembly } from "../assembly/assembly";
+import { settlePlacements, updateAssembly } from "../assembly/assembly";
 import { instancesForKernel } from "../assembly/placed";
 import { leavesOf } from "../assembly/subassembly";
 import type { Assembly, Feature } from "../model/types";
@@ -116,7 +116,8 @@ export const ASSEMBLY_FEATURE_TOOLS: ToolDef[] = [
       // Cut on the whole design's engine: which copies lost material, and any problem.
       await s.checkpoint();
       const all = builtParts(s);
-      const inputs = instancesForKernel(made, all, assembliesOf(next), solve(s, asm));
+      const solved = solve(s, asm);
+      const inputs = instancesForKernel(made, all, assembliesOf(next), solved);
       const r = s.withWholeEngine((e) => e.assemblyCuts(inputs));
       const problem = r.errors[tool.id];
       if (problem) throw new InputError(`${problem} Nothing was changed.`);
@@ -130,7 +131,9 @@ export const ASSEMBLY_FEATURE_TOOLS: ToolDef[] = [
       s.throwIfCancelled();
       // The parts it cuts are the ones it reaches now (as Onshape lists them): a bolt mated into the hole later isn't
       // drilled too. Change them with the app's "Parts…".
-      s.commit(parts ? next : updateAssembly(next, asm.id, (x) => setFeatureParts(x, tool.id, reached)));
+      // (The parts are kept where they're shown — where it cut them — as the mate solver cuts them where the design has them.)
+      const kept = settlePlacements(next, asm.id, solved.placements);
+      s.commit(parts ? kept : updateAssembly(kept, asm.id, (x) => setFeatureParts(x, tool.id, reached)));
       const names = reached.map((k) => leaves.find((l) => l.key === k)?.name ?? k);
       const volumes = r.meshes.filter((m) => reached.includes(m.id)).map((m) => `${leaves.find((l) => l.key === m.id)?.name ?? m.id} ${r2(m.volume ?? 0)} mm³`);
       return say(`Made ${tool.name} in ${asm.name} (on ${label}): it cuts ${names.join(", ")} in this assembly only — their Part Studio parts are unchanged.`, volumes.length ? `Volumes now: ${volumes.join(", ")}.` : null);

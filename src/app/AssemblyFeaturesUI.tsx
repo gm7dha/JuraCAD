@@ -35,6 +35,7 @@ import {
   editInContext,
   forgetContext,
   hideContext,
+  reachNow,
   setAsmFeatureParts,
   toggleAsmFeatureSuppressed,
   updateContextNow,
@@ -106,18 +107,34 @@ export function AssemblyFeaturesSection({ assembly }: { assembly: Assembly }) {
   );
 }
 
-/** Which parts a feature cuts: every top-level part it reaches, or the ones ticked (parts inside sub-assemblies too). */
+/**
+ * Which parts a feature cuts: the ones ticked (parts inside sub-assemblies too), or — one click — the parts it reaches
+ * from where everything is now (taken once, as Accept does, so a part put in the hole later isn't cut too).
+ */
 function PartsChooser({ assembly, feature, onDone }: { assembly: Assembly; feature: Feature; onDone: () => void }) {
   const leaves = useAssemblyLeaves();
-  const chosen = assembly.featureParts?.[feature.id] ?? null;
+  const chosen = assembly.featureParts?.[feature.id] ?? leaves.filter((l) => !l.path.length).map((l) => l.key);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
   return (
     <div className="asm-feature-parts" onClick={(e) => e.stopPropagation()}>
-      <label className="check-row">
-        <input type="checkbox" checked={chosen === null} onChange={(e) => setAsmFeatureParts(feature.id, e.target.checked ? null : leaves.filter((l) => !l.path.length).map((l) => l.key))} />
-        Every part it reaches (not inside sub-assemblies)
-      </label>
-      {chosen !== null &&
-        leaves.map((l) => (
+      <button
+        className="text-button small"
+        disabled={busy}
+        title="Tick just the parts it cuts from where they are now"
+        onClick={() => {
+          setBusy(true);
+          setNote(null);
+          void reachNow(feature.id).then((problem) => {
+            setBusy(false);
+            setNote(problem);
+          });
+        }}
+      >
+        {busy ? "Working…" : "The parts it reaches now"}
+      </button>
+      {note && <div className="dialog-note">{note}</div>}
+      {leaves.map((l) => (
           <label className="check-row" key={l.key}>
             <input
               type="checkbox"

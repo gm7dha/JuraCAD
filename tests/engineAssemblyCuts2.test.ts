@@ -11,7 +11,7 @@ import { assemblyHole, assemblySketch, modifiedCopies } from "../src/assembly/as
 import { billOfMaterials } from "../src/assembly/assembly";
 import { contextInputs, contextPartId, takeContext } from "../src/assembly/inContext";
 import { solveWithParts } from "../src/assembly/mates";
-import { cutsInsideSubAssemblies, instancesForKernel } from "../src/assembly/placed";
+import { cutMeshesFrom, cutsInsideSubAssemblies, instancesForKernel, storedCutInputs } from "../src/assembly/placed";
 import { stepTree } from "../src/assembly/stepTree";
 import { GeometryEngine } from "../src/kernel/engine";
 import type { PartMesh, StudioInput } from "../src/kernel/protocol";
@@ -129,7 +129,8 @@ describe("assembly features, more", () => {
     asm = { ...asm, mates: [{ id: "m1", name: "Cylindrical 1", type: "cylindrical", a: { instanceId: "i1", pick: { partId: plate.id, ref: wall } }, b: { instanceId: "i2", pick: { partId: pin.id, ref: side } }, flip: false, values: {} }] };
     // Without the cut copies the hole's wall isn't there to mate to; with them, the pin goes into the hole.
     expect(solveWithParts(asm, parts).mateErrors.m1).toBeDefined();
-    const solved = solveWithParts(asm, parts, { cutMeshes: Object.fromEntries(r.meshes.map((m) => [m.id, m])) });
+    const cuts = cutMeshesFrom(engine.assemblyCuts(storedCutInputs([asm], parts)).meshes);
+    const solved = solveWithParts(asm, parts, { cutMeshes: cuts });
     expect(solved.mateErrors).toEqual({});
     expect(solved.placements.i2.position[0]).toBeCloseTo(20, 4);
     expect(solved.placements.i2.position[1]).toBeCloseTo(12, 4);

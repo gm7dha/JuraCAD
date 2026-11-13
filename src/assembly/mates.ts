@@ -238,6 +238,25 @@ export type FrameLookup = (mate: Mate, side: "a" | "b") => Frame | null;
 /** An assembly's own copies cut by its own features, by instance id (see SolveOptions.cutMeshes). */
 export type CutMeshes = (assemblyId: string) => Readonly<Record<string, PartMesh>> | undefined;
 
+/** The cut copies worked out for a state of the document's assemblies and the parts as built (`rememberCutMeshes`). */
+const remembered = new WeakMap<readonly Assembly[], WeakMap<readonly PartMesh[], CutMeshes>>();
+
+/**
+ * Says which cut copies go with these assemblies and parts (the app once the geometry worker has cut them, the Claude
+ * extension as it solves), so every solve of that state finds them — sub-assemblies solved for the 3D view, exports
+ * and drawings too — without each caller passing them on.
+ */
+export function rememberCutMeshes(assemblies: readonly Assembly[], parts: readonly PartMesh[], cuts: CutMeshes): void {
+  let byParts = remembered.get(assemblies);
+  if (!byParts) remembered.set(assemblies, (byParts = new WeakMap()));
+  byParts.set(parts, cuts);
+}
+
+/** The cut copies remembered for these assemblies and parts, if any. */
+export function rememberedCutMeshes(assemblies: readonly Assembly[] | undefined, parts: readonly PartMesh[]): CutMeshes | undefined {
+  return assemblies ? remembered.get(assemblies)?.get(parts) : undefined;
+}
+
 /** The cut copy of instance `key` of `a` (a "copy/inner" key reaches into the sub-assemblies it names). */
 function cutMeshAt(a: Assembly, key: string, assemblies: readonly Assembly[] | undefined, cuts: CutMeshes | undefined): PartMesh | undefined {
   if (!cuts) return undefined;
@@ -867,7 +886,9 @@ const symmetryOn = (parts: readonly PartMesh[], assemblies?: readonly Assembly[]
 };
 
 /** Solve using the parts as built now (pass the document's assemblies when it may hold sub-assemblies). */
-export function solveWithParts(assembly: Assembly, parts: PartMesh[], options: SolveOptions = {}): SolveResult {
+export function solveWithParts(assembly: Assembly, parts: PartMesh[], given: SolveOptions = {}): SolveResult {
+  const kept = given.cutMeshes ? undefined : rememberedCutMeshes(given.assemblies, parts);
+  const options: SolveOptions = kept ? { ...given, cutMeshes: kept } : given;
   // (Flexible sub-assemblies' parts are solved here too; without any, exactly as before.)
   const r = settledWithCuts(assembly, parts, options, (a) =>
     options.assemblies && hasFlexible(a)
@@ -988,8 +1009,9 @@ const NO_CUTS = {};
  * copy, by key), as the assembly's own solve puts them. Empty when it has none.
  * Worked out once for each state of the document and parts.
  */
-export function flexibleInner(a: Assembly, parts: readonly PartMesh[], assemblies: readonly Assembly[], cuts?: CutMeshes): Record<string, Placement> {
+export function flexibleInner(a: Assembly, parts: readonly PartMesh[], assemblies: readonly Assembly[], given?: CutMeshes): Record<string, Placement> {
   if (!hasFlexible(a)) return {};
+  const cuts = given ?? rememberedCutMeshes(assemblies, parts);
   let byParts = flexCache.get(a);
   if (!byParts) flexCache.set(a, (byParts = new WeakMap()));
   let byAll = byParts.get(parts);
@@ -1131,13 +1153,14 @@ const insideCache = new WeakMap<readonly Assembly[], WeakMap<readonly PartMesh[]
  * a sub-assembly (it moves as one piece, so this never changes with where it's
  * placed). Worked out once for each state of the document and parts.
  */
-export function solvedInside(sub: Assembly, parts: readonly PartMesh[], assemblies?: readonly Assembly[], within: readonly string[] = [sub.id], cuts?: CutMeshes): Record<string, Placement> {
+export function solvedInside(sub: Assembly, parts: readonly PartMesh[], assemblies?: readonly Assembly[], within: readonly string[] = [sub.id], given?: CutMeshes): Record<string, Placement> {
+  const cuts = given ?? rememberedCutMeshes(assemblies, parts);
   // (With cut copies, a mate on a face its own features made is found on them, as at the top level.)
-  const options: SolveOptions = { assemblies, ...(cuts ? { cutMeshes: cuts } : {}) };
+  const options: SolveOptions = cuts ? { cutMeshes: cuts } : {};
   const solve = () =>
     assemblies && hasFlexible(sub)
       ? solveFlexibly(sub, parts, assemblies, options, within).flat
-      : settledWithCuts(sub, parts as PartMesh[], options, (a) =>
+      : settledWithCuts(sub, parts as PartMesh[], { ...options, assemblies }, (a) =>
           solveAssembly(a, (m, side) => connectorFrameFor(a, parts as PartMesh[], m[side], assemblies, within, cuts), { symmetry: symmetryOn(parts, assemblies) }),
         ).placements;
   if (!assemblies) return solve();

@@ -17,9 +17,9 @@ import { create } from "zustand";
 import { useEffect, useMemo } from "react";
 
 import { addAssemblyFeatures, assemblyExtrudeCut, assemblyFeaturesOf, assemblyHole, assemblySketch, deleteAssemblyFeatures, modifiedCopies, setFeatureParts } from "../assembly/assemblyFeatures";
-import { updateAssembly } from "../assembly/assembly";
+import { settlePlacements, updateAssembly } from "../assembly/assembly";
 import { contextGone, contextPartOf, removeContext, setContextHidden, takeContext, updateContext } from "../assembly/inContext";
-import { hasAssemblyFeatures, instancesForKernel } from "../assembly/placed";
+import { cutMeshesFrom, hasAssemblyFeatures, instancesForKernel, storedCutInputs } from "../assembly/placed";
 import type { Placement } from "../assembly/math";
 import { getKernel } from "../kernel/connect";
 import type { AssemblyCutsResult, PartMesh } from "../kernel/protocol";
@@ -29,7 +29,7 @@ import { addCircle, addPoint, addRectangle } from "../sketch/ops";
 import type { SketchPlane } from "../sketch/planes";
 import { emptySketch, type SketchData } from "../sketch/types";
 import { useSolvedAssembly } from "./assemblySolve";
-import { solveWithParts } from "../assembly/mates";
+import { rememberCutMeshes, solveWithParts, type CutMeshes } from "../assembly/mates";
 
 /** What the Hole / Cut dialog is making (null = closed). */
 export interface AsmCutDraft {
@@ -57,9 +57,66 @@ interface AsmFeatureState {
   /** Edit in context: the context parts of each Part Studio, from the latest rebuilds. */
   contextParts: PartMesh[];
   draft: AsmCutDraft | null;
+  /**
+   * The mate solver's cut copies (each assembly's own copies cut by its own features, where the document has them —
+   * see storedCutInputs), for the document's assemblies and the parts as they were when the worker cut them.
+   */
+  solverCuts: { assemblies: readonly Assembly[]; parts: readonly PartMesh[]; cuts: CutMeshes; signature: string } | null;
 }
 
-export const useAsmFeatures = create<AsmFeatureState>(() => ({ cuts: null, contextParts: [], draft: null }));
+export const useAsmFeatures = create<AsmFeatureState>(() => ({ cuts: null, contextParts: [], draft: null, solverCuts: null }));
+
+/** The solver's cut copies for the document now (the latest worked out while new ones are on their way). */
+export function solverCutsNow(): CutMeshes | undefined {
+  return useAsmFeatures.getState().solverCuts?.cuts;
+}
+
+/**
+ * Keeps the mate solver's cut copies up to date: whenever the document's assemblies or the parts change, the worker
+ * cuts each assembly's copies where the document has them. They depend on the document alone (never on a solve), so
+ * a mate on a drilled hole settles at once.
+ */
+function useSolverCuts(): void {
+  const parts = useStore((s) => s.parts);
+  const assemblies = useStore((s) => s.history.present.assemblies);
+  const dragging = useStore((s) => !!s.dragPreview);
+  useEffect(() => {
+    if (dragging) return;
+    const list = assemblies ?? [];
+    const inputs = list.some((a) => a.features?.length) ? storedCutInputs(list, parts) : [];
+    if (!inputs.length) {
+      if (useAsmFeatures.getState().solverCuts) useAsmFeatures.setState({ solverCuts: null });
+      return;
+    }
+    const signature = JSON.stringify(inputs);
+    const was = useAsmFeatures.getState().solverCuts;
+    if (was && was.signature === signature && was.parts === parts) {
+      // (The same copies to cut: kept, said for the new assemblies too.)
+      if (was.assemblies !== list) {
+        rememberCutMeshes(list, parts, was.cuts);
+        useAsmFeatures.setState({ solverCuts: { ...was, assemblies: list } });
+      }
+      return;
+    }
+    let live = true;
+    const kernel = getKernel();
+    kernel
+      .whenIdle()
+      .then(() => kernel.assemblyCuts(inputs))
+      .then(
+        (result) => {
+          if (!live) return;
+          const cuts = cutMeshesFrom(result.meshes);
+          rememberCutMeshes(list, parts, cuts);
+          useAsmFeatures.setState({ solverCuts: { assemblies: list, parts, cuts, signature } });
+        },
+        () => undefined,
+      );
+    return () => {
+      live = false;
+    };
+  }, [parts, assemblies, dragging]);
+}
 
 const NO_MESHES: PartMesh[] = [];
 const NO_CUT_MESHES: Record<string, PartMesh> = {};
@@ -106,6 +163,7 @@ export function useAssemblyCuts(): { meshes: Record<string, PartMesh>; modified:
   const dragging = useStore((s) => !!s.dragPreview);
   const cuts = useAsmFeatures((s) => s.cuts);
   const any = !!assembly && hasAssemblyFeatures(assembly, assemblies ?? []);
+  useSolverCuts();
   useEffect(() => {
     if (!assembly || !any || !solved || dragging) {
       if (!any && useAsmFeatures.getState().cuts) useAsmFeatures.setState({ cuts: null });
@@ -120,8 +178,7 @@ export function useAssemblyCuts(): { meshes: Record<string, PartMesh>; modified:
       .then(
         (result) => {
           if (!live) return;
-          // The same cuts as before (the solve that used them ran again): kept as they were, or the view and the
-          // mate solver would keep asking for them again.
+          // The same cuts as before: kept as they were, so the view isn't drawn again for nothing.
           const was = useAsmFeatures.getState().cuts;
           if (was && was.assembly.id === assembly.id && cutsSignature(was.result) === cutsSignature(result)) {
             if (was.assembly !== assembly) useAsmFeatures.setState({ cuts: { assembly, result: was.result } });
@@ -220,9 +277,9 @@ export async function acceptAsmCut(): Promise<string | null> {
   const made = trial.assemblies?.find((a) => a.id === asm.id);
   if (!made) return null;
   let reached: string[] = [];
+  const solved = solveWithParts(asm, s.parts, { assemblies: s.history.present.assemblies });
   try {
     const assemblies = trial.assemblies ?? [];
-    const solved = solveWithParts(asm, s.parts, { assemblies: s.history.present.assemblies });
     const r = await getKernel().assemblyCuts(instancesForKernel(made, s.parts, assemblies, solved));
     if (r.errors[tool.id]) return r.errors[tool.id];
     reached = r.reached[tool.id] ?? [];
@@ -231,7 +288,9 @@ export async function acceptAsmCut(): Promise<string | null> {
   }
   if (!reached.length) return `It wouldn't cut anything from there. Check where you clicked${d.throughAll ? "" : ", or tick Through all or Flip direction"}.`;
   // (The assembly may have changed while the worker was cutting: added to the latest one.)
-  useStore.getState().changeDocument((doc) => addAssemblyFeatures(doc, asm.id, [sketch, tool], { [tool.id]: d.parts ?? reached }));
+  // The parts are kept where they're shown, which is where the feature cuts them (the mate solver's cut copies are made
+  // with the parts where the document has them).
+  useStore.getState().changeDocument((doc) => addAssemblyFeatures(settlePlacements(doc, asm.id, solved.placements), asm.id, [sketch, tool], { [tool.id]: d.parts ?? reached }));
   useAsmFeatures.setState({ draft: null });
   return null;
 }
@@ -249,9 +308,33 @@ export function toggleAsmFeatureSuppressed(id: string): void {
 }
 
 /** Which copies a feature cuts (null = every top-level part it reaches). */
-export function setAsmFeatureParts(id: string, keys: string[] | null): void {
+export function setAsmFeatureParts(id: string, keys: string[]): void {
   const asm = activeAssembly(useStore.getState());
   if (asm) useStore.getState().changeDocument((doc) => updateAssembly(doc, asm.id, (a) => setFeatureParts(a, id, keys)));
+}
+
+/**
+ * "The parts it reaches now": every top-level copy tried once, and the ones it really cuts kept as its list (as
+ * Accept does) — so a part mated into the hole later isn't drilled too. Returns a problem to show, or null.
+ */
+export async function reachNow(id: string): Promise<string | null> {
+  const s = useStore.getState();
+  const asm = activeAssembly(s);
+  if (!asm) return null;
+  const assemblies = s.history.present.assemblies ?? [];
+  const trial = setFeatureParts(asm, id, null);
+  let reached: string[];
+  try {
+    const solved = solveWithParts(asm, s.parts, { assemblies });
+    const r = await getKernel().assemblyCuts(instancesForKernel(trial, s.parts, assemblies.map((a) => (a.id === asm.id ? trial : a)), solved));
+    if (r.errors[id] && !r.reached[id]?.length) return r.errors[id];
+    reached = r.reached[id] ?? [];
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+  if (!reached.length) return "It doesn't cut any part from where it is now.";
+  setAsmFeatureParts(id, reached);
+  return null;
 }
 
 // ---------------------------------------------------------------------------

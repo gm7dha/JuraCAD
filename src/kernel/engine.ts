@@ -2480,6 +2480,8 @@ export class GeometryEngine {
           this.links = {};
           // Edit in context: other Part Studios' parts placed round the part being edited, for sketches that use them.
           const notBuilt = new Set<string>();
+          // (Any left by a build stopped part-way are freed first.)
+          this.contextParts.forEach((p) => p.shape.delete());
           this.contextParts = studio.contexts?.length && usesContext(studio) ? this.placeContextParts(studio.contexts, notBuilt) : [];
           setCurrentScope(studio.variables ?? variables);
           // What each sketch could snap to is kept (cheaply) for when one is opened — not for other configurations.

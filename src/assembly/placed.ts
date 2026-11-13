@@ -4,7 +4,7 @@
  * the exploded view's places, and each part placed for the geometry engine.
  * Pure (no store), so the Claude extension uses exactly what the app does.
  */
-import { solvedInside, solveWithParts, type SolveResult } from "./mates";
+import { solvedInside, solveWithParts, type CutMeshes, type SolveResult } from "./mates";
 import { boundsOfVertices, type Box3 } from "./assembly";
 import { addOffsets, explodedPlacements, explodeOffsets, stepOffsets } from "./explode";
 import { compose, IDENTITY, type Placement, type Vec3 } from "./math";
@@ -87,9 +87,9 @@ export function cutStager(assembly: Assembly, parts: readonly PartMesh[], assemb
     return { list, places: solvedInside(sub, parts, assemblies, within) };
   };
   return (leaf, solved) => {
+    // (Deepest sub-assembly first, this assembly's own last: each level cuts what the levels inside it left.)
     const stages: CutStage[] = [];
     const own = cutsFor(assembly, leaf.key);
-    if (own) stages.push({ features: own, at: { position: solved.position, rotation: solved.rotation }, ...(leaf.instance.mirrored ? { mirrored: true } : {}) });
     const path = [leaf.top, ...leaf.path];
     let level: Assembly = assembly;
     const within = [assembly.id];
@@ -107,12 +107,13 @@ export function cutStager(assembly: Assembly, parts: readonly PartMesh[], assemb
           if (there) {
             const top = places[there.top] ?? sub.instances.find((x) => x.id === there.top)?.placement ?? IDENTITY;
             const at = there.path.length ? compose(top, there.relative) : top;
-            stages.push({ features, at: { position: at.position, rotation: at.rotation }, ...(there.instance.mirrored ? { mirrored: true } : {}) });
+            stages.unshift({ features, at: { position: at.position, rotation: at.rotation }, ...(there.instance.mirrored ? { mirrored: true } : {}) });
           }
         }
       }
       level = sub;
     }
+    if (own) stages.push({ features: own, at: { position: solved.position, rotation: solved.rotation }, ...(leaf.instance.mirrored ? { mirrored: true } : {}) });
     return stages.length ? stages : undefined;
   };
 }
@@ -127,6 +128,43 @@ export function cutsInsideSubAssemblies(assembly: Assembly, parts: readonly Part
   if (!hasAssemblyFeatures(assembly, assemblies)) return false;
   const stager = cutStager(assembly, parts, assemblies);
   return leavesOf(assembly, parts, assemblies).some((l) => l.path.length > 0 && !!stager(l, IDENTITY));
+}
+
+/** (Joins an assembly's id and one of its instances' ids in `storedCutInputs`.) */
+export const CUT_KEY = "|";
+
+/**
+ * What the mate solver's cut copies are made from: in every assembly with features, each of its own part copies its
+ * own features cut, with the copy where the document has it (never where a solve moved it — so the cut copies, and
+ * the solve that uses them, depend on the document alone and settle at once). Ids are "<assembly id>|<instance id>".
+ */
+export function storedCutInputs(assemblies: readonly Assembly[], parts: readonly PartMesh[]): InstanceInput[] {
+  const out: InstanceInput[] = [];
+  for (const a of assemblies) {
+    if (!a.features?.length) continue;
+    for (const i of a.instances) {
+      if (i.subAssembly || i.suppressed || !findMesh(parts, meshIdOf(i))) continue;
+      const features = cutsFor(a, i.id);
+      if (!features) continue;
+      const at = { position: i.placement.position, rotation: i.placement.rotation };
+      out.push({ id: `${a.id}${CUT_KEY}${i.id}`, partId: meshIdOf(i), name: i.name, ...at, ...(i.mirrored ? { mirrored: true } : {}), cuts: [{ features, at, ...(i.mirrored ? { mirrored: true } : {}) }] });
+    }
+  }
+  return out;
+}
+
+/** The solver's cut copies (see SolveOptions.cutMeshes) from what the geometry worker made of `storedCutInputs`. */
+export function cutMeshesFrom(meshes: readonly PartMesh[]): CutMeshes {
+  const by = new Map<string, Record<string, PartMesh>>();
+  for (const m of meshes) {
+    const at = m.id.indexOf(CUT_KEY);
+    if (at < 0) continue;
+    const a = m.id.slice(0, at);
+    let list = by.get(a);
+    if (!list) by.set(a, (list = {}));
+    list[m.id.slice(at + 1)] = m;
+  }
+  return (id) => by.get(id);
 }
 
 /** What an export says when it's written flat because of `cutsInsideSubAssemblies`. */
