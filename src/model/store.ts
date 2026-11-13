@@ -99,6 +99,7 @@ const NO_FRAMES: Record<string, FollowedFrame> = {};
 const NO_CURVES: Record<string, number[][]> = {};
 const NO_WARNINGS: Record<string, string> = {};
 const NO_CENTRES: Record<string, [number, number, number]> = {};
+const NO_FRAME_PATHS: Record<string, import("./frame").PathSeg[]> = {};
 
 /**
  * The open dialog's undo after a change to `before` (the draft as it was): one more step — unless `typing` names the
@@ -334,6 +335,8 @@ export interface AppState {
   featureNotes: Record<string, string>;
   /** Move / copy features → the point they turn about before the move (from the latest rebuild): where the triad goes. */
   transformCentres: Record<string, [number, number, number]>;
+  /** Frames → the path pieces they follow from part edges and curve features (from the latest rebuild), for the dialog's corners. */
+  framePaths: Record<string, import("./frame").PathSeg[]>;
   /** While the Move / copy triad is being dragged: the boxes' values so far (shown instead of the draft's). */
   transformLive: Record<string, string> | null;
   /** The open dialog's own undo: the draft before each drag of the triad (or Move triad click), newest last. */
@@ -896,6 +899,7 @@ export const useStore = create<AppState>((set, get) => {
     featureWarnings: NO_WARNINGS,
     featureNotes: NO_WARNINGS,
     transformCentres: NO_CENTRES,
+    framePaths: NO_FRAME_PATHS,
     transformLive: null,
     draftSteps: null,
     setTransformLive: (transformLive) => set({ transformLive }),

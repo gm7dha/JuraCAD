@@ -385,7 +385,9 @@ export function parseDrawings(raw: unknown): Drawing[] {
         const leader = Array.isArray(n.leader) && n.leader.length === 2 && n.leader.every(num) ? (n.leader as [number, number]) : null;
         const symbol = parseSymbol(n.symbol);
         const table = symbol ? null : parseTable(n.table);
-        return { id: n.id, at, text: n.text.slice(0, 2000), ...(symbol ? { symbol } : {}), ...(leader ? { leader } : {}), ...(table ? { table } : {}) };
+        const cl = n.cutList && typeof n.cutList === "object" ? (n.cutList as Record<string, unknown>) : null;
+        const cutList = cl ? (typeof cl.studio === "string" ? { studio: cl.studio } : {}) : null;
+        return { id: n.id, at, text: n.text.slice(0, 2000), ...(symbol ? { symbol } : {}), ...(leader ? { leader } : {}), ...(table ? { table } : {}), ...(cutList ? { cutList } : {}) };
       })
       .filter((x): x is DrawingNote => x !== null);
     const revisions = (Array.isArray(r.revisions) ? r.revisions : [])

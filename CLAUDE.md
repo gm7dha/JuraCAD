@@ -314,7 +314,14 @@
   cut-made face of a part the solve moves from its stored place (`cutFaceMoved`, `settledWithCuts`) is switched off and said ("This
   mate uses a face made by an assembly feature on …") only when it is what moves the part: solved without such mates, a part that
   still goes to the same place (moved by something upstream — the part under it made thicker, a Fasten following it) keeps them;
-  at most three solves. `rememberCutMeshes(assemblies,
+  at most three solves. Drilled copies a Part Studio change moves (the base a plate is fastened to made wider slides it) are
+  stored where the solve now puts them: pure `src/assembly/cutSettle.ts` `settleCutCopies(assemblies, parts, cuts)` (only
+  non-fixed copies the assembly's own features change; same array when nothing moved; cached, a settled state settles to
+  itself; sub-assemblies first, `childrenFirst`) / `settleCutCopiesIn(doc, …)`; the app runs it once per new `parts` when the
+  solver's cut copies for them arrive (`settleAfterRebuild` in assemblyFeatureState.ts, through `changeVersions` — no undo step
+  of its own; while dragging or viewing an old version it waits for the next answer), the extension's `solve` solves with the settled assemblies (`withSettled`; tools that commit store
+  them). So the solver's copy is cut where the copy is shown and a pin mated into the hole stays in it (tests/engineAssemblyCuts4,
+  the reviewer's probe: base 40 → 46, plate slides 3 mm). `rememberCutMeshes(assemblies,
   parts, cuts)` lets every solve of that state find them without being passed (`rememberedCutMeshes`; the app's `useSolverCuts`
   once the worker answers, the extension's `solverCuts` in `solve`); a state not cut yet takes the app's latest copies
   (`carryCutMeshesOver`; kept for it when its `storedCutInputs` are the same), so edits never make mated parts jump; Accept / add_assembly_feature settle placements first, so
@@ -329,9 +336,24 @@
   App: `src/app/assemblyFeatureState.ts` (own zustand store: cut meshes for the assembly on show, used by Viewport's
   `instanceMeshes` and connectorAt via `cutMeshFor`; the Hole/Cut draft; `acceptAsmCut` asks the worker what it reaches first;
   actions via `changeDocument`), `src/app/AssemblyFeaturesUI.tsx` (toolbar group "Hole"/"Cut", the "Assembly features" list with
-  Parts…/Off/delete and each feature's problem, `AsmCutPanel`, `asmCutPick` first in handleAssemblyPick). Not done:
-  Fillet/Chamfer/Sweep as assembly features, a full sketch editor in assemblies (points/rectangles/circles only), sub-assemblies'
-  own solve used for their stages even when flexible.
+  Parts…/Off/delete and each feature's problem, `AsmCutPanel`, `asmCutPick` first in handleAssemblyPick).
+  Fillet / Chamfer as assembly features (Onshape's): ordinary "fillet"/"chamfer" records whose `picks` have `partId` = the copy's
+  key, picked on the copy as shown (holes drilled here included). `storedEdgePicks`: an edge the plain part has (`hasRef` — a
+  straight edge on the same line overlapping counts, so a notch that shortens it doesn't matter) keeps `ref` in the PART's own
+  coordinates (it goes with the copy when a mate moves it); one only the assembly's cuts made (a hole's rim) is kept in that
+  level's coordinates with `TopoPick.placed`, as the cut is, and `stageFeatures` (placed.ts, every stage) turns it into part
+  coordinates from the copy's place each build (`toPartRef`/`toLevelRef`) — so it never jumps to the nearest other hole; `featureCuts` = has a pick on that key (featureParts unused); `cutsFor` hands each copy only its own
+  picks (`onlyPicksOn`, cached objects); `assemblyEdgeFeature`; engine `cutCopy` takes the copy back to part coordinates for
+  them and runs the Part Studio's own `applyEdgeFeature` on it alone (`edgeFeatureOnCopy`, `this.parts` swapped), `reached` when
+  the volume changed either way. `Assembly.featureNeeds` (fillet id → the features its edges come from; `edgeNeeds`: for picks the plain
+  part hasn't got, the features of this assembly that reached the copy without which the edge isn't there — the copy made with
+  each left out, asked of the engine by the app and Claude; all of them only if no single one made it; parsed with
+  `parseFeatureParts(…, true)`):
+  `assemblyFeatureDependents` takes them with a deleted cut. `tidyFeatureParts` drops picks on removed copies (`tidyEdgePicks`).
+  App: toolbar Fillet/Chamfer in the assembly-feature group, `AsmCutDraft.edges`/`size`, edge clicks → `toggleAsmEdge`,
+  `acceptAsmEdges`. Claude: add_assembly_feature `kind` "fillet"/"chamfer" with `edges` [{instance, edge|edges}] and
+  `radius`/`distance`. Not done: Sweep as an assembly feature, picked edges drawn highlighted in the view, a full sketch editor
+  in assemblies (points/rectangles/circles only), sub-assemblies' own solve used for their stages even when flexible.
   Edit in context: `doc.contexts` (`EditContext`: studioId, assemblyId, instance key, `parts` = the OTHER parts' {key, partId,
   studioId, placement relative to the edited copy, mirrored}; `hidden`), pure `src/assembly/inContext.ts` (`takeContext` — made or
   taken again for the same assembly+copy, same object when nothing moved —, `updateContext`, `contextProblem`, `setContextHidden`,
@@ -345,11 +367,16 @@
   features build (`partOrContext` in followSketch); so two studios can each be edited in the other's context, and where both use the
   other's parts the one built first says so plainly on its features (`notBuilt`). Viewport: `useShownContextParts` see-through,
   `withContextParts` for planeForFace/Use; clicking one outside a sketch says it's for reference. UI: an instance row's right-click
-  (InstanceMenu) or the toolbar's "In context" → `editInContext`, `ContextBar` (Update context / Hide / Remove). Not done: Claude's
-  tools for contexts; intersect/up-to-face/mates against context parts. Tests: assemblyCutFeatures (pure), engineAssemblyCuts,
+  (InstanceMenu) or the toolbar's "In context" → `editInContext`, `ContextBar` (Update context / Hide / Remove). Claude:
+  `edit_in_context` (make/update, `hidden`; lists where each other part sits from the copy's origin) and `remove_context` (by
+  name or copy) in `src/mcp/contextTools.ts` (tests/mcpContexts). Not done: Claude's own tools using context parts (sketch on /
+  Use them); intersect/up-to-face/mates against context parts. Tests: assemblyCutFeatures (pure), engineAssemblyCuts,
   engineAssemblyCuts2 (a sub-assembly's holes in a parent, structured STEP sharing untouched copies, a cut copy's weight, a pin
   mated into a drilled hole, two studios in each other's context + the real cycle said plainly), engineInContext,
-  mcpAssemblyFeatures (`add_assembly_feature` — keeps the parts it reached —, `delete_assembly_feature`, a pin mated into the hole).
+  mcpAssemblyFeatures (`add_assembly_feature` — keeps the parts it reached —, `delete_assembly_feature`, a pin mated into the hole,
+  the base widened under a drilled plate, fillet/chamfer), engineAssemblyEdges (fillet/chamfer volumes, other copies and a mated
+  pin untouched, a hole's rim bevelled and deleted with the hole), engineAssemblyEdges2 (a rim chamfer stays on its hole when the
+  plate moves by the holes' spacing; needs only that hole; a notch-shortened edge needs nothing), engineAssemblyCuts4.
 - Drawings: `src/drawing/` — `drawing.ts` (document edits, parsing), `cameras.ts` (view directions; first-angle),
   `annotations.ts` (centre marks/lines, section hatching, balloons), `sections.ts` (section cuts drawn on a view:
   cut plane, camera, letters; views are keyed by `viewKey` — the kind, or "section:<id>"), `sheet.ts` (lays the sheet out as simple line/text shapes in sheet mm, y up), `export.ts` (SVG and a hand-written
@@ -711,10 +738,44 @@
   (`canonicalAxis`); projected sheets reach 2 × the size of the sketches and faces.
   Dialog `src/app/CurveOptions.tsx` (`CurveOptions`, `PathChoice`: sketch / curve / "Part edges (click them)"); Toolbar group
   "curves" (`startCurve`). Claude: add_feature "curve" with `curve_type` (`src/mcp/curveSpec.ts`), sweep `path` (sketch or
-  curve) / `path_edges` + `path_part`; points may be {"curve", "end"}. Not done: isocline, offset and trim curves; sketches can't
-  Use/project or pierce a curve feature yet; surface sweeps along curves. Tests: tests/curves, curveClicks (pure), engineCurves
+  curve) / `path_edges` + `path_part`; points may be {"curve", "end"}. Newer kinds (`src/kernel/curvesMore.ts`, params
+  `distance`/`angle` — `ParamDef.lazy`: left out of `defaultParams`, so older features save byte for byte; `max` 90 on the
+  angle): Offset curve (`picks` = edges + at most one face to move across; a face alone = its outline less seams; edges only =
+  the face holding them all, else the first beside the first edge, with a note; on a flat face everything exact via
+  BRepOffsetAPI_MakeOffset — open chains with IsOpenResult, so inside corners are cut back and outside ones rounded; the sign
+  chosen by whether the result lies on the face; on curved faces `walkedOffset`: the wire split into smooth stretches at
+  direction jumps > 2° (`smoothStretches`), each sample walked across the surface square to the edge, inside corners cut back
+  where the moved stretches cross (`segmentGap`), outside ones joined by an arc walked round the corner, a spline per piece;
+  moved into the face, a result that leaves the face or touches itself is refused, `checkInside`; `flip` = out of the face),
+  Isocline (`picks` = faces, `axis` = the direction, default Z; n·d = sin(angle), `flip` = −; the face's (u, v) box sampled with
+  BRepGProp_Face, pure marching squares + bisection on each crossing, then `clipRun` cuts the lines to the face's pcurve outline
+  (`uvOutline`), the crossing found exactly by bisection along the edge's own curve, so lines run right up to the face's edge;
+  `joinRuns` across seams; all in `src/geometry/isoContour.ts`; splines fitted), Trim curve (`curves` = [curve to trim, bound
+  curve?], else `plane`, else face `picks`; BRepAlgoAPI_Splitter on the wire, pieces walked from its start — or, `flip`, its end —
+  up to the first that ends on the bound; a meeting at the start doesn't count, and one touching only there is said plainly;
+  `curveUses` needs both curves). Sketches use curve features like part edges: `curveFeatureRefs` gives each edge of its
+  wires as a `RefEdge` with `source` {sketch: <curve id>, item "e<k>", ends "e<k>.a"/".b"/".c"} (+ shape, + pierce places), so
+  links are ordinary SketchItemLinks (old files unchanged; Delete with dependents counts them as "references brought in");
+  `workOutCandidates` offers curves before the sketch (from `StudioBuild.curves`); `followCurveLinks` (engine; links whose
+  id `this.curves` has, else the old sketch lookup) takes each curve feature's links together and, per group (curves; each kind of point end), always weighs its edge numbers
+  against the cheapest one-edge-per-link matching (`assignCheapest`, `src/geometry/assign.ts`, Hungarian): cost = distance from
+  where the move puts it + 3 × size change (a line's length, an arc's/circle's radius; nearer of as it was or stretched), edges of
+  the wrong kind excluded (ends only from open edges, centres only from round ones, never a closed edge's seam point). The move
+  = per-axis scale + shift fitted from the links at their own numbers (refitted without stray pairs) — only from 3+ links; with
+  fewer, none (a move could "explain" any swap). Edge k stands unless the matching is clearly cheaper overall AND by size (a
+  hole growing, shrinking or moving keeps its circle; two holes whose loops come back swapped follow their own); a link whose own
+  number is gone or of another kind takes its matched edge only when it's near or the only one of its size; a free rival as
+  good = lost (null). Pierce points stay on edge k.
+  Whole-face inward offsets on flat faces also check nesting (`checkNesting`: each moved hole inside a moved outer outline and
+  none round it — roles by the way round the loops run, or from which source loop they came). The controller's `skipRef` treats a curve as shown unless its eye is off. Not done: surface sweeps along
+  curves; trimming an offset that runs off its face (it's refused). Tests: tests/curves, curveClicks (pure), engineCurves
   (helix length/pitch/taper/face, spring volume, ellipse of a slanted cut, projected onto a ball, fit spline, bridge, sweep along
-  an edge, composite, curve pattern on a helix), mcpCurves.
+  an edge, composite, curve pattern on a helix), mcpCurves; tests/curvesMore (pure; an old helix saves byte for byte), engineCurvesMore
+  (box top 5 mm in/out, an L of edges in (60 mm, cut back) and out (rounded), an L with a corner across a cylinder, a hole's
+  outline growing off the face refused, ball isocline at 45° = R/√2 circle and on a cut ball up to the cut, helix trimmed by a
+  plane/a face/only touching at its start, a sketch using/piercing a helix and following it, every edge of an offset (with and
+  without a hole) followed as the box grows 40 → 80 → 120, two holes' circles kept on their own holes when their loops swap order or a hole grows/shrinks/moves, a number that no longer fits matched by nearness, a hole grown round
+  the outline refused), mcpCurvesMore.
 - Frames (Onshape's Frame, Trim frame, Gusset, Cut list): feature types "frame" (`Feature.frame`, `FrameDef` in
   model/frameTypes.ts: `paths` = sketches, all their lines/arcs/circles or `items`; `profile` = a built-in family + size key
   ("custom" = the width/height/wall params) or `{kind:"sketch"}` (its closed regions' polygons); `anchor` (9 points of the
@@ -758,8 +819,41 @@
   clicking a sketch line while a Frame is open leaves it out / puts it back (lineDraftId), Trim frame's Members / To a plane
   or face / To a part, Gusset picks 2 parts. Dependents: path sketches a list, profile sketch / gusset parts / trim target
   needed, trim members a list, trim plane via planesOf; frames and gussets make solid parts. Claude: add_feature "frame" /
-  "trim_frame" / "gusset" and `describe_cut_list` (csv) in `src/mcp/frameSpec.ts`. Not done: part edges and curve features as
-  paths, cut list on drawings, mitres where 3+ meet, gussets off the middle plane, Ts on arcs. Tests: tests/frame (pure),
+  "trim_frame" / "gusset" and `describe_cut_list` (csv) in `src/mcp/frameSpec.ts`. Not done: gussets off the middle plane, Ts on
+  arcs or curves, copes against curved members (Trim frame to one uses its part).
+  - More paths: `FrameDef.edges` (`FrameEdge` = TopoPick + `key`, a lasting name from `edgeKeyFor` — a hash of the part and the
+    edge's ends/middle as picked, so re-picking an edge gives its name back and removing one renames nothing; filled in when
+    missing by parseFrameDef; segment ids `edgeSegId` "<part>/<key>"; a part's picks re-found together, two on one edge refused) and `.curves` (curve
+    feature ids, `curveSegId` "<curve>/<wire>.<edge>"), mixed with sketch paths (missing = none; old files unchanged). Engine
+    `framePathPieces` samples each edge (`pointAt`/`tangentAt`, tangents turned to run with the points) → pure `edgeSegment`:
+    a line, an arc (all samples on one circle in one plane) or a `CurveSeg` (samples + exact length; `normals` when the curve
+    is `frenet`, a helix — then `n` = the binormal, so the profile's across faces the axis); `withPathNormal` gives a group's
+    lines/curves the plane they share (facing +Z, else +Y, else +X; else Z). `carryCurve` carries the profile's axes: kept at
+    the same angle to `normals`, else rotation-minimising (double reflection, exactly undone going back). Curve members are
+    `pipeLoop`s (MakePipeShell: Frenet for helices, else steered by `plannedGuide` — a B-spline `curveAcross` puts 0.2 × the
+    tightest bend (≤ 5) off the curve along the planned across, as sweep.ts's twistGuide, since CorrectedFrenet drifts ~1° on 3D
+    curves) along the real edge (`FrameSpines`, by seg id; `reversed` walks it back), holes swept and cut. A closed curve is
+    swept in two halves (`halves`: BRep_Tool.Curve cut at the middle of its parameter — the samples are even, so the middle
+    sample is there), each with an open guide, the frame's turn round the loop shared out (`curveAcross(…, close)`); a pipe
+    round a closed spine unguided is made a solid from its shell (MakeSolid would cap the seam). Each way is tried in turn
+    and the first sound (BRepCheck) result kept; OpenCascade's own error text is never shown (applyFrame's catch). `RebuildResult.framePaths` →
+    `store.framePaths` (connect.ts) give the dialog's corners those pieces; Claude's frame builds itself once without corners
+    first (`pathSegments` in frameSpec.ts) so corners on edges/curves go in the same call. Clicks: an edge (Viewport, not the
+    frame's own) → `togglePathEdge` with `builtEdgeKey` (the clicked edge matched — ends and middle — against the pieces as
+    re-found in the last build, "<part>/<key>", so a changed part's edge is still recognised; Claude giving `edges` again
+    keeps the names the same way), a curve (geomPick) → `togglePathCurve`; things later in the list are refused at once
+    (`laterPathMessage`). Dependents: the path is one list
+    of sketches + curves + edges' parts (`frameUses` pathCurves/pathParts; `withoutGone` drops gone ones).
+  - Mitres where 3+ meet: `findCorners` offers "mitre" when `mitreable` (no straight-on pair, `sharpestPair` ≥ SHARPEST); each
+    end is cut by the halfway plane to every other member there (two members: exactly the old mitre), extended by the most any
+    plane needs, labelled with the largest angle and `EndCut.compound` → `FrameMemberInfo.compound` ("compound mitre 45°" in the
+    cut list; a trimmed end drops it). A cube corner of s × s: 3 s²(L − s/6), no overlaps. Butt stays the usual.
+  - Cut list on drawings: `DrawingNote.cutList` ({studio?}) → `src/drawing/cutListTable.ts` (`sheetCutList`: the studio named,
+    else the sheet's part's studio, else one piece per copy in the sheet's assembly; `cutListRows` = heading, a line per
+    length, a total per profile; inch designs in inches to 0.01) → `SheetInfo.cutList` (sheetInfo) → drawn by layoutSheet with `tablePrims` (decimal comma
+    applied), so SVG/PDF/DXF carry it. Toolbar "Cut list" (`addCutListTable`, one per sheet), panel `CutListNoteProperties`;
+    Claude's add_drawing_note `cut_list` (+ `studio`); describe_drawing lists its rows. Tests: tests/frameMore (pure),
+    engineFrameMore (box top edges, sketch + edge, helix rail, circle edge, fit spline, cube corner), mcpFrameMore. Tests: tests/frame (pure),
   engineFrame (volumes, butt pairs, the 2040 cube, split-post T both orders and unmerged, +, rails each side of a post and at an
   angle, lines drawn either way, an L across sketches, copes 290/280, stable ids, gussets at a corner and a T, trims), mcpFrame.
 - Split face and Modify fillet (Onshape's). Split face = a "split" with `splitDef.mode: "face"` (missing = Split part, exactly as

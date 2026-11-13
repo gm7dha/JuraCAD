@@ -11,7 +11,7 @@ import { compose, IDENTITY, type Placement, type Vec3 } from "./math";
 import { findMesh, meshIdOf } from "./configured";
 import { kernelInstances, leavesOf, leavesOfTop, PATH_SEP, topBox, type Leaf } from "./subassembly";
 import type { Assembly } from "../model/types";
-import { cutsFor } from "./assemblyFeatures";
+import { cutsFor, stageFeatures } from "./assemblyFeatures";
 import type { CutStage, InstanceInput, PartMesh } from "../kernel/protocol";
 
 const NO_LEAVES: Leaf[] = [];
@@ -107,13 +107,13 @@ export function cutStager(assembly: Assembly, parts: readonly PartMesh[], assemb
           if (there) {
             const top = places[there.top] ?? sub.instances.find((x) => x.id === there.top)?.placement ?? IDENTITY;
             const at = there.path.length ? compose(top, there.relative) : top;
-            stages.unshift({ features, at: { position: at.position, rotation: at.rotation }, ...(there.instance.mirrored ? { mirrored: true } : {}) });
+            stages.unshift({ features: stageFeatures(features, at, !!there.instance.mirrored), at: { position: at.position, rotation: at.rotation }, ...(there.instance.mirrored ? { mirrored: true } : {}) });
           }
         }
       }
       level = sub;
     }
-    if (own) stages.push({ features: own, at: { position: solved.position, rotation: solved.rotation }, ...(leaf.instance.mirrored ? { mirrored: true } : {}) });
+    if (own) stages.push({ features: stageFeatures(own, solved, !!leaf.instance.mirrored), at: { position: solved.position, rotation: solved.rotation }, ...(leaf.instance.mirrored ? { mirrored: true } : {}) });
     return stages.length ? stages : undefined;
   };
 }
@@ -147,7 +147,7 @@ export function storedCutInputs(assemblies: readonly Assembly[], parts: readonly
       const features = cutsFor(a, i.id);
       if (!features) continue;
       const at = { position: i.placement.position, rotation: i.placement.rotation };
-      out.push({ id: `${a.id}${CUT_KEY}${i.id}`, partId: meshIdOf(i), name: i.name, ...at, ...(i.mirrored ? { mirrored: true } : {}), cuts: [{ features, at, ...(i.mirrored ? { mirrored: true } : {}) }] });
+      out.push({ id: `${a.id}${CUT_KEY}${i.id}`, partId: meshIdOf(i), name: i.name, ...at, ...(i.mirrored ? { mirrored: true } : {}), cuts: [{ features: stageFeatures(features, at, !!i.mirrored), at, ...(i.mirrored ? { mirrored: true } : {}) }] });
     }
   }
   return out;

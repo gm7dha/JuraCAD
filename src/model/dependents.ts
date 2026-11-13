@@ -202,7 +202,8 @@ function usesOf(f: Feature): Uses {
   if (f.frame || f.trimFrame || f.gusset) {
     // Frames: the path's sketches (a list), the profile's sketch; Trim frame's members (a list) and target; a gusset's two members.
     const fu = frameUses(f);
-    if (fu.pathSketches.length) lists.push({ what: "path sketch", many: "path sketches", features: fu.pathSketches });
+    if (fu.pathSketches.length + fu.pathCurves.length + fu.pathParts.length)
+      lists.push(fu.pathCurves.length + fu.pathParts.length ? { what: "path sketch, curve or edge", many: "path sketches, curves and edges", features: [...fu.pathSketches, ...fu.pathCurves], parts: fu.pathParts } : { what: "path sketch", many: "path sketches", features: fu.pathSketches });
     features.push(...fu.sketches);
     parts.push(...fu.parts);
     if (fu.trimParts.length) lists.push({ what: "member it trims", many: "members it trims", parts: fu.trimParts });
@@ -356,6 +357,16 @@ export function withoutGone(f: Feature, gone: Set<string>): Feature {
   if (f.pattern?.parts?.some(partGone)) set({ pattern: { ...out.pattern!, parts: f.pattern.parts.filter((p) => !partGone(p)) } });
   if (f.compositeParts?.some(partGone)) set({ compositeParts: f.compositeParts.filter((p) => !partGone(p)) });
   if (f.frame?.paths.some((p) => featureGone(p.sketch))) set({ frame: { ...f.frame, paths: f.frame.paths.filter((p) => !featureGone(p.sketch)) } });
+  if (out.frame?.curves?.some(featureGone)) {
+    const curves = out.frame.curves.filter((c) => !featureGone(c));
+    const { curves: _c, ...rest } = out.frame;
+    set({ frame: curves.length ? { ...rest, curves } : rest });
+  }
+  if (out.frame?.edges?.some((e) => partGone(e.partId))) {
+    const edges = out.frame.edges.filter((e) => !partGone(e.partId));
+    const { edges: _e, ...rest } = out.frame;
+    set({ frame: edges.length ? { ...rest, edges } : rest });
+  }
   if (f.trimFrame?.parts.some(partGone)) set({ trimFrame: { ...f.trimFrame, parts: f.trimFrame.parts.filter((p) => !partGone(p)) } });
   if (f.sketch) {
     const lost = (l: unknown) => linkGone(l, featureGone, partGone);

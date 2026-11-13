@@ -38,6 +38,7 @@ export function updateAssembly(doc: JuraCADDocument, id: string, fn: (a: Assembl
  * cuts nothing, as chosen). Entries for features that no longer exist go too.
  */
 export function tidyFeatureParts(a: Assembly): Assembly {
+  a = tidyEdgePicks(a);
   if (!a.featureParts) return a;
   const tops = new Set(a.instances.map((i) => i.id));
   const ids = new Set((a.features ?? []).map((f) => f.id));
@@ -55,6 +56,21 @@ export function tidyFeatureParts(a: Assembly): Assembly {
   if (!changed) return a;
   const { featureParts: _p, ...plain } = a;
   return Object.keys(out).length ? { ...plain, featureParts: out } : plain;
+}
+
+/** Assembly Fillets / Chamfers forget the edges they picked on copies that are gone (the feature stays, saying so). */
+function tidyEdgePicks(a: Assembly): Assembly {
+  if (!a.features?.some((f) => (f.type === "fillet" || f.type === "chamfer") && f.picks?.length)) return a;
+  const tops = new Set(a.instances.map((i) => i.id));
+  let changed = false;
+  const features = a.features.map((f) => {
+    if ((f.type !== "fillet" && f.type !== "chamfer") || !f.picks) return f;
+    const kept = f.picks.filter((p) => tops.has(p.partId.split("/")[0]));
+    if (kept.length === f.picks.length) return f;
+    changed = true;
+    return { ...f, picks: kept };
+  });
+  return changed ? { ...a, features } : a;
 }
 
 /** Next free name: "Assembly 1", "Assembly 2"… */

@@ -3,7 +3,7 @@ import { blendClick, boundaryClick } from "../model/surfaceClicks";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { findMesh, meshIdOf } from "../assembly/configured";
-import { indexOfRef, type TopoPick } from "../geometry/topoRef";
+import { indexOfRef, sameRef, type TopoPick } from "../geometry/topoRef";
 import { isPatternFeature, isPickFeature } from "../model/features";
 import { madeByDraft } from "../model/document";
 import { planeVisible, sketchVisible, usedSketches } from "../model/visibility";
@@ -44,7 +44,7 @@ import { sketchAreas } from "../sketch/areas";
 import { planDrag, type DragPlan } from "../assembly/drag";
 import { connectorFrameFor, frameLookup, solveWithParts } from "../assembly/mates";
 import { sectionPlane } from "./section";
-import { togglePathLine } from "../model/frame";
+import { builtEdgeKey, laterPathMessage, togglePathEdge, togglePathLine } from "../model/frame";
 import { linePlane, pickableSketchLines, referenceShape, setMirrorReference, setPatternDirection, sketchLine3D, type DirectionChoice, type PickableLine } from "../model/patternRefs";
 import { guardViewportZoom } from "./zoomGuard";
 import { NO_FILTER } from "./selectionFilter";
@@ -529,8 +529,18 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     return;
   }
   // Frames: a sketch line clicked is left out of the path (or put back); Trim frame and Gusset pick members, a plane or a part.
+  // Part edges and curve features clicked are followed too (or left out again).
   if (s.editing?.draft.type === "frame" && s.editing.draft.frame) {
-    if (target?.kind === "sketchLine") s.setDraftField({ frame: togglePathLine(s.editing.draft.frame, activeFeatures(s), target.id, target.line) });
+    const fr = s.editing.draft.frame;
+    const own = s.editing.draft.id;
+    if (target?.kind === "sketchLine") s.setDraftField({ frame: togglePathLine(fr, activeFeatures(s), target.id, target.line) });
+    else if (target?.kind === "part" && target.item.kind === "edge") {
+      if (target.item.partId.split(/[~@]/)[0] === own) return s.showToast("That's one of this frame's own lengths. Click an edge of another part.");
+      const later = laterPathMessage(activeFeatures(s), own, target.item.partId.split(/[~@]/)[0]);
+      if (later) return s.showToast(later);
+      const pick = pickFor(s.parts, target.item);
+      if (pick) s.setDraftField({ frame: togglePathEdge(fr, pick, (a, b) => a.partId === b.partId && sameRef(a.ref, b.ref), builtEdgeKey(fr.edges, s.framePaths[own], pick)) });
+    }
     return;
   }
   if (s.editing?.draft.type === "trimFrame" && s.editing.draft.trimFrame) {

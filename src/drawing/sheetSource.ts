@@ -17,6 +17,7 @@ import { surfacePointNearCentre } from "./annotations";
 import { withDetails } from "./details";
 import { projectionKinds } from "./drawing";
 import { tapSizes } from "./holeCallouts";
+import { sheetCutList } from "./cutListTable";
 import { breakOutRequests, sectionRequests, viewKey, type BreakOutRequest, type SectionRequest } from "./sections";
 import type { BomLine, Projections, SheetInfo } from "./sheet";
 import { withShortenings } from "./shorten";
@@ -105,7 +106,8 @@ export function drawingDate(now = new Date()): string {
 export function sheetInfo(page: Drawing, doc: JuraCADDocument, parts: PartMesh[], subject: string, instances: InstanceInput[] | undefined, sheetNo: number, sheetCount: number, date = drawingDate()): SheetInfo {
   const bom = drawingBom(page, doc, parts);
   const balloons = balloonsFor(bom, instances, parts);
-  return { designName: doc.name, subject, date, bom, balloons, taps: tapSizes(doc, page), ...(sheetCount > 1 ? { sheetNo, sheetCount } : {}) };
+  const cut = sheetCutList(page, parts, instances?.map((i) => i.partId), doc.units === "in" ? "in" : "mm");
+  return { designName: doc.name, subject, date, bom, balloons, taps: tapSizes(doc, page), ...(sheetCount > 1 ? { sheetNo, sheetCount } : {}), ...(cut ? { cutList: cut } : {}) };
 }
 
 /** Each view's scale for a sheet scale: its own, or the sheet's. */

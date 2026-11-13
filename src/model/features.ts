@@ -19,6 +19,13 @@ export interface ParamDef {
   integer?: boolean;
   /** Smallest allowed value. */
   min?: number;
+  /** Largest allowed value. */
+  max?: number;
+  /**
+   * Not put into a new feature's params (nor into one read from a file) until it's typed: a newer setting of a
+   * feature type that only some of its kinds use, so older features save exactly as before. Missing = the default.
+   */
+  lazy?: boolean;
 }
 
 export interface FeatureDef {
@@ -557,6 +564,8 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "startAngle", label: "Start angle", defaultValue: "0", group: "position", unit: "°" },
       { key: "taper", label: "Taper (widening as it rises)", defaultValue: "0", group: "size", unit: "°" },
       { key: "bulge", label: "Bulge", defaultValue: "1", positive: true, group: "size", unit: "" },
+      { key: "distance", label: "Distance across the face", defaultValue: "5", positive: true, group: "size", lazy: true },
+      { key: "angle", label: "Slope angle", defaultValue: "45", min: 0, max: 90, group: "size", unit: "°", lazy: true },
     ],
   },
   coil: {
@@ -743,6 +752,7 @@ export function resolveParams(feature: Pick<Feature, "type" | "params"> & Partia
       if (p.positive && r.value <= 0) return `${p.label} must be more than 0`;
       if (p.integer && !Number.isInteger(r.value)) return "Must be a whole number";
       if (p.min !== undefined && r.value < p.min) return `Must be at least ${p.min}`;
+      if (p.max !== undefined && r.value > p.max) return `Must be at most ${p.max}`;
       return r.value;
     };
     let out = check(typed);
@@ -769,7 +779,7 @@ export function describeParamErrors(feature: Feature): string | null {
  */
 export function defaultParams(type: FeatureType, unit: "mm" | "in" = "mm"): Record<string, string> {
   return Object.fromEntries(
-    FEATURE_DEFS[type].params.map((p) => {
+    FEATURE_DEFS[type].params.filter((p) => !p.lazy).map((p) => {
       const isLength = p.unit === undefined || p.unit === "mm";
       const mm = Number(p.defaultValue);
       if (unit === "mm" || !isLength || !mm) return [p.key, p.defaultValue];

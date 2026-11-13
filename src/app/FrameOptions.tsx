@@ -9,7 +9,7 @@ import { lengthNumber } from "../model/units";
 import { Icons } from "./icons";
 
 const CORNER_LABELS: Record<FrameCornerType, string> = {
-  mitre: "Mitre (both cut at the halfway angle)",
+  mitre: "Mitre (each cut at the halfway angle to the others)",
   butt: "Butt (one runs through, the other stops at its side)",
   coped: "Coped (cut to the other's shape — for tubes)",
   none: "None (both left square)",
@@ -32,6 +32,7 @@ export function FrameOptions() {
   const setDraftField = useStore((s) => s.setDraftField);
   const features = useStore(activeFeatures);
   const rollbackTo = useStore((s) => s.rollbackTo);
+  const builtPieces = useStore((s) => (s.editing?.draft.type === "frame" ? s.framePaths[s.editing.draft.id] : undefined));
   if (draft?.type !== "frame" || !draft.frame) return null;
   const def = draft.frame;
   const set = (patch: Partial<FrameDef>) => setDraftField({ frame: { ...def, ...patch } });
@@ -46,7 +47,15 @@ export function FrameOptions() {
       set({ profile: { kind: "sketch", sketch: other?.id ?? "" } });
     } else set({ profile: { kind: k as FrameProfileKind, size: PROFILE_KINDS.find((x) => x.kind === k)!.sizes[0].key } });
   };
-  const { corners, members } = frameCornersFor(draftSegments(def, features), def);
+  // Part edges and curves: their pieces as last built (the engine finds them).
+  const more = def.edges?.length || def.curves?.length ? builtPieces ?? [] : [];
+  const { corners, members } = frameCornersFor([...draftSegments(def, features), ...more], def);
+  const here = features.findIndex((f) => f.id === draft.id);
+  const curvesOffered = features.filter((f, i) => f.type === "curve" && !f.suppressed && (here < 0 || i < here));
+  const toggleCurve = (id: string, on: boolean) => {
+    const list = (def.curves ?? []).filter((c) => c !== id);
+    set({ curves: on ? [...list, id] : list.length ? list : undefined });
+  };
   const setCorner = (key: string, patch: Partial<FrameCornerChoice> | null) => {
     const rest = (def.corners ?? []).filter((c) => c.key !== key);
     const cur = (def.corners ?? []).find((c) => c.key === key);
@@ -60,7 +69,7 @@ export function FrameOptions() {
       <fieldset className="param-group">
         <legend>Path</legend>
         {sketches.length === 0 ? (
-          <p className="dialog-error">There are no sketches yet. Cancel, then sketch the frame&apos;s lines first.</p>
+          <p className="dialog-hint">There are no sketches yet: click part edges or curves in the 3D view, or cancel and sketch the frame&apos;s lines first.</p>
         ) : (
           <ul className="pick-list" aria-label="Sketches the frame follows">
             {sketches
@@ -80,7 +89,27 @@ export function FrameOptions() {
               })}
           </ul>
         )}
-        <p className="dialog-hint field-hint">Each line or arc becomes a length of its own. Click a sketch line in the 3D view to leave it out (or put it back).</p>
+        {curvesOffered.length > 0 && (
+          <ul className="pick-list" aria-label="Curves the frame follows">
+            {curvesOffered.map((c) => (
+              <li key={c.id}>
+                <label className="check-row">
+                  <input type="checkbox" checked={!!def.curves?.includes(c.id)} onChange={(e) => toggleCurve(c.id, e.target.checked)} />
+                  {c.name}
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="small">
+          Part edges: {def.edges?.length ? `${def.edges.length} picked` : "none"}
+          {def.edges?.length ? (
+            <button type="button" className="link-button" onClick={() => set({ edges: undefined })}>
+              Clear
+            </button>
+          ) : null}
+        </p>
+        <p className="dialog-hint field-hint">Each line or arc becomes a length of its own. Click a sketch line in the 3D view to leave it out (or put it back); click part edges or curves (a helix…) to follow them too.</p>
         <label className="check-row" title="Lines and arcs that carry on smoothly into each other (a rounded corner) make one bent length">
           <input type="checkbox" checked={!def.noMerge} onChange={(e) => set({ noMerge: e.target.checked ? undefined : true })} />
           Join lines and arcs that carry on smoothly
