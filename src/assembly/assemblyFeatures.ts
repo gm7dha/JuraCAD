@@ -27,7 +27,8 @@ import type { SketchPlane } from "../sketch/planes";
 import { updateAssembly } from "./assembly";
 import { PATH_SEP } from "./subassembly";
 import { isAssemblyEdgeFeature, isAssemblyFeature } from "./featureParse";
-import type { TopoPick } from "../geometry/topoRef";
+import type { EdgeRef, TopoPick, TopoRef, Vec3 } from "../geometry/topoRef";
+import { applyPlacement, invert, rotate, type Placement } from "./math";
 import type { PartMesh } from "../kernel/protocol";
 
 export { ASSEMBLY_CUT_TYPES, ASSEMBLY_FEATURE_TYPES, isAssemblyEdgeFeature, isAssemblyFeature, parseFeatureParts } from "./featureParse";
@@ -227,30 +228,109 @@ export function assemblyEdgeFeature(a: Pick<Assembly, "features">, kind: "fillet
 }
 
 const near = (p: readonly number[], q: readonly number[]) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < 1e-3;
+const sub3 = (p: readonly number[], q: readonly number[]): Vec3 => [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
+const dot3 = (p: readonly number[], q: readonly number[]) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
+
+/** Whether `e` lies on the same straight line as `ref` and overlaps it (a piece of the same edge, made shorter or longer). */
+function sameLine(e: EdgeRef, ref: EdgeRef): boolean {
+  const d = sub3(ref.b, ref.a);
+  const len = Math.hypot(d[0], d[1], d[2]);
+  if (len < 1e-9) return false;
+  const u: Vec3 = [d[0] / len, d[1] / len, d[2] / len];
+  const off = (p: readonly number[]) => {
+    const w = sub3(p, ref.a);
+    const t = dot3(w, u);
+    return { t, gap: Math.hypot(w[0] - t * u[0], w[1] - t * u[1], w[2] - t * u[2]) };
+  };
+  const ea = off(e.a);
+  const eb = off(e.b);
+  if (ea.gap > 1e-3 || eb.gap > 1e-3) return false;
+  return Math.min(Math.max(ea.t, eb.t), len) - Math.max(Math.min(ea.t, eb.t), 0) > 1e-6;
+}
 
 /**
- * Which of the assembly's cuts a new Fillet / Chamfer needs (`Assembly.featureNeeds`): for each picked edge the
- * plain part hasn't got (a drilled hole's rim), the cuts that changed that copy (`reached`, from the worker; `isCut`
- * tells cuts from earlier Fillets / Chamfers, which count only when no cut changed it). Picks' partIds are copy keys;
- * `plainOf` gives each copy's plain part.
+ * Whether a part (or a cut copy) has an edge or face where `ref` is: the same edge, or for a straight edge any piece of
+ * the same line overlapping it (a notch that shortens an edge doesn't make it a new one); a face of the same kind on the
+ * same plane, or at the same place.
+ */
+export function hasRef(mesh: Pick<PartMesh, "edgeRefs" | "faceRefs">, ref: TopoRef): boolean {
+  if (ref.kind === "edge") {
+    return mesh.edgeRefs.some(
+      (e) => e.curve === ref.curve && ((e.curve === "LINE" && sameLine(e, ref)) || (near(e.mid, ref.mid) && ((near(e.a, ref.a) && near(e.b, ref.b)) || (near(e.a, ref.b) && near(e.b, ref.a))))),
+    );
+  }
+  return mesh.faceRefs.some((f) => {
+    if (f.surface !== ref.surface || dot3(f.normal, ref.normal) < 1 - 1e-6) return false;
+    return f.surface === "PLANE" ? Math.abs(dot3(sub3(f.center, ref.center), ref.normal)) < 1e-3 : near(f.center, ref.center);
+  });
+}
+
+const flipX = (v: readonly number[]): Vec3 => [-v[0], v[1], v[2]];
+
+/** A ref in a part's own coordinates, as it is in an assembly level where the copy sits at `at` (mirrored or not). */
+export function toLevelRef(ref: TopoRef, at: Placement, mirrored: boolean): TopoRef {
+  const point = (p: Vec3) => applyPlacement(at, mirrored ? flipX(p) : p);
+  if (ref.kind === "edge") return { kind: "edge", curve: ref.curve, a: point(ref.a), b: point(ref.b), mid: point(ref.mid) };
+  return { kind: "face", surface: ref.surface, center: point(ref.center), normal: rotate(at.rotation, mirrored ? flipX(ref.normal) : ref.normal) };
+}
+
+/** The other way: a ref in the level's coordinates, in the part's own coordinates for a copy at `at`. */
+export function toPartRef(ref: TopoRef, at: Placement, mirrored: boolean): TopoRef {
+  const back = invert(at);
+  const point = (p: Vec3) => {
+    const q = applyPlacement(back, p);
+    return mirrored ? flipX(q) : q;
+  };
+  if (ref.kind === "edge") return { kind: "edge", curve: ref.curve, a: point(ref.a), b: point(ref.b), mid: point(ref.mid) };
+  const n = rotate(back.rotation, ref.normal);
+  return { kind: "face", surface: ref.surface, center: point(ref.center), normal: mirrored ? flipX(n) : n };
+}
+
+/**
+ * How a new Fillet / Chamfer keeps its picks (made on the copies as shown, refs in each part's own coordinates): an
+ * edge the plain part has (`hasRef`) stays on the part, so it goes with the copy; one only the assembly's own cuts made
+ * (a drilled hole's rim) is kept in the assembly's coordinates (`placed`), as the cut is — so when the copy moves it's
+ * still that hole's rim, never the nearest other one. `placeOf` = where each copy sits now (and its hand).
+ */
+export function storedEdgePicks(picks: readonly TopoPick[], plainOf: (key: string) => PartMesh | undefined, placeOf: (key: string) => { at: Placement; mirrored: boolean } | undefined): TopoPick[] {
+  return picks.map((p) => {
+    const plain = plainOf(p.partId);
+    const where = placeOf(p.partId);
+    if (!where || (plain && hasRef(plain, p.ref))) return { partId: p.partId, ref: p.ref };
+    return { partId: p.partId, ref: toLevelRef(p.ref, where.at, where.mirrored), placed: true };
+  });
+}
+
+/**
+ * The features of a cut stage with their placed picks (see storedEdgePicks) turned into the part's own coordinates for a
+ * copy at `at` — worked out again each build, from where the copy is now.
+ */
+export function stageFeatures(features: Feature[], at: Placement, mirrored: boolean): Feature[] {
+  if (!features.some((f) => isAssemblyEdgeFeature(f) && f.picks?.some((p) => p.placed))) return features;
+  return features.map((f) =>
+    isAssemblyEdgeFeature(f) && f.picks?.some((p) => p.placed) ? { ...f, picks: f.picks.map((p) => (p.placed ? { partId: p.partId, ref: toPartRef(p.ref, at, mirrored) } : p)) } : f,
+  );
+}
+
+/**
+ * Which of the assembly's features a new Fillet / Chamfer needs (`Assembly.featureNeeds`): for each picked edge (refs in
+ * the parts' own coordinates, as picked) the plain part hasn't got (`hasRef`), the features that changed that copy
+ * (`reached`) without which the edge isn't there — `without(id, key)` is the copy made with that one left out (undefined
+ * = nothing else changes it: the plain part). If no single one made it (several together), all of them.
  */
 export function edgeNeeds(
   picks: readonly TopoPick[],
   plainOf: (key: string) => PartMesh | undefined,
   reached: Readonly<Record<string, readonly string[]>>,
-  isCut: (id: string) => boolean = () => true,
+  without: (id: string, key: string) => PartMesh | undefined,
 ): string[] {
   const out = new Set<string>();
   for (const p of picks) {
-    if (p.ref.kind !== "edge") continue;
-    const ref = p.ref;
     const plain = plainOf(p.partId);
-    const had = plain?.edgeRefs.some((e) => e.curve === ref.curve && near(e.mid, ref.mid) && ((near(e.a, ref.a) && near(e.b, ref.b)) || (near(e.a, ref.b) && near(e.b, ref.a))));
-    if (had) continue;
-    // The cuts that changed that copy made it — else (no cut did) an earlier Fillet / Chamfer's own new edge.
+    if (!plain || hasRef(plain, p.ref)) continue;
     const by = Object.entries(reached).filter(([, keys]) => keys.includes(p.partId)).map(([id]) => id);
-    const cuts = by.filter(isCut);
-    for (const id of cuts.length ? cuts : by) out.add(id);
+    const makers = by.filter((id) => !hasRef(without(id, p.partId) ?? plain, p.ref));
+    for (const id of makers.length ? makers : by) out.add(id);
   }
   return [...out];
 }

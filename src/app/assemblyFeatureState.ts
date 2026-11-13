@@ -25,9 +25,10 @@ import {
   assemblySketch,
   deleteAssemblyFeatures,
   edgeNeeds,
-  isAssemblyEdgeFeature,
+  hasRef,
   modifiedCopies,
   setFeatureNeeds,
+  storedEdgePicks,
   setFeatureParts,
 } from "../assembly/assemblyFeatures";
 import { findMesh, meshIdOf } from "../assembly/configured";
@@ -36,7 +37,7 @@ import type { TopoPick } from "../geometry/topoRef";
 import { settlePlacements, updateAssembly } from "../assembly/assembly";
 import { contextGone, contextPartOf, removeContext, setContextHidden, takeContext, updateContext } from "../assembly/inContext";
 import { cutMeshesFrom, hasAssemblyFeatures, instancesForKernel, storedCutInputs } from "../assembly/placed";
-import type { Placement } from "../assembly/math";
+import { compose, type Placement } from "../assembly/math";
 import { getKernel } from "../kernel/connect";
 import type { AssemblyCutsResult, PartMesh } from "../kernel/protocol";
 import { activeAssembly, activeStudioId, useStore } from "../model/store";
@@ -122,9 +123,10 @@ let settledFor: readonly PartMesh[] | null = null;
  */
 function settleAfterRebuild(list: readonly Assembly[], parts: readonly PartMesh[], cuts: CutMeshes): void {
   if (settledFor === parts) return;
-  settledFor = parts;
   const s = useStore.getState();
+  // (Not now — an old version on show, a drag, or the design changed meanwhile: the next answer for these parts settles.)
   if (s.versionView || s.dragPreview || s.history.present.assemblies !== list) return;
+  settledFor = parts;
   const next = settleCutCopiesIn(s.history.present, parts, cuts);
   if (next !== s.history.present) s.changeVersions(() => next);
 }
@@ -326,24 +328,48 @@ async function acceptAsmEdges(d: AsmCutDraft, asm: Assembly): Promise<string | n
   if (!d.edges.length) return "Click the edges to round first.";
   if (!(d.size > 0)) return d.kind === "fillet" ? "The radius must be more than 0." : "The distance must be more than 0.";
   const s = useStore.getState();
-  const tool = assemblyEdgeFeature(asm, d.kind, d.edges, { size: d.size });
+  const before = s.history.present.assemblies ?? [];
+  const solved = solveWithParts(asm, s.parts, { assemblies: before });
+  const leavesNow = leavesOf(asm, s.parts, before);
+  const plainOf = (key: string) => {
+    const leaf = leavesNow.find((l) => l.key === key);
+    return leaf ? findMesh(s.parts, meshIdOf(leaf.instance)) : undefined;
+  };
+  const placeOf = (key: string) => {
+    const leaf = leavesNow.find((l) => l.key === key);
+    if (!leaf) return undefined;
+    const top = solved.placements[leaf.top] ?? asm.instances.find((i) => i.id === leaf.top)!.placement;
+    return { at: leaf.path.length ? compose(top, leaf.relative) : top, mirrored: !!leaf.instance.mirrored };
+  };
+  // Edges of the part itself go with the copy; a hole's rim the assembly drilled stays with the hole (storedEdgePicks).
+  const tool = assemblyEdgeFeature(asm, d.kind, storedEdgePicks(d.edges, plainOf, placeOf), { size: d.size });
   const trial = addAssemblyFeatures(s.history.present, asm.id, [tool]);
   const made = trial.assemblies?.find((a) => a.id === asm.id);
   if (!made) return null;
   const assemblies = trial.assemblies ?? [];
-  const solved = solveWithParts(asm, s.parts, { assemblies: s.history.present.assemblies });
   let needs: string[];
   try {
-    const r = await getKernel().assemblyCuts(instancesForKernel(made, s.parts, assemblies, solved));
+    const kernel = getKernel();
+    const r = await kernel.assemblyCuts(instancesForKernel(made, s.parts, assemblies, solved));
     if (r.errors[tool.id]) return r.errors[tool.id];
     if (!r.reached[tool.id]?.length) return "It wouldn't change anything: click edges of the parts.";
-    const leaves = leavesOf(made, s.parts, assemblies);
-    const plainOf = (key: string) => {
-      const leaf = leaves.find((l) => l.key === key);
-      return leaf ? findMesh(s.parts, meshIdOf(leaf.instance)) : undefined;
-    };
-    const { [tool.id]: _own, ...earlier } = r.reached;
-    needs = edgeNeeds(d.edges, plainOf, earlier, (id) => !isAssemblyEdgeFeature(assemblyFeaturesOf(made).find((f) => f.id === id) ?? { type: "sketch" }));
+    // The feature each edge only the assembly made comes from: the copy made without it hasn't got the edge.
+    const own = new Set(assemblyFeaturesOf(asm).map((f) => f.id));
+    const earlier = Object.fromEntries(Object.entries(r.reached).filter(([id]) => own.has(id)));
+    const keys = [...new Set(d.edges.map((p) => p.partId))];
+    const without = new Map<string, Record<string, PartMesh>>();
+    for (const p of d.edges) {
+      const plain = plainOf(p.partId);
+      if (!plain || hasRef(plain, p.ref)) continue;
+      for (const [id, reached] of Object.entries(earlier)) {
+        if (without.has(id) || !reached.includes(p.partId)) continue;
+        const off = { ...asm, features: assemblyFeaturesOf(asm).map((f) => (f.id === id ? { ...f, suppressed: true } : f)) };
+        const inputs = instancesForKernel(off, s.parts, before.map((x) => (x.id === asm.id ? off : x)), solved).filter((i) => keys.includes(i.id));
+        const cut = await kernel.assemblyCuts(inputs);
+        without.set(id, Object.fromEntries(cut.meshes.map((m) => [m.id, m])));
+      }
+    }
+    needs = edgeNeeds(d.edges, plainOf, earlier, (id, key) => without.get(id)?.[key]);
   } catch (e) {
     return e instanceof Error ? e.message : String(e);
   }

@@ -4,9 +4,11 @@
  * through two mated plates at once. The parts in their Part Studios don't
  * change; only this assembly's copies are cut (src/assembly/assemblyFeatures.ts).
  */
-import { addAssemblyFeatures, assemblyEdgeFeature, assemblyExtrudeCut, assemblyFeaturesOf, assemblyHole, assemblySketch, deleteAssemblyFeatures, edgeNeeds, isAssemblyEdgeFeature, setFeatureNeeds, setFeatureParts } from "../assembly/assemblyFeatures";
+import { addAssemblyFeatures, assemblyEdgeFeature, assemblyExtrudeCut, assemblyFeaturesOf, assemblyHole, assemblySketch, deleteAssemblyFeatures, edgeNeeds, setFeatureNeeds, storedEdgePicks, setFeatureParts } from "../assembly/assemblyFeatures";
 import { findMesh, meshIdOf } from "../assembly/configured";
 import type { TopoPick } from "../geometry/topoRef";
+import type { Placement } from "../assembly/math";
+import type { PartMesh } from "../kernel/protocol";
 import { settlePlacements, updateAssembly } from "../assembly/assembly";
 import { instancesForKernel } from "../assembly/placed";
 import { leavesOf } from "../assembly/subassembly";
@@ -49,9 +51,10 @@ function chosenParts(s: Session, asm: Assembly, raw: unknown): string[] | undefi
  * The edges named in "edges" ([{"instance", "edge" | "edges"}]), as picks on the copies: each pick's partId is the
  * copy's key and its ref in the part's own coordinates (picked on the copy as it sits, with earlier cuts' faces).
  */
-function edgePicks(s: Session, asm: Assembly, raw: unknown): { picks: TopoPick[]; names: string[] } {
+function edgePicks(s: Session, asm: Assembly, raw: unknown): { picks: TopoPick[]; names: string[]; places: Map<string, { at: Placement; mirrored: boolean }> } {
   const picks: TopoPick[] = [];
   const names: string[] = [];
+  const places = new Map<string, { at: Placement; mirrored: boolean }>();
   const items = list(raw, "edges");
   if (!items.length) throw new InputError('edges: name the edges to round, e.g. [{"instance": "Plate <1>", "edge": "along z"}].');
   items.forEach((item, i) => {
@@ -68,8 +71,9 @@ function edgePicks(s: Session, asm: Assembly, raw: unknown): { picks: TopoPick[]
       if (ref && !picks.some((q) => q.partId === t.leaf.key && q.ref === ref)) picks.push({ partId: t.leaf.key, ref });
     }
     if (!names.includes(t.leaf.name)) names.push(t.leaf.name);
+    places.set(t.leaf.key, { at: t.placement, mirrored: !!t.leaf.instance.mirrored });
   });
-  return { picks, names };
+  return { picks, names, places };
 }
 
 /** A Fillet or Chamfer made in an assembly (see add_assembly_feature). */
@@ -82,27 +86,46 @@ async function addEdgeFeature(s: Session, asm: Assembly, kind: "fillet" | "chamf
   const other = kind === "fillet" ? "distance" : "radius";
   if (a[other] !== undefined) throw new InputError(`A ${kind} takes "${sizeKey}", not "${other}".`);
   const size = amount(a[sizeKey] ?? (kind === "fillet" ? 2 : 1), sizeKey, scope, { positive: true }).value;
-  const { picks, names } = edgePicks(s, asm, a.edges);
-  let tool = assemblyEdgeFeature(asm, kind, picks, { size });
+  const { picks, names, places } = edgePicks(s, asm, a.edges);
+  const all = builtParts(s);
+  const assemblies = assembliesOf(s.doc);
+  const leavesNow = leavesOf(asm, all, assemblies);
+  const plainOf = (key: string) => {
+    const leaf = leavesNow.find((l) => l.key === key);
+    return leaf ? findMesh(all, meshIdOf(leaf.instance)) : undefined;
+  };
+  // Edges of the part itself go with the copy; a hole's rim the assembly drilled stays with the hole (see storedEdgePicks).
+  let tool = assemblyEdgeFeature(asm, kind, storedEdgePicks(picks, plainOf, (k) => places.get(k)), { size });
   if (a.name !== undefined) tool = { ...tool, name: text(a.name, "name").slice(0, 80) };
   const next = addAssemblyFeatures(s.doc, asm.id, [tool]);
   const made = assembliesOf(next).find((x) => x.id === asm.id)!;
   await s.checkpoint();
-  const all = builtParts(s);
   const solved = solve(s, asm);
   const r = s.withWholeEngine((e) => e.assemblyCuts(instancesForKernel(made, all, assembliesOf(next), solved)));
   const problem = r.errors[tool.id];
   if (problem) throw new InputError(`${problem} Nothing was changed.`);
   if (!r.reached[tool.id]?.length) throw new InputError(`${tool.name} wouldn't change anything: check the edges named (list_edges with "assembly" and "instance" shows them). Nothing was changed.`);
   s.throwIfCancelled();
-  // Edges only the assembly's own cuts made (a drilled hole's rim): deleting that cut takes this with it.
+  // Edges only the assembly's own features made (a drilled hole's rim): the one each comes from is noted (the copy
+  // made without it hasn't got the edge), so deleting it takes this with it.
   const leaves = leavesOf(made, all, assembliesOf(next));
-  const plainOf = (key: string) => {
-    const leaf = leaves.find((l) => l.key === key);
-    return leaf ? findMesh(all, meshIdOf(leaf.instance)) : undefined;
+  // (This assembly's own earlier features: a sub-assembly's are in its own list.)
+  const own = new Set(assemblyFeaturesOf(asm).map((f) => f.id));
+  const earlier = Object.fromEntries(Object.entries(r.reached).filter(([id]) => own.has(id)));
+  const keys = [...places.keys()];
+  const withoutCache = new Map<string, Record<string, PartMesh>>();
+  const without = (id: string, key: string): PartMesh | undefined => {
+    let meshes = withoutCache.get(id);
+    if (!meshes) {
+      const off = { ...asm, features: assemblyFeaturesOf(asm).map((f) => (f.id === id ? { ...f, suppressed: true } : f)) };
+      const list = assemblies.map((x) => (x.id === asm.id ? off : x));
+      const inputs = instancesForKernel(off, all, list, solved).filter((i) => keys.includes(i.id));
+      meshes = Object.fromEntries(s.withWholeEngine((e) => e.assemblyCuts(inputs)).meshes.map((m) => [m.id, m]));
+      withoutCache.set(id, meshes);
+    }
+    return meshes[key];
   };
-  const { [tool.id]: _own, ...earlier } = r.reached;
-  const needs = edgeNeeds(picks, plainOf, earlier, (id) => !isAssemblyEdgeFeature(assemblyFeaturesOf(made).find((f) => f.id === id) ?? { type: "sketch" }));
+  const needs = edgeNeeds(picks, plainOf, earlier, without);
   const kept = settlePlacements(next, asm.id, solved.placements);
   s.commit(updateAssembly(kept, asm.id, (x) => setFeatureNeeds(x, tool.id, needs)));
   const volumes = r.meshes.filter((m) => r.reached[tool.id].includes(m.id)).map((m) => `${leaves.find((l) => l.key === m.id)?.name ?? m.id} ${r2(m.volume ?? 0)} mm³`);

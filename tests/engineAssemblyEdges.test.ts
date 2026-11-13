@@ -71,7 +71,7 @@ describe("Fillet and Chamfer in an assembly", () => {
     expect(rim.length).toBeGreaterThan(0);
     const picks = rim.map((ref) => ({ partId: "i1", ref }));
     const chamfer = assemblyEdgeFeature(asm, "chamfer", picks, { size: 1 }, "c1");
-    const needs = edgeNeeds(picks, (k) => parts.find((p) => p.id === asm.instances.find((i) => i.id === k)!.partId), drilled.reached);
+    const needs = edgeNeeds(picks, (k) => parts.find((p) => p.id === asm.instances.find((i) => i.id === k)!.partId), drilled.reached, () => undefined);
     expect(needs).toEqual(["h1"]);
     asm = setFeatureNeeds({ ...asm, features: [sk, hole, chamfer] }, "c1", needs);
     const r = engine.assemblyCuts(instancesForKernel(asm, parts, [asm]));
@@ -80,7 +80,7 @@ describe("Fillet and Chamfer in an assembly", () => {
     const bevel = 0.5 * 2 * Math.PI * (3 + 1 / 3);
     expect(r.meshes.find((m) => m.id === "i1")!.volume).toBeCloseTo(8000 - Math.PI * 9 * 5 - bevel, 1);
     // An edge the plain part has (an upright corner) needs nothing; the hole's rim needs the hole.
-    expect(edgeNeeds([{ partId: "i1", ref: upright()[0] }], () => parts.find((p) => p.id === plate.id), drilled.reached)).toEqual([]);
+    expect(edgeNeeds([{ partId: "i1", ref: upright()[0] }], () => parts.find((p) => p.id === plate.id), drilled.reached, () => undefined)).toEqual([]);
     expect(assemblyFeatureDependents(asm, ["h1"])).toEqual(["h1", "c1"]);
     expect(assemblyFeatureDependents(asm, ["s1"])).toEqual(["s1", "h1", "c1"]);
     const after = deleteAssemblyFeatures(asm, ["h1"]);

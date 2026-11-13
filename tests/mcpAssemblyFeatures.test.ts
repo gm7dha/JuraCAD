@@ -214,4 +214,31 @@ describe("assembly features for Claude", () => {
     expect(await ok(s, "delete_assembly_feature", { feature: "Hole 1" })).toMatch(/Deleted Hole 1, Chamfer 1/);
     expect(s.doc.assemblies![0].features!.map((f) => f.name)).toEqual(["Sketch 1", "Fillet 1"]);
   });
+
+  it("chamfers one of two drilled holes' rims: it needs only that hole, and stays on it when the plate moves", async () => {
+    const { s } = newSession();
+    await ok(s, "new_design", { name: "Two holes" });
+    await ok(s, "add_feature", { type: "box", width: 60, depth: 40, height: 5 });
+    await ok(s, "rename_part", { part: s.build().parts[0].name, name: "Plate" });
+    await ok(s, "create_assembly", { name: "Holes" });
+    await ok(s, "insert_into_assembly", { part: "Plate", at: [0, 0, 0], fixed: false });
+    await ok(s, "add_assembly_feature", { kind: "hole", on: { instance: "Plate <1>", face: "top" }, points: [[15, 20]], diameter: 6 });
+    await ok(s, "add_assembly_feature", { kind: "hole", on: { instance: "Plate <1>", face: "top" }, points: [[25, 20]], diameter: 6 });
+    const made = await ok(s, "add_assembly_feature", { kind: "chamfer", edges: [{ instance: "Plate <1>", edge: { near: [18, 20, 5] } }], distance: 0.5 });
+    expect(made).toMatch(/edges made by Hole 1, so deleting that/);
+    expect(made).not.toMatch(/Hole 2/);
+    const chamfer = s.doc.assemblies![0].features!.find((f) => f.type === "chamfer")!;
+    expect(chamfer.picks![0].placed).toBe(true);
+    // Moved 10 along: the bevel is still round the hole at x = 15 in the assembly.
+    await ok(s, "place_instance", { instance: "Plate <1>", at: [10, 0, 0] });
+    expect(await ok(s, "describe_assembly", {})).not.toMatch(/PROBLEM/);
+    const { cutMeshesOf, solve } = await import("../src/mcp/assemblyTools");
+    const asm = s.doc.assemblies![0];
+    const solved = solve(s, asm);
+    const cone = cutMeshesOf(s, asm, s.doc.assemblies!, solved)![asm.instances[0].id].faceRefs.filter((f) => f.surface === "CONE");
+    expect(cone.map((f) => Math.round((f.center[0] + solved.placements[asm.instances[0].id].position[0]) * 1000) / 1000)).toEqual([15]);
+    // Deleting the other hole keeps the chamfer.
+    expect(await ok(s, "delete_assembly_feature", { feature: "Hole 2" })).toMatch(/^Deleted Hole 2 from/);
+    expect(s.doc.assemblies![0].features!.map((f) => f.name)).toContain("Chamfer 1");
+  });
 });

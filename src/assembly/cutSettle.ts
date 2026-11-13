@@ -9,12 +9,14 @@
  * a pin mated into its hole would follow the hole of the solver's copy, off
  * the hole that's shown.
  *
- * So once per design change (new parts or a new set of assemblies), each copy
- * an assembly's own features cut is stored where the solve now puts it — as
- * settleSolved does after a mate is made — and the solver's copies are then cut
- * there. Nothing else is touched (parts not cut keep their stored places), it
- * is one step and never repeated for the same state: a settled state settles to
- * itself.
+ * So each copy an assembly's own features change is stored where the solve now
+ * puts it — as settleSolved does after a mate is made — and the solver's copies
+ * are then cut there. Nothing else is touched (parts not cut keep their stored
+ * places). The app does it once for each new set of built parts (after a
+ * rebuild, when the solver's cut copies for them have arrived); the extension
+ * solves with the settled assemblies each time, which is cached per assemblies
+ * and parts. A settled state settles to itself, so it never repeats itself.
+ * Sub-assemblies are settled before the assemblies using them.
  *
  * Pure: no store, no engine.
  */
@@ -32,6 +34,23 @@ function elsewhere(p: Placement, q: Placement): boolean {
   if (p.position.some((v, k) => Math.abs(v - q.position[k]) > MOVED)) return true;
   const same = p.rotation.every((v, k) => Math.abs(v - q.rotation[k]) < 1e-7) || p.rotation.every((v, k) => Math.abs(v + q.rotation[k]) < 1e-7);
   return !same;
+}
+
+/** The assemblies, each after every sub-assembly it holds (a circle, which files never keep, is broken anywhere). */
+function childrenFirst(assemblies: readonly Assembly[]): Assembly[] {
+  const out: Assembly[] = [];
+  const seen = new Set<string>();
+  const visit = (a: Assembly) => {
+    if (seen.has(a.id)) return;
+    seen.add(a.id);
+    for (const i of a.instances) {
+      const sub = i.subAssembly ? assemblies.find((x) => x.id === i.subAssembly) : undefined;
+      if (sub) visit(sub);
+    }
+    out.push(a);
+  };
+  assemblies.forEach(visit);
+  return out;
 }
 
 /** Settled states, by assemblies and parts (a settled state maps to itself). */
@@ -52,7 +71,7 @@ export function settleCutCopies(assemblies: readonly Assembly[], parts: readonly
   const known = settled.get(assemblies)?.get(parts);
   if (known) return known;
   let list = assemblies;
-  for (const a of assemblies) {
+  for (const a of childrenFirst(assemblies)) {
     if (!a.features?.length) continue;
     const drilled = a.instances.filter((i) => !i.fixed && !i.subAssembly && !i.suppressed && cutsFor(a, i.id));
     if (!drilled.length) continue;
@@ -60,7 +79,8 @@ export function settleCutCopies(assemblies: readonly Assembly[], parts: readonly
     const go = drilled.filter((i) => solved.placements[i.id] && elsewhere(solved.placements[i.id], i.placement));
     if (!go.length) continue;
     const ids = new Set(go.map((i) => i.id));
-    const next: Assembly = { ...a, instances: a.instances.map((i) => (ids.has(i.id) ? { ...i, placement: solved.placements[i.id] } : i)) };
+    const now = list.find((x) => x.id === a.id) ?? a;
+    const next: Assembly = { ...now, instances: now.instances.map((i) => (ids.has(i.id) ? { ...i, placement: solved.placements[i.id] } : i)) };
     list = list.map((x) => (x.id === a.id ? next : x));
   }
   keep(assemblies, parts, list);
