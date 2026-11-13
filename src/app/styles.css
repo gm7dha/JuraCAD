@@ -3972,6 +3972,26 @@ kbd {
 }
 
 /* A narrow touch screen (an iPad held upright): a slimmer feature list leaves the view more room. */
+/* A tablet held sideways (an iPad is 1024 px): toolbar buttons as close as fingers allow, so few are past the edge. */
+@media (pointer: coarse) and (max-width: 1100px) {
+  .toolbar {
+    gap: 2px;
+  }
+  .tool-button {
+    min-width: 42px;
+    padding: 2px 1px;
+  }
+  .tool-button.icon-only {
+    min-width: 40px;
+  }
+  .tool-split-arrow {
+    width: 15px;
+  }
+  .tool-divider {
+    margin: 0 2px;
+  }
+}
+
 @media (pointer: coarse) and (max-width: 900px) {
   .workspace {
     grid-template-columns: 220px 1fr;
