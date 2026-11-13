@@ -1565,9 +1565,12 @@
   most `CRUMB_MOST` 3 mm² and the cells nearer it than the body goes whole to the neighbour thickest beside it; a hole in the
   outline (`outsideFromEdge`) holding only thin cells of other pieces (`thinAt`) is given to the piece. A tab's own knob and
   stem are never touched; every tab must still catch (`tabHolds` = joinPieces' `locks`), else it's undone with the room round
-  the broken tabs left alone and tried again. Islands with no holes or crumbs are byte-identical (18 settings checked against
+  the broken tabs left alone and tried again. A bigger part joined only by a strip too thin to print (a low, narrow neck of
+  coast) is first widened: sea cells within `narrowest` of both it and the body become the piece's land (at base height).
+  Dovetails: `joinPieces` refuses a tab that adds a separate outline to either piece (`meshPartCount` before/after
+  painting): a knob joined through a strip too thin to print fell out of the owner's Arran print, leaving keyholes. Islands with no holes or crumbs are byte-identical (18 settings checked against
   the old code: 14 the same; the 4 that changed each had a crumb or a slot through a piece in the old mesh). tests/islandHoles (meshes pinned to the old code's hashes;
-  15 mm pieces, pattern 1: every tab catches).
+  15 mm pieces, pattern 1: every tab catches; a low ragged coast over sizes/patterns: every piece one shell, every tab catches).
   Tests: tests/islandPuzzle (pure; over seeds/sizes on a ragged coast: ≥ 2 joints per piece, outlines from the meshes never
   cross or come within 2·fit, every tab catches when pulled, median play ≤ 0.5 mm — `tests/support/outlineGeom.ts`), tests/islandMarks.
 - Mountain puzzle (a card in the Design library's 3D printing tab under "Puzzles" — `src/library/tools.ts` `LIBRARY_TOOLS`:

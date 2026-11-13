@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { gridFrom } from "../src/terrain/elevation";
 import { fillEnclosed, ISLAND_DEFAULTS, makeIslandPuzzle, SMALL_HOLE, type IslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
+import { weld } from "../src/geometry/threeMf";
 import { collides, outlineSegs, SegGrid, type Seg } from "./support/outlineGeom";
 
 const W = 6000;
@@ -242,6 +243,40 @@ describe("holes in the land", () => {
       const q = makeIslandPuzzle(plain, sw, W, H, spec);
       expect(q.warnings.join(" ")).not.toMatch(/filled in|kept as sea/);
       expect(meshHash(q)).toBe(before);
+    }
+  });
+});
+
+/** How many separate solids a mesh is (triangles joined through shared corners). */
+function shellsOf(b: { vertices: ArrayLike<number>; triangles: ArrayLike<number> }): number {
+  const m = weld(b.vertices, b.triangles);
+  const up = new Int32Array(m.vertices.length / 3).map((_, i) => i);
+  const find = (a: number): number => (up[a] === a ? a : (up[a] = find(up[a])));
+  for (let t = 0; t < m.triangles.length; t += 3) {
+    const [a, c, d] = [find(m.triangles[t]), find(m.triangles[t + 1]), find(m.triangles[t + 2])];
+    up[c] = a;
+    up[find(d)] = a;
+  }
+  const roots = new Set<number>();
+  for (let t = 0; t < m.triangles.length; t++) roots.add(find(m.triangles[t]));
+  return roots.size;
+}
+
+describe("a low, ragged coast (the owner's Arran print: keyholes and slits by the sea)", () => {
+  // Low land (at most 25 m) with a coast full of narrow spits and bays.
+  const low = gridFrom(sw, W, H, 25, (e, n) => {
+    const [x, y] = [(e - sw.e) / W - 0.5, (n - sw.n) / H - 0.5];
+    const a = Math.atan2(y, x);
+    const r = Math.hypot(x / 0.42, y / 0.4) + 0.12 * Math.sin(a * 9) + 0.07 * Math.sin(a * 23 + 1) + 0.04 * Math.sin(e / 70) * Math.cos(n / 80);
+    return Math.max(0, (1 - r) * 25);
+  });
+  it("makes every piece one solid, every dovetail catching, for several sizes and patterns", () => {
+    for (const [piece, seed] of [[15, 1], [25, 2], [40, 3], [20, 4]]) {
+      const label = `${piece} mm, pattern ${seed}`;
+      const p = makeIslandPuzzle(low, sw, W, H, { ...SPEC, bed: [200, 200, 200], piece, seed });
+      expect(p.pieces.length, label).toBeGreaterThan(3);
+      for (const q of p.pieces) expect(shellsOf(q.bodies[0]), `${label}: piece ${q.name}`).toBe(1);
+      expect(pullOut(p), label).toBe(0);
     }
   });
 });

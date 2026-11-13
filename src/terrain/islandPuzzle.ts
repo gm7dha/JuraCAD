@@ -970,6 +970,30 @@ function neckFade(tabs: Joined["tabs"], nx: number, ny: number, cell: number): (
 /** The most a crumb's inside may be (mm²): bigger separate parts of a piece are left as they are. */
 export const CRUMB_MOST = 3;
 
+/** How many separate outlines piece `id`'s mesh has (within its box of cells [i0, j0, i1, j1]). */
+export function meshPartCount(piece: Int32Array, nx: number, ny: number, cell: number, fit: number, id: number, box: number[]): number {
+  const [i0, j0] = [box[0] - 2, box[1] - 2];
+  const [w, h] = [box[2] - box[0] + 5, box[3] - box[1] + 5];
+  const mine = new Uint8Array(w * h);
+  const other = new Uint8Array(w * h);
+  for (let j = 0; j < h; j++)
+    for (let i = 0; i < w; i++) {
+      const [a, b] = [i + i0, j + j0];
+      const m = a >= 0 && b >= 0 && a < nx && b < ny && piece[b * nx + a] === id;
+      mine[j * w + i] = m ? 1 : 0;
+      other[j * w + i] = m ? 0 : 1;
+    }
+  const dOut = distanceTransform(other, w, h);
+  const dIn = distanceTransform(mine, w, h);
+  const f = new Float64Array(w * h);
+  const inside = new Uint8Array(w * h);
+  for (let c = 0; c < w * h; c++) {
+    f[c] = (mine[c] ? Math.sqrt(dOut[c]) - Math.SQRT1_2 : -(Math.sqrt(dIn[c]) - 0.5)) * cell - fit;
+    inside[c] = f[c] > 0 ? 1 : 0;
+  }
+  return meshParts(inside, f, w, h).count;
+}
+
 /** Stretches of inside samples as marching squares joins them: side by side, or across a saddle square whose mean is > 0. */
 function meshParts(inside: Uint8Array, f: Float64Array, w: number, h: number): { id: Int32Array; count: number } {
   const id = new Int32Array(w * h).fill(-1);
@@ -1075,7 +1099,7 @@ function crumbsAway(piece: Int32Array, nx: number, ny: number, cell: number, fit
   const N = nx * ny;
   const most = CRUMB_MOST / (cell * cell);
   let movedAny = false;
-  for (let pass = 0; pass < 3; pass++) {
+  for (let pass = 0; pass < 6; pass++) {
     const boxes = new Map<number, number[]>();
     for (let c = 0; c < N; c++) {
       const p = piece[c];
@@ -1087,6 +1111,7 @@ function crumbsAway(piece: Int32Array, nx: number, ny: number, cell: number, fit
     }
     const lost = new Uint8Array(N);
     const gift = new Int32Array(N).fill(-1);
+    const widen: [number, number][] = [];
     let any = false;
     for (const [id, b] of boxes) {
       const [i0, j0] = [b[0] - 2, b[1] - 2];
@@ -1136,13 +1161,40 @@ function crumbsAway(piece: Int32Array, nx: number, ny: number, cell: number, fit
       const size = new Int32Array(parts.count);
       for (let c = 0; c < w * h; c++) if (parts.id[c] >= 0) size[parts.id[c]]++;
       const main = size.indexOf(Math.max(...size));
+      // A bigger part joined to the body only by a strip too thin to print (a low, narrow neck of coast): the sea beside
+      // the strip is made land, so it prints and holds them together.
+      const narrowest = Math.ceil(2 * (fit / cell + 1)) + 2;
+      const bodyOnly = new Uint8Array(w * h);
+      for (let c = 0; c < w * h; c++) bodyOnly[c] = parts.id[c] === main ? 1 : 0;
+      const dMain = distanceTransform(bodyOnly, w, h);
+      let widened = false;
+      for (let q = 0; q < parts.count; q++) {
+        if (q === main || size[q] <= most) continue;
+        const part = new Uint8Array(w * h);
+        for (let c = 0; c < w * h; c++) part[c] = parts.id[c] === q ? 1 : 0;
+        const dPart = distanceTransform(part, w, h);
+        for (let j = 0; j < h; j++)
+          for (let i = 0; i < w; i++) {
+            const c = j * w + i;
+            const [a, bb] = [i + i0, j + j0];
+            if (a < 0 || bb < 0 || a >= nx || bb >= ny) continue;
+            if (piece[bb * nx + a] !== -1 || dMain[c] > narrowest ** 2 || dPart[c] > narrowest ** 2) continue;
+            if (Math.sqrt(dMain[c]) + Math.sqrt(dPart[c]) > narrowest * 1.5) continue;
+            widen.push([bb * nx + a, id]);
+            widened = true;
+          }
+      }
+      if (widened) {
+        any = true;
+        continue;
+      }
       const crumb = new Uint8Array(w * h);
       const body = new Uint8Array(w * h);
       let crumbs = false;
       for (let c = 0; c < w * h; c++) {
         const q = parts.id[c];
         if (q < 0) continue;
-        if (q === main || size[q] > most) body[c] = 1;
+        if (q === main) body[c] = 1;
         else (crumb[c] = 1), (crumbs = true);
       }
       if (!crumbs) continue;
@@ -1160,6 +1212,11 @@ function crumbsAway(piece: Int32Array, nx: number, ny: number, cell: number, fit
     }
     if (!any) break;
     let moved = false;
+    for (const [c, id] of widen)
+      if (piece[c] === -1) {
+        piece[c] = id;
+        moved = true;
+      }
     for (let c = 0; c < N; c++)
       if (gift[c] >= 0 && piece[c] !== gift[c]) {
         piece[c] = gift[c];
@@ -1629,6 +1686,13 @@ function joinPieces(piece: Int32Array, nx: number, ny: number, cell: number, ful
     if (!b) boxes.set(p, [i, j, i, j]);
     else [b[0], b[1], b[2], b[3]] = [Math.min(b[0], i), Math.min(b[1], j), Math.max(b[2], i), Math.max(b[3], j)];
   }
+  // How many separate outlines each piece's mesh has (worked out before a tab is painted, kept up to date as tabs go in).
+  const shellCount = new Map<number, number>();
+  const shells = (id: number) => {
+    let n = shellCount.get(id);
+    if (n === undefined) shellCount.set(id, (n = meshPartCount(piece, nx, ny, cell, spec.fit, id, boxes.get(id)!)));
+    return n;
+  };
   const rnd = seeded(spec.seed * 31 + 17);
   const at = (x: number, y: number) => {
     const [i, j] = [Math.floor(x / cell), Math.floor(y / cell)];
@@ -1688,6 +1752,7 @@ function joinPieces(piece: Int32Array, nx: number, ny: number, cell: number, ful
             return true;
           })();
           if (!ok) continue;
+          const shellsBefore = [shells(from), shells(into)];
           // Paint it, then make sure the piece it went into is still one piece.
           const changed: number[] = [];
           const R = Math.ceil((head + reach) / cell) + 2;
@@ -1716,7 +1781,24 @@ function joinPieces(piece: Int32Array, nx: number, ny: number, cell: number, ful
               }),
             );
           };
-          if (!changed.length || !wholePiece(piece, nx, ny, into, boxes.get(into)!) || !locks()) {
+          // Neither piece's mesh may come apart: a knob joined to its piece only through a strip too thin to print would
+          // fall out (leaving a keyhole), and a socket can cut a thin piece in two.
+          const tabBox = (b: number[]) => {
+            const out = [...b];
+            for (const c of changed) {
+              const [i, j] = [c % nx, Math.floor(c / nx)];
+              [out[0], out[1], out[2], out[3]] = [Math.min(out[0], i), Math.min(out[1], j), Math.max(out[2], i), Math.max(out[3], j)];
+            }
+            return out;
+          };
+          const apart = () => {
+            const now = [meshPartCount(piece, nx, ny, cell, spec.fit, from, tabBox(boxes.get(from)!)), meshPartCount(piece, nx, ny, cell, spec.fit, into, boxes.get(into)!)];
+            if (now[0] > shellsBefore[0] || now[1] > shellsBefore[1]) return true;
+            shellCount.set(from, now[0]);
+            shellCount.set(into, now[1]);
+            return false;
+          };
+          if (!changed.length || !wholePiece(piece, nx, ny, into, boxes.get(into)!) || !locks() || apart()) {
             for (const c of changed) piece[c] = into;
             continue;
           }
