@@ -361,11 +361,12 @@ export async function exportDrawing(format: "pdf" | "svg" | "dxf") {
   s.showToast(count > 1 ? `Saved ${file}.${format} (sheet ${no} of ${count} — switch sheets to save another, or save a PDF for them all)` : `Saved ${file}.${format}`, "success");
 }
 
-function ToolButton({ label, icon, onClick, disabled, title }: { label: string; icon: ReactNode; onClick?: () => void; disabled?: boolean; title?: string }) {
+/** `iconOnly`: Undo and Redo show just their icon, as on the other toolbars (the name is in the tooltip). */
+function ToolButton({ label, icon, onClick, disabled, title, iconOnly }: { label: string; icon: ReactNode; onClick?: () => void; disabled?: boolean; title?: string; iconOnly?: boolean }) {
   return (
-    <button className="tool-button" onClick={onClick} disabled={disabled} title={title ?? label} aria-label={label}>
+    <button className={`tool-button${iconOnly ? " icon-only" : ""}`} onClick={onClick} disabled={disabled} title={title ?? label} aria-label={label}>
       {icon}
-      <span>{label}</span>
+      {!iconOnly && <span>{label}</span>}
     </button>
   );
 }
@@ -378,8 +379,8 @@ export function DrawingToolbar() {
   return (
     <div className="toolbar" role="toolbar" aria-label="Drawing tools">
       <div className="tool-group">
-        <ToolButton label="Undo" icon={<Icons.Undo />} onClick={() => useStore.getState().undo()} disabled={!canUndo} title={`Undo (${shortcut(platform, "Z")})`} />
-        <ToolButton label="Redo" icon={<Icons.Redo />} onClick={() => useStore.getState().redo()} disabled={!canRedo} title="Redo" />
+        <ToolButton label="Undo" icon={<Icons.Undo />} onClick={() => useStore.getState().undo()} disabled={!canUndo} title={`Undo (${shortcut(platform, "Z")})`} iconOnly />
+        <ToolButton label="Redo" icon={<Icons.Redo />} onClick={() => useStore.getState().redo()} disabled={!canRedo} title="Redo" iconOnly />
       </div>
       <div className="tool-divider" />
       <div className="tool-group">

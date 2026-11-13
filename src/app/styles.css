@@ -331,7 +331,7 @@ button:disabled {
   width: 1px;
   height: 36px;
   background: var(--line);
-  margin: 0 6px;
+  margin: 0 4px;
 }
 
 .tool-button {
@@ -348,6 +348,12 @@ button:disabled {
   background: transparent;
   color: var(--ink-2);
   font-size: 11.5px;
+}
+
+/* Undo, Fit, Section…: just the icon (the name is in the tooltip), as in Onshape. */
+.tool-button.icon-only {
+  min-width: 34px;
+  padding: 2px 4px;
 }
 
 .tool-button:hover:not(:disabled) {
@@ -2529,6 +2535,21 @@ kbd {
   }
 }
 
+/* Tablets and small windows: toolbar buttons a little tighter, so a Part Studio's tools (nearly) all show. */
+@media (max-width: 1100px) {
+  .toolbar {
+    padding: 0 4px;
+  }
+  .tool-button {
+    min-width: 40px;
+    padding: 2px 2px;
+    font-size: 10px;
+  }
+  .tool-button.icon-only {
+    min-width: 32px;
+  }
+}
+
 @media (max-width: 1300px) {
   .phase-badge .badge-extra {
     display: none;
@@ -3182,7 +3203,7 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
+  width: 12px;
   height: 48px;
   padding: 0;
   border: 1px solid transparent;
@@ -3204,6 +3225,9 @@ kbd {
   z-index: 1000;
   display: flex;
   flex-direction: column;
+  /* Long lists (planes + curves) scroll rather than run off the bottom of a short window; the top is set where it opens. */
+  max-height: calc(100vh - 8px);
+  overflow-y: auto;
   min-width: 190px;
   padding: 4px;
   background: var(--panel);
@@ -3235,6 +3259,19 @@ kbd {
 }
 .tool-menu button:disabled {
   opacity: 0.4;
+}
+/* A new section of a long list (curves after planes, sheet metal's views after its tools…) */
+.tool-menu button.menu-break {
+  position: relative;
+  margin-top: 9px;
+}
+.tool-menu button.menu-break::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: -5px;
+  border-top: 1px solid var(--line);
 }
 .tool-menu-icon {
   display: flex;
@@ -3858,7 +3895,15 @@ kbd {
     min-height: 44px;
   }
   .tool-button {
-    min-width: 52px;
+    min-width: 46px;
+    height: 52px;
+  }
+  .tool-button.icon-only {
+    min-width: 44px;
+  }
+  /* Wide enough for a finger (a long press on the button opens its list too). */
+  .tool-split-arrow {
+    width: 26px;
     height: 52px;
   }
   .relation-button {
@@ -3927,6 +3972,26 @@ kbd {
   }
   .measure-panel {
     bottom: 76px;
+  }
+}
+
+/* A tablet held sideways (an iPad is 1024 px): toolbar buttons as close as fingers allow, so few are past the edge. */
+@media (pointer: coarse) and (max-width: 1100px) {
+  .toolbar {
+    gap: 2px;
+  }
+  .tool-button {
+    min-width: 42px;
+    padding: 2px 1px;
+  }
+  .tool-button.icon-only {
+    min-width: 40px;
+  }
+  .tool-split-arrow {
+    width: 22px;
+  }
+  .tool-divider {
+    margin: 0 2px;
   }
 }
 

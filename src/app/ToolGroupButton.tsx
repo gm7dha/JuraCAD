@@ -11,6 +11,8 @@ export interface GroupItem {
   /** Stays the same while the label might not (used to remember the last one picked). */
   key: string;
   label: string;
+  /** A shorter name for the toolbar button itself (the list shows `label`), e.g. "Boundary" for "Boundary surface". */
+  short?: string;
   icon: ReactNode;
   title: string;
   onClick: () => void;
@@ -18,6 +20,8 @@ export interface GroupItem {
   disabled?: boolean;
   /** Keyboard shortcut shown in the list, e.g. "R". */
   shortcut?: string;
+  /** Starts a new section of the list (a thin line above it). */
+  divider?: boolean;
 }
 
 // "partsmith.toolGroup.*" are browser-storage keys from the app's old name (PartSmith), kept so choices are remembered.
@@ -36,7 +40,20 @@ const remember = (id: string, key: string) => {
   }
 };
 
-export function ToolGroupButton({ id, name, items, pressed = false }: { id: string; name: string; items: GroupItem[]; pressed?: boolean }) {
+export function ToolGroupButton({
+  id,
+  name,
+  items,
+  pressed = false,
+  compact = false,
+}: {
+  id: string;
+  name: string;
+  items: GroupItem[];
+  pressed?: boolean;
+  /** Just the icon on the button (the name is in its tooltip), as the sketch relations. */
+  compact?: boolean;
+}) {
   const [last, setLast] = useState<string | null>(() => remembered(id));
   const [open, setOpen] = useState(false);
   const arrow = useRef<HTMLButtonElement>(null);
@@ -85,9 +102,17 @@ export function ToolGroupButton({ id, name, items, pressed = false }: { id: stri
 
   const allOff = items.every((i) => i.disabled);
   return (
-    <div className="tool-split">
+    <div
+      className="tool-split"
+      // A right-click, or a long press on a touch screen (touchCompat sends it as a contextmenu), opens the list,
+      // so a finger needn't find the ▾ (on the button too when its tool can't be used yet).
+      onContextMenu={(e) => {
+        e.preventDefault();
+        if (!allOff) setOpen(true);
+      }}
+    >
       <button
-        className={`tool-button${shown.active || pressed ? " active" : ""}`}
+        className={`tool-button${compact ? " icon-only" : ""}${shown.active || pressed ? " active" : ""}`}
         onClick={() => pick(shown)}
         disabled={shown.disabled}
         title={shown.title}
@@ -95,7 +120,7 @@ export function ToolGroupButton({ id, name, items, pressed = false }: { id: stri
         aria-pressed={shown.active}
       >
         {shown.icon}
-        <span>{shown.label}</span>
+        {!compact && <span>{shown.short ?? shown.label}</span>}
       </button>
       <button
         ref={arrow}
@@ -120,7 +145,7 @@ export function ToolGroupButton({ id, name, items, pressed = false }: { id: stri
             className="tool-menu"
             role="menu"
             aria-label={`${name} tools`}
-            style={{ left: at.left, top: at.top }}
+            style={{ left: at.left, top: at.top, maxHeight: `calc(100vh - ${at.top}px - 8px)` }}
             onKeyDown={(e) => {
               if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
               e.preventDefault();
@@ -133,7 +158,7 @@ export function ToolGroupButton({ id, name, items, pressed = false }: { id: stri
               <button
                 key={item.key}
                 role="menuitem"
-                className={item.active ? "active" : ""}
+                className={[item.active && "active", item.divider && "menu-break"].filter(Boolean).join(" ")}
                 disabled={item.disabled}
                 onClick={() => pick(item)}
                 title={item.title}
