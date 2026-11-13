@@ -70,8 +70,8 @@ import { importCacheKey, importKey, importReport, importSolids, isImportedSurfac
 import { simplifyShape } from "./simplify";
 import { regionOfFaces } from "./facePattern";
 import { modifyFillets, NotAFillet } from "./modifyFillet";
-import { memberSolid, keepSide } from "./frame";
-import { angleFromSquare, centreLine, clipPolyline, cutLength, envelopeOf, gussetOutline, memberInfo, memberRange, planFrame, polylineLength, sketchPathSegments, straightMember, trimmedInfo, usualMaterial, type MemberPlan, type PathSeg, type StraightMember } from "../model/frame";
+import { memberSolid, keepSide, type FrameSpines } from "./frame";
+import { angleFromSquare, centreLine, clipPolyline, curveSegId, cutLength, edgeSegId, edgeSegment, envelopeOf, gussetOutline, memberInfo, memberRange, planFrame, polylineLength, sketchPathSegments, straightMember, trimmedInfo, usualMaterial, withPathNormal, type MemberPlan, type PathSeg, type StraightMember } from "../model/frame";
 import { builtInProfile, placedProfile, type ProfileShape } from "../model/frameProfiles";
 import type { FrameMemberInfo } from "../model/frameTypes";
 import { splitFaces } from "./splitFace";
@@ -2246,6 +2246,8 @@ interface StudioBuild {
   notes?: Record<string, string>;
   /** Move / copy features: the point they turn about (see RebuildResult.transformCentres). */
   centres?: Record<string, Vec3>;
+  /** Frames' path pieces from part edges and curves (see RebuildResult.framePaths). */
+  framePaths?: Record<string, PathSeg[]>;
   /** Sketches on part faces, or using part edges: what was found for them. */
   links: Record<string, SketchLinkInfo>;
   /** Each sketch: what it could snap to, as things were where it sits (see sketchCandidates). */
@@ -2442,6 +2444,7 @@ export class GeometryEngine {
     const featureWarnings: Record<string, string> = {};
     const featureNotes: Record<string, string> = {};
     const transformCentres: Record<string, Vec3> = {};
+    const framePaths: Record<string, PathSeg[]> = {};
     const followed: Record<string, FollowedFrame> = {};
     const curves: Record<string, number[][]> = {};
     const shared = JSON.stringify([variables, partNames]);
@@ -2519,7 +2522,7 @@ export class GeometryEngine {
           for (const p of this.parts) for (const m of p.members ?? []) if (names[m.id]) m.name = names[m.id];
           // Another configuration's copies of the parts (for assemblies).
           if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
-          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, centres: this.centres, links: this.links, snaps: this.snaps ?? new Map(), followed: this.followed, owned: this.owned, curves: this.curves, curveLines: this.curveLines };
+          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, centres: this.centres, framePaths: this.framePaths, links: this.links, snaps: this.snaps ?? new Map(), followed: this.followed, owned: this.owned, curves: this.curves, curveLines: this.curveLines };
           this.curves = new Map();
           this.snaps = null;
           this.builds.set(studio.id, b);
@@ -2537,6 +2540,7 @@ export class GeometryEngine {
           Object.assign(featureWarnings, b.warnings ?? {});
           Object.assign(featureNotes, b.notes ?? {});
           Object.assign(transformCentres, b.centres ?? {});
+          Object.assign(framePaths, b.framePaths ?? {});
         }
         this.studiosBuilt.add(studio.id);
       }
@@ -2561,6 +2565,7 @@ export class GeometryEngine {
       ...(Object.keys(featureWarnings).length ? { featureWarnings } : {}),
       ...(Object.keys(featureNotes).length ? { featureNotes } : {}),
       ...(Object.keys(transformCentres).length ? { transformCentres } : {}),
+      ...(Object.keys(framePaths).length ? { framePaths } : {}),
       ...(Object.keys(followed).length ? { followed } : {}),
       ...(Object.keys(curves).length ? { curves } : {}),
       durationMs: Math.round(performance.now() - started),
@@ -3062,6 +3067,7 @@ export class GeometryEngine {
     const infoNotes: Record<string, string> = {};
     this.notes = infoNotes;
     this.centres = {};
+    this.framePaths = {};
     let partCounter = 0;
     let surfaceCounter = 0;
     const sketches: SketchMap = new Map();
@@ -5747,22 +5753,34 @@ export class GeometryEngine {
       segs.push(...r.segs);
       skipped += r.skipped;
     }
+    // Part edges and curve features followed too (their curved pieces swept along the real edges).
+    const spines: FrameSpines = new Map();
+    const more = this.framePathPieces(feature, features, spines);
+    if (typeof more === "string") {
+      spines.forEach((w) => w.delete());
+      return more;
+    }
+    if (more.length) this.framePaths[feature.id] = more;
+    segs.push(...more);
     // The same curve picked twice is used once.
     const unique = segs.filter((s, i) => segs.findIndex((x) => x.id === s.id) === i);
     const plan = planFrame(unique, def, shape, Math.max(0, values.gap ?? 0));
-    if (typeof plan === "string") return plan;
+    if (typeof plan === "string") {
+      spines.forEach((w) => w.delete());
+      return plan;
+    }
     const solids: Shape3D[] = [];
     const envelopes = new Map<number, Shape3D>();
     const env = envelopeOf(shape);
     try {
-      for (const m of plan.members) solids.push(memberSolid(m, shape));
+      for (const m of plan.members) solids.push(memberSolid(m, shape, spines));
       // Coped ends: cut to the outside of the member(s) running through (no slots or holes), keeping the biggest piece.
       plan.members.forEach((m, i) => {
         for (const end of [0, 1] as const) {
           for (const t of m.ends[end].cope ?? []) {
             let tool = envelopes.get(t);
             if (!tool) {
-              tool = memberSolid(plan.members[t], env);
+              tool = memberSolid(plan.members[t], env, spines);
               envelopes.set(t, tool);
             }
             const cut = solids[i].cut(tool) as Shape3D;
@@ -5773,9 +5791,12 @@ export class GeometryEngine {
       });
     } catch (e) {
       solids.forEach((x) => x.delete());
-      return describeError(e, "Couldn't make this frame.");
+      // Our own plain messages pass on; OpenCascade's own text never reaches the user.
+      const said = e instanceof Error ? e.message : "";
+      return said && !/Standard_|BRep|Geom|TopoDS|OCC|BindingError|is not a function|undefined/.test(said) ? said : "Couldn't make this frame. Try a smaller profile, or a smoother path with gentler bends.";
     } finally {
       envelopes.forEach((x) => x.delete());
+      spines.forEach((w) => w.delete());
     }
     plan.members.forEach((m, i) => {
       // Named by the member's first curve, so ids stay put when other lines are added or taken away.
@@ -5791,6 +5812,89 @@ export class GeometryEngine {
     return null;
   }
 
+  /** Frames' path pieces from part edges and curve features, this build (see RebuildResult.framePaths). */
+  private framePaths: Record<string, PathSeg[]> = {};
+
+  /**
+   * A frame's path pieces from part edges and curve features: lines, arcs or sampled curves (edgeSegment), the
+   * curved ones' real edges put in `spines` (walked the way their samples run). A plain message when one is missing.
+   */
+  private framePathPieces(feature: Feature, features: Feature[], spines: FrameSpines): PathSeg[] | string {
+    const def = feature.frame!;
+    const fromEdge = (e: Edge, id: string, frenet: boolean): PathSeg | null => {
+      const length = measureLength(e);
+      const kind = e.geomType;
+      // (Even, so a closed curve's middle sample is the middle of its parameter: kernel/frame.ts cuts it there.)
+      const n = kind === "LINE" ? 4 : kind === "CIRCLE" ? 48 : 2 * Math.min(180, Math.max(24, Math.ceil(length / 4)));
+      const pts: Vec3[] = [];
+      const tans: Vec3[] = [];
+      for (let i = 0; i <= n; i++) {
+        pts.push(takeVec(e.pointAt(i / n)));
+        const t = takeVec(e.tangentAt(i / n));
+        const l = Math.hypot(...t) || 1;
+        tans.push([t[0] / l, t[1] / l, t[2] / l]);
+      }
+      // Tangents the way the points run.
+      const d: Vec3 = [pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2]];
+      if (d[0] * tans[0][0] + d[1] * tans[0][1] + d[2] * tans[0][2] < 0) tans.forEach((t, i) => (tans[i] = [-t[0], -t[1], -t[2]]));
+      const seg = edgeSegment(id, pts, tans, length, { frenet });
+      if (seg?.kind === "curve") {
+        let w = assembleWire([e]);
+        if (dist3(takeVec(w.startPoint), pts[0]) > 1e-5 * Math.max(1, length)) {
+          const r = reversedWire(w);
+          w.delete();
+          w = r;
+        }
+        spines.set(id, w);
+      }
+      return seg;
+    };
+    const out: PathSeg[] = [];
+    // Part edges: one group (they lie in one plane, or the profile stands up).
+    const fromEdges: PathSeg[] = [];
+    // All of a part's picked edges found again together, so no two can land on the same edge.
+    const byPart = new Map<string, NonNullable<typeof def.edges>>();
+    for (const e of def.edges ?? []) byPart.set(e.partId, [...(byPart.get(e.partId) ?? []), e]);
+    for (const [partId, picks] of byPart) {
+      const part = this.parts.find((p) => p.id === partId);
+      if (!part) return "A part whose edges the frame follows no longer exists (or comes later in the list). Edit the frame and pick its edges again.";
+      let edges: Edge[];
+      try {
+        edges = findPickedEdges(part.shape, picks);
+      } catch {
+        return `${picks.length === 1 ? "An edge" : "Some of the edges"} the frame follows on ${part.name} can't be found any more (the part has changed too much). Edit the frame and pick ${picks.length === 1 ? "it" : "them"} again.`;
+      }
+      const same = edges.some((e, i) => edges.some((o, j) => j > i && e.isSame(o)));
+      if (same) {
+        edges.forEach((e) => e.delete());
+        return `Two of the edges the frame follows on ${part.name} are now the same edge (the part has changed). Edit the frame and pick its edges again.`;
+      }
+      edges.forEach((e, i) => {
+        const seg = fromEdge(e, edgeSegId(partId, picks[i].key), false);
+        e.delete();
+        if (seg) fromEdges.push(seg);
+      });
+    }
+    out.push(...withPathNormal(fromEdges));
+    for (const id of def.curves ?? []) {
+      const target = features.find((f) => f.id === id);
+      if (!target || features.indexOf(target) > features.indexOf(feature)) return target ? `${target.name} comes after this frame in the list. Move it above, or leave it out of the path.` : "A curve the frame follows has been deleted. Edit the frame and pick its path again.";
+      const built = this.curves.get(id);
+      if (!built?.wires.length) return target.suppressed ? `${target.name} is suppressed, so the frame can't follow it.` : `${target.name} couldn't be made, so the frame can't follow it.`;
+      const pieces: PathSeg[] = [];
+      built.wires.forEach((w, wi) => {
+        const edges = edgesOf(w);
+        edges.forEach((e, ei) => {
+          const seg = fromEdge(e, curveSegId(id, wi, ei), !!built.frenet);
+          if (seg) pieces.push(seg);
+        });
+        edges.forEach((e) => e.delete());
+      });
+      out.push(...withPathNormal(pieces));
+    }
+    return out;
+  }
+
   private applyTrimFrame(feature: Feature): string | null {
     const def = feature.trimFrame;
     if (!def?.parts.length) return "Click the frame members to trim.";
@@ -5801,7 +5905,7 @@ export class GeometryEngine {
     const targetMember = def.to ? this.frameMembers.get(def.to) : undefined;
     let tool: Shape3D | null = null;
     try {
-      if (target) tool = targetMember ? memberSolid(targetMember.plan, envelopeOf(targetMember.shape)) : target.shape.clone();
+      if (target) tool = targetMember && !targetMember.plan.member.segs.some((x) => x.kind === "curve") ? memberSolid(targetMember.plan, envelopeOf(targetMember.shape)) : target.shape.clone();
       for (const id of def.parts) {
         const part = this.parts.find((p) => p.id === id);
         if (!part) return "One of the members to trim no longer exists. Edit this and pick them again.";

@@ -93,6 +93,12 @@ export function connectKernel(): () => void {
       const was = useStore.getState().transformCentres;
       const centres = { ...was, ...(result.transformCentres ?? {}) };
       if (JSON.stringify(centres) !== JSON.stringify(was)) useStore.setState({ transformCentres: centres });
+      // Frames' path pieces from part edges and curves (the dialog's corners); kept the same object while nothing changed.
+      if (result.framePaths) {
+        const had = useStore.getState().framePaths;
+        const paths = { ...had, ...result.framePaths };
+        if (JSON.stringify(paths) !== JSON.stringify(had)) useStore.setState({ framePaths: paths });
+      }
       refreshCandidates();
     });
   };

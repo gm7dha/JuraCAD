@@ -27,9 +27,9 @@ import { activeDrawing, partsInStudio, useLengthUnit, useStore } from "../model/
 import { fromUnit, lengthNumber } from "../model/units";
 import { studiosOf } from "../model/studios";
 import { cropRel, MAX_CROP_POINTS, withoutCrop } from "../drawing/crop";
-import { CropsList, DrawingStyleFields, pickCsvTable, TemplatesSection, TitleFieldsEditor } from "./DrawingExtrasPanel";
+import { addCutListTable, CropsList, DrawingStyleFields, pickCsvTable, TemplatesSection, TitleFieldsEditor } from "./DrawingExtrasPanel";
 import type { ViewCrop } from "../model/types";
-import type { Shortening, BreakOut, DetailView, Dimension, Drawing, DrawingRevision, DrawingSymbol, GdtCharacteristic, JuraCADDocument, SectionCut, ViewHost } from "../model/types";
+import type { Shortening, BreakOut, DetailView, Dimension, Drawing, DrawingNote, DrawingRevision, DrawingSymbol, GdtCharacteristic, JuraCADDocument, SectionCut, ViewHost } from "../model/types";
 import { addSection, breakOutRequests, hostKindOf, missedSections, viewKey, putBreakOut, removeBreakOut, removeSection, SECTION_HOSTS, sectionRequests, toRel, updateSection } from "../drawing/sections";
 import { addDetail, DETAIL_ZOOMS, removeDetail, updateDetail, withDetails } from "../drawing/details";
 import { balloonsFor, drawingDate, sheetInfo, sheetParts, viewScales, withViewParts, type DrawingSubject, type SheetPart } from "../drawing/sheetSource";
@@ -432,6 +432,7 @@ export function DrawingToolbar() {
           }))}
         />
         <ToolButton label="Table" icon={<Icons.Table />} onClick={() => pickCsvTable(changeShownPage)} title="Table from a CSV file — put a table (a parts list, a cut list, sizes…) saved from a spreadsheet on the sheet. Drag it to move it; Delete removes it" />
+        <ToolButton label="Cut list" icon={<Icons.Table />} onClick={() => addCutListTable(changeShownPage)} title="Cut list — a table of the frame members' lengths (profile, length, end cuts, how many), from the sheet's Part Studio or assembly, kept up to date. Drag it to move it; Delete removes it" />
         <ToolGroupButton
           id="drawing-views"
           name="section"
@@ -472,11 +473,34 @@ export function DrawingToolbar() {
 }
 
 /** A text box that saves on Enter or when you leave it (one undo step). */
+/** A Cut list table: which Part Studio's frame members it lists. */
+function CutListNoteProperties({ note, change }: { note: DrawingNote; change: (fn: (d: Drawing) => Drawing) => void }) {
+  const doc = useStore((s) => s.history.present);
+  const studios = studiosOf(doc);
+  const set = (studio: string) => change((d) => putNote(d, { ...note, cutList: studio ? { studio } : {} }));
+  return (
+    <section className="panel-section">
+      <h3>Cut list</h3>
+      <p className="panel-hint">The frame members&apos; lengths, worked out afresh each time. Drag it to move it; Delete removes it.</p>
+      <label className="field-label">Members of</label>
+      <select className="full-select" aria-label="Cut list of" value={note.cutList?.studio ?? ""} onChange={(e) => set(e.target.value)}>
+        <option value="">This sheet&apos;s part or assembly</option>
+        {studios.map((st) => (
+          <option key={st.id} value={st.id}>
+            {st.name}
+          </option>
+        ))}
+      </select>
+    </section>
+  );
+}
+
 /** The selected note: its text — or, for a symbol, its settings. */
 function NoteProperties({ drawing, change }: { drawing: Drawing; change: (fn: (d: Drawing) => Drawing) => void }) {
   const selected = useStore((s) => s.selectedDim);
   const note = drawing.notes?.find((n) => n.id === selected);
   if (!note) return null;
+  if (note.cutList) return <CutListNoteProperties note={note} change={change} />;
   if (note.table) {
     const rows = note.table.length;
     const cols = Math.max(0, ...note.table.map((r) => r.length));

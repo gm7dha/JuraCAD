@@ -857,7 +857,7 @@ export function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | n
     }
     if (feature.type === "import" && isSimplifyLevel(f.simplify)) feature.simplify = f.simplify;
     if (feature.type === "composite") feature.compositeParts = ids(f.compositeParts);
-    if (feature.type === "frame") feature.frame = parseFrameDef(f.frame) ?? { paths: [], profile: { kind: "extrusion", size: "2020" } };
+    if (feature.type === "frame") feature.frame = parseFrameDef(f.frame, parsePick) ?? { paths: [], profile: { kind: "extrusion", size: "2020" } };
     if (feature.type === "trimFrame") feature.trimFrame = parseTrimFrame(f.trimFrame, parsePlane);
     if (feature.type === "gusset") feature.gusset = parseGusset(f.gusset);
     if (feature.type === "deletePart") {

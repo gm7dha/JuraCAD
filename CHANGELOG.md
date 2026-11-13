@@ -8,6 +8,13 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.71 — Frames along edges and curves, three-way mitres, cut lists on drawings
+
+- Frames can follow part edges and curves (such as a helix), mixed with sketch lines; along a helix the profile keeps facing the middle.
+- Where three or more frame lengths meet (a cube's corner), the corner can be mitred.
+- New Cut list table for drawings: the frame lengths, how many, profile and end cuts, kept up to date (also in PDF, SVG and DXF).
+- Claude can do all three (frame `edges`/`curves`, three-way `"mitre"` corners, `add_drawing_note` `cut_list`).
+
 ## v0.70 — Assembly fillets, chamfers and Edit in context for Claude
 
 - A pin mated into a hole drilled in an assembly now stays in the hole when a Part Studio change moves the drilled part.
