@@ -557,6 +557,8 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "startAngle", label: "Start angle", defaultValue: "0", group: "position", unit: "°" },
       { key: "taper", label: "Taper (widening as it rises)", defaultValue: "0", group: "size", unit: "°" },
       { key: "bulge", label: "Bulge", defaultValue: "1", positive: true, group: "size", unit: "" },
+      { key: "distance", label: "Distance across the face", defaultValue: "5", positive: true, group: "size" },
+      { key: "angle", label: "Slope angle", defaultValue: "45", min: 0, group: "size", unit: "°" },
     ],
   },
   coil: {

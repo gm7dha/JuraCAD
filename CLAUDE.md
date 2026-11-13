@@ -711,10 +711,25 @@
   (`canonicalAxis`); projected sheets reach 2 × the size of the sketches and faces.
   Dialog `src/app/CurveOptions.tsx` (`CurveOptions`, `PathChoice`: sketch / curve / "Part edges (click them)"); Toolbar group
   "curves" (`startCurve`). Claude: add_feature "curve" with `curve_type` (`src/mcp/curveSpec.ts`), sweep `path` (sketch or
-  curve) / `path_edges` + `path_part`; points may be {"curve", "end"}. Not done: isocline, offset and trim curves; sketches can't
-  Use/project or pierce a curve feature yet; surface sweeps along curves. Tests: tests/curves, curveClicks (pure), engineCurves
+  curve) / `path_edges` + `path_part`; points may be {"curve", "end"}. Newer kinds (`src/kernel/curvesMore.ts`, params
+  `distance`/`angle`): Offset curve (`picks` = edges + at most one face to move across; a face alone = its outline less seams;
+  none = the first face beside the first edge, with a note; closed loops on a flat face exact via BRepOffsetAPI_MakeOffset, sign
+  chosen by whether the result lies on the face; else `walkedOffset` — each sample walked across the surface square to the edge,
+  re-projected step by step, a spline fitted; `flip` = out of the face), Isocline (`picks` = faces, `axis` = the direction, default
+  Z; n·d = sin(angle), `flip` = −; the face's (u, v) grid sampled with BRepGProp_Face, points off the face masked by its pcurves'
+  outline (`insidePieces`), pure marching squares + bisection on each crossing + `joinRuns` across seams in
+  `src/geometry/isoContour.ts`, splines fitted), Trim curve (`curves` = [curve to trim, bound curve?], else `plane`, else face
+  `picks`; BRepAlgoAPI_Splitter on the wire, pieces walked from its start — or, `flip`, its end — up to the first that ends on the
+  bound; `curveUses` needs both curves). Sketches use curve features like part edges: `curveFeatureRefs` gives each edge of its
+  wires as a `RefEdge` with `source` {sketch: <curve id>, item "e<k>", ends "e<k>.a"/".b"/".c"} (+ shape, + pierce places), so
+  links are ordinary SketchItemLinks (old files unchanged; Delete with dependents counts them as "references brought in");
+  `workOutCandidates` offers curves before the sketch (from `StudioBuild.curves`), `followSketch`'s `followCurve` re-finds edge k
+  when `this.curves` has the id (else the old sketch lookup), lost = null; the controller's `skipRef` treats a curve as shown
+  unless its eye is off. Not done: surface sweeps along curves; offsets past where the walk folds over are refused, not trimmed. Tests: tests/curves, curveClicks (pure), engineCurves
   (helix length/pitch/taper/face, spring volume, ellipse of a slanted cut, projected onto a ball, fit spline, bridge, sweep along
-  an edge, composite, curve pattern on a helix), mcpCurves.
+  an edge, composite, curve pattern on a helix), mcpCurves; tests/curvesMore (pure), engineCurvesMore (box top 5 mm in, a
+  cylinder edge walked down, ball isocline at 45° = R/√2 circle, helix trimmed by a plane and a face, a sketch using/piercing a
+  helix and following it), mcpCurvesMore.
 - Frames (Onshape's Frame, Trim frame, Gusset, Cut list): feature types "frame" (`Feature.frame`, `FrameDef` in
   model/frameTypes.ts: `paths` = sketches, all their lines/arcs/circles or `items`; `profile` = a built-in family + size key
   ("custom" = the width/height/wall params) or `{kind:"sketch"}` (its closed regions' polygons); `anchor` (9 points of the

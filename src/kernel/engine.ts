@@ -27,6 +27,7 @@ import { copyNumber, isSkipped } from "../model/patterns";
 import { materialRuns, shapeDistance, upToFaceSolid, upToPartsSolid } from "./upTo";
 import { loftSketches, pathWire, sweepAlongSpine, sweepSketch } from "./sweep";
 import { bezierEdge, chainEdges, compoundOf, endFrame, helixWire, interpolatedEdge, planeSheet, reversedWire, sectionEdges, sheetAlong, squareTo, takeVec, wirePolyline } from "./curves";
+import { isoclineWires, offsetOnFace, trimWire } from "./curvesMore";
 import { bridgePoints, curveKindInfo, fitSplineProblem, helixSizes, type BridgeEnd } from "../model/curves";
 import { walkPoints } from "../sketch/pathSample";
 import { buildLoft } from "./loft";
@@ -2654,6 +2655,64 @@ export class GeometryEngine {
   }
 
   /**
+   * A curve feature's edges (in its wires' order: item "e<k>"), each as a reference seen square-on to a sketch — the
+   * same as a part edge, but `source` names the curve feature (`{sketch: <curve id>, item: "e<k>"}`, its ends
+   * "e<k>.a"/"e<k>.b", a round edge's centre "e<k>.c"), so links to it are SketchItemLinks that follow the curve and
+   * Delete with dependents sees them like any other feature they use. Pierce places too (`pierces`). The caller
+   * frees nothing: the edges are freed here.
+   */
+  private curveFeatureRefs(id: string, name: string, wires: Wire[], frame: PlaneFrame, opts: { pierces?: boolean; only?: number } = {}): { refs: RefEdge[]; byItem: Map<number, { seen: RefEdge | null; edge: Edge; ref: EdgeRef }> } {
+    const edges = wires.flatMap((w) => edgesOf(w));
+    const byItem = new Map<number, { seen: RefEdge | null; edge: Edge; ref: EdgeRef }>();
+    const refs: RefEdge[] = [];
+    edges.forEach((e, k) => {
+      if (opts.only !== undefined && k !== opts.only) {
+        e.delete();
+        return;
+      }
+      const bounds = boundsOf(e as unknown as Shape3D);
+      const ref = edgeRefOf(e, bounds);
+      const item = `e${k}`;
+      const closed = Math.hypot(ref.a[0] - ref.b[0], ref.a[1] - ref.b[1], ref.a[2] - ref.b[2]) < 1e-6;
+      const raw = seeEdge(frame, { partId: "", ref }, edgeSamples(e, ref));
+      let seen: RefEdge | null = null;
+      if (raw) {
+        const { pick: _p, project: _q, ...rest } = raw;
+        const ends = closed ? { ...(rest.centre ? { c: `${item}.c` } : {}) } : { a: `${item}.a`, b: `${item}.b`, ...(rest.kind === "arc" ? { c: `${item}.c` } : {}) };
+        seen = { ...rest, source: { sketch: id, item, ends, name } };
+        // A curve other than a line or circle carries its exact shape, so it can be used.
+        if (seen.kind === "curve" && !seen.shape) {
+          const sh = edgeShape(e);
+          const shape = sh ? seeShape(frame, sh) : null;
+          if (shape) seen = { ...seen, shape };
+        }
+        refs.push(seen);
+      }
+      if (opts.pierces && (ref.curve === "LINE" || straddles(frame, bounds))) {
+        const lerp = (f: number): Vec3 => [ref.a[0] + (ref.b[0] - ref.a[0]) * f, ref.a[1] + (ref.b[1] - ref.a[1]) * f, ref.a[2] + (ref.b[2] - ref.a[2]) * f];
+        const at = ref.curve === "LINE" ? edgePierceRefs(frame, { partId: "", ref }, lerp) : edgePierceRefs(frame, { partId: "", ref }, edgeAt(e), edgeSpans(e));
+        for (const pr of at) {
+          const { pick: _p, project: _q, ...rest } = pr;
+          refs.push({ ...rest, source: { sketch: id, item, name } });
+        }
+      }
+      byItem.set(k, { seen, edge: e, ref });
+    });
+    return { refs, byItem };
+  }
+
+  /** Free what curveFeatureRefs kept. */
+  private freeCurveRefs(byItem: Map<number, { edge: Edge }>): void {
+    for (const { edge } of byItem.values()) {
+      try {
+        edge.delete();
+      } catch {
+        // already freed
+      }
+    }
+  }
+
+  /**
    * A sketch on a part's face, or using part edges or other sketches, as they
    * are now: the face's edges (to show and snap to in the sketch), the sketch
    * moved with its face, and its linked lines, circles, arcs and points moved
@@ -2811,15 +2870,54 @@ export class GeometryEngine {
       const f = sketches.get(id);
       return f?.sketch?.plane ? { id, name: f.name, plane: f.sketch.plane, data: f.sketch.data } : null;
     };
+    // Curves and points following a curve feature (built earlier in the list): its edge "e<k>", found again by number.
+    const curveItem = (link: { sketch: string; item: string }): { k: number; end?: "a" | "b" | "c" } | null => {
+      if (!this.curves.has(link.sketch)) return null;
+      const m = /^e(\d+)(?:\.([abc]))?$/.exec(link.item);
+      return m ? { k: Number(m[1]), ...(m[2] ? { end: m[2] as "a" | "b" | "c" } : {}) } : { k: -1 };
+    };
+    const curveLinked = new Set<string>();
+    const followCurve = (link: { sketch: string; item: string }, use: (got: { seen: RefEdge | null; edge: Edge; ref: EdgeRef } | undefined, end?: "a" | "b" | "c") => void): boolean => {
+      const ci = curveItem(link);
+      if (!ci) return false;
+      const built = this.curves.get(link.sketch)!;
+      const { byItem } = this.curveFeatureRefs(link.sketch, "", built.wires, frame, { only: ci.k });
+      try {
+        use(byItem.get(ci.k), ci.end);
+      } finally {
+        this.freeCurveRefs(byItem);
+      }
+      return true;
+    };
     for (const c of linked) {
       const link = (c as { link: CurveLink }).link;
       if (isPartLink(link)) continue;
+      if (followCurve(link, (got) => (links[c.id] = got?.seen ? sameKind(c, shaped(c, got.seen, got.edge)) : null))) curveLinked.add(c.id);
+    }
+    for (const p of linkedPts) {
+      const link = p.link!;
+      if ("partId" in link) continue;
+      const done = followCurve(link, (got, end) => {
+        if (!got) return void (pointLinks[p.id] = null);
+        if (link.end === "pierce") {
+          const walk = remembered(edgeAt(got.edge));
+          pointLinks[p.id] = nearestPlace(edgePierces(frame, walk, got.ref.curve === "LINE" ? 1 : pierceSamples(walk, edgeSpans(got.edge))), [p.x, p.y]);
+          return;
+        }
+        const at = edgePoint3(got.ref, end === "a" ? "a" : end === "b" ? "b" : end === "c" ? "centre" : "mid");
+        pointLinks[p.id] = at ? toSketch(frame, at) : null;
+      });
+      if (done) curveLinked.add(p.id);
+    }
+    for (const c of linked) {
+      const link = (c as { link: CurveLink }).link;
+      if (isPartLink(link) || curveLinked.has(c.id)) continue;
       const src = sourceOf(link.sketch);
       links[c.id] = src ? sameKind(c, seeSketchCurve(src, link.item, frame)) : null;
     }
     for (const p of linkedPts) {
       const link = p.link!;
-      if ("partId" in link) continue;
+      if ("partId" in link || curveLinked.has(p.id)) continue;
       const src = sourceOf(link.sketch);
       if (link.end === "pierce") pointLinks[p.id] = src ? nearestPlace(sketchCurvePierces(src, link.item, frame), [p.x, p.y]) : null;
       else pointLinks[p.id] = src ? sketchPointAt(src, link as typeof link & { end?: "mid" }, frame) : null;
@@ -2932,6 +3030,16 @@ export class GeometryEngine {
       } finally {
         all.forEach((e) => e.delete());
       }
+    }
+    // Curve features earlier in the list (as built), like part edges.
+    const builtCurves = this.builds.get(studioId)?.curves;
+    for (const f of before) {
+      if (f.type !== "curve" || f.suppressed || out.length >= LIMIT) continue;
+      const c = builtCurves?.get(f.id);
+      if (!c?.wires.length) continue;
+      const { refs, byItem } = this.curveFeatureRefs(f.id, f.name, c.wires, frame, { pierces: true });
+      this.freeCurveRefs(byItem);
+      out.push(...refs);
     }
     for (const [id, f] of snap.earlier) {
       if (id === sketchId || !f.sketch?.plane) continue;
@@ -8103,6 +8211,87 @@ export class GeometryEngine {
             rest.delete();
           }
         } finally {
+          faces.forEach((f) => f.delete());
+        }
+      }
+      case "offset": {
+        const picks = feature.picks ?? [];
+        const edgePicks = picks.filter((p) => p.ref.kind === "edge");
+        const facePick = picks.find((p) => p.ref.kind === "face");
+        if (!facePick && !edgePicks.length) throw new Error("Click a face (for its whole outline), or edges and the face to move them across.");
+        const edges = edgePicks.length ? this.pickedEdgesOf(edgePicks) : [];
+        let face: Face | null = null;
+        try {
+          if (facePick) face = this.pickedFacesOf([facePick])[0];
+          else {
+            // The first face beside the first edge.
+            const part = this.parts.find((x) => x.id === edgePicks[0].partId)!;
+            for (const f of facesOf(part.shape)) {
+              const mine = edgesOf(f);
+              const has = mine.some((e) => e.isSame(edges[0]));
+              mine.forEach((e) => e.delete());
+              if (has && !face) face = f;
+              else f.delete();
+            }
+            if (!face) throw new Error("Couldn't find a face beside those edges. Click the face to move them across.");
+            this.notes[feature.id] = "Moved across the first face beside the edges. Click a face to choose which.";
+          }
+          return { wires: offsetOnFace(face, edges, v.distance, !!def.flip) };
+        } finally {
+          face?.delete();
+          edges.forEach((e) => e.delete());
+        }
+      }
+      case "isocline": {
+        const faces = this.pickedFacesOf((feature.picks ?? []).filter((p) => p.ref.kind === "face"));
+        try {
+          if (!faces.length) throw new Error("Click the faces to find the slope on.");
+          const line = this.findGeom(def.axis ?? { p: [0, 0, 0], axis: "z" }, "line", sketches, all);
+          if (!line.dir) throw new Error("Pick a direction: a line, a flat face or a plane, or X, Y or Z.");
+          const angle = v.angle ?? 0;
+          if (!(angle >= 0 && angle <= 90)) throw new Error("The slope angle must be from 0° to 90°.");
+          const sine = Math.sin((angle * Math.PI) / 180) * (def.flip ? -1 : 1);
+          return { wires: faces.flatMap((f) => isoclineWires(f, unitVec(line.dir!), sine)) };
+        } finally {
+          faces.forEach((f) => f.delete());
+        }
+      }
+      case "trim": {
+        const [id, boundId] = def.curves ?? [];
+        const name = (x: string) => all.find((f) => f.id === x)?.name ?? "The curve";
+        if (!id) throw new Error("Click the curve to trim.");
+        const c = this.curves.get(id);
+        if (!c?.wires.length) throw new Error(`${name(id)} is gone, suppressed, failed or comes later in the list. Pick another curve to trim.`);
+        if (c.wires.length > 1) throw new Error(`${name(id)} is in ${c.wires.length} separate pieces. Join them with a Composite curve first.`);
+        const wire = c.wires[0];
+        if (boundId) {
+          const b = this.curves.get(boundId);
+          if (!b?.wires.length) throw new Error(`${name(boundId)} is gone, suppressed, failed or comes later in the list. Pick something else to cut back to.`);
+          const bound = compoundOf(b.wires);
+          try {
+            return { wires: [trimWire(wire, bound, !!def.flip)] };
+          } finally {
+            bound.delete();
+          }
+        }
+        if (def.plane) {
+          const frame = planeFrame(def.plane);
+          const [lo, hi] = boundsOf(wire as unknown as Shape3D);
+          const mid: Vec3 = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+          const sheet = planeSheet(frame.origin as Vec3, frame.u as Vec3, frame.v as Vec3, mid, 2 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 10);
+          try {
+            return { wires: [trimWire(wire, sheet, !!def.flip)] };
+          } finally {
+            sheet.delete();
+          }
+        }
+        const faces = this.pickedFacesOf((feature.picks ?? []).filter((p) => p.ref.kind === "face"));
+        if (!faces.length) throw new Error("Click what to cut the curve back to: a face, a plane or another curve.");
+        const bound = compoundOf(faces);
+        try {
+          return { wires: [trimWire(wire, bound, !!def.flip)] };
+        } finally {
+          bound.delete();
           faces.forEach((f) => f.delete());
         }
       }

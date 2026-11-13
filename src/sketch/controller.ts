@@ -4,7 +4,7 @@
  * snap marker) for the viewport to draw.
  */
 import { activeFeatures, useStore, type SketchTool } from "../model/store";
-import { sketchVisible, usedSketches } from "../model/visibility";
+import { planeVisible, sketchVisible, usedSketches } from "../model/visibility";
 import type { Feature } from "../model/types";
 import { hitTest, inferOrientation, type Hit } from "./hit";
 import { dimensionLayout, offsetFor } from "./layout";
@@ -210,7 +210,8 @@ export class SketchController {
     const c = this.skipCache;
     if (c && c.hidden === hidden && c.features === features) return c.skip;
     const used = usedSketches(features);
-    const shown = new Set(features.filter((f) => f.type === "sketch" && sketchVisible(f, used)).map((f) => f.id));
+    // (Curve features, which sketches can use too, are shown unless their eye is off.)
+    const shown = new Set(features.filter((f) => (f.type === "sketch" && sketchVisible(f, used)) || (f.type === "curve" && planeVisible(f))).map((f) => f.id));
     const hiddenSet = new Set(hidden);
     const skip = (e: RefEdge) => (e.project && e.pick ? hiddenSet.has(e.pick.partId) : !!e.source && !shown.has(e.source.sketch));
     this.skipCache = { hidden, features, skip };

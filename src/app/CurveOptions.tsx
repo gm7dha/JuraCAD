@@ -1,5 +1,6 @@
 /**
- * Dialog parts for curve features (Helix, Projected, Bridging, Composite, Fit spline, Intersection curves) and the
+ * Dialog parts for curve features (Helix, Projected, Bridging, Composite, Fit spline, Intersection, Offset, Isocline and
+ * Trim curves) and the
  * path choice of Sweep and Curve pattern (a sketch, a curve feature, or part edges clicked in the view).
  */
 import { useMemo } from "react";
@@ -244,6 +245,65 @@ export function CurveOptions() {
           <label className="field-label">Plane (optional)</label>
           {def.plane ? <Chip text={planeLabel(def.plane)} onClear={() => set({ plane: undefined })} label="Clear the plane" /> : <p className="dialog-hint field-hint">Click a plane to cut the faces with it — or, without one, the first face is met with the others.</p>}
           {!picks.length && <p className="dialog-error">Click the faces.</p>}
+        </>
+      )}
+      {def.kind === "offset" && (
+        <>
+          {pickList("Edges and face")}
+          <p className={picks.length ? "dialog-hint field-hint" : "dialog-error"}>
+            Click a face to move its whole outline across it, or click edges and then the face they move across (without one, the first face beside the edges is used).
+          </p>
+          <label className="check-row">
+            <input type="checkbox" checked={!!def.flip} onChange={(e) => set({ flip: e.target.checked || undefined })} />
+            Other way (out of the face)
+          </label>
+        </>
+      )}
+      {def.kind === "isocline" && (
+        <>
+          {pickList("Faces")}
+          {!picks.length && <p className="dialog-error">Click the faces to find the slope on.</p>}
+          <label className="field-label">Direction</label>
+          {def.axis ? <Chip text={label(def.axis)} onClear={() => set({ axis: undefined, picking: "axis" })} label="Clear the direction" /> : <p className="dialog-error">Click a line, flat face or plane for the direction.</p>}
+          <p className="dialog-hint field-hint">
+            <button type="button" className={def.picking === "axis" ? "link-button selected" : "link-button"} onClick={() => set({ picking: def.picking === "axis" ? undefined : "axis" })}>
+              {def.picking === "axis" ? "Click a line or flat face in the 3D view…" : "Pick a direction"}
+            </button>{" "}
+            or choose:{" "}
+            {(["x", "y", "z"] as const).map((a) => (
+              <button key={a} type="button" className="link-button" onClick={() => set({ axis: { p: [0, 0, 0], dir: a === "x" ? [1, 0, 0] : a === "y" ? [0, 1, 0] : [0, 0, 1], axis: a }, picking: undefined })}>
+                {a.toUpperCase()}
+              </button>
+            ))}
+          </p>
+          <label className="check-row">
+            <input type="checkbox" checked={!!def.flip} onChange={(e) => set({ flip: e.target.checked || undefined })} />
+            Sloping the other way (facing away from the direction)
+          </label>
+        </>
+      )}
+      {def.kind === "trim" && (
+        <>
+          <label className="field-label">Curve to trim</label>
+          {def.curves?.[0] ? (
+            <Chip text={names(def.curves[0]) ?? "A curve"} onClear={() => set({ curves: [], picking: "curve" })} label="Clear the curve to trim" />
+          ) : (
+            <p className="dialog-error">Click the curve to trim in the 3D view.</p>
+          )}
+          <label className="field-label">Cut back to</label>
+          {def.curves?.[1] ? (
+            <Chip text={names(def.curves[1]) ?? "A curve"} onClear={() => set({ curves: def.curves!.slice(0, 1) })} label="Clear what it's cut back to" />
+          ) : def.plane ? (
+            <Chip text={planeLabel(def.plane)} onClear={() => set({ plane: undefined })} label="Clear the plane" />
+          ) : picks.length ? (
+            pickList("Face")
+          ) : (
+            <p className="dialog-error">Click a face, a plane or another curve.</p>
+          )}
+          <label className="check-row">
+            <input type="checkbox" checked={!!def.flip} onChange={(e) => set({ flip: e.target.checked || undefined })} />
+            Keep the other end
+          </label>
         </>
       )}
     </fieldset>
