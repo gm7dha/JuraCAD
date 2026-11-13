@@ -7,26 +7,34 @@ import { parsePlacement } from "./math";
 import type { ContextPart, EditContext, Feature, FeatureType, JuraCADDocument } from "../model/types";
 import type { ContextInput } from "../kernel/protocol";
 
-/** The kinds of feature an assembly can hold: sketches, and what cuts with them. */
-export const ASSEMBLY_FEATURE_TYPES: readonly FeatureType[] = ["sketch", "extrude", "revolve", "hole"];
+/** The kinds of feature an assembly can hold: sketches, what cuts with them, and Fillet / Chamfer on copies' edges. */
+export const ASSEMBLY_FEATURE_TYPES: readonly FeatureType[] = ["sketch", "extrude", "revolve", "hole", "fillet", "chamfer"];
 
-/** Kinds that cut parts (the others are sketches). */
-export const ASSEMBLY_CUT_TYPES: readonly FeatureType[] = ["extrude", "revolve", "hole"];
+/** Kinds that change parts (the others are sketches). */
+export const ASSEMBLY_CUT_TYPES: readonly FeatureType[] = ["extrude", "revolve", "hole", "fillet", "chamfer"];
 
 /** Whether a feature is one an assembly can hold (and cut with). */
 export function isAssemblyFeature(f: Pick<Feature, "type" | "operation">): boolean {
   if (!ASSEMBLY_FEATURE_TYPES.includes(f.type)) return false;
-  return f.type === "sketch" || f.type === "hole" || f.operation === "remove";
+  return f.type === "sketch" || f.type === "hole" || f.type === "fillet" || f.type === "chamfer" || f.operation === "remove";
 }
 
-/** Read `featureParts` from a file: only lists of strings, for features that exist. */
-export function parseFeatureParts(raw: unknown, features: readonly Feature[]): Record<string, string[]> | undefined {
+/** Fillet / Chamfer in an assembly: edges picked on copies (a pick's `partId` is the copy's key). */
+export const isAssemblyEdgeFeature = (f: Pick<Feature, "type">): boolean => f.type === "fillet" || f.type === "chamfer";
+
+/**
+ * Read `featureParts` from a file: only lists of strings, for features that exist. `features` = the lists are of
+ * feature ids (`featureNeeds`): only ones that exist are kept.
+ */
+export function parseFeatureParts(raw: unknown, features: readonly Feature[], ofFeatures = false): Record<string, string[]> | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const ids = new Set(features.map((f) => f.id));
   const out: Record<string, string[]> = {};
   for (const [id, v] of Object.entries(raw as Record<string, unknown>)) {
     if (!ids.has(id) || !Array.isArray(v)) continue;
-    out[id] = v.filter((x): x is string => typeof x === "string").slice(0, 500);
+    const list = v.filter((x): x is string => typeof x === "string" && (!ofFeatures || ids.has(x))).slice(0, 500);
+    if (ofFeatures && !list.length) continue;
+    out[id] = list;
   }
   return Object.keys(out).length ? out : undefined;
 }
