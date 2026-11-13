@@ -38,6 +38,11 @@ export interface FrameCornerChoice {
   through?: string;
 }
 
+/** A part edge a frame follows, with its lasting name in the frame. */
+export interface FrameEdge extends TopoPick {
+  key: string;
+}
+
 export interface FrameDef {
   paths: FramePath[];
   profile: FrameProfile;
@@ -49,10 +54,12 @@ export interface FrameDef {
   noMerge?: boolean;
   corners?: FrameCornerChoice[];
   /**
-   * Part edges followed too (found again on each rebuild; joined end to end with each other and the sketch lines). A
-   * member along one is named by its place in this list ("<part>/e<k>"). Missing = none (older files).
+   * Part edges followed too (found again on each rebuild, all of a part's together; joined end to end with each other
+   * and the sketch lines). Each keeps the `key` it was given when picked (`edgeKeyFor`: from the edge as picked, so the
+   * same edge picked again gets it back), which names its member ("<part>/<key>") and its corners, so taking another edge
+   * out renames nothing. Missing = none.
    */
-  edges?: TopoPick[];
+  edges?: FrameEdge[];
   /** Curve features (a Helix, Bridging curve…) followed too, each edge of each piece a length. Missing = none. */
   curves?: string[];
 }
@@ -91,6 +98,8 @@ export interface FrameMemberInfo {
   length: number;
   /** How each end is cut: an angle from square in degrees (0 = square, 45 = a mitre), or "coped". */
   ends: [number | "coped", number | "coped"];
+  /** Which ends are compound mitres (cut against two or more members at once). Missing = neither. */
+  compound?: [boolean, boolean];
   /** Bent to a curve (its length is along the middle). */
   curved?: boolean;
   /** The material it's usually made of (materials.ts key), for its weight when the part has none set. */

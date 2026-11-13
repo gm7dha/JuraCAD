@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { builtInProfile, placedProfile, type ProfileShape } from "../src/model/frameProfiles";
-import { buildMembers, edgeSegment, findCorners, frameLayout, parseFrameDef, planFrame, segFrames, togglePathCurve, togglePathEdge, withPathNormal, type CurveSeg, type PathSeg, type V3 } from "../src/model/frame";
+import { buildMembers, curveAcross, cutList, edgeKeyFor, edgeSegment, findCorners, frameLayout, laterPathMessage, memberInfo, parseFrameDef, planFrame, segFrames, togglePathCurve, togglePathEdge, withPathNormal, type CurveSeg, type PathSeg, type V3 } from "../src/model/frame";
 import type { FrameDef } from "../src/model/frameTypes";
 import type { Feature } from "../src/model/types";
 import { findDependents, withoutGone } from "../src/model/dependents";
@@ -81,6 +81,27 @@ describe("path pieces from edges and curves", () => {
     expect(dot(f[0].x, [-1, 0, 0])).toBeGreaterThan(0.999);
     expect(dot(end.x, [-1, 0, 0])).toBeGreaterThan(0.999);
     expect(Math.abs(dot(end.y, h.tans[400]))).toBeLessThan(1e-9);
+  });
+
+  it("the planned across directions along a 3D curve end where the member's end axes are", () => {
+    const pts: V3[] = [];
+    const tans: V3[] = [];
+    let length = 0;
+    for (let i = 0; i <= 300; i++) {
+      const u = i / 300;
+      pts.push([100 * u, 40 * Math.sin(3 * u), 30 * u * u]);
+      const d: V3 = [100, 120 * Math.cos(3 * u), 60 * u];
+      const l = Math.hypot(...d);
+      tans.push([d[0] / l, d[1] / l, d[2] / l]);
+      if (i) length += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1], pts[i][2] - pts[i - 1][2]);
+    }
+    const seg = withPathNormal([edgeSegment("c/0.0", pts, tans, length)!])[0] as CurveSeg;
+    expect(seg.kind).toBe("curve");
+    const [m] = buildMembers([seg], true);
+    const xs = curveAcross(m.segs[0] as CurveSeg, m.start);
+    const f = segFrames(m);
+    expect(dot(xs[xs.length - 1], f[1].x)).toBeGreaterThan(1 - 1e-12);
+    expect(xs.every((x, i) => Math.abs(dot(x, (m.segs[0] as CurveSeg).tans[i])) < 1e-12)).toBe(true);
   });
 
   it("without following its bending, a flat curve carries the profile exactly as an arc would, and back again", () => {
@@ -176,6 +197,10 @@ describe("mitres where three or more meet", () => {
     expect(both).toBe(0);
     // And every point of the three bars round the corner belongs to one of them (no gap).
     expect(covered).toBe(inBars);
+    // The cut list calls them compound mitres.
+    const info = memberInfo(p, 0, s, "fr");
+    expect(info.compound).toEqual([true, false]);
+    expect(cutList([{ id: "a", name: "a", frame: info }]).rows[0].ends).toBe("compound mitre 45° / square");
   });
 });
 
@@ -186,9 +211,11 @@ describe("reading, toggling and Delete with dependents", () => {
     const old = { paths: [{ sketch: "s1" }], profile: { kind: "extrusion", size: "2020" } };
     expect(parseFrameDef(old, parsePick)).toEqual(old);
     expect(JSON.stringify(parseFrameDef(old, parsePick))).toBe(JSON.stringify(old));
-    const more = parseFrameDef({ ...old, edges: [pick, { partId: "x", ref: "nonsense" }], curves: ["h1", "h1", 3] }, parsePick)!;
-    expect(more.edges).toHaveLength(1);
+    const more = parseFrameDef({ ...old, edges: [{ ...pick, key: "e7q" }, { partId: "x", ref: "nonsense" }, pick], curves: ["h1", "h1", 3] }, parsePick)!;
+    expect(more.edges!.map((e) => e.key)).toEqual(["e7q", edgeKeyFor(pick)]);
     expect(more.curves).toEqual(["h1"]);
+    // Read back exactly as saved.
+    expect(parseFrameDef(JSON.parse(JSON.stringify(more)), parsePick)).toEqual(more);
   });
 
   it("clicking an edge or a curve adds it, clicking it again leaves it out", () => {
@@ -197,20 +224,38 @@ describe("reading, toggling and Delete with dependents", () => {
     const one = togglePathEdge(def, pick, same);
     expect(one.edges).toHaveLength(1);
     expect(togglePathEdge(one, pick, same)).toEqual(def);
+    // Names last: taking out the middle edge leaves the others' names alone; picked again it gets its name back.
+    const ref = (x: number) => parsePick({ partId: "box1", ref: { kind: "edge", a: [x, 0, 5], b: [x + 10, 0, 5], mid: [x + 5, 0, 5], curve: "LINE" } })!;
+    let three = def;
+    for (const x of [0, 10, 20]) three = togglePathEdge(three, ref(x), same);
+    const names = three.edges!.map((e) => e.key);
+    expect(new Set(names).size).toBe(3);
+    const two = togglePathEdge(three, ref(10), same);
+    expect(two.edges!.map((e) => e.key)).toEqual([names[0], names[2]]);
+    expect(togglePathEdge(two, ref(10), same).edges!.map((e) => e.key)).toEqual([names[0], names[2], names[1]]);
+    expect(edgeKeyFor(ref(0), [edgeKeyFor(ref(0))])).not.toBe(edgeKeyFor(ref(0)));
     const c = togglePathCurve(def, "h1");
     expect(c.curves).toEqual(["h1"]);
     expect(togglePathCurve(c, "h1")).toEqual(def);
+  });
+
+  it("says at once when what was clicked comes after the frame", () => {
+    const list = [{ id: "a" }, { id: "fr" }, { id: "h" }];
+    expect(laterPathMessage(list, "fr", "h")).toMatch(/comes after this frame/);
+    expect(laterPathMessage(list, "fr", "a")).toBeNull();
+    // A new frame (not in the list yet) comes after everything.
+    expect(laterPathMessage(list, "new", "h")).toBeNull();
   });
 
   it("knows a frame needs its curves and edges' parts: losing one of several keeps it, losing them all takes it", () => {
     const sk = { id: "s1", type: "sketch", name: "Sketch 1" } as Feature;
     const h = { id: "h1", type: "curve", name: "Helix 1" } as Feature;
     const box = { id: "box1", type: "box", name: "Box 1" } as Feature;
-    const fr = { id: "fr", type: "frame", name: "Frame 1", frame: { paths: [{ sketch: "s1" }], curves: ["h1"], edges: [pick], profile: { kind: "extrusion", size: "2020" } } } as Feature;
+    const fr = { id: "fr", type: "frame", name: "Frame 1", frame: { paths: [{ sketch: "s1" }], curves: ["h1"], edges: [{ ...pick, key: "e1" }], profile: { kind: "extrusion", size: "2020" } } } as Feature;
     const all = [sk, h, box, fr];
     expect(JSON.stringify(findDependents(all, ["h1"]).partial)).toContain('"fr"');
     expect(findDependents(all, ["h1"]).dependents).toEqual([]);
-    const tidied = withoutGone(fr, new Set(["h1", "box1"]));
+    const tidied = withoutGone({ ...fr, frame: { ...fr.frame!, edges: [{ ...pick, key: "e1" }] } }, new Set(["h1", "box1"]));
     expect(tidied.frame).toEqual({ paths: [{ sketch: "s1" }], profile: { kind: "extrusion", size: "2020" } });
     const onlyCurve = { ...fr, frame: { paths: [], curves: ["h1"], profile: { kind: "extrusion", size: "2020" } } } as Feature;
     expect(findDependents([h, onlyCurve], ["h1"]).dependents).toEqual(["fr"]);
@@ -229,6 +274,10 @@ describe("cut list table on a drawing", () => {
     expect(rows[2]).toEqual(["2", "1", "2020 aluminium extrusion", "320.0", "45° / 45°"]);
     expect(rows[3]).toEqual(["", "3", "2020 aluminium extrusion in all", "1160.0", ""]);
     expect(cutListRows([])[1][2]).toBe(NO_MEMBERS);
+    // An inch design's table is in inches.
+    const inch = cutListRows(parts.slice(0, 1).map((p) => ({ id: p.id, name: p.name, frame: p.frame })), "in");
+    expect(inch[0][3]).toBe("Length (in)");
+    expect(inch[1][3]).toBe("16.54");
   });
 
   it("a sheet lists its part's Part Studio, the studio it names, or every copy in its assembly", () => {

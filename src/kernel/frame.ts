@@ -3,8 +3,8 @@
  * arc, the pieces of a merged run fused), lengthened at its ends where a corner needs it, then cut by the corner's
  * half-spaces, and coped members cut to the member running through. The planning is pure, in model/frame.ts.
  */
-import { assembleWire, basicFaceExtrusion, cast, getOC, isShape3D, makeBox, makeCircle, makeFace, makeLine, revolution, Vector, type Shape3D, type Wire } from "replicad";
-import { dot, segLength, segTangent, type Axes, type CurveSeg, type MemberPlan, type PathSeg, type V3 } from "../model/frame";
+import { assembleWire, basicFaceExtrusion, cast, getOC, isShape3D, makeBox, makeBSplineApproximation, makeCircle, makeFace, makeLine, revolution, Vector, type Shape3D, type Wire } from "replicad";
+import { curveAcross, dot, segLength, segTangent, type Axes, type CurveSeg, type MemberPlan, type PathSeg, type V3 } from "../model/frame";
 import { reversedWire } from "./curves";
 import type { ProfileLoop, ProfileShape } from "../model/frameProfiles";
 
@@ -79,14 +79,40 @@ function prism(shape: ProfileShape, from: V3, dir: V3, { x, y }: Axes, length: n
  */
 export type FrameSpines = Map<string, Wire>;
 
-/** One closed loop of the profile pushed along a curve's real edge (OpenCascade's pipe shell). */
-function pipeLoop(loop: Wire, spine: Wire, frenet: boolean): Shape3D {
+/**
+ * A guide a little way off the curve along the planned across direction at every sample: the pipe turns the profile to
+ * keep facing it, so it follows the plan's rotation-minimising frames exactly (OpenCascade's own "corrected Frenet"
+ * drifts from them on curves that aren't flat, about a degree on a 3D spline). As sweep.ts's twistGuide.
+ */
+function plannedGuide(s: CurveSeg, f: Axes): Wire {
+  const xs = curveAcross(s, f);
+  let tightest = Infinity;
+  for (let i = 1; i < s.pts.length; i++) {
+    const p = s.pts[i];
+    const q = s.pts[i - 1];
+    const ds = Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+    const turn = Math.acos(Math.min(1, Math.max(-1, dot(s.tans[i], s.tans[i - 1]))));
+    if (turn > 1e-9 && ds > 1e-12) tightest = Math.min(tightest, ds / turn);
+  }
+  const radius = Math.min(s.length / 4, tightest * 0.2, 5);
+  const pts = s.pts.map((p, i) => add(p, mul(xs[i], radius)));
+  const edge = makeBSplineApproximation(pts, { tolerance: radius * 1e-4, degMax: 8, degMin: 3 });
+  try {
+    return assembleWire([edge]);
+  } finally {
+    edge.delete();
+  }
+}
+
+/** One closed loop of the profile pushed along a curve's real edge (OpenCascade's pipe shell), steered by `guide` if given. */
+function pipeLoop(loop: Wire, spine: Wire, frenet: boolean, guide: Wire | null): Shape3D {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const oc = getOC() as any;
   const pipe = new oc.BRepOffsetAPI_MakePipeShell(spine.wrapped);
   try {
-    // Frenet: the profile keeps its place relative to the curve's bending (a helix); else it turns as little as it can.
-    pipe.SetMode(frenet);
+    // Frenet: the profile keeps its place relative to the curve's bending (a helix); else it follows the planned guide.
+    if (guide) pipe.SetMode(guide.wrapped, false, oc.BRepFill_TypeOfContact.BRepFill_NoContact);
+    else pipe.SetMode(frenet);
     pipe.Add(loop.wrapped, false, false);
     pipe.Build();
     if (!pipe.IsDone()) throw new Error("not built");
@@ -105,13 +131,14 @@ function curveSolid(shape: ProfileShape, s: CurveSeg, f: Axes, spines: FrameSpin
   const edge = spines?.get(s.id);
   if (!edge) throw new Error("A curved part of the path couldn't be found. Edit the frame and pick it again.");
   const spine = s.reversed ? reversedWire(edge) : edge;
+  const guide = s.normals ? null : plannedGuide(s, f);
   try {
     const pieces: Shape3D[] = [];
     for (const r of shape.regions) {
       const outer = loopWire(r.outer, s.a, f.x, f.y, false);
       let solid: Shape3D;
       try {
-        solid = pipeLoop(outer, spine, !!s.normals);
+        solid = pipeLoop(outer, spine, !!s.normals, guide);
       } finally {
         outer.delete();
       }
@@ -119,7 +146,7 @@ function curveSolid(shape: ProfileShape, s: CurveSeg, f: Axes, spines: FrameSpin
         const hw = loopWire(h, s.a, f.x, f.y, false);
         let hole: Shape3D;
         try {
-          hole = pipeLoop(hw, spine, !!s.normals);
+          hole = pipeLoop(hw, spine, !!s.normals, guide);
         } finally {
           hw.delete();
         }
@@ -133,6 +160,7 @@ function curveSolid(shape: ProfileShape, s: CurveSeg, f: Axes, spines: FrameSpin
     return fuseAll(pieces);
   } finally {
     if (spine !== edge) spine.delete();
+    guide?.delete();
   }
 }
 

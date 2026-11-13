@@ -5,7 +5,7 @@
 import type { Feature } from "../model/types";
 import type { FrameCornerChoice, FrameDef, FrameProfileKind } from "../model/frameTypes";
 import { PROFILE_KINDS, ANCHORS } from "../model/frameProfiles";
-import { frameLayout, frameCutList, cutListCsv, cutListLines, sketchPathSegments, type PathSeg } from "../model/frame";
+import { edgeKeyFor, frameLayout, frameCutList, cutListCsv, cutListLines, sketchPathSegments, type PathSeg } from "../model/frame";
 import { amount, bool, InputError, list, noExtras, oneOf, text, xyz, type Obj } from "./args";
 import { pickEdges } from "./picks";
 import { basePlane } from "./planeSpec";
@@ -24,14 +24,25 @@ export const FRAME_HELP = `frame (Onshape's Frame: a profile along sketch lines 
 export const TRIM_HELP = 'trim_frame (Onshape\'s Trim frame): members (frame member part names), and plane ("Top"|"Front"|"Right", a Plane name, or {"point":[x,y,z],"normal":[x,y,z]}) — keeps the side with more of each member, or the other with flip — or to_part (cut where each member meets that part, keeping the biggest piece)';
 export const GUSSET_HELP = "gusset (Onshape's Gusset): members (two frame member parts meeting at a corner), size (mm along each, default 60), thickness (default 5), chamfer (mm: cut the inside corner off; 0 = none), other_side (where one member ends on the other's side: the plate goes the other way along it)";
 
-/** The path's segments, as the dialog sees them (sketch planes as saved; part edges and curves as last built, so set their corners when editing). */
-function pathSegments(def: FrameDef, ctx: SpecContext, id: string): PathSeg[] {
+/**
+ * The path's segments, as the dialog sees them (sketch planes as saved). Part edges and curves are found by the
+ * engine: the frame is built once first, as it will be without corner choices, so their corners can be set in the same call.
+ */
+function pathSegments(def: FrameDef, ctx: SpecContext, f: Feature): PathSeg[] {
   const segs: PathSeg[] = [];
   for (const p of def.paths) {
-    const sk = ctx.doc.features.find((f) => f.id === p.sketch);
+    const sk = ctx.doc.features.find((x) => x.id === p.sketch);
     if (sk?.sketch?.plane) segs.push(...sketchPathSegments(sk.id, sk.sketch.plane, sk.sketch.data, p.items).segs);
   }
-  if (def.edges?.length || def.curves?.length) segs.push(...(ctx.session.build().framePaths?.[id] ?? []));
+  if (def.edges?.length || def.curves?.length) {
+    const { corners: _c, ...plain } = def;
+    const trial: Feature = { ...f, frame: plain };
+    const list = ctx.doc.features.some((x) => x.id === f.id) ? ctx.doc.features.map((x) => (x.id === f.id ? trial : x)) : [...ctx.doc.features, trial];
+    const built = ctx.session.build(list);
+    const err = built.errors[f.id];
+    if (err) throw new InputError(`The frame can't be made, so its corners can't be set: ${err}`);
+    segs.push(...(built.framePaths?.[f.id] ?? []));
+  }
   return segs;
 }
 
@@ -45,7 +56,13 @@ export function applyFrame(f: Feature, a: Obj, ctx: SpecContext): void {
       const part = ctx.session.part(ctx.parts, a.edge_part, "edge_part");
       const edges = pickEdges(part, picked, "edges").filter((p) => p.ref.kind === "edge");
       if (!edges.length) throw new InputError("edges: give edges (E-numbers from list_edges), not faces.");
-      def.edges = edges;
+      // Each with its lasting name (the same edge keeps the name it had, so its member keeps its colour and mates).
+      const keys: string[] = [];
+      def.edges = edges.map((e) => {
+        const key = edgeKeyFor(e, keys);
+        keys.push(key);
+        return { ...e, key };
+      });
     } else delete def.edges;
   }
   if (has(a, "curves")) {
@@ -88,7 +105,7 @@ export function applyFrame(f: Feature, a: Obj, ctx: SpecContext): void {
     else def.noMerge = true;
   }
   if (has(a, "corners")) {
-    const segs = pathSegments(def, ctx, f.id);
+    const segs = pathSegments(def, ctx, f);
     const { members, corners } = frameLayout(segs, { noMerge: def.noMerge });
     const chosen: FrameCornerChoice[] = list(a.corners, "corners", { allowEmpty: true }).map((raw, i) => {
       if (!raw || typeof raw !== "object") throw new InputError(`corners[${i}] should be {"at":[x,y,z],"type":…}.`);

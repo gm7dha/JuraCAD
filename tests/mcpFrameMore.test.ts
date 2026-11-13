@@ -45,9 +45,12 @@ describe("frames from Claude, more", () => {
   it("follows a box's top edges and a helix, mitres a cube corner, and puts a cut list on a drawing", async () => {
     const s = newSession();
     await ok(s, "add_feature", { type: "box", width: 200, depth: 100, height: 50 });
-    await ok(s, "add_feature", { type: "frame", edges: [{ near: [100, 0, 50] }, { near: [200, 50, 50] }, { near: [100, 100, 50] }, { near: [0, 50, 50] }], edge_part: "Part 1", profile: "timber", size: "44x44" });
+    await ok(s, "add_feature", { type: "frame", edges: [{ near: [100, 0, 50] }, { near: [200, 50, 50] }, { near: [100, 100, 50] }, { near: [0, 50, 50] }], edge_part: "Part 1", profile: "timber", size: "44x44", corners: [{ at: [0, 0, 50], type: "butt" }] });
     const fr = s.doc.features.find((f) => f.type === "frame")!;
     expect(fr.frame!.edges).toHaveLength(4);
+    // Its corners could be set in the same call (the edges were found first), and every edge has its lasting name.
+    expect(fr.frame!.corners).toHaveLength(1);
+    expect(new Set(fr.frame!.edges!.map((e) => e.key)).size).toBe(4);
     expect(s.build().parts.filter((p) => p.frame)).toHaveLength(4);
     expect(await fails(s, "add_feature", { type: "frame", edges: [{ near: [100, 0, 50] }] })).toContain("edge_part");
     expect(await fails(s, "add_feature", { type: "frame", profile: "timber", size: "44x44" })).toContain("needs a path");
@@ -65,6 +68,7 @@ describe("frames from Claude, more", () => {
     expect(corner.frame!.corners?.[0].type).toBe("mitre");
     const cube = s.build().parts.filter((p) => p.frame?.frame === corner.id);
     expect(cube.map((p) => p.frame!.length)).toEqual([322, 322, 322]);
+    expect(await ok(s, "describe_cut_list")).toContain("compound mitre 45°");
 
     // The cut list on a drawing of one of the members (its Part Studio's members).
     await ok(s, "create_drawing", { part: cube[0].name, views: ["front"] });

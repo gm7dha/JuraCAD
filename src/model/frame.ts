@@ -17,7 +17,7 @@
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 import type { TopoPick } from "../geometry/topoRef";
-import type { FrameCornerType, FrameDef, FrameMemberInfo, GussetDef, TrimFrameDef } from "./frameTypes";
+import type { FrameCornerType, FrameDef, FrameEdge, FrameMemberInfo, GussetDef, TrimFrameDef } from "./frameTypes";
 import { profilePoints, reachAlong, type P2, type ProfileShape } from "./frameProfiles";
 import { massGrams } from "./materials";
 
@@ -98,6 +98,29 @@ function reversedSeg(s: PathSeg): PathSeg {
 
 /** Householder reflection of v in the plane square to u (u·u = c). */
 const reflect = (v: V3, u: V3, c: number): V3 => (c > 1e-24 ? sub(v, mul(u, (2 / c) * dot(u, v))) : v);
+
+/**
+ * The profile's across (x) at every sample of a curve segment that doesn't follow its own bending, starting from `f` at
+ * its start: carried as little turned as possible (double reflection, as `carryCurve`). The solid's sweep is steered
+ * by these (kernel/frame.ts), so the profile arrives at the end exactly as planned.
+ */
+export function curveAcross(s: CurveSeg, f: Axes): V3[] {
+  const P = s.pts;
+  const T = s.tans;
+  const out: V3[] = [];
+  let r = f.x;
+  for (let i = 0; i < P.length; i++) {
+    if (i > 0) {
+      const v1 = sub(P[i], P[i - 1]);
+      const c1 = dot(v1, v1);
+      const tL = reflect(T[i - 1], v1, c1);
+      const v2 = sub(T[i], tL);
+      r = reflect(reflect(r, v1, c1), v2, dot(v2, v2));
+    }
+    out.push(unit(sub(r, mul(T[i], dot(r, T[i])))));
+  }
+  return out;
+}
 
 /**
  * The profile's axes carried along a curve segment, from its start to its end (or back): kept at the same angle to the
@@ -613,6 +636,8 @@ export interface EndCut {
   cope?: number[];
   /** For the cut list: degrees from square, or coped. */
   label: number | "coped";
+  /** Mitred against two or more members at once (a compound mitre, as at a cube's corner). */
+  compound?: boolean;
 }
 
 export interface MemberPlan {
@@ -839,6 +864,7 @@ export function planFrame(segs: PathSeg[], def: Pick<FrameDef, "noMerge" | "corn
           label = Math.max(label, angleFromSquare(n, d));
         });
         cut.label = label;
+        if (dirs.length > 2) cut.compound = true;
       });
       continue;
     }
@@ -1132,6 +1158,7 @@ export function memberInfo(plan: FramePlan, i: number, shape: ProfileShape, fram
     profile: shape.label,
     length: Math.round(length * 100) / 100,
     ends: [p.ends[0].label, p.ends[1].label],
+    ...(p.ends[0].compound || p.ends[1].compound ? { compound: [!!p.ends[0].compound, !!p.ends[1].compound] as [boolean, boolean] } : {}),
     ...(sm ? {} : { curved: true }),
     ...(usual ? { usual } : {}),
   };
@@ -1146,7 +1173,10 @@ export function trimmedInfo(info: FrameMemberInfo, m: StraightMember, shape: Pro
   const end = trimmedEnd(m, cut.n);
   const ends: FrameMemberInfo["ends"] = [...info.ends];
   ends[end] = angleFromSquare(cut.n, m.dir);
-  return { info: { ...info, length: Math.round(cutLength(member, shape) * 100) / 100, ends }, member };
+  // A trimmed end is a plain cut now.
+  const compound = info.compound ? (info.compound.map((c, i) => c && i !== end) as [boolean, boolean]) : undefined;
+  const { compound: _c, ...rest } = info;
+  return { info: { ...rest, length: Math.round(cutLength(member, shape) * 100) / 100, ends, ...(compound?.some(Boolean) ? { compound } : {}) }, member };
 }
 
 /**
@@ -1227,7 +1257,7 @@ export interface CutListTotal {
   mass?: number;
 }
 
-const endWord = (e: number | "coped") => (e === "coped" ? "coped" : e === 0 ? "square" : `${e}°`);
+const endWord = (e: number | "coped", compound = false) => (e === "coped" ? "coped" : compound ? `compound mitre ${e}°` : e === 0 ? "square" : `${e}°`);
 
 /** The cut list: identical members (same profile, length to 0.1 mm and end cuts) grouped, and totals per profile. */
 export function cutList(parts: CutListPart[], massOf?: (part: CutListPart) => number | undefined): { rows: CutListRow[]; totals: CutListTotal[] } {
@@ -1236,7 +1266,7 @@ export function cutList(parts: CutListPart[], massOf?: (part: CutListPart) => nu
     if (!p.frame) continue;
     const f = p.frame;
     const length = Math.round(f.length * 10) / 10;
-    const pair = [endWord(f.ends[0]), endWord(f.ends[1])].sort();
+    const pair = [endWord(f.ends[0], f.compound?.[0]), endWord(f.ends[1], f.compound?.[1])].sort();
     const ends = `${pair[0]} / ${pair[1]}`;
     const row = rows.find((r) => r.profile === f.profile && r.length === length && r.ends === ends && !!r.curved === !!f.curved);
     const m = massOf?.(p);
@@ -1296,7 +1326,17 @@ export function parseFrameDef(raw: unknown, readPick?: (v: unknown) => TopoPick 
     .filter((c): c is Record<string, unknown> => !!c && typeof c === "object")
     .filter((c) => typeof c.key === "string" && typeof c.type === "string" && CORNER_TYPES.has(c.type))
     .map((c) => ({ key: c.key as string, type: c.type as FrameCornerType, ...(typeof c.through === "string" ? { through: c.through } : {}) }));
-  const edges = readPick && Array.isArray(r.edges) ? r.edges.map(readPick).filter((p): p is TopoPick => !!p && p.ref.kind === "edge") : [];
+  const edges: FrameEdge[] = [];
+  if (readPick && Array.isArray(r.edges)) {
+    for (const raw of r.edges) {
+      const p = readPick(raw);
+      if (!p || p.ref.kind !== "edge") continue;
+      const k = (raw as Record<string, unknown>).key;
+      // A key kept as it was saved; a missing or repeated one is given the next free name.
+      const key = typeof k === "string" && EDGE_KEY.test(k) && !edges.some((e) => e.key === k) ? k : edgeKeyFor(p, edges.map((e) => e.key));
+      edges.push({ ...p, key });
+    }
+  }
   const curves = [...new Set(strs(r.curves))];
   return {
     paths,
@@ -1378,11 +1418,35 @@ export function togglePathLine(def: FrameDef, features: { id: string; type: stri
   return { ...def, paths };
 }
 
-/** A part edge clicked while a Frame is open: followed by the frame (added to its edges), or left out again. */
+const EDGE_KEY = /^e[0-9a-z]{1,16}$/;
+
+/**
+ * An edge's lasting name in a frame, made from the edge as picked (its part and ends, to 1 µm): the same edge picked
+ * again gets the same name back, and taking other edges out renames nothing. One already `taken` gets a letter on.
+ */
+export function edgeKeyFor(pick: TopoPick, taken: Iterable<string> = []): string {
+  const r = pick.ref;
+  const ends = r.kind === "edge" ? [r.a, r.b].map((p) => p.map((v) => Math.round(v * 1000)).join(",")).sort() : [];
+  const mid = r.kind === "edge" ? r.mid.map((v) => Math.round(v * 1000)).join(",") : "";
+  let h = 0x811c9dc5;
+  for (const ch of `${pick.partId}|${ends.join("|")}|${mid}`) {
+    h ^= ch.charCodeAt(0);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  const used = new Set(taken);
+  let key = `e${h.toString(36)}`;
+  for (let i = 0; used.has(key); i++) key = `e${h.toString(36)}${String.fromCharCode(97 + (i % 26))}${i >= 26 ? Math.floor(i / 26) : ""}`;
+  return key;
+}
+
+/**
+ * A part edge clicked while a Frame is open: followed by the frame (added to its edges, with a new lasting name), or
+ * left out again (the others keep their names; picked again, it gets its old name back).
+ */
 export function togglePathEdge(def: FrameDef, pick: TopoPick, same: (a: TopoPick, b: TopoPick) => boolean): FrameDef {
   const list = def.edges ?? [];
   const at = list.findIndex((e) => same(e, pick));
-  const edges = at >= 0 ? list.filter((_, i) => i !== at) : [...list, { partId: pick.partId, ref: pick.ref }];
+  const edges = at >= 0 ? list.filter((_, i) => i !== at) : [...list, { partId: pick.partId, ref: pick.ref, key: edgeKeyFor(pick, list.map((e) => e.key)) }];
   const { edges: _old, ...rest } = def;
   return edges.length ? { ...rest, edges } : rest;
 }
@@ -1395,6 +1459,16 @@ export function togglePathCurve(def: FrameDef, curve: string): FrameDef {
   return curves.length ? { ...rest, curves } : rest;
 }
 
-/** Ids of path segments from part edges ("<part>/e<k>", k = the edge's place in `def.edges`) and curve features ("<curve>/<piece>.<edge>"). */
-export const edgeSegId = (partId: string, k: number) => `${partId}/e${k}`;
+/** Ids of path segments from part edges ("<part>/<key>", the edge's lasting name) and curve features ("<curve>/<piece>.<edge>"). */
+export const edgeSegId = (partId: string, key: string) => `${partId}/${key}`;
 export const curveSegId = (curveId: string, wire: number, edge: number) => `${curveId}/${wire}.${edge}`;
+
+/**
+ * A frame being edited can't follow what comes after it in the list (a part made later, a later curve): the plain
+ * message to show at once when one is clicked, else null. `featureId` = the curve, or the part's maker (before "~"/"@").
+ */
+export function laterPathMessage(features: { id: string }[], frameId: string, featureId: string): string | null {
+  const me = features.findIndex((f) => f.id === frameId);
+  const it = features.findIndex((f) => f.id === featureId);
+  return me >= 0 && it > me ? "That comes after this frame in the list, so the frame can't follow it. Move the frame below it, or pick something else." : null;
+}

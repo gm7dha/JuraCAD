@@ -5849,20 +5849,28 @@ export class GeometryEngine {
     const out: PathSeg[] = [];
     // Part edges: one group (they lie in one plane, or the profile stands up).
     const fromEdges: PathSeg[] = [];
-    for (const [k, pick] of (def.edges ?? []).entries()) {
-      const part = this.parts.find((p) => p.id === pick.partId);
+    // All of a part's picked edges found again together, so no two can land on the same edge.
+    const byPart = new Map<string, NonNullable<typeof def.edges>>();
+    for (const e of def.edges ?? []) byPart.set(e.partId, [...(byPart.get(e.partId) ?? []), e]);
+    for (const [partId, picks] of byPart) {
+      const part = this.parts.find((p) => p.id === partId);
       if (!part) return "A part whose edges the frame follows no longer exists (or comes later in the list). Edit the frame and pick its edges again.";
       let edges: Edge[];
       try {
-        edges = findPickedEdges(part.shape, [pick]);
+        edges = findPickedEdges(part.shape, picks);
       } catch {
-        return `${def.edges!.length === 1 ? "The edge" : `Edge ${k + 1}`} the frame follows can't be found any more (the part has changed too much). Edit the frame and pick it again.`;
+        return `${picks.length === 1 ? "An edge" : "Some of the edges"} the frame follows on ${part.name} can't be found any more (the part has changed too much). Edit the frame and pick ${picks.length === 1 ? "it" : "them"} again.`;
       }
-      for (const e of edges) {
-        const seg = fromEdge(e, edgeSegId(pick.partId, k), false);
+      const same = edges.some((e, i) => edges.some((o, j) => j > i && e.isSame(o)));
+      if (same) {
+        edges.forEach((e) => e.delete());
+        return `Two of the edges the frame follows on ${part.name} are now the same edge (the part has changed). Edit the frame and pick its edges again.`;
+      }
+      edges.forEach((e, i) => {
+        const seg = fromEdge(e, edgeSegId(partId, picks[i].key), false);
         e.delete();
         if (seg) fromEdges.push(seg);
-      }
+      });
     }
     out.push(...withPathNormal(fromEdges));
     for (const id of def.curves ?? []) {

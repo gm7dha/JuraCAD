@@ -11,7 +11,10 @@ import type { CurveDef, Feature } from "../src/model/types";
 import type { FrameDef } from "../src/model/frameTypes";
 import type { EdgeRef, TopoPick } from "../src/geometry/topoRef";
 import { helixLength } from "../src/model/curves";
-import { cornerKey } from "../src/model/frame";
+import { cornerKey, edgeKeyFor, planFrame } from "../src/model/frame";
+import { builtInProfile, placedProfile, type ProfileShape } from "../src/model/frameProfiles";
+import { edgesOf, facesOf } from "../src/kernel/topology";
+import type { FrameEdge } from "../src/model/frameTypes";
 import { loadOpenCascade, feature, sketchFeature, meshOf, relativeError } from "./support/engineHelpers";
 import { polySketch } from "./support/frameSketch";
 
@@ -27,10 +30,11 @@ const frame = (def: Partial<FrameDef>, params: Record<string, string | number> =
 });
 const curve = (def: CurveDef, params: Record<string, number> = {}): Feature => ({ ...feature("curve", params), curve: def });
 const near = (a: Vec3, b: Vec3, tol = 1e-3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < tol;
-const edgeOf = (box: Feature, refs: { edgeRefs: EdgeRef[] }, a: Vec3, b: Vec3): TopoPick => {
+const edgeOf = (box: Feature, refs: { edgeRefs: EdgeRef[] }, a: Vec3, b: Vec3): FrameEdge => {
   const ref = refs.edgeRefs.find((e) => (near(e.a, a) && near(e.b, b)) || (near(e.a, b) && near(e.b, a)));
   if (!ref) throw new Error(`no edge ${a} – ${b}`);
-  return { partId: box.id, ref };
+  const pick: TopoPick = { partId: box.id, ref };
+  return { ...pick, key: edgeKeyFor(pick) };
 };
 const frameParts = () => (engine as unknown as { parts: { id: string; shape: Shape3D; frame?: unknown }[] }).parts.filter((p) => p.frame);
 function overlap(a: Shape3D, b: Shape3D): number {
@@ -62,7 +66,7 @@ describe("frames along part edges and curves (real OCCT)", () => {
     expect(r.featureErrors).toEqual({});
     const members = r.parts.filter((p) => p.frame);
     expect(members).toHaveLength(4);
-    expect(members.map((p) => p.id)).toEqual([0, 1, 2, 3].map((k) => `${f.id}~${box.id}_e${k}`));
+    expect(members.map((p) => p.id).sort()).toEqual(edges.map((e) => `${f.id}~${box.id}_${e.key}`).sort());
     const total = volumes().reduce((a, b) => a + b, 0);
     expect(relativeError(total, 44 * 44 * 600)).toBeLessThan(1e-6);
     expect(members.map((p) => p.frame!.length).sort((a, b) => a - b)).toEqual([144, 144, 244, 244]);
@@ -73,6 +77,12 @@ describe("frames along part edges and curves (real OCCT)", () => {
     expect(b.max[2]).toBeCloseTo(72, 3);
     // The dialog gets the pieces for its corners.
     expect(r.framePaths?.[f.id]).toHaveLength(4);
+    // Taking the second edge out leaves the others' members (and their colours, mates, drawings) named as they were.
+    const three = { ...f, frame: { ...f.frame!, edges: [edges[0], edges[2], edges[3]] } };
+    const r3 = engine.rebuild([box, three]);
+    expect(r3.featureErrors).toEqual({});
+    const left = r3.parts.filter((p) => p.frame).map((p) => p.id);
+    expect(left.sort()).toEqual([edges[0], edges[2], edges[3]].map((e) => `${f.id}~${box.id}_${e.key}`).sort());
   });
 
   it("mixes a sketch line with a part edge: mitred where they meet, no overlap", () => {
@@ -116,7 +126,7 @@ describe("frames along part edges and curves (real OCCT)", () => {
     const cyl = feature("cylinder", { diameter: 100, height: 20, x: 0, y: 0, z: 0 });
     const part = engine.rebuild([cyl]).parts[0];
     const rim = part.edgeRefs.find((e) => e.curve === "CIRCLE" && Math.abs(e.mid[2] - 20) < 1e-6)!;
-    const ring = frame({ edges: [{ partId: cyl.id, ref: rim }], profile: { kind: "tube", size: "20x2" } });
+    const ring = frame({ edges: [{ partId: cyl.id, ref: rim, key: "e1" }], profile: { kind: "tube", size: "20x2" } });
     const r = engine.rebuild([cyl, ring]);
     expect(r.featureErrors).toEqual({});
     const A = Math.PI * (10 * 10 - 8 * 8);
@@ -129,6 +139,34 @@ describe("frames along part edges and curves (real OCCT)", () => {
     const m = rs.parts.find((p) => p.frame)!;
     expect(m.frame!.curved).toBe(true);
     expect(relativeError(volumes()[0], 60 * m.frame!.length)).toBeLessThan(5e-3);
+    // The bar arrives at the far end turned exactly as planned (its 20 mm side along the planned across).
+    const shape = placedProfile(builtInProfile("flat", "20x3") as ProfileShape, undefined, false, 0);
+    const plan = planFrame(rs.framePaths![bar.id], {}, shape, 0);
+    if (typeof plan === "string") throw new Error(plan);
+    const pm = plan.members[0];
+    const endAt = pm.member.segs[pm.member.segs.length - 1].b;
+    const endX = pm.frames[pm.frames.length - 1].x;
+    const solid = frameParts()[0].shape;
+    let best: { d: number; dir: Vec3 } | null = null;
+    for (const face of facesOf(solid)) {
+      const es = edgesOf(face);
+      const ends = es.map((e) => [e.startPoint, e.endPoint].map((v) => {
+        const r: Vec3 = [v.x, v.y, v.z];
+        v.delete();
+        return r;
+      }));
+      const pts = ends.flat();
+      const c: Vec3 = [0, 1, 2].map((k) => pts.reduce((t, p) => t + p[k], 0) / pts.length) as Vec3;
+      const d = Math.hypot(c[0] - endAt[0], c[1] - endAt[1], c[2] - endAt[2]);
+      const longest = ends.map(([a, b]) => [b[0] - a[0], b[1] - a[1], b[2] - a[2]] as Vec3).sort((p, q) => Math.hypot(...q) - Math.hypot(...p))[0];
+      if (face.geomType === "PLANE" && (!best || d < best.d)) best = { d, dir: longest };
+      es.forEach((e) => e.delete());
+      face.delete();
+    }
+    expect(best!.d).toBeLessThan(1);
+    const l = Math.hypot(...best!.dir);
+    const cos = Math.abs(best!.dir[0] * endX[0] + best!.dir[1] * endX[1] + best!.dir[2] * endX[2]) / l;
+    expect((Math.acos(Math.min(1, cos)) * 180) / Math.PI).toBeLessThan(0.1);
   });
 
   it("refuses a curve that comes after the frame, and says when an edge's part has gone", () => {
@@ -136,7 +174,7 @@ describe("frames along part edges and curves (real OCCT)", () => {
     const h = curve({ kind: "helix", around: "axis", axis: { p: [0, 0, 0], dir: [0, 0, 1], axis: "z" } }, { diameter: 200, height: 300, turns: 2 });
     const f = frame({ curves: [h.id] });
     expect(engine.rebuild([f, h]).featureErrors[f.id]).toMatch(/comes after/);
-    const lost = frame({ edges: [{ partId: "gone", ref: { kind: "edge", curve: "LINE", a: [0, 0, 0], b: [1, 0, 0], mid: [0.5, 0, 0] } }] });
+    const lost = frame({ edges: [{ partId: "gone", ref: { kind: "edge", curve: "LINE", a: [0, 0, 0], b: [1, 0, 0], mid: [0.5, 0, 0] }, key: "e1" }] });
     expect(engine.rebuild([lost]).featureErrors[lost.id]).toMatch(/no longer exists/);
   });
 });

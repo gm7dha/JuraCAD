@@ -106,7 +106,7 @@ export function drawingDate(now = new Date()): string {
 export function sheetInfo(page: Drawing, doc: JuraCADDocument, parts: PartMesh[], subject: string, instances: InstanceInput[] | undefined, sheetNo: number, sheetCount: number, date = drawingDate()): SheetInfo {
   const bom = drawingBom(page, doc, parts);
   const balloons = balloonsFor(bom, instances, parts);
-  const cut = sheetCutList(page, parts, instances?.map((i) => i.partId));
+  const cut = sheetCutList(page, parts, instances?.map((i) => i.partId), doc.units === "in" ? "in" : "mm");
   return { designName: doc.name, subject, date, bom, balloons, taps: tapSizes(doc, page), ...(sheetCount > 1 ? { sheetNo, sheetCount } : {}), ...(cut ? { cutList: cut } : {}) };
 }
 

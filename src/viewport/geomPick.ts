@@ -9,7 +9,7 @@ import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 import { planeFrame, type PlaneFrame } from "../sketch/planes";
 import { connectorFromClick, fractionAlong, planeClick, type GeomClick } from "../model/geomClicks";
 import { curveClick, curvePoint, pathClick, type CurveClick } from "../model/curveClicks";
-import { togglePathCurve } from "../model/frame";
+import { laterPathMessage, togglePathCurve } from "../model/frame";
 import { isMorePlaneMode } from "../sketch/planeTypes";
 import { loftClick } from "../model/loft";
 import { boundaryClick } from "../model/surfaceClicks";
@@ -142,7 +142,9 @@ export function geomPick(manager: SceneManager | null, target: PickTarget | null
   }
   // A Frame follows a curve clicked (or leaves it out again).
   if (target?.kind === "curve" && d?.type === "frame" && d.frame) {
-    if (target.id !== d.id) s.setDraftField({ frame: togglePathCurve(d.frame, target.id) });
+    const later = laterPathMessage(activeFeatures(s), d.id, target.id);
+    if (later) s.showToast(later);
+    else if (target.id !== d.id) s.setDraftField({ frame: togglePathCurve(d.frame, target.id) });
     return true;
   }
   if (target?.kind === "curve") {
