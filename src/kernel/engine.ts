@@ -2787,76 +2787,90 @@ export class GeometryEngine {
       const Y = axis(1);
       return { map: (o) => [X.f(o[0]), Y.f(o[1])], kx: X.k, ky: Y.k };
     };
-    /** Does a size fit: as it was, or stretched by the move? (No size: yes.) */
-    const sizeFits = (u: Use, f: Fit, kx: number, ky: number): boolean => {
-      if (!u.size || f.size === undefined) return true;
-      const near = (want: number) => Math.abs(f.size! - want) <= Math.max(0.2, 0.25 * want);
-      if (near(u.size.old)) return true;
+    /** How far a size is from the link's: from as it was or as stretched by the move, whichever is nearer (no size: 0). */
+    const sizeGap = (u: Use, f: Fit, kx: number, ky: number): number => {
+      if (!u.size || f.size === undefined) return 0;
       const stretched = u.size.kind === "length" ? Math.hypot(u.size.run[0] * kx, u.size.run[1] * ky) : u.size.old * Math.sqrt(Math.abs(kx * ky));
-      return near(stretched);
+      return Math.min(Math.abs(f.size - u.size.old), Math.abs(f.size - stretched));
     };
     for (const [curveId, uses] of byCurve) {
       const built = this.curves.get(curveId)!;
       const { byItem } = this.curveFeatureRefs(curveId, "", built.wires, frame);
       try {
-        const atK = uses.map((u) => {
-          const got = byItem.get(u.k);
-          return got ? u.fit(got) : null;
-        });
-        const pairsOf = (keep: (i: number) => boolean) => {
-          const pairs: [P, P][] = [];
-          uses.forEach((u, i) => {
-            const f = atK[i];
-            if (f && keep(i) && f.at.length === u.old.length) u.old.forEach((o, j) => pairs.push([o, f.at[j]]));
-          });
-          return pairs;
-        };
-        const first = moveFrom(pairsOf(() => true));
-        const fitsK = uses.map((u, i) => !!atK[i] && sizeFits(u, atK[i]!, first.kx, first.ky));
         uses.forEach((u) => done.add(u.id));
-        if (fitsK.every(Boolean)) {
-          uses.forEach((u, i) => u.set(atK[i]!.value));
-          continue;
-        }
-        // Something changed: the move the still-fitting links show, then every group's links matched again together.
-        const move = moveFrom(pairsOf((i) => fitsK[i]));
         const edges = [...byItem.entries()];
-        const groups = new Map<string, Use[]>();
-        for (const u of uses) groups.set(u.group, [...(groups.get(u.group) ?? []), u]);
-        for (const [, list] of groups) {
-          if (list[0].pierce) {
-            for (const u of list) {
-              const got = byItem.get(u.k);
-              const f = got ? u.fit(got) : null;
-              u.set(f ? f.value : null);
+        const kAt = (u: Use) => edges.findIndex(([i]) => i === u.k);
+        const fitsAll = uses.map((u) => edges.map(([, got]) => u.fit(got)));
+        // The move the links show at their own numbers: a per-axis scale and shift, fitted again without the pairs
+        // that stray from it (a hole that moved on its own, or loops that swapped).
+        const pairs: [P, P][] = [];
+        uses.forEach((u, i) => {
+          const j = kAt(u);
+          const f = j >= 0 ? fitsAll[i][j] : null;
+          if (f && f.at.length === u.old.length) u.old.forEach((o, n) => pairs.push([o, f.at[n]]));
+        });
+        // (Fitted only from three or more links: with fewer, a move can "explain" any swap, so none is assumed.)
+        const linksAtK = uses.filter((u, i) => {
+          const j = kAt(u);
+          return j >= 0 && !!fitsAll[i][j];
+        }).length;
+        let move = moveFrom(linksAtK >= 3 ? pairs : []);
+        if (linksAtK >= 3 && pairs.length > 2) {
+          const res = pairs.map(([o, q]) => d2(move.map(o), q));
+          const median = [...res].sort((x, y) => x - y)[Math.floor(res.length / 2)];
+          const kept = pairs.filter((_, i) => res[i] <= Math.max(0.5, 2 * median));
+          if (kept.length >= 2 && kept.length < pairs.length) move = moveFrom(kept);
+        }
+        const where = (u: Use, f: Fit) => {
+          const want = u.old.map(move.map);
+          if (!want.length || f.at.length !== want.length) return 0;
+          return want.length === 2 ? Math.min(d2(want[0], f.at[0]) + d2(want[1], f.at[1]), d2(want[0], f.at[1]) + d2(want[1], f.at[0])) / 2 : d2(want[0], f.at[0]);
+        };
+        const BIG = 1e12;
+        const groups = new Map<string, number[]>();
+        uses.forEach((u, i) => groups.set(u.group, [...(groups.get(u.group) ?? []), i]));
+        for (const [, idx] of groups) {
+          if (uses[idx[0]].pierce) {
+            for (const i of idx) {
+              const j = kAt(uses[i]);
+              const f = j >= 0 ? fitsAll[i][j] : null;
+              uses[i].set(f ? f.value : null);
             }
             continue;
           }
-          const fits = list.map((u) => edges.map(([, got]) => u.fit(got)));
-          const where = (u: Use, f: Fit) => {
-            const want = u.old.map(move.map);
-            if (!want.length || f.at.length !== want.length) return 0;
-            return want.length === 2 ? Math.min(d2(want[0], f.at[0]) + d2(want[1], f.at[1]), d2(want[0], f.at[1]) + d2(want[1], f.at[0])) / 2 : d2(want[0], f.at[0]);
-          };
-          const BIG = 1e12;
-          const cost = list.map((u, i) =>
-            edges.map((_, j) => {
-              const f = fits[i][j];
-              if (!f || !sizeFits(u, f, move.kx, move.ky)) return BIG;
-              return where(u, f) + (u.size && f.size !== undefined ? 10 * Math.abs(f.size - u.size.old) : 0);
-            }),
-          );
-          const chosen = assignCheapest(cost, BIG);
-          list.forEach((u, i) => {
-            const j = chosen[i];
-            const f = j >= 0 ? fits[i][j] : null;
-            if (!f || cost[i][j] >= BIG) return u.set(null);
-            const feasible = cost[i].map((c, jj) => (c < BIG ? jj : -1)).filter((jj) => jj >= 0);
-            // Near where the move puts it, or the only edge of its size; and no other edge as good.
-            const near = where(u, f) <= Math.max(0.5, 0.3 * f.span);
-            const onlyOne = !!u.size && feasible.length === 1;
-            const rival = feasible.some((jj) => jj !== j && Math.abs(cost[i][jj] - cost[i][j]) < 1e-6);
-            u.set((near || onlyOne) && !rival ? f.value : null);
+          // Cost of each link on each edge: how far from where the move puts it, plus 3 × how much its size changed.
+          const sizeCost = idx.map((i) => edges.map((_, j) => (fitsAll[i][j] ? 3 * sizeGap(uses[i], fitsAll[i][j]!, move.kx, move.ky) : 0)));
+          const cost = idx.map((i, n) => edges.map((_, j) => (fitsAll[i][j] ? where(uses[i], fitsAll[i][j]!) + sizeCost[n][j] : BIG)));
+          const kCols = idx.map((i) => kAt(uses[i]));
+          const kFeasible = kCols.every((j, n) => j >= 0 && cost[n][j] < BIG);
+          const total = (cols: number[], of: number[][]) => cols.reduce((t, j, n) => t + (j >= 0 ? of[n][j] : BIG), 0);
+          const kCost = kFeasible ? total(kCols, cost) : Infinity;
+          const best = assignCheapest(cost, BIG);
+          const bestCost = total(best, cost);
+          // The numbers stand unless a clearly cheaper way to match them all up exists — cheaper overall AND by size, as
+          // places alone can't tell a swap from a move.
+          const clearlyBetter = bestCost < kCost - Math.max(1, 0.1 * bestCost) && total(best, sizeCost) < total(kCols, sizeCost) - 0.5;
+          if (kFeasible && !clearlyBetter) {
+            idx.forEach((i, n) => uses[i].set(fitsAll[i][kCols[n]]!.value));
+            continue;
+          }
+          idx.forEach((i, n) => {
+            const u = uses[i];
+            const j = best[n];
+            const f = j >= 0 && cost[n][j] < BIG ? fitsAll[i][j] : null;
+            if (!f) return u.set(null);
+            // Truly unclear (another free edge as good): lost rather than a guess.
+            const taken = new Set(best.filter((x, m) => m !== n && x >= 0));
+            const rival = cost[n].some((c, jj) => jj !== j && !taken.has(jj) && c < BIG && Math.abs(c - cost[n][j]) < 1e-6);
+            if (rival) return u.set(null);
+            // Its own number gone or of another kind: only an edge near where it was, or the only one of its size.
+            if (kCols[n] < 0 || cost[n][kCols[n]] >= BIG) {
+              const near = where(u, f) <= Math.max(0.5, 0.3 * f.span);
+              const sameSize = (x: Fit | null) => !!x && !!u.size && x.size !== undefined && sizeGap(u, x, move.kx, move.ky) <= Math.max(0.2, 0.25 * u.size.old);
+              const onlyOne = sameSize(f) && fitsAll[i].filter(sameSize).length === 1;
+              if (!near && !onlyOne) return u.set(null);
+            }
+            u.set(f.value);
           });
         }
       } finally {
