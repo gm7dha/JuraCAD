@@ -1116,7 +1116,10 @@ export function giveAwayCrumbs(
     const broken = live.filter((tb) => !tabHolds(piece, nx, ny, cell, fit, tb));
     // No piece may come apart where it didn't before (cells taken from behind a knob's neck would cut it off).
     const split = changedPieces(was, piece).filter((q) => {
-      if (!partsWere.has(q)) partsWere.set(q, meshPartCount(was, nx, ny, cell, fit, q, boxOf(was, nx, q)));
+      if (!partsWere.has(q)) {
+        const old = boxOf(was, nx, q);
+        partsWere.set(q, old ? meshPartCount(was, nx, ny, cell, fit, q, old) : 0);
+      }
       const box = boxOf(piece, nx, q);
       return box !== null && meshPartCount(piece, nx, ny, cell, fit, q, box) > partsWere.get(q)!;
     });
@@ -1407,20 +1410,6 @@ function crumbsAway(piece: Int32Array, nx: number, ny: number, cell: number, fit
     movedAny = true;
   }
   return movedAny;
-}
-
-/** Is cell `c` of its piece outside that piece's mesh (too near another piece or the sea, as pieceMesh's samples)? */
-function thinAt(piece: Int32Array, nx: number, ny: number, cell: number, fit: number, c: number): boolean {
-  const q = piece[c];
-  const T = fit / cell + Math.SQRT1_2;
-  const R = Math.ceil(T);
-  const [i, j] = [c % nx, Math.floor(c / nx)];
-  for (let b = j - R; b <= j + R; b++)
-    for (let a = i - R; a <= i + R; a++) {
-      if ((a - i) ** 2 + (b - j) ** 2 > T * T) continue;
-      if (a < 0 || b < 0 || a >= nx || b >= ny || piece[b * nx + a] !== q) return true;
-    }
-  return false;
 }
 
 /** Outside samples reached from the box's edge, joined as marching squares joins them (corner to corner across a saddle whose mean is ≤ 0). */
