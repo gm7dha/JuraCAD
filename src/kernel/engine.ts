@@ -2870,42 +2870,82 @@ export class GeometryEngine {
       const f = sketches.get(id);
       return f?.sketch?.plane ? { id, name: f.name, plane: f.sketch.plane, data: f.sketch.data } : null;
     };
-    // Curves and points following a curve feature (built earlier in the list): its edge "e<k>", found again by number.
+    // Curves and points following a curve feature (built earlier in the list): its edge "e<k>" — the same number again,
+    // unless another of its edges is clearly nearer where the sketch has it (the curve's pieces came out in another
+    // order): then that one; and lost when neither is near (`chooseNear`).
     const curveItem = (link: { sketch: string; item: string }): { k: number; end?: "a" | "b" | "c" } | null => {
       if (!this.curves.has(link.sketch)) return null;
       const m = /^e(\d+)(?:\.([abc]))?$/.exec(link.item);
       return m ? { k: Number(m[1]), ...(m[2] ? { end: m[2] as "a" | "b" | "c" } : {}) } : { k: -1 };
     };
+    type CurveGot = { seen: RefEdge | null; edge: Edge; ref: EdgeRef };
     const curveLinked = new Set<string>();
-    const followCurve = (link: { sketch: string; item: string }, use: (got: { seen: RefEdge | null; edge: Edge; ref: EdgeRef } | undefined, end?: "a" | "b" | "c") => void): boolean => {
+    const followCurve = (link: { sketch: string; item: string }, use: (byItem: Map<number, CurveGot>, k: number, end?: "a" | "b" | "c") => void): boolean => {
       const ci = curveItem(link);
       if (!ci) return false;
       const built = this.curves.get(link.sketch)!;
-      const { byItem } = this.curveFeatureRefs(link.sketch, "", built.wires, frame, { only: ci.k });
+      const { byItem } = this.curveFeatureRefs(link.sketch, "", built.wires, frame);
       try {
-        use(byItem.get(ci.k), ci.end);
+        use(byItem, ci.k, ci.end);
       } finally {
         this.freeCurveRefs(byItem);
       }
       return true;
     };
+    const d2 = (a: [number, number], b: [number, number]) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+    const pos = (id: string): [number, number] | null => {
+      const q = sk.data.points.find((x) => x.id === id);
+      return q ? [q.x, q.y] : id === "origin" ? [0, 0] : null;
+    };
+    /** Of the candidates (each with how far it is from where the sketch has it), the one to follow, or null (lost). */
+    const chooseNear = <T>(cands: { k: number; value: T; score: number; size: number }[], k: number): T | null => {
+      if (!cands.length) return null;
+      const nearest = cands.reduce((x, y) => (y.score < x.score ? y : x));
+      const same = cands.find((x) => x.k === k);
+      if (same && same.score <= 1.5 * nearest.score + 1e-6) return same.value;
+      if (nearest.score <= Math.max(0.5, 0.3 * nearest.size)) return nearest.value;
+      return null;
+    };
     for (const c of linked) {
       const link = (c as { link: CurveLink }).link;
       if (isPartLink(link)) continue;
-      if (followCurve(link, (got) => (links[c.id] = got?.seen ? sameKind(c, shaped(c, got.seen, got.edge)) : null))) curveLinked.add(c.id);
+      const done = followCurve(link, (byItem, k) => {
+        // Where the sketch has this curve now: its ends, or its centre.
+        const ids = c.type === "line" ? [c.p1, c.p2] : c.type === "arc" ? [c.start, c.end] : c.type === "circle" || c.type === "ellipse" ? [c.center] : c.type === "spline" ? [c.points[0], c.points[c.points.length - 1]] : [];
+        const here = ids.map(pos).filter((x): x is [number, number] => !!x);
+        const cands: { k: number; value: RefEdge; score: number; size: number }[] = [];
+        for (const [i, got] of byItem) {
+          const seen = got.seen ? sameKind(c, shaped(c, got.seen, got.edge)) : null;
+          if (!seen) continue;
+          const there: [number, number][] = c.type === "circle" || c.type === "ellipse" ? [seen.centre ?? seen.mid] : [seen.a, seen.b];
+          let score = 0;
+          if (here.length === 2 && there.length === 2) score = Math.min(d2(here[0], there[0]) + d2(here[1], there[1]), d2(here[0], there[1]) + d2(here[1], there[0])) / 2;
+          else if (here.length && there.length) score = d2(here[0], there[0]);
+          cands.push({ k: i, value: seen, score, size: Math.max(d2(seen.a, seen.b), 2 * (seen.radius ?? 0)) });
+        }
+        links[c.id] = chooseNear(cands, k);
+      });
+      if (done) curveLinked.add(c.id);
     }
     for (const p of linkedPts) {
       const link = p.link!;
       if ("partId" in link) continue;
-      const done = followCurve(link, (got, end) => {
-        if (!got) return void (pointLinks[p.id] = null);
+      const done = followCurve(link, (byItem, k, end) => {
         if (link.end === "pierce") {
+          const got = byItem.get(k);
+          if (!got) return void (pointLinks[p.id] = null);
           const walk = remembered(edgeAt(got.edge));
           pointLinks[p.id] = nearestPlace(edgePierces(frame, walk, got.ref.curve === "LINE" ? 1 : pierceSamples(walk, edgeSpans(got.edge))), [p.x, p.y]);
           return;
         }
-        const at = edgePoint3(got.ref, end === "a" ? "a" : end === "b" ? "b" : end === "c" ? "centre" : "mid");
-        pointLinks[p.id] = at ? toSketch(frame, at) : null;
+        const cands: { k: number; value: [number, number]; score: number; size: number }[] = [];
+        for (const [i, got] of byItem) {
+          const at = edgePoint3(got.ref, end === "a" ? "a" : end === "b" ? "b" : end === "c" ? "centre" : "mid");
+          if (!at) continue;
+          const q = toSketch(frame, at);
+          cands.push({ k: i, value: q, score: d2(q, [p.x, p.y]), size: Math.hypot(got.ref.a[0] - got.ref.b[0], got.ref.a[1] - got.ref.b[1], got.ref.a[2] - got.ref.b[2]) });
+        }
+        pointLinks[p.id] = chooseNear(cands, k);
       });
       if (done) curveLinked.add(p.id);
     }
@@ -8224,19 +8264,28 @@ export class GeometryEngine {
         try {
           if (facePick) face = this.pickedFacesOf([facePick])[0];
           else {
-            // The first face beside the first edge.
+            // The face all the picked edges lie on (else the first face beside the first edge, with a note).
             const part = this.parts.find((x) => x.id === edgePicks[0].partId)!;
+            let holdsAll: Face | null = null;
+            let firstBeside: Face | null = null;
+            let holders = 0;
             for (const f of facesOf(part.shape)) {
               const mine = edgesOf(f);
-              const has = mine.some((e) => e.isSame(edges[0]));
+              const hasFirst = mine.some((e) => e.isSame(edges[0]));
+              const hasAll = edgePicks.every((p) => p.partId === part.id) && edges.every((x) => mine.some((e) => e.isSame(x)));
               mine.forEach((e) => e.delete());
-              if (has && !face) face = f;
+              if (hasAll) holders++;
+              if (hasAll && !holdsAll) holdsAll = f;
+              else if (hasFirst && !firstBeside) firstBeside = f;
               else f.delete();
             }
+            face = holdsAll ?? firstBeside;
+            if (holdsAll && firstBeside) firstBeside.delete();
             if (!face) throw new Error("Couldn't find a face beside those edges. Click the face to move them across.");
-            this.notes[feature.id] = "Moved across the first face beside the edges. Click a face to choose which.";
+            if (!holdsAll) this.notes[feature.id] = "The edges aren't all on one face, so they're moved across the first face beside the first edge. Click a face to choose which.";
+            else if (holders > 1) this.notes[feature.id] = "The edges lie on two faces; they're moved across the first. Click a face to choose which.";
           }
-          return { wires: offsetOnFace(face, edges, v.distance, !!def.flip) };
+          return { wires: offsetOnFace(face, edges.map((e) => e.clone() as Edge), v.distance, !!def.flip) };
         } finally {
           face?.delete();
           edges.forEach((e) => e.delete());

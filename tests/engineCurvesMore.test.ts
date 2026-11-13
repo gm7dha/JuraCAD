@@ -71,6 +71,83 @@ describe("Offset curve", () => {
       expect(Math.abs(Math.hypot(p[0], p[1]) - 10)).toBeLessThan(1e-3);
     }
   });
+
+  const lTop = () => {
+    const box = feature("box", { width: 40, depth: 30, height: 10 });
+    const part = engine.rebuild([box]).parts[0];
+    // The top face's edges along y = 0 and x = 40 (an L with its corner at (40, 0)).
+    const along = part.edgeRefs.filter((e) => e.curve === "LINE" && e.a[2] > 9.99 && e.b[2] > 9.99 && ((Math.abs(e.a[1]) < 1e-6 && Math.abs(e.b[1]) < 1e-6) || (Math.abs(e.a[0] - 40) < 1e-6 && Math.abs(e.b[0] - 40) < 1e-6)));
+    expect(along).toHaveLength(2);
+    return { box, picks: along.map((ref) => ({ partId: box.id, ref })) };
+  };
+
+  it("moves an L of edges into the face: cut back at the inside corner (no loop)", () => {
+    engine = new GeometryEngine();
+    const { box, picks } = lTop();
+    // Only edges picked: the face they both lie on (the top) is found.
+    const oc = curve({ kind: "offset" }, { distance: 5 }, { picks });
+    const r = engine.rebuild([box, oc]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.featureNotes?.[oc.id]).toBeUndefined();
+    const lines = r.curves![oc.id];
+    expect(lines).toHaveLength(1);
+    expect(Math.abs(lengthOf(lines) - 60)).toBeLessThan(1e-3);
+    for (const p of pointsOf(lines[0])) {
+      expect(Math.abs(p[2] - 10)).toBeLessThan(1e-6);
+      const onBottom = Math.abs(p[1] - 5) < 1e-4 && p[0] > -1e-4 && p[0] < 35 + 1e-4;
+      const onSide = Math.abs(p[0] - 35) < 1e-4 && p[1] > 5 - 1e-4 && p[1] < 30 + 1e-4;
+      expect(onBottom || onSide).toBe(true);
+    }
+  });
+
+  it("moves an L of edges out of the face: rounded round the outside corner", () => {
+    engine = new GeometryEngine();
+    const { box, picks } = lTop();
+    const oc = curve({ kind: "offset", flip: true }, { distance: 5 }, { picks });
+    const r = engine.rebuild([box, oc]);
+    expect(r.featureErrors).toEqual({});
+    const lines = r.curves![oc.id];
+    expect(lines).toHaveLength(1);
+    expect(Math.abs(lengthOf(lines) - (70 + (Math.PI * 5) / 2))).toBeLessThan(0.02);
+    for (const p of pointsOf(lines[0])) {
+      // 5 mm from the L everywhere (the corner (40, 0) for the arc).
+      const dx = Math.max(0, p[0] - 40);
+      const dy = Math.max(0, -p[1]);
+      const gap = p[0] <= 40 ? -p[1] : p[1] >= 0 ? p[0] - 40 : Math.hypot(dx, dy);
+      expect(Math.abs(gap - 5)).toBeLessThan(1e-3);
+    }
+  });
+
+  it("walks an L of edges with a corner across a round face, cut back at the corner", () => {
+    engine = new GeometryEngine();
+    const cyl = feature("cylinder", { diameter: 20, height: 30 });
+    const cut = feature("box", { width: 20, depth: 20, height: 30, x: 0, y: 0 }, "remove");
+    const part = engine.rebuild([cyl, cut]).parts[0];
+    const arc = part.edgeRefs.find((e) => e.curve === "CIRCLE" && e.mid[2] > 29.99)!;
+    const line = part.edgeRefs.find((e) => e.curve === "LINE" && Math.abs(e.a[0]) < 1e-6 && Math.abs(e.b[0]) < 1e-6 && Math.abs(e.a[1] - 10) < 1e-6 && Math.abs(e.b[1] - 10) < 1e-6)!;
+    expect(arc && line).toBeTruthy();
+    const oc = curve({ kind: "offset" }, { distance: 5 }, { picks: [{ partId: cyl.id, ref: arc }, { partId: cyl.id, ref: line }] });
+    const r = engine.rebuild([cyl, cut, oc]);
+    expect(r.featureErrors).toEqual({});
+    const lines = r.curves![oc.id];
+    expect(lines).toHaveLength(1);
+    expect(Math.abs(lengthOf(lines) - ((3 * Math.PI) / 2 - 0.5) * 10 - 25)).toBeLessThan(0.05);
+    for (const p of pointsOf(lines[0])) expect(Math.abs(Math.hypot(p[0], p[1]) - 10)).toBeLessThan(1e-3);
+  });
+
+  it("refuses to move a face's outline so far in that a hole's grows off the face", () => {
+    engine = new GeometryEngine();
+    const box = feature("box", { width: 40, depth: 30, height: 10 });
+    const hole = feature("cylinder", { diameter: 6, height: 10, x: 12, y: 15 }, "remove");
+    const top = engine.rebuild([box, hole]).parts[0].faceRefs.find((f) => f.surface === "PLANE" && f.normal[2] > 0.99)!;
+    const oc = curve({ kind: "offset" }, { distance: 12 }, { picks: [{ partId: box.id, ref: top }] });
+    expect(engine.rebuild([box, hole, oc]).featureErrors[oc.id]).toMatch(/off the face|into each other/);
+    // A small move is fine: the outline and the hole's circle, 2 loops.
+    const small = { ...oc, params: { ...oc.params, distance: "2" } };
+    const r = engine.rebuild([box, hole, small]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.curves![oc.id]).toHaveLength(2);
+  });
 });
 
 describe("Isocline", () => {
@@ -94,9 +171,33 @@ describe("Isocline", () => {
     const r2 = engine.rebuild([ball, { ...iso, curve: { ...iso.curve!, flip: true } }]);
     expect(pointsOf(r2.curves![iso.id][0])[0][2]).toBeCloseTo(-R, 3);
   });
+
+  it("runs right up to the face's edge on a cut ball", () => {
+    engine = new GeometryEngine();
+    const ball = feature("sphere", { diameter: 20 });
+    const cut = feature("box", { width: 20, depth: 40, height: 40, x: 3, y: -20, z: -20 }, "remove");
+    const face = engine.rebuild([ball, cut]).parts[0].faceRefs.find((f) => f.surface === "SPHERE")!;
+    const iso = curve({ kind: "isocline", axis: { p: [0, 0, 0], dir: [0, 0, 1], axis: "z" } }, { angle: 45 }, { picks: [{ partId: ball.id, ref: face }] });
+    const r = engine.rebuild([ball, cut, iso]);
+    expect(r.featureErrors).toEqual({});
+    const R = 10 / Math.SQRT2;
+    const pts = r.curves![iso.id].flatMap(pointsOf);
+    for (const p of pts) {
+      expect(p[0]).toBeLessThan(3 + 1e-4);
+      expect(Math.abs(Math.hypot(p[0], p[1]) - R)).toBeLessThan(1e-3);
+    }
+    expect(Math.max(...pts.map((p) => p[0]))).toBeGreaterThan(3 - 1e-4);
+  });
 });
 
 describe("Trim curve", () => {
+  it("looks past a meeting at the curve's start, and says plainly when that's the only one", () => {
+    engine = new GeometryEngine();
+    const h = curve({ kind: "helix", around: "axis", axis: { p: [0, 0, 0], dir: [0, 0, 1], axis: "z" } }, { diameter: 20, height: 20, turns: 4 });
+    const top = curve({ kind: "trim", curves: [h.id], plane: { kind: "default", name: "Top" } });
+    expect(engine.rebuild([h, top]).featureErrors[top.id]).toMatch(/only touches that at its start/);
+  });
+
   it("cuts a helix back to a plane: half the length", () => {
     engine = new GeometryEngine();
     const h = curve({ kind: "helix", around: "axis", axis: { p: [0, 0, 0], dir: [0, 0, 1], axis: "z" } }, { diameter: 20, height: 20, turns: 4 });
@@ -164,5 +265,24 @@ describe("Sketches using curve features", () => {
     // The curve deleted: the links are lost (reported), not left behind.
     const r3 = engine.rebuild([sk2]);
     expect(Object.values(r3.sketchLinks![sk.id].links).every((l) => l === null)).toBe(true);
+  });
+  it("follows the nearer edge when the number points elsewhere (the pieces came out in another order)", () => {
+    engine = new GeometryEngine();
+    const box = feature("box", { width: 40, depth: 30, height: 10 });
+    const top = engine.rebuild([box]).parts[0].faceRefs.find((f) => f.surface === "PLANE" && f.normal[2] > 0.99)!;
+    const oc = curve({ kind: "offset" }, { distance: 5 }, { picks: [{ partId: box.id, ref: top }] });
+    const sk = sketchFeature({ kind: "default", name: "Top" }, emptySketch());
+    engine.rebuild([box, oc, sk]);
+    const refs = engine.sketchCandidates("main", sk.id)!.filter((e) => e.source?.sketch === oc.id && e.kind === "line");
+    expect(refs.length).toBe(4);
+    const used = linkEdge(sk.sketch!.data, refs[0], false);
+    const line = used.sketch.curves.find((c) => c.id === used.curveId)!;
+    const wrong = refs.find((e) => e.source!.item !== refs[0].source!.item && Math.abs(e.a[0] - refs[0].a[0]) + Math.abs(e.a[1] - refs[0].a[1]) > 10)!;
+    const data = { ...used.sketch, curves: used.sketch.curves.map((c) => (c === line ? { ...c, link: { sketch: oc.id, item: wrong.source!.item } } : c)) };
+    const r = engine.rebuild([box, oc, { ...sk, sketch: { ...sk.sketch!, data } }]);
+    const got = r.sketchLinks![sk.id].links[line.id]!;
+    expect(got).toBeTruthy();
+    const near = (a: [number, number], b: [number, number]) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6;
+    expect((near(got.a, refs[0].a) && near(got.b, refs[0].b)) || (near(got.a, refs[0].b) && near(got.b, refs[0].a))).toBe(true);
   });
 });

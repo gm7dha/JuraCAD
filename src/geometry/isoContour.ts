@@ -175,3 +175,74 @@ export function thinRun(points: Vec3[], gap: number, most: number): Vec3[] {
   out.push(points[points.length - 1]);
   return out;
 }
+
+/** Where segment a→b crosses segment c→d: the shares along each (null when they don't). */
+function crossAt(a: P2, b: P2, c: P2, d: P2): { s: number; t: number } | null {
+  const r: P2 = [b[0] - a[0], b[1] - a[1]];
+  const q: P2 = [d[0] - c[0], d[1] - c[1]];
+  const den = r[0] * q[1] - r[1] * q[0];
+  if (Math.abs(den) < 1e-300) return null;
+  const w: P2 = [c[0] - a[0], c[1] - a[1]];
+  const s = (w[0] * q[1] - w[1] * q[0]) / den;
+  const t = (w[0] * r[1] - w[1] * r[0]) / den;
+  return s > 0 && s <= 1 && t >= 0 && t <= 1 ? { s, t } : null;
+}
+
+/**
+ * A contour line cut to the inside of an outline (`pieces`, even–odd): the stretches inside, each running right up
+ * to where it crosses the outline. `onOutline` (optional) works the crossing out exactly — it's given the outline
+ * piece's index, the share along it, and the straight-line guess. A closed run wholly inside stays closed.
+ */
+export function clipRun(run: ContourRun, pieces: readonly [P2, P2][], onOutline?: (piece: number, t: number, guess: P2) => P2): ContourRun[] {
+  const pts = run.closed ? [...run.points, run.points[0]] : run.points;
+  if (pts.length < 2) return [];
+  // Every crossing, segment by segment, in order along the run.
+  const nodes: { p: P2; cross: boolean }[] = [{ p: pts[0], cross: false }];
+  let crossings = 0;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i];
+    const b = pts[i + 1];
+    const hits: { s: number; p: P2 }[] = [];
+    pieces.forEach(([c, d], k) => {
+      const x = crossAt(a, b, c, d);
+      if (!x) return;
+      const guess: P2 = [a[0] + (b[0] - a[0]) * x.s, a[1] + (b[1] - a[1]) * x.s];
+      hits.push({ s: x.s, p: onOutline ? onOutline(k, x.t, guess) : guess });
+    });
+    hits.sort((u, v) => u.s - v.s);
+    for (const h of hits) {
+      nodes.push({ p: h.p, cross: true });
+      crossings++;
+    }
+    nodes.push({ p: b, cross: false });
+  }
+  if (!crossings) return insidePieces(pts[0], pieces) || insidePieces(pts[Math.floor(pts.length / 2)], pieces) ? [run] : [];
+  const out: ContourRun[] = [];
+  let cur: P2[] | null = null;
+  for (let i = 0; i + 1 < nodes.length; i++) {
+    const a = nodes[i].p;
+    const b = nodes[i + 1].p;
+    const mid: P2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const inside = insidePieces(mid, pieces);
+    if (inside) {
+      if (!cur) cur = [a];
+      cur.push(b);
+    } else if (cur) {
+      out.push({ points: cur, closed: false });
+      cur = null;
+    }
+  }
+  if (cur) out.push({ points: cur, closed: false });
+  // A closed run that started inside: its last stretch carries on into its first.
+  if (run.closed && out.length > 1) {
+    const first = out[0];
+    const last = out[out.length - 1];
+    const l = last.points[last.points.length - 1];
+    const f = first.points[0];
+    if (l[0] === f[0] && l[1] === f[1]) {
+      out[0] = { points: [...last.points, ...first.points.slice(1)], closed: false };
+      out.pop();
+    }
+  }
+  return out.filter((r) => r.points.length >= 2);
+}

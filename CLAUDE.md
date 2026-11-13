@@ -712,24 +712,35 @@
   Dialog `src/app/CurveOptions.tsx` (`CurveOptions`, `PathChoice`: sketch / curve / "Part edges (click them)"); Toolbar group
   "curves" (`startCurve`). Claude: add_feature "curve" with `curve_type` (`src/mcp/curveSpec.ts`), sweep `path` (sketch or
   curve) / `path_edges` + `path_part`; points may be {"curve", "end"}. Newer kinds (`src/kernel/curvesMore.ts`, params
-  `distance`/`angle`): Offset curve (`picks` = edges + at most one face to move across; a face alone = its outline less seams;
-  none = the first face beside the first edge, with a note; closed loops on a flat face exact via BRepOffsetAPI_MakeOffset, sign
-  chosen by whether the result lies on the face; else `walkedOffset` — each sample walked across the surface square to the edge,
-  re-projected step by step, a spline fitted; `flip` = out of the face), Isocline (`picks` = faces, `axis` = the direction, default
-  Z; n·d = sin(angle), `flip` = −; the face's (u, v) grid sampled with BRepGProp_Face, points off the face masked by its pcurves'
-  outline (`insidePieces`), pure marching squares + bisection on each crossing + `joinRuns` across seams in
-  `src/geometry/isoContour.ts`, splines fitted), Trim curve (`curves` = [curve to trim, bound curve?], else `plane`, else face
-  `picks`; BRepAlgoAPI_Splitter on the wire, pieces walked from its start — or, `flip`, its end — up to the first that ends on the
-  bound; `curveUses` needs both curves). Sketches use curve features like part edges: `curveFeatureRefs` gives each edge of its
+  `distance`/`angle` — `ParamDef.lazy`: left out of `defaultParams`, so older features save byte for byte; `max` 90 on the
+  angle): Offset curve (`picks` = edges + at most one face to move across; a face alone = its outline less seams; edges only =
+  the face holding them all, else the first beside the first edge, with a note; on a flat face everything exact via
+  BRepOffsetAPI_MakeOffset — open chains with IsOpenResult, so inside corners are cut back and outside ones rounded; the sign
+  chosen by whether the result lies on the face; on curved faces `walkedOffset`: the wire split into smooth stretches at
+  direction jumps > 2° (`smoothStretches`), each sample walked across the surface square to the edge, inside corners cut back
+  where the moved stretches cross (`segmentGap`), outside ones joined by an arc walked round the corner, a spline per piece;
+  moved into the face, a result that leaves the face or touches itself is refused, `checkInside`; `flip` = out of the face),
+  Isocline (`picks` = faces, `axis` = the direction, default Z; n·d = sin(angle), `flip` = −; the face's (u, v) box sampled with
+  BRepGProp_Face, pure marching squares + bisection on each crossing, then `clipRun` cuts the lines to the face's pcurve outline
+  (`uvOutline`), the crossing found exactly by bisection along the edge's own curve, so lines run right up to the face's edge;
+  `joinRuns` across seams; all in `src/geometry/isoContour.ts`; splines fitted), Trim curve (`curves` = [curve to trim, bound
+  curve?], else `plane`, else face `picks`; BRepAlgoAPI_Splitter on the wire, pieces walked from its start — or, `flip`, its end —
+  up to the first that ends on the bound; a meeting at the start doesn't count, and one touching only there is said plainly;
+  `curveUses` needs both curves). Sketches use curve features like part edges: `curveFeatureRefs` gives each edge of its
   wires as a `RefEdge` with `source` {sketch: <curve id>, item "e<k>", ends "e<k>.a"/".b"/".c"} (+ shape, + pierce places), so
   links are ordinary SketchItemLinks (old files unchanged; Delete with dependents counts them as "references brought in");
-  `workOutCandidates` offers curves before the sketch (from `StudioBuild.curves`), `followSketch`'s `followCurve` re-finds edge k
-  when `this.curves` has the id (else the old sketch lookup), lost = null; the controller's `skipRef` treats a curve as shown
-  unless its eye is off. Not done: surface sweeps along curves; offsets past where the walk folds over are refused, not trimmed. Tests: tests/curves, curveClicks (pure), engineCurves
+  `workOutCandidates` offers curves before the sketch (from `StudioBuild.curves`), `followSketch`'s `followCurve` (when
+  `this.curves` has the id; else the old sketch lookup) re-finds the edge by `chooseNear`: edge k unless another is clearly
+  nearer where the sketch has it (≤ 1.5 × the nearest keeps k — a multi-loop offset, isocline or composite whose pieces come out
+  in another order follows the right one), else the nearest within 0.3 × its size (≥ 0.5 mm), else lost (null); Pierce points
+  stay on edge k. The controller's `skipRef` treats a curve as shown unless its eye is off. Not done: surface sweeps along
+  curves; trimming an offset that runs off its face (it's refused). Tests: tests/curves, curveClicks (pure), engineCurves
   (helix length/pitch/taper/face, spring volume, ellipse of a slanted cut, projected onto a ball, fit spline, bridge, sweep along
-  an edge, composite, curve pattern on a helix), mcpCurves; tests/curvesMore (pure), engineCurvesMore (box top 5 mm in, a
-  cylinder edge walked down, ball isocline at 45° = R/√2 circle, helix trimmed by a plane and a face, a sketch using/piercing a
-  helix and following it), mcpCurvesMore.
+  an edge, composite, curve pattern on a helix), mcpCurves; tests/curvesMore (pure; an old helix saves byte for byte), engineCurvesMore
+  (box top 5 mm in/out, an L of edges in (60 mm, cut back) and out (rounded), an L with a corner across a cylinder, a hole's
+  outline growing off the face refused, ball isocline at 45° = R/√2 circle and on a cut ball up to the cut, helix trimmed by a
+  plane/a face/only touching at its start, a sketch using/piercing a helix and following it, a wrong edge number followed to the
+  nearer edge), mcpCurvesMore.
 - Frames (Onshape's Frame, Trim frame, Gusset, Cut list): feature types "frame" (`Feature.frame`, `FrameDef` in
   model/frameTypes.ts: `paths` = sketches, all their lines/arcs/circles or `items`; `profile` = a built-in family + size key
   ("custom" = the width/height/wall params) or `{kind:"sketch"}` (its closed regions' polygons); `anchor` (9 points of the

@@ -3,11 +3,13 @@
  * sketches that use curve features.
  */
 import { describe, expect, it } from "vitest";
-import { chainKeys, contourRuns, insidePieces, joinRuns, thinRun, type P2 } from "../src/geometry/isoContour";
+import { chainKeys, clipRun, contourRuns, insidePieces, joinRuns, thinRun, type P2 } from "../src/geometry/isoContour";
+import { defaultParams, resolveParams } from "../src/model/features";
 import { curveClick } from "../src/model/curveClicks";
 import { curveParamKeys, curveUses, newCurveDef, parseCurveDef } from "../src/model/curves";
 import { deleteFeatures, findDependents } from "../src/model/dependents";
 import { emptyDocument } from "../src/model/document";
+import { readDocumentFile, serializeDocument } from "../src/model/fileFormat";
 import type { Feature } from "../src/model/types";
 import type { TopoPick } from "../src/geometry/topoRef";
 import { emptySketch } from "../src/sketch/types";
@@ -73,7 +75,51 @@ const feat = (id: string, type: Feature["type"], extra: Partial<Feature> = {}): 
 const face = (partId: string): TopoPick => ({ partId, ref: { kind: "face" } as unknown as TopoPick["ref"] });
 const edge = (partId: string): TopoPick => ({ partId, ref: { kind: "edge", a: [0, 0, 0] } as unknown as TopoPick["ref"] });
 
+describe("clipping a line to the face's outline", () => {
+  const square: [P2, P2][] = [[[0, 0], [2, 0]], [[2, 0], [2, 2]], [[2, 2], [0, 2]], [[0, 2], [0, 0]]];
+  it("runs right up to the edge, exactly where it crosses", () => {
+    const run = { points: [[-1, 1], [0.5, 1], [1.5, 1], [3, 1]] as P2[], closed: false };
+    const out = clipRun(run, square);
+    expect(out).toHaveLength(1);
+    expect(out[0].points[0]).toEqual([0, 1]);
+    expect(out[0].points[out[0].points.length - 1]).toEqual([2, 1]);
+    // The crossing can be worked out exactly by the caller.
+    const exact = clipRun(run, square, (k, t) => [k === 3 ? 0 : 2, 1 + t * 0]);
+    expect(exact[0].points[0]).toEqual([0, 1]);
+  });
+  it("keeps a loop wholly inside closed, and splits one crossing out and back", () => {
+    const loop = { points: [[0.5, 0.5], [1.5, 0.5], [1.5, 1.5], [0.5, 1.5]] as P2[], closed: true };
+    expect(clipRun(loop, square)).toEqual([loop]);
+    const big = { points: [[1, 0.5], [3, 0.5], [3, 1.5], [1, 1.5]] as P2[], closed: true };
+    const out = clipRun(big, square);
+    expect(out).toHaveLength(1);
+    expect(out[0].closed).toBe(false);
+    expect(out[0].points[0]).toEqual([2, 1.5]);
+    expect(out[0].points[out[0].points.length - 1]).toEqual([2, 0.5]);
+  });
+});
+
 describe("new curve kinds", () => {
+  it("leave older curve features' settings alone (the new boxes only when typed)", () => {
+    const params = defaultParams("curve");
+    expect(params.distance).toBeUndefined();
+    expect(params.angle).toBeUndefined();
+    const iso = { type: "curve" as const, params: {}, curve: { kind: "isocline" as const } };
+    expect(resolveParams(iso).values.angle).toBe(45);
+    expect(resolveParams({ ...iso, params: { angle: "95" } }).errors.angle).toMatch(/at most 90/);
+    expect(resolveParams({ type: "curve", params: {}, curve: { kind: "offset" } }).values.distance).toBe(5);
+  });
+
+  it("an older helix saves byte for byte the same after being read", () => {
+    const helix = { ...feat("h1", "curve", { curve: { kind: "helix", around: "axis", axis: { p: [0, 0, 0], dir: [0, 0, 1], axis: "z" } } }), params: { height: "30", turns: "5", pitch: "6", diameter: "20", startAngle: "0", taper: "0", bulge: "1" } };
+    const doc = { ...emptyDocument(), features: [helix] };
+    const at = new Date(0);
+    const text = serializeDocument(doc, at);
+    const read = readDocumentFile(text);
+    expect(read.ok).toBe(true);
+    if (read.ok) expect(serializeDocument(read.doc, at)).toBe(text);
+  });
+
   it("show their own size boxes and start sensibly", () => {
     expect(curveParamKeys({ kind: "offset" })).toEqual(["distance"]);
     expect(curveParamKeys({ kind: "isocline" })).toEqual(["angle"]);
