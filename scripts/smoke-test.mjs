@@ -180,7 +180,15 @@ try {
     });
     const sizes = await bar.evaluate((b) => [b.scrollWidth, b.clientWidth]);
     if (sizes[0] > sizes[1]) throw new Error(`the Part Studio toolbar needs ${sizes[0]} px but a 1280 px window gives it ${sizes[1]}`);
-    if (await page.getByLabel("Scroll tools right").count()) throw new Error("the toolbar shows a scroll arrow at 1280 px");
+    // The room left: the tools' own widths (the gap before the right-hand ones stretches to fill whatever is over).
+    const spare = await bar.evaluate((b) => {
+      const gap = b.querySelector(".toolbar-spacer");
+      return Math.round(gap ? gap.getBoundingClientRect().width : b.clientWidth - b.scrollWidth);
+    });
+    // The ‹ › arrows follow the window's size a moment later (it was 1180 px, too narrow, a moment ago).
+    await page.getByLabel("Scroll tools right").waitFor({ state: "detached", timeout: 5_000 }).catch(() => {
+      throw new Error(`the toolbar still shows a scroll arrow at 1280 px (${spare} px to spare)`);
+    });
     await shot("toolbar1280", { clip: { x: 0, y: 0, width: 1280, height: 130 }, width: 1280 });
     // A group's ▾ list: planes and connectors, then (after a line) the curves.
     await page.locator('.tool-split-arrow[data-items*="|Helix|"]').click();
@@ -191,7 +199,8 @@ try {
     await page.keyboard.press("Escape");
     await page.waitForSelector('[role="menu"]', { state: "detached" });
     await page.setViewportSize({ width: 1180, height: 760 });
-    toolbarReport = `The Part Studio toolbar fits 1280 px (${sizes[0]} px of tools)`;
+    toolbarReport = `The Part Studio toolbar fits 1280 px with ${spare} px to spare`;
+    if (spare < 40) annotate("warning", "Toolbar nearly full", `the Part Studio toolbar has only ${spare} px to spare at 1280 px`);
   }
 
   step = "drilling a hole with a cylinder";

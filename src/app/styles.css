@@ -313,7 +313,7 @@ button:disabled {
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   height: 58px;
   padding: 0 8px;
   background: var(--panel);
@@ -331,7 +331,7 @@ button:disabled {
   width: 1px;
   height: 36px;
   background: var(--line);
-  margin: 0 4px;
+  margin: 0 3px;
 }
 
 .tool-button {
@@ -2521,8 +2521,9 @@ kbd {
 
 /* Narrow screens (kept last so these win over the rules above). */
 @media (max-width: 1400px) {
+  /* 43 px: a Part Studio's tools then fit a 1280 px window with room to spare (the smoke test reports how much). */
   .tool-button {
-    min-width: 46px;
+    min-width: 43px;
     padding: 2px 3px;
     font-size: 10.5px;
   }
