@@ -24,7 +24,7 @@ import {
   type PuzzlePiece,
 } from "../terrain/mountainPuzzle";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
-import { HILL_RULE, PATH_CHOICES, ROAD_CHOICES, TIDY_MARKS, WATER_CHOICES, type MarkChoice } from "../terrain/mapMarks";
+import { HILL_RULE, PATH_CHOICES, ROAD_CHOICES, TIDY_MARKS, WATER_CHOICES, WATER_ONLY, waterOnly, type MarkChoice } from "../terrain/mapMarks";
 import { featuresAtScale, featuresOnGrid, featureSummary, NO_FEATURES, osmArea, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail, type OsmLineKind } from "../terrain/osm";
 import { PEAKS } from "../terrain/peaks";
 import { blurred, greyFromRgba, photoGrid, photoReadSize, type PhotoPixels } from "../terrain/photoRelief";
@@ -35,7 +35,7 @@ import { downloadFile, safeFileName } from "./download";
 import { Modal } from "./Modal";
 import { openMountain, useMountain } from "./mountainState";
 import { loadTerrainTile } from "./mountainTiles";
-import { loadPrinter, printerBed, savePrinter } from "./printerSetting";
+import { amsSlotsOf, loadPrinter, printerBed, savePrinter } from "./printerSetting";
 
 type Source = "peak" | "ref" | "picture" | "osm";
 
@@ -70,17 +70,26 @@ export function MarkChoices({ choice, onChange, roads }: { choice: MarkChoice; o
       </select>
     </label>
   );
+  const justWater = waterOnly(choice);
   return (
     <>
-      {row("water", "Water", WATER_CHOICES)}
-      {row("paths", "Paths", PATH_CHOICES)}
-      {roads && row("roads", "Roads", ROAD_CHOICES)}
+      <label className="mountain-row">
+        <span>Marks</span>
+        <span>
+          <input type="checkbox" checked={justWater} onChange={(e) => onChange(e.target.checked ? WATER_ONLY : TIDY_MARKS)} /> Lochs, lakes and reservoirs only — no
+          paths, tracks, roads or buildings
+        </span>
+      </label>
+      {!justWater && row("water", "Water", WATER_CHOICES)}
+      {!justWater && row("paths", "Paths", PATH_CHOICES)}
+      {!justWater && roads && row("roads", "Roads", ROAD_CHOICES)}
       <p className="muted small">
+        {justWater ? "Just the lochs, lakes and reservoirs big enough to see, filled with water a little below their shore — and, in colour, no red or black filament is needed. " : ""}
         {choice.paths === "hills" ? `${HILL_RULE} ` : ""}
-        {choice.water === "standing" ? "Only lochs, lakes and reservoirs big enough to see are shown — no rivers or streams. " : ""}
+        {!justWater && choice.water === "standing" ? "Only lochs, lakes and reservoirs big enough to see are shown — no rivers or streams. " : ""}
         {roads && choice.roads === "trunk" ? "Only motorways and trunk roads are shown. " : ""}
         {roads && choice.roads === "main" ? "Only motorways, trunk roads and A roads are shown. " : ""}
-        {choice.paths === "hills" || (roads && choice.roads !== "all") ? "These are thin lines (0.6 mm wide, 0.4 mm deep), so they print neatly." : ""}
+        {choice.paths === "hills" || (roads && (choice.roads === "trunk" || choice.roads === "main")) ? "These are thin lines (0.6 mm wide, 0.4 mm deep), so they print neatly." : ""}
       </p>
     </>
   );
@@ -258,7 +267,7 @@ export function MountainPuzzleDialog() {
   const mapSize: [number, number] = puzzle ? [puzzle.layout.cols * puzzle.spec.cube, puzzle.layout.rows * puzzle.spec.cube] : [1, 1];
   const paintMap = useMemo(() => mapRaster(puzzleMap, mapSize[0], mapSize[1]), [puzzleMap]);
   const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap);
-  const usualBands = () => (puzzle ? mountainBands(puzzle.layout.low, puzzle.layout.high, snowline) : mountainBands(0, 1000, snowline));
+  const usualBands = (n = 4) => (puzzle ? mountainBands(puzzle.layout.low, puzzle.layout.high, snowline, n) : mountainBands(0, 1000, snowline, n));
   const fileName = safeFileName(`${loaded?.area.name ?? "Mountain"} puzzle`, "Mountain puzzle");
   const set = <K extends keyof typeof spec>(key: K, value: (typeof spec)[K]) => setSpec((s) => ({ ...s, [key]: value }));
   const numberBox = (value: number, onChange: (v: number) => void, step: number, min: number, max: number, unit: string) => (
@@ -292,7 +301,7 @@ export function MountainPuzzleDialog() {
   const snowParts = puzzle?.pieces.filter((p) => p.bodies.some((b) => b.part === "snow")).length ?? 0;
 
   return (
-    <Modal title={photoMode ? "Photo relief puzzle" : "Mountain puzzle"} onClose={close} width={980}>
+    <Modal title={photoMode ? "Photo relief puzzle" : "Mountain puzzle"} onClose={close} width={1280}>
       <div className="mountain-layout">
         <div className="mountain-side">
           {photoMode ? (
@@ -512,6 +521,8 @@ export function MountainPuzzleDialog() {
             spec={colour}
             setSpec={setColour}
             usual={usualBands}
+            slots={amsSlotsOf(printer)}
+            setSlots={(n) => setPrinter(savePrinter({ amsSlots: n }))}
             usualBase={null}
             usualWater={WATER_BLUE}
             has={paintMap}
@@ -861,5 +872,26 @@ export function Mountain3D({ puzzle, explode, paint }: { puzzle: { pieces: Puzzl
     v.renderer.render(v.scene, v.camera);
   }, [puzzle, explode, paint]);
 
-  return <div ref={host} className="mountain-3d" aria-label="The puzzle in 3D: drag to turn it" />;
+  // Enlarged to (nearly) the whole window; Esc or the button puts it back (the window's own Esc is held off meanwhile).
+  const [big, setBig] = useState(false);
+  useEffect(() => {
+    if (!big) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      setBig(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [big]);
+
+  return (
+    <div className={big ? "mountain-3d-wrap big" : "mountain-3d-wrap"} data-keeps-escape={big ? "" : undefined}>
+      <div ref={host} className="mountain-3d" aria-label="The puzzle in 3D: drag to turn it" />
+      <button type="button" className="mountain-3d-size" onClick={() => setBig(!big)} title={big ? "Back to the usual size (Esc)" : "Make the 3D view fill the window"}>
+        {big ? "✕ Close big view" : "⤢ Enlarge"}
+      </button>
+    </div>
+  );
 }

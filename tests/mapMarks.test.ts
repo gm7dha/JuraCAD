@@ -7,7 +7,8 @@ import { describe, expect, it } from "vitest";
 import { gridFrom } from "../src/terrain/elevation";
 import { GROOVES, THIN_GROOVE, thinDepth } from "../src/terrain/groundMarks";
 import { fetchCovers, ISLANDS, marksQuery } from "../src/terrain/islands";
-import { ALL_MARKS, HILL_CLIMB, hillRoutes, joinRoutes, LEAST_ROUTE, TIDY_MARKS, type MarkLine } from "../src/terrain/mapMarks";
+import { filaments, islandBands, mapOnPuzzle, mapRaster, PATH_RED, ROAD_BLACK, SEA_BLUE, type ColourSpec } from "../src/terrain/colour";
+import { ALL_MARKS, HILL_CLIMB, hillRoutes, joinRoutes, LEAST_ROUTE, TIDY_MARKS, WATER_ONLY, waterOnly, type MarkLine } from "../src/terrain/mapMarks";
 import { featuresAtScale, featuresOnGrid, lineLength, LEAST_LOCH, readOsm, ringArea } from "../src/terrain/osm";
 import { hillOsm } from "./support/osmSample";
 
@@ -189,5 +190,59 @@ describe("Fetching tidy marks", () => {
     expect(fetchCovers({ detail: "all", choice: { ...TIDY_MARKS, roads: "trunk" } }, "all", TIDY_MARKS)).toBe(false);
     expect(fetchCovers({ detail: "all", choice: TIDY_MARKS }, "all", { ...TIDY_MARKS, roads: "trunk" })).toBe(true);
     expect(fetchCovers({ detail: "all", choice: TIDY_MARKS }, "water", { ...TIDY_MARKS, roads: "all" })).toBe(true);
+  });
+});
+
+describe("Lochs, lakes and reservoirs only", () => {
+  const arran = ISLANDS[1];
+  it("puts on the lochs and reservoirs and nothing else: no paths, tracks, roads, rivers or buildings", () => {
+    expect(waterOnly(WATER_ONLY)).toBe(true);
+    expect(waterOnly(TIDY_MARKS)).toBe(false);
+    // A house too (a copy of a loch's outline, as a building).
+    const loch = data.shapes.find((s) => s.kind === "water" && !s.flowing)!;
+    const withHouse = { ...data, shapes: [...data.shapes, { ...loch, kind: "building" as const, name: undefined }] };
+    const f = featuresOnGrid(withHouse, "all", WATER_ONLY, hill);
+    expect(f.lines).toEqual([]);
+    expect(f.shapes.length).toBeGreaterThan(0);
+    expect(f.shapes.every((s) => s.kind === "water")).toBe(true);
+    // The same lochs as the tidy choice keeps.
+    const tidy = featuresOnGrid(withHouse, "all", TIDY_MARKS, hill);
+    expect(f.shapes.length).toBe(tidy.shapes.filter((s) => s.kind === "water").length);
+    expect(tidy.shapes.some((s) => s.kind === "building")).toBe(true);
+    // "None" on just the paths or just the roads leaves the other.
+    const noPaths = featuresOnGrid(data, "all", { ...TIDY_MARKS, paths: "none" }, hill);
+    expect(noPaths.lines.length).toBeGreaterThan(0);
+    expect(noPaths.lines.every((l) => l.kind === "road")).toBe(true);
+    const noRoads = featuresOnGrid(data, "all", { ...TIDY_MARKS, roads: "none" }, hill);
+    expect(noRoads.lines.some((l) => l.kind === "road")).toBe(false);
+    expect(noRoads.lines.length).toBeGreaterThan(0);
+  });
+  it("asks OpenStreetMap only for the water (a smaller, quicker fetch)", () => {
+    for (const detail of ["water", "all"] as const) {
+      const q = marksQuery(arran.sw, arran.width, arran.height, detail, WATER_ONLY)!;
+      expect(q).toContain('"natural"="water"');
+      expect(q).toContain('"landuse"="reservoir"');
+      for (const not of ["highway", "route", "residential", "leisure", "forest", "wood", "waterway"]) expect(q, `${detail}: ${not}`).not.toContain(not);
+      expect(q.length).toBeLessThan(marksQuery(arran.sw, arran.width, arran.height, detail, TIDY_MARKS)!.length / 2);
+    }
+    // A water-only fetch holds water-only, but not paths or roads.
+    expect(fetchCovers({ detail: "all", choice: WATER_ONLY }, "all", WATER_ONLY)).toBe(true);
+    expect(fetchCovers({ detail: "all", choice: WATER_ONLY }, "all", TIDY_MARKS)).toBe(false);
+    expect(fetchCovers({ detail: "all", choice: WATER_ONLY }, "water", { ...WATER_ONLY, paths: "all" })).toBe(false);
+    expect(fetchCovers({ detail: "all", choice: WATER_ONLY }, "all", { ...WATER_ONLY, roads: "trunk" })).toBe(false);
+    // And anything fetched holds water-only.
+    expect(fetchCovers({ detail: "all", choice: TIDY_MARKS }, "all", WATER_ONLY)).toBe(true);
+  });
+  it("needs no red or black filament in colour", () => {
+    const k = 0.05;
+    const map = (c: typeof TIDY_MARKS) => mapRaster(mapOnPuzzle(featuresAtScale(featuresOnGrid(data, "all", c, hill), k).features, sw.e, sw.n, k), 200, 150);
+    const spec: ColourSpec = { mode: "bands", bands: islandBands(1000), base: SEA_BLUE, water: SEA_BLUE, paths: PATH_RED, roads: ROAD_BLACK, layer: 0.2 };
+    const tidy = filaments(spec, map(TIDY_MARKS)).map((f) => f.colour);
+    const water = filaments(spec, map(WATER_ONLY)).map((f) => f.colour);
+    expect(tidy).toContain(PATH_RED);
+    expect(water).not.toContain(PATH_RED);
+    expect(water).not.toContain(ROAD_BLACK);
+    expect(water).toContain(SEA_BLUE);
+    expect(water.length).toBeLessThan(tidy.length);
   });
 });

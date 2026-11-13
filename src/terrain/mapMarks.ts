@@ -16,17 +16,21 @@ import type { OsmLineKind } from "./osm";
 
 type XY = [number, number];
 
-/** What goes on: "standing" water = lochs, lakes and reservoirs only; "hills" = main hill routes only; "trunk" = motorways and trunk roads only; "main" = those and A roads (primary). */
+/** What goes on: "standing" water = lochs, lakes and reservoirs only; "hills" = main hill routes only; "trunk" = motorways and trunk roads only; "main" = those and A roads (primary); "none" = no paths / no roads at all. */
 export interface MarkChoice {
   water: "standing" | "all";
-  paths: "hills" | "all";
-  roads: "trunk" | "main" | "all";
+  paths: "none" | "hills" | "all";
+  roads: "none" | "trunk" | "main" | "all";
 }
 
 /** The tidy choice, used unless asked otherwise. */
 export const TIDY_MARKS: MarkChoice = { water: "standing", paths: "hills", roads: "main" };
 /** Everything from the map, as before. */
 export const ALL_MARKS: MarkChoice = { water: "all", paths: "all", roads: "all" };
+/** Lochs, lakes and reservoirs and nothing else: no paths, tracks, roads or buildings (the owner's wish). */
+export const WATER_ONLY: MarkChoice = { water: "standing", paths: "none", roads: "none" };
+/** Is it lochs, lakes and reservoirs only? Then buildings are left off too. */
+export const waterOnly = (c: MarkChoice) => c.water === "standing" && c.paths === "none" && c.roads === "none";
 
 /** The choices in words, for the puzzle windows. */
 export const WATER_CHOICES: [MarkChoice["water"], string][] = [
@@ -36,11 +40,13 @@ export const WATER_CHOICES: [MarkChoice["water"], string][] = [
 export const PATH_CHOICES: [MarkChoice["paths"], string][] = [
   ["hills", "Main hill routes only"],
   ["all", "All paths and tracks"],
+  ["none", "No paths or tracks"],
 ];
 export const ROAD_CHOICES: [MarkChoice["roads"], string][] = [
   ["trunk", "Main trunk roads only"],
   ["main", "Main roads (A roads)"],
   ["all", "All roads"],
+  ["none", "No roads"],
 ];
 
 /** The rule in plain words, for the windows. */
@@ -67,7 +73,7 @@ export const TRUNK_ROADS = new Set(["motorway", "trunk"]);
 /** Roads kept as main roads: those and primary roads (in Britain, most A roads). */
 export const MAIN_ROADS = new Set(["motorway", "trunk", "primary"]);
 /** How much of the road map each choice takes, least first (a fetch for one holds what those before it need). */
-export const ROAD_RANK: Record<MarkChoice["roads"], number> = { trunk: 0, main: 1, all: 2 };
+export const ROAD_RANK: Record<MarkChoice["roads"], number> = { none: -1, trunk: 0, main: 1, all: 2 };
 
 export interface MarkLine {
   kind: OsmLineKind;
@@ -93,9 +99,11 @@ export function tidyMarks(lines: MarkLine[], areas: MarkAreas, choice: MarkChoic
     if (l.kind === "river" || l.kind === "stream") {
       if (choice.water === "all") out.push({ kind: l.kind, pts: l.pts });
     } else if (l.kind === "road") {
+      if (choice.roads === "none") continue;
       if (choice.roads === "all") out.push({ kind: l.kind, pts: l.pts });
       else if ((choice.roads === "main" ? MAIN_ROADS : TRUNK_ROADS).has(l.highway ?? "")) out.push({ kind: l.kind, pts: l.pts, thin: true });
-    } else if (choice.paths === "all") out.push({ kind: l.kind, pts: l.pts });
+    } else if (choice.paths === "none") continue;
+    else if (choice.paths === "all") out.push({ kind: l.kind, pts: l.pts });
     else paths.push(l);
   }
   if (paths.length) out.push(...hillRoutes(paths, areas, grid));

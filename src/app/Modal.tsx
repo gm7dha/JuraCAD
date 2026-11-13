@@ -25,7 +25,8 @@ export function Modal({ title, onClose, children, footer, width = 520 }: ModalPr
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      // Something inside it that takes Esc itself while open (an enlarged 3D view) goes back first.
+      if (e.key === "Escape" && !document.querySelector("[data-keeps-escape]")) {
         e.stopPropagation();
         onCloseRef.current();
       }

@@ -17,7 +17,12 @@ export interface PrinterChoice {
 
 export interface PrinterSetting extends PrinterChoice {
   print: PrintSettings;
+  /** Filament slots in the AMS units: 4 (one AMS) or 8 (two). Missing = 8 on the X2D (the owner has two AMS Pros), else 4. */
+  amsSlots?: 4 | 8;
 }
+
+/** How many filaments the AMS units hold, for the puzzles' colours. */
+export const amsSlotsOf = (p: Pick<PrinterSetting, "printer" | "amsSlots">): 4 | 8 => p.amsSlots ?? (p.printer === "bambu-x2d" ? 8 : 4);
 
 function readRaw(): Record<string, unknown> {
   try {
@@ -38,6 +43,7 @@ export function loadPrinter(): PrinterSetting {
     printer: typeof r.printer === "string" ? r.printer : PRINTERS[0].id,
     ...(isSize(r.custom) ? { custom: r.custom } : {}),
     print: parsePrintSettings(r.print),
+    ...(r.amsSlots === 4 || r.amsSlots === 8 ? { amsSlots: r.amsSlots } : {}),
   };
 }
 

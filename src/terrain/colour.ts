@@ -13,6 +13,7 @@
  * piece. Without caps it just divides the triangles where they cross the planes (full colour, so the sides can change
  * colour at a band's height).
  */
+import { bambu, spoolFor, spoolLabel } from "./bambuColours";
 import { weld } from "../geometry/threeMf";
 import { grooveOf, GROOVES, THIN_GROOVE, WATER_DROP } from "./groundMarks";
 import type { Body } from "./mountainPuzzle";
@@ -48,6 +49,8 @@ export interface ColourSpec {
   roads?: string | null;
   /** Print layer height (mm): band edges are moved onto whole layers. */
   layer: number;
+  /** Which Bambu Lab spool was picked for a colour ("#rrggbb" → its code), where two spools share a colour. */
+  spools?: Record<string, string>;
   /** The first layer's height (mm), when it isn't `layer` (Bambu Studio's "Initial layer height"). */
   firstLayer?: number;
 }
@@ -68,70 +71,138 @@ export const LEAST_BANDS = 2;
 /** At most this many filaments in all (bands, base and water). */
 export const MOST_FILAMENTS = 8;
 
-export const SEA_BLUE = "#2f6ea5";
-/** Footpaths and tracks: red, as on OS maps' footpaths (the owner's wish). */
-export const PATH_RED = "#d22a1e";
+/** The usual colours are real Bambu Lab PLA colours (bambuColours.ts), so the preview looks like the print. Sea: PLA Matte Marine Blue. */
+export const SEA_BLUE = bambu("PLA Matte", "Marine Blue");
+/** Footpaths and tracks: red, as on OS maps' footpaths (the owner's wish) — PLA Basic Red. */
+export const PATH_RED = bambu("PLA Basic", "Red");
 
-/** Roads: black (the owner's wish). */
-export const ROAD_BLACK = "#1f1f1f";
+/** Roads: black (the owner's wish) — PLA Basic Black. */
+export const ROAD_BLACK = bambu("PLA Basic", "Black");
 
 /** What the map has to colour: water (lochs, rivers, streams), paths (footpaths, tracks) and roads. `true`/`false` = all/none. */
 export type MapHas = boolean | { water: boolean; paths?: boolean; roads?: boolean };
 const hasOf = (h: MapHas) => (typeof h === "boolean" ? { water: h, paths: h, roads: h } : { water: h.water, paths: !!h.paths, roads: !!h.roads });
-export const WATER_BLUE = "#3a7bc0";
+/** A mountain's lochs: PLA Basic Cyan. */
+export const WATER_BLUE = bambu("PLA Basic", "Cyan");
+
+const SAND = bambu("PLA Matte", "Desert Tan");
+const LOWLAND = bambu("PLA Matte", "Grass Green");
+const GREEN = bambu("PLA Basic", "Mistletoe Green");
+const OLIVE = bambu("PLA Matte", "Dark Green");
+const BROWN = bambu("PLA Basic", "Cocoa Brown");
+const GREY = bambu("PLA Basic", "Gray");
 
 /**
  * The usual island colours: sand at the coast, green, brown, grey on the tops — with the sea-blue base and water, five
- * filaments (olive is first among the spare colours, for a sixth).
+ * filaments (olive is first among the spare colours, for a sixth). All Bambu Lab PLA.
  */
 export const ISLAND_COLOURS: [string, string, number][] = [
-  ["Sand", "#e2d199", 0],
-  ["Green", "#5d9a45", 0.06],
-  ["Brown", "#8b6745", 0.45],
-  ["Grey", "#9d9d9b", 0.75],
+  ["Sand", SAND, 0],
+  ["Green", GREEN, 0.06],
+  ["Brown", BROWN, 0.45],
+  ["Grey", GREY, 0.75],
 ];
 
-/** The usual mountain colours: green low down, brown, grey rock, white snow. */
+/** More island bands for two AMS units (8 filaments): five, then six (with olive). */
+export const ISLAND_COLOURS_5: [string, string, number][] = [
+  ["Sand", SAND, 0],
+  ["Lowland green", LOWLAND, 0.03],
+  ["Green", GREEN, 0.15],
+  ["Brown", BROWN, 0.45],
+  ["Grey", GREY, 0.75],
+];
+export const ISLAND_COLOURS_6: [string, string, number][] = [
+  ["Sand", SAND, 0],
+  ["Lowland green", LOWLAND, 0.03],
+  ["Green", GREEN, 0.12],
+  ["Olive", OLIVE, 0.3],
+  ["Brown", BROWN, 0.5],
+  ["Grey", GREY, 0.75],
+];
+
+const SNOW_WHITE = bambu("PLA Basic", "Jade White");
+const ROCK = bambu("PLA Basic", "Gray");
+const MOUNTAIN_BROWN = bambu("PLA Matte", "Dark Brown");
+
+/** The usual mountain colours: green low down, brown, grey rock, white snow (Bambu Lab PLA). */
 export const MOUNTAIN_COLOURS: [string, string, number][] = [
-  ["Green", "#55913f", 0],
-  ["Brown", "#8b6a47", 0.3],
-  ["Grey rock", "#8e8e8c", 0.6],
-  ["Snow", "#f4f6f8", 0.8],
+  ["Green", GREEN, 0],
+  ["Brown", MOUNTAIN_BROWN, 0.3],
+  ["Grey rock", ROCK, 0.6],
+  ["Snow", SNOW_WHITE, 0.8],
+];
+/** More mountain bands for two AMS units: lowland green below, then pale scree under the snow. */
+export const MOUNTAIN_COLOURS_5: [string, string, number][] = [
+  ["Lowland green", LOWLAND, 0],
+  ["Green", GREEN, 0.15],
+  ["Brown", MOUNTAIN_BROWN, 0.3],
+  ["Grey rock", ROCK, 0.6],
+  ["Snow", SNOW_WHITE, 0.8],
+];
+export const MOUNTAIN_COLOURS_6: [string, string, number][] = [
+  ["Lowland green", LOWLAND, 0],
+  ["Green", GREEN, 0.15],
+  ["Brown", MOUNTAIN_BROWN, 0.3],
+  ["Grey rock", ROCK, 0.55],
+  ["Scree", bambu("PLA Basic", "Light Gray"), 0.7],
+  ["Snow", SNOW_WHITE, 0.8],
 ];
 
-/** More colours offered when bands are added: the next unused one. */
-export const SPARE_COLOURS = ["#8c8a3f", "#c9b27c", "#3f6f36", "#b08d5a", "#6b6b6b", "#d8d0c0", "#a04f3a", "#e8e8e8", "#556b2f"];
+/** More colours offered when bands are added: the next unused one (Bambu Lab PLA). */
+export const SPARE_COLOURS = [
+  OLIVE,
+  bambu("PLA Matte", "Caramel"),
+  bambu("PLA Basic", "Bronze"),
+  bambu("PLA Matte", "Ash Gray"),
+  bambu("PLA Basic", "Dark Gray"),
+  bambu("PLA Matte", "Bone White"),
+  bambu("PLA Matte", "Terracotta"),
+  bambu("PLA Basic", "Light Gray"),
+  bambu("PLA Basic", "Beige"),
+];
+
+/**
+ * How many usual bands to offer: 4 with one AMS; with more slots as many as fit (up to 6) beside the other filaments the
+ * map needs (`others`: the base/water, paths, roads — distinct colours).
+ */
+export const usualBandCount = (slots: number, others: number) => (slots <= AMS_SLOTS ? 4 : Math.max(4, Math.min(6, slots - others)));
 
 const nice = (m: number) => (Math.abs(m) < 50 ? Math.round(m) : Math.round(m / 10) * 10);
 
 /** An island's bands for ground up to `high` m. */
-export function islandBands(high: number): ColourBand[] {
-  return ISLAND_COLOURS.map(([name, colour, f]) => ({ name, colour, from: nice(f * Math.max(high, 10)) }));
+export function islandBands(high: number, count = 4): ColourBand[] {
+  const set = count >= 6 ? ISLAND_COLOURS_6 : count === 5 ? ISLAND_COLOURS_5 : ISLAND_COLOURS;
+  return set.map(([name, colour, f]) => ({ name, colour, from: nice(f * Math.max(high, 10)) }));
 }
 
 /** A mountain's bands from `low` to `high` m, the snow starting at `snowline` when given. */
-export function mountainBands(low: number, high: number, snowline: number | null = null): ColourBand[] {
+export function mountainBands(low: number, high: number, snowline: number | null = null, count = 4): ColourBand[] {
   const r = Math.max(high - low, 10);
-  return MOUNTAIN_COLOURS.map(([name, colour, f], i) => ({
+  const set = count >= 6 ? MOUNTAIN_COLOURS_6 : count === 5 ? MOUNTAIN_COLOURS_5 : MOUNTAIN_COLOURS;
+  return set.map(([name, colour, f], i) => ({
     name,
     colour,
-    from: i === MOUNTAIN_COLOURS.length - 1 && snowline !== null ? snowline : nice(low + f * r),
+    from: i === set.length - 1 && snowline !== null ? snowline : nice(low + f * r),
     ...(name === "Snow" ? { snow: true } : {}),
   }));
 }
 
 export const PLAIN_COLOUR: ColourSpec = { mode: "plain", bands: [], base: null, water: null, layer: LAYER_DEFAULT };
 
-/** Filaments one AMS holds. */
+/** Filaments one AMS holds (two hold 8). */
 export const AMS_SLOTS = 4;
 
 /** Things worth knowing about the colour choices that don't stop them (plain English). */
-export function colourWarnings(spec: ColourSpec, has: MapHas = true, ground: [number, number] | null = null): string[] {
+export function colourWarnings(spec: ColourSpec, has: MapHas = true, ground: [number, number] | null = null, slots = AMS_SLOTS): string[] {
   if (spec.mode === "plain") return [];
   const out: string[] = [];
   const n = filaments(spec, has).length;
-  if (spec.mode === "bands" && n > AMS_SLOTS)
-    out.push(`That's ${n} filaments, and one AMS holds ${AMS_SLOTS}: use a second AMS or the spool holder for the rest, or fewer bands (or the same colour for two of them).`);
+  if (spec.mode === "bands" && n > slots)
+    out.push(
+      slots <= AMS_SLOTS
+        ? `That's ${n} filaments, and one AMS holds ${AMS_SLOTS}: use a second AMS or the spool holder for the rest, or fewer bands (or the same colour for two of them).`
+        : `That's ${n} filaments, and your AMS units hold ${slots}: use the spool holder for the rest, or fewer bands (or the same colour for two of them).`,
+    );
   if (ground && spec.bands.length > 1) {
     const [lo, hi] = ground;
     const inside = spec.bands.slice(1).filter((b) => !b.snow || spec.mode === "bands").some((b) => b.from > lo && b.from < hi);
@@ -163,6 +234,8 @@ export interface Filament {
   colour: string;
   /** What it's used for: "Base", "Sand", "Water", "Paths", "Roads". */
   uses: string[];
+  /** The Bambu Lab spool of that colour (the one picked, else the first with it), e.g. "Bambu Green (PLA Basic)". */
+  spool?: string;
 }
 
 /** The filaments the bands need: one per different colour, in the order they're first used (base, bands, water, paths, roads). */
@@ -173,7 +246,10 @@ export function filaments(spec: ColourSpec, has: MapHas = true): Filament[] {
     const c = colour.toLowerCase();
     const f = out.find((x) => x.colour === c);
     if (f) f.uses.push(use);
-    else out.push({ n: out.length + 1, colour: c, uses: [use] });
+    else {
+      const spool = spoolFor(c, spec.spools?.[c]);
+      out.push(spool ? { n: out.length + 1, colour: c, uses: [use], spool: spoolLabel(spool) } : { n: out.length + 1, colour: c, uses: [use] });
+    }
   };
   if (spec.base) add(spec.base, "Base");
   for (const b of spec.bands) add(b.colour, b.name);
@@ -874,7 +950,8 @@ export function fullColours(bodies: Body[], ctx: FullContext, top = true): Colou
       for (const i of [a, b, c]) for (let d = 0; d < 3; d++) vn[i * 3 + d] += n[d] * area;
     }
     const off = vertices.length / 3;
-    vertices.push(...V);
+    // One by one: spreading a big piece's corners into push() overflows the stack.
+    for (let i = 0; i < V.length; i++) vertices.push(V[i]);
     for (let t = 0; t < T.length; t += 3) {
       const n = tn[t / 3];
       const cz = (V[T[t] * 3 + 2] + V[T[t + 1] * 3 + 2] + V[T[t + 2] * 3 + 2]) / 3;

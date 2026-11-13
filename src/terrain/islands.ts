@@ -82,20 +82,25 @@ export function marksQuery(sw: GridPoint, width: number, height: number, detail:
   ];
   const r = (x: number) => x.toFixed(4);
   const box = [Math.min(...corners.map((c) => c.lat)), Math.min(...corners.map((c) => c.lon)), Math.max(...corners.map((c) => c.lat)), Math.max(...corners.map((c) => c.lon))].map(r).join(",");
+  const paths = choice.paths !== "none";
   const parts = [
-    // Footways too: England's public footpaths often are, and so are some hill paths (pavements are told apart later).
-    `way["highway"~"^(path|footway|bridleway|steps|track)$"](${box});`,
-    // Towns, parks and woods, which hill routes are judged against.
-    `way["landuse"~"^(residential|commercial|retail|industrial)$"](${box});`,
-    `way["leisure"~"^(park|garden|golf_course|recreation_ground)$"](${box});`,
+    ...(paths
+      ? [
+          // Footways too: England's public footpaths often are, and so are some hill paths (pavements are told apart later).
+          `way["highway"~"^(path|footway|bridleway|steps|track)$"](${box});`,
+          // Towns, parks and woods, which hill routes are judged against.
+          `way["landuse"~"^(residential|commercial|retail|industrial)$"](${box});`,
+          `way["leisure"~"^(park|garden|golf_course|recreation_ground)$"](${box});`,
+        ]
+      : []),
     `way["natural"="water"](${box});`,
     `relation["type"="multipolygon"]["natural"="water"](${box});`,
     `way["landuse"="reservoir"](${box});`,
     `relation["type"="multipolygon"]["landuse"="reservoir"](${box});`,
   ];
-  if (choice.paths !== "all") parts.push(`way["natural"="wood"](${box});`, `way["landuse"="forest"](${box});`);
+  if (choice.paths === "hills") parts.push(`way["natural"="wood"](${box});`, `way["landuse"="forest"](${box});`);
   if (choice.water === "all") parts.push(`way["waterway"~"^(river|canal|stream|burn)$"](${box});`);
-  if (detail === "all")
+  if (detail === "all" && choice.roads !== "none")
     parts.push(
       choice.roads === "all"
         ? `way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified)$"](${box});`
@@ -105,6 +110,7 @@ export function marksQuery(sw: GridPoint, width: number, height: number, detail:
     );
   // One request, at most 120 s and 60 MB of answer — the same as the biggest map file read. Walking routes come as
   // relations only (which ways they hold), not every member far outside the area.
+  if (!paths) return `[out:xml][timeout:120][maxsize:62914560];(${parts.join("")});(._;>;);out qt;`;
   return `[out:xml][timeout:120][maxsize:62914560];relation["route"~"^(hiking|foot|walking)$"](${box})->.hr;(${parts.join("")});(._;>;);(._;.hr;);out qt;`;
 }
 
@@ -119,6 +125,7 @@ export function fetchCovers(fetched: MarksFetched, detail: "water" | "all", choi
   if (detail === "all" && fetched.detail !== "all") return false;
   if (choice.water === "all" && fetched.choice.water !== "all") return false;
   if (choice.paths === "hills" && fetched.choice.paths !== "hills") return false;
+  if (choice.paths === "all" && fetched.choice.paths === "none") return false;
   if (detail === "all" && ROAD_RANK[fetched.choice.roads] < ROAD_RANK[choice.roads]) return false;
   return true;
 }

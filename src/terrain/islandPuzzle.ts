@@ -287,6 +287,189 @@ function keepLand(isLand: Uint8Array, nx: number, ny: number, land: IslandLand, 
   }
 }
 
+/** A patch at sea level bigger than this (mm² on the puzzle) and not a loch on the map is taken to be the sea (a sea loch). */
+export const SMALL_HOLE = 100;
+
+/** Is (x, y) inside the ring (even–odd)? */
+function inRing(r: XY[], x: number, y: number): boolean {
+  let inside = false;
+  for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+    const [a, b] = [r[i], r[j]];
+    if (a[1] > y !== b[1] > y && x < a[0] + ((y - a[1]) * (b[0] - a[0])) / (b[1] - a[1])) inside = !inside;
+  }
+  return inside;
+}
+
+/** Low patches inside the land, filled in: each cell's patch (−1 elsewhere), how many, and each patch's level (m). */
+export interface FilledHoles {
+  patch: Int32Array;
+  count: number;
+  level: Float64Array;
+  /** Patches left as sea (`fill` said no). */
+  kept: number;
+}
+
+/**
+ * Fill in every patch of non-land the land closes round (`isLand` changed in place): only what can be reached from the
+ * area's edge through non-land — diagonal steps too, so a sea channel one cell wide still counts — stays sea. Each patch
+ * gets the lowest height (`heightOf` a cell) of the land cells beside it: a loch's surface, or the shore round a gap.
+ */
+export function fillEnclosed(
+  isLand: Uint8Array,
+  nx: number,
+  ny: number,
+  heightOf: (c: number) => number,
+  /** Fill this patch (its cells, its lowest height)? Missing: every one. */
+  fill: (cells: number[], lowest: number) => boolean = () => true,
+): FilledHoles {
+  const N = nx * ny;
+  const open = new Uint8Array(N);
+  const stack: number[] = [];
+  for (let i = 0; i < nx; i++) for (const j of [0, ny - 1]) stack.push(j * nx + i);
+  for (let j = 0; j < ny; j++) for (const i of [0, nx - 1]) stack.push(j * nx + i);
+  while (stack.length) {
+    const c = stack.pop()!;
+    if (open[c] || isLand[c]) continue;
+    open[c] = 1;
+    const [i, j] = [c % nx, Math.floor(c / nx)];
+    for (let b = Math.max(0, j - 1); b <= Math.min(ny - 1, j + 1); b++)
+      for (let a = Math.max(0, i - 1); a <= Math.min(nx - 1, i + 1); a++) {
+        const d = b * nx + a;
+        if (!open[d] && !isLand[d]) stack.push(d);
+      }
+  }
+  const found = stretches(nx, ny, (c) => !isLand[c] && !open[c]);
+  // Which to fill: numbered again, the rest left as sea.
+  const cellsOf: number[][] = Array.from({ length: found.count }, () => []);
+  for (let c = 0; c < N; c++) if (found.id[c] >= 0) cellsOf[found.id[c]].push(c);
+  const renumber = new Int32Array(found.count).fill(-1);
+  let count = 0;
+  for (let q = 0; q < found.count; q++) {
+    let lowest = Infinity;
+    for (const c of cellsOf[q]) lowest = Math.min(lowest, heightOf(c));
+    if (fill(cellsOf[q], lowest)) renumber[q] = count++;
+  }
+  const patches = { id: new Int32Array(N).fill(-1), count };
+  for (let c = 0; c < N; c++) if (found.id[c] >= 0) patches.id[c] = renumber[found.id[c]];
+  const level = new Float64Array(patches.count).fill(Infinity);
+  for (let c = 0; c < N; c++) {
+    const p = patches.id[c];
+    if (p < 0) continue;
+    const [i, j] = [c % nx, Math.floor(c / nx)];
+    for (const [di, dj] of STEPS) {
+      const [a, b] = [i + di, j + dj];
+      if (a < 0 || b < 0 || a >= nx || b >= ny) continue;
+      const d = b * nx + a;
+      if (isLand[d] && patches.id[d] < 0) level[p] = Math.min(level[p], heightOf(d));
+    }
+  }
+  for (let c = 0; c < N; c++) if (patches.id[c] >= 0) isLand[c] = 1;
+  for (let p = 0; p < patches.count; p++) if (!Number.isFinite(level[p])) level[p] = 0;
+  return { patch: patches.id, count: patches.count, level, kept: found.count - count };
+}
+
+/**
+ * The ground over filled-in patches (m per cell, NaN elsewhere): smooth from the land round them, as a soap film is
+ * from its wire (each cell the mean of its neighbours), never below a patch's lowest shore. The land within `grow`
+ * cells of a patch is worked out too (and raised, never lowered, where it comes out higher): the height data runs down
+ * into a gap over about its own spacing, and that slope shouldn't be what the patch is filled from.
+ */
+export function smoothFill(holes: FilledHoles, isLand: Uint8Array, nx: number, ny: number, heightOf: (c: number) => number, grow: number): Float32Array {
+  const N = nx * ny;
+  const fill = new Float32Array(N).fill(NaN);
+  // The cells worked out: each patch and the land near it.
+  const near = new Int32Array(N).fill(-1);
+  let frontier: number[] = [];
+  for (let c = 0; c < N; c++) if (holes.patch[c] >= 0) {
+    near[c] = 0;
+    frontier.push(c);
+  }
+  for (let step = 1; step <= grow && frontier.length; step++) {
+    const next: number[] = [];
+    for (const c of frontier) {
+      const [i, j] = [c % nx, Math.floor(c / nx)];
+      for (let b = Math.max(0, j - 1); b <= Math.min(ny - 1, j + 1); b++)
+        for (let a = Math.max(0, i - 1); a <= Math.min(nx - 1, i + 1); a++) {
+          const d = b * nx + a;
+          if (near[d] < 0 && isLand[d]) {
+            near[d] = step;
+            next.push(d);
+          }
+        }
+    }
+    frontier = next;
+  }
+  const cells: number[] = [];
+  const value = new Float64Array(N);
+  for (let c = 0; c < N; c++) if (isLand[c]) value[c] = holes.patch[c] >= 0 ? NaN : heightOf(c);
+  let start = 0;
+  let n = 0;
+  for (let c = 0; c < N; c++)
+    if (near[c] >= 0) cells.push(c);
+    else if (isLand[c] && Number.isFinite(value[c])) {
+      // A fixed edge value beside the worked-out cells.
+      const [i, j] = [c % nx, Math.floor(c / nx)];
+      if ((i > 0 && near[c - 1] >= 0) || (i < nx - 1 && near[c + 1] >= 0) || (j > 0 && near[c - nx] >= 0) || (j < ny - 1 && near[c + nx] >= 0)) {
+        start += value[c];
+        n++;
+      }
+    }
+  const first = n ? start / n : 0;
+  for (const c of cells) value[c] = first;
+  // Over-relaxed Gauss–Seidel: settles in about as many sweeps as the patch is cells across.
+  let [i0, j0, i1, j1] = [nx, ny, 0, 0];
+  for (const c of cells) {
+    const [i, j] = [c % nx, Math.floor(c / nx)];
+    [i0, j0, i1, j1] = [Math.min(i0, i), Math.min(j0, j), Math.max(i1, i), Math.max(j1, j)];
+  }
+  const sweeps = Math.min(4000, 50 + 3 * Math.max(i1 - i0, j1 - j0));
+  for (let s = 0; s < sweeps; s++) {
+    let most = 0;
+    for (const c of cells) {
+      const [i, j] = [c % nx, Math.floor(c / nx)];
+      let [sum, k] = [0, 0];
+      for (const d of [i > 0 ? c - 1 : -1, i < nx - 1 ? c + 1 : -1, j > 0 ? c - nx : -1, j < ny - 1 ? c + nx : -1])
+        if (d >= 0 && isLand[d]) {
+          sum += value[d];
+          k++;
+        }
+      if (!k) continue;
+      const v = value[c] + 1.8 * (sum / k - value[c]);
+      most = Math.max(most, Math.abs(v - value[c]));
+      value[c] = v;
+    }
+    if (most < 1e-3) break;
+  }
+  for (const c of cells) {
+    const p = holes.patch[c];
+    fill[c] = p >= 0 ? Math.max(value[c], holes.level[p]) : value[c];
+  }
+  return fill;
+}
+
+/** The ground with filled-in patches (and the land just round them) raised to the smooth fill. */
+function filledGround(ground: (x: number, y: number) => number, fill: Float32Array, nx: number, ny: number, cell: number) {
+  return (x: number, y: number): number => {
+    const h = ground(x, y);
+    const fx = x / cell - 0.5;
+    const fy = y / cell - 0.5;
+    const [i, j] = [Math.floor(fx), Math.floor(fy)];
+    if (i < -1 || j < -1 || i >= nx || j >= ny) return h;
+    const [u, v] = [fx - i, fy - j];
+    let [sum, wt] = [0, 0];
+    for (const [a, b, w] of [[i, j, (1 - u) * (1 - v)], [i + 1, j, u * (1 - v)], [i, j + 1, (1 - u) * v], [i + 1, j + 1, u * v]]) {
+      if (a < 0 || b < 0 || a >= nx || b >= ny || w <= 0) continue;
+      const f = fill[b * nx + a];
+      if (Number.isNaN(f)) continue;
+      sum += f * w;
+      wt += w;
+    }
+    if (!wt) return h;
+    // Inside a patch every corner is filled; at the patch's land edge only some are, and the land itself rules there.
+    return Math.max(h, sum / wt);
+  };
+}
+
 /**
  * The puzzle from heights over an area `areaWidth` × `areaHeight` m whose south-west corner is grid point `sw`. Cut
  * along `cuts`' lines when given (and they divide the land), else into pieces of about `spec.piece` mm.
@@ -379,13 +562,37 @@ function buildIsland(
   const nx = Math.ceil(W / cell);
   const ny = Math.ceil(H / cell);
   const N = nx * ny;
-  const ground = (x: number, y: number) => heightAt(grid, sw.e + x / k, sw.n + y / k);
+  const rawGround = (x: number, y: number) => heightAt(grid, sw.e + x / k, sw.n + y / k);
   const warnings: string[] = [];
 
   // Land, then only the land asked for.
   const isLand = new Uint8Array(N);
-  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) isLand[j * nx + i] = ground((i + 0.5) * cell, (j + 0.5) * cell) > spec.sea ? 1 : 0;
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) isLand[j * nx + i] = rawGround((i + 0.5) * cell, (j + 0.5) * cell) > spec.sea ? 1 : 0;
   keepLand(isLand, nx, ny, spec.land, warnings);
+  // Low ground the land closes round (a loch whose height data sits at sea level, a gap in the data) is filled in as land,
+  // smoothly from the ground round it, so it never prints as a hole right through the island.
+  const cellHeight = (c: number) => rawGround(((c % nx) + 0.5) * cell, (Math.floor(c / nx) + 0.5) * cell);
+  // Not a sea loch with a narrow mouth: a loch on the map, ground the tiles don't code as sea (above 0 m: low land, or a
+  // gap they hold above 0), or small enough on the puzzle that it can only be a hole.
+  const lochs = features.shapes.filter((f) => f.kind === "water").map((f) => f.rings[0]);
+  const onMapWater = (c: number) => {
+    const [e, n] = [sw.e + (((c % nx) + 0.5) * cell) / k, sw.n + ((Math.floor(c / nx) + 0.5) * cell) / k];
+    return lochs.some((r) => inRing(r, e, n));
+  };
+  const holes = fillEnclosed(isLand, nx, ny, cellHeight, (cells, lowest) => {
+    if (lowest > 0 || cells.length * cell * cell <= SMALL_HOLE) return true;
+    const step = Math.max(1, Math.floor(cells.length / 40));
+    for (let q = 0; q < cells.length; q += step) if (onMapWater(cells[q])) return true;
+    return false;
+  });
+  const ground = holes.count
+    ? filledGround(rawGround, smoothFill(holes, isLand, nx, ny, cellHeight, Math.min(40, Math.ceil((grid.spacing * k) / cell) + 1)), nx, ny, cell)
+    : rawGround;
+  if (holes.count) warnings.push(`${holes.count === 1 ? "A low patch" : `${holes.count} low patches`} inside the land (a loch, or a gap in the height data) ${holes.count === 1 ? "was" : "were"} filled in, so there's no hole through the island.`);
+  if (holes.kept)
+    warnings.push(
+      `${holes.kept === 1 ? "A big patch" : `${holes.kept} big patches`} at sea level closed in by the land (a sea loch whose mouth is too narrow to show at this size, perhaps) ${holes.kept === 1 ? "was" : "were"} kept as sea.`,
+    );
   let high = 0;
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) if (isLand[j * nx + i]) high = Math.max(high, ground((i + 0.5) * cell, (j + 0.5) * cell));
   const label = new Int32Array(N).fill(-1);
@@ -550,6 +757,10 @@ function buildIsland(
     joined = joinPieces(piece, nx, ny, cell, neck, spec);
   }
   const { joints, made: joins, unjoined, loose } = joined;
+  // Bits of a piece too thin for its outline (between two boundary lines running close together, at a corner of a wiggly
+  // one, beside a dovetail) would print as loose crumbs with a gap round them: they go to the piece beside them instead.
+  // Dovetails are left alone; who touches whom is counted again.
+  if (giveAwayCrumbs(piece, nx, ny, cell, spec.fit, joined.tabs)) joined.touching = touchingOf(piece, nx, ny);
   if (joined.weak.length) warnings.push(`${joined.weak.length} ${joined.weak.length === 1 ? "piece has" : "pieces have"} fewer than two dovetails — try another pattern number or piece size.`);
   if (loose) warnings.push(`${loose} small ${loose === 1 ? "islet is a loose piece" : "islets are loose pieces"}, with nothing to join to.`);
 
@@ -755,6 +966,415 @@ function neckFade(tabs: Joined["tabs"], nx: number, ny: number, cell: number): (
     return (keep[c] * (1 - u) + keep[c + 1] * u) * (1 - v) + (keep[c + nx] * (1 - u) + keep[c + nx + 1] * u) * v;
   };
 }
+
+/** The most a crumb's inside may be (mm²): bigger separate parts of a piece are left as they are. */
+export const CRUMB_MOST = 3;
+
+/** How many separate outlines piece `id`'s mesh has (within its box of cells [i0, j0, i1, j1]). */
+export function meshPartCount(piece: Int32Array, nx: number, ny: number, cell: number, fit: number, id: number, box: number[]): number {
+  const [i0, j0] = [box[0] - 2, box[1] - 2];
+  const [w, h] = [box[2] - box[0] + 5, box[3] - box[1] + 5];
+  const mine = new Uint8Array(w * h);
+  const other = new Uint8Array(w * h);
+  for (let j = 0; j < h; j++)
+    for (let i = 0; i < w; i++) {
+      const [a, b] = [i + i0, j + j0];
+      const m = a >= 0 && b >= 0 && a < nx && b < ny && piece[b * nx + a] === id;
+      mine[j * w + i] = m ? 1 : 0;
+      other[j * w + i] = m ? 0 : 1;
+    }
+  const dOut = distanceTransform(other, w, h);
+  const dIn = distanceTransform(mine, w, h);
+  const f = new Float64Array(w * h);
+  const inside = new Uint8Array(w * h);
+  for (let c = 0; c < w * h; c++) {
+    f[c] = (mine[c] ? Math.sqrt(dOut[c]) - Math.SQRT1_2 : -(Math.sqrt(dIn[c]) - 0.5)) * cell - fit;
+    inside[c] = f[c] > 0 ? 1 : 0;
+  }
+  return meshParts(inside, f, w, h).count;
+}
+
+/** Stretches of inside samples as marching squares joins them: side by side, or across a saddle square whose mean is > 0. */
+function meshParts(inside: Uint8Array, f: Float64Array, w: number, h: number): { id: Int32Array; count: number } {
+  const id = new Int32Array(w * h).fill(-1);
+  let count = 0;
+  for (let c0 = 0; c0 < w * h; c0++) {
+    if (!inside[c0] || id[c0] >= 0) continue;
+    const n = count++;
+    id[c0] = n;
+    const stack = [c0];
+    while (stack.length) {
+      const c = stack.pop()!;
+      const [i, j] = [c % w, Math.floor(c / w)];
+      const go = (a: number, b: number) => {
+        if (a < 0 || b < 0 || a >= w || b >= h) return;
+        const d = b * w + a;
+        if (inside[d] && id[d] < 0) {
+          id[d] = n;
+          stack.push(d);
+        }
+      };
+      go(i + 1, j);
+      go(i - 1, j);
+      go(i, j + 1);
+      go(i, j - 1);
+      for (const [di, dj] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+        const [a, b] = [i + di, j + dj];
+        if (a < 0 || b < 0 || a >= w || b >= h) continue;
+        const [p, q] = [j * w + a, b * w + i];
+        if (inside[p] || inside[q]) continue;
+        if (f[c] + f[b * w + a] + f[p] + f[q] > 0) go(a, b);
+      }
+    }
+  }
+  return { id, count };
+}
+
+/**
+ * Cells near dovetails left alone (marked in `zone`): each tab's own knob and stem (`room` 0), or with `room` mm round them
+ * — the cells `locks` reads — for tabs a move would stop catching.
+ */
+function markTabZone(zone: Uint8Array, nx: number, ny: number, cell: number, tabs: Joined["tabs"], room: number) {
+  for (const tb of tabs) {
+    const shape = tabShape(tb.neck);
+    const t: XY = [tb.dir[1], -tb.dir[0]];
+    const R = Math.ceil((shape.head + shape.reach + 2 * room) / cell) + 2;
+    const [ci, cj] = [Math.floor(tb.at[0] / cell), Math.floor(tb.at[1] / cell)];
+    for (let j = Math.max(0, cj - R); j <= Math.min(ny - 1, cj + R); j++)
+      for (let i = Math.max(0, ci - R); i <= Math.min(nx - 1, ci + R); i++) {
+        const [x, y] = [(i + 0.5) * cell - tb.at[0], (j + 0.5) * cell - tb.at[1]];
+        if (shape.inside(x * t[0] + y * t[1], x * tb.dir[0] + y * tb.dir[1], room)) zone[j * nx + i] = 1;
+      }
+  }
+}
+
+/** Does a dovetail still catch, pulled straight back and wiggled (the test `joinPieces` made it with)? */
+function tabHolds(piece: Int32Array, nx: number, ny: number, cell: number, fit: number, tb: Joined["tabs"][number]): boolean {
+  const shape = tabShape(tb.neck);
+  const t: XY = [tb.dir[1], -tb.dir[0]];
+  const at = (x: number, y: number) => {
+    const [i, j] = [Math.floor(x / cell), Math.floor(y / cell)];
+    return i < 0 || j < 0 || i >= nx || j >= ny ? -1 : piece[j * nx + i];
+  };
+  const cells: XY[] = [];
+  const R = Math.ceil((shape.head + shape.reach) / cell) + 2;
+  const [ci, cj] = [Math.floor(tb.at[0] / cell), Math.floor(tb.at[1] / cell)];
+  for (let j = Math.max(0, cj - R); j <= Math.min(ny - 1, cj + R); j++)
+    for (let i = Math.max(0, ci - R); i <= Math.min(nx - 1, ci + R); i++) {
+      if (piece[j * nx + i] !== tb.from) continue;
+      const [x, y] = [(i + 0.5) * cell, (j + 0.5) * cell];
+      const [u, v] = [(x - tb.at[0]) * t[0] + (y - tb.at[1]) * t[1], (x - tb.at[0]) * tb.dir[0] + (y - tb.at[1]) * tb.dir[1]];
+      if (shape.inside(u, v)) cells.push([x, y]);
+    }
+  const pull = 2 * fit + 2 * cell + 0.3;
+  const wiggle = 2 * fit + cell;
+  return [-wiggle, 0, wiggle].every((e) => cells.some(([x, y]) => at(x - tb.dir[0] * pull + t[0] * e, y - tb.dir[1] * pull + t[1] * e) === tb.into));
+}
+
+/**
+ * Crumbs a piece's mesh would print loose (changed in place): the mesh's outline runs `fit` inside the piece's cells, so
+ * where a piece is only a cell or two wide — between boundary lines running close together, at a corner of a wiggly one —
+ * a bit of it (at most `CRUMB_MOST` mm² inside) comes out as an outline of its own, or joined only corner to corner, with a
+ * gap round it. Those bits, and the cells beside them nearer them than the piece's body, go to the piece beside them.
+ * A dovetail's own knob and stem are never touched, and every dovetail must still catch afterwards: one that wouldn't has
+ * the cells round it left alone, and it's tried again (else nothing moves). Returns whether anything moved. Pieces with
+ * no crumbs are left exactly as they were.
+ */
+export function giveAwayCrumbs(piece: Int32Array, nx: number, ny: number, cell: number, fit: number, tabs: Joined["tabs"]): boolean {
+  const zone = new Uint8Array(nx * ny);
+  markTabZone(zone, nx, ny, cell, tabs, 0);
+  const was = piece.slice();
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (!crumbsAway(piece, nx, ny, cell, fit, zone)) return false;
+    const broken = tabs.filter((tb) => !tabHolds(piece, nx, ny, cell, fit, tb));
+    if (!broken.length) return true;
+    piece.set(was);
+    markTabZone(zone, nx, ny, cell, broken, 2 * fit + 3 * cell + 0.6);
+  }
+  return false;
+}
+
+/** One go of `giveAwayCrumbs`, leaving `zone` alone: whether anything moved. */
+function crumbsAway(piece: Int32Array, nx: number, ny: number, cell: number, fit: number, zone: Uint8Array): boolean {
+  const N = nx * ny;
+  const most = CRUMB_MOST / (cell * cell);
+  let movedAny = false;
+  for (let pass = 0; pass < 6; pass++) {
+    const boxes = new Map<number, number[]>();
+    for (let c = 0; c < N; c++) {
+      const p = piece[c];
+      if (p < 0) continue;
+      const [i, j] = [c % nx, Math.floor(c / nx)];
+      const b = boxes.get(p);
+      if (!b) boxes.set(p, [i, j, i, j]);
+      else [b[0], b[1], b[2], b[3]] = [Math.min(b[0], i), Math.min(b[1], j), Math.max(b[2], i), Math.max(b[3], j)];
+    }
+    const lost = new Uint8Array(N);
+    const gift = new Int32Array(N).fill(-1);
+    const widen: [number, number][] = [];
+    let any = false;
+    for (const [id, b] of boxes) {
+      const [i0, j0] = [b[0] - 2, b[1] - 2];
+      const [w, h] = [b[2] - b[0] + 5, b[3] - b[1] + 5];
+      const mine = new Uint8Array(w * h);
+      const other = new Uint8Array(w * h);
+      for (let j = 0; j < h; j++)
+        for (let i = 0; i < w; i++) {
+          const [a, bb] = [i + i0, j + j0];
+          const m = a >= 0 && bb >= 0 && a < nx && bb < ny && piece[bb * nx + a] === id;
+          mine[j * w + i] = m ? 1 : 0;
+          other[j * w + i] = m ? 0 : 1;
+        }
+      // The mesh's own samples (pieceMesh's f): > 0 inside the outline. Its separate outlines are the stretches of inside
+      // samples, joined side by side, or corner to corner across a square whose other two corners are outside when that
+      // square's mean is above 0 (marching squares' saddle rule, as pieceMesh draws it).
+      const dOut = distanceTransform(other, w, h);
+      const dIn = distanceTransform(mine, w, h);
+      const f = new Float64Array(w * h);
+      for (let c = 0; c < w * h; c++) f[c] = (mine[c] ? Math.sqrt(dOut[c]) - Math.SQRT1_2 : -(Math.sqrt(dIn[c]) - 0.5)) * cell - fit;
+      const core = new Uint8Array(w * h);
+      for (let c = 0; c < w * h; c++) core[c] = f[c] > 0 ? 1 : 0;
+      const parts = meshParts(core, f, w, h);
+      // Holes in its outline: outside samples the box's edge can't reach. One holding only thin bits of other pieces (a
+      // strip of a neighbour poking in, which prints as nothing, leaving a slot right through) is given to this piece.
+      const reached = outsideFromEdge(core, f, w, h);
+      const holes = stretches(w, h, (c) => !core[c] && !reached[c]);
+      if (holes.count) {
+        const holeCells: number[][] = Array.from({ length: holes.count }, () => []);
+        for (let c = 0; c < w * h; c++) if (holes.id[c] >= 0) holeCells[holes.id[c]].push(c);
+        for (const hole of holeCells) {
+          const gifts: number[] = [];
+          let keep = false;
+          for (const c of hole) {
+            const g = (Math.floor(c / w) + j0) * nx + (c % w) + i0;
+            const q = piece[g];
+            if (q === id) continue;
+            if (q < 0 || zone[g] || !thinAt(piece, nx, ny, cell, fit, g)) keep = true;
+            else gifts.push(g);
+          }
+          if (keep || !gifts.length) continue;
+          for (const g of gifts) gift[g] = id;
+          any = true;
+        }
+      }
+      if (parts.count < 2) continue;
+      const size = new Int32Array(parts.count);
+      for (let c = 0; c < w * h; c++) if (parts.id[c] >= 0) size[parts.id[c]]++;
+      const main = size.indexOf(Math.max(...size));
+      // A bigger part joined to the body only by a strip too thin to print (a low, narrow neck of coast): the sea beside
+      // the strip is made land, so it prints and holds them together.
+      const narrowest = Math.ceil(2 * (fit / cell + 1)) + 2;
+      const bodyOnly = new Uint8Array(w * h);
+      for (let c = 0; c < w * h; c++) bodyOnly[c] = parts.id[c] === main ? 1 : 0;
+      const dMain = distanceTransform(bodyOnly, w, h);
+      let widened = false;
+      for (let q = 0; q < parts.count; q++) {
+        if (q === main || size[q] <= most) continue;
+        const part = new Uint8Array(w * h);
+        for (let c = 0; c < w * h; c++) part[c] = parts.id[c] === q ? 1 : 0;
+        const dPart = distanceTransform(part, w, h);
+        for (let j = 0; j < h; j++)
+          for (let i = 0; i < w; i++) {
+            const c = j * w + i;
+            const [a, bb] = [i + i0, j + j0];
+            if (a < 0 || bb < 0 || a >= nx || bb >= ny) continue;
+            if (piece[bb * nx + a] !== -1 || dMain[c] > narrowest ** 2 || dPart[c] > narrowest ** 2) continue;
+            if (Math.sqrt(dMain[c]) + Math.sqrt(dPart[c]) > narrowest * 1.5) continue;
+            widen.push([bb * nx + a, id]);
+            widened = true;
+          }
+      }
+      if (widened) {
+        any = true;
+        continue;
+      }
+      const crumb = new Uint8Array(w * h);
+      const body = new Uint8Array(w * h);
+      let crumbs = false;
+      for (let c = 0; c < w * h; c++) {
+        const q = parts.id[c];
+        if (q < 0) continue;
+        if (q === main) body[c] = 1;
+        else (crumb[c] = 1), (crumbs = true);
+      }
+      if (!crumbs) continue;
+      const dBody = distanceTransform(body, w, h);
+      const dCrumb = distanceTransform(crumb, w, h);
+      for (let j = 0; j < h; j++)
+        for (let i = 0; i < w; i++) {
+          const c = j * w + i;
+          if (!mine[c] || !(crumb[c] || (dCrumb[c] < dBody[c] && dCrumb[c] <= 8))) continue;
+          const g = (j + j0) * nx + i + i0;
+          if (zone[g] || gift[g] >= 0) continue;
+          lost[g] = 1;
+          any = true;
+        }
+    }
+    if (!any) break;
+    let moved = false;
+    for (const [c, id] of widen)
+      if (piece[c] === -1) {
+        piece[c] = id;
+        moved = true;
+      }
+    for (let c = 0; c < N; c++)
+      if (gift[c] >= 0 && piece[c] !== gift[c]) {
+        piece[c] = gift[c];
+        lost[c] = 0;
+        moved = true;
+      }
+    // Each lost bit (cells touching side by side or corner to corner) goes whole to the piece beside it that's thickest
+    // there, so it joins that piece's body rather than making a crumb of it; with no other piece beside it, it stays.
+    const runs = stretches8(lost, nx, ny);
+    const cellsOf: number[][] = Array.from({ length: runs.count }, () => []);
+    for (let c = 0; c < N; c++) if (runs.id[c] >= 0) cellsOf[runs.id[c]].push(c);
+    for (const run of cellsOf) {
+      const own = piece[run[0]];
+      let [i0, j0, i1, j1] = [nx, ny, -1, -1];
+      for (const c of run) {
+        const [a, b] = [c % nx, Math.floor(c / nx)];
+        [i0, j0, i1, j1] = [Math.min(i0, a), Math.min(j0, b), Math.max(i1, a), Math.max(j1, b)];
+      }
+      const R = 8;
+      [i0, j0, i1, j1] = [Math.max(0, i0 - R), Math.max(0, j0 - R), Math.min(nx - 1, i1 + R), Math.min(ny - 1, j1 + R)];
+      const [w, h] = [i1 - i0 + 1, j1 - j0 + 1];
+      // The pieces beside it, and the cells of theirs it touches.
+      const besides = new Map<number, number[]>();
+      for (const c of run) {
+        const [a, b] = [c % nx, Math.floor(c / nx)];
+        for (let y = Math.max(0, b - 1); y <= Math.min(ny - 1, b + 1); y++)
+          for (let x = Math.max(0, a - 1); x <= Math.min(nx - 1, a + 1); x++) {
+            const d = y * nx + x;
+            const q = piece[d];
+            if (q < 0 || q === own || lost[d]) continue;
+            const list = besides.get(q) ?? [];
+            list.push(d);
+            besides.set(q, list);
+          }
+      }
+      let best = -1;
+      let thick = -1;
+      for (const [q, touched] of besides) {
+        const notQ = new Uint8Array(w * h);
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) notQ[y * w + x] = piece[(y + j0) * nx + x + i0] === q ? 0 : 1;
+        const d = distanceTransform(notQ, w, h);
+        let most = 0;
+        for (const c of touched) most = Math.max(most, d[(Math.floor(c / nx) - j0) * w + (c % nx) - i0]);
+        if (most > thick || (most === thick && q < best)) [best, thick] = [q, most];
+      }
+      if (best < 0) continue;
+      for (const c of run) piece[c] = best;
+      moved = true;
+    }
+    if (!moved) break;
+    movedAny = true;
+  }
+  return movedAny;
+}
+
+/** Is cell `c` of its piece outside that piece's mesh (too near another piece or the sea, as pieceMesh's samples)? */
+function thinAt(piece: Int32Array, nx: number, ny: number, cell: number, fit: number, c: number): boolean {
+  const q = piece[c];
+  const T = fit / cell + Math.SQRT1_2;
+  const R = Math.ceil(T);
+  const [i, j] = [c % nx, Math.floor(c / nx)];
+  for (let b = j - R; b <= j + R; b++)
+    for (let a = i - R; a <= i + R; a++) {
+      if ((a - i) ** 2 + (b - j) ** 2 > T * T) continue;
+      if (a < 0 || b < 0 || a >= nx || b >= ny || piece[b * nx + a] !== q) return true;
+    }
+  return false;
+}
+
+/** Outside samples reached from the box's edge, joined as marching squares joins them (corner to corner across a saddle whose mean is ≤ 0). */
+function outsideFromEdge(inside: Uint8Array, f: Float64Array, w: number, h: number): Uint8Array {
+  const seen = new Uint8Array(w * h);
+  const stack: number[] = [];
+  const push = (c: number) => {
+    if (!inside[c] && !seen[c]) (seen[c] = 1), stack.push(c);
+  };
+  for (let i = 0; i < w; i++) push(i), push((h - 1) * w + i);
+  for (let j = 0; j < h; j++) push(j * w), push(j * w + w - 1);
+  while (stack.length) {
+    const c = stack.pop()!;
+    const [i, j] = [c % w, Math.floor(c / w)];
+    if (i > 0) push(c - 1);
+    if (i < w - 1) push(c + 1);
+    if (j > 0) push(c - w);
+    if (j < h - 1) push(c + w);
+    for (const [di, dj] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      const [a, b] = [i + di, j + dj];
+      if (a < 0 || b < 0 || a >= w || b >= h) continue;
+      const [p, q] = [j * w + a, b * w + i];
+      if (!inside[p] || !inside[q]) continue;
+      if (f[c] + f[b * w + a] + f[p] + f[q] <= 0) push(b * w + a);
+    }
+  }
+  return seen;
+}
+
+/** Stretches of marked cells, joined side by side or corner to corner. */
+function stretches8(mark: Uint8Array, nx: number, ny: number): { id: Int32Array; count: number } {
+  const id = new Int32Array(nx * ny).fill(-1);
+  let count = 0;
+  for (let c0 = 0; c0 < nx * ny; c0++) {
+    if (!mark[c0] || id[c0] >= 0) continue;
+    const n = count++;
+    id[c0] = n;
+    const stack = [c0];
+    while (stack.length) {
+      const c = stack.pop()!;
+      const [i, j] = [c % nx, Math.floor(c / nx)];
+      for (let b = Math.max(0, j - 1); b <= Math.min(ny - 1, j + 1); b++)
+        for (let a = Math.max(0, i - 1); a <= Math.min(nx - 1, i + 1); a++) {
+          const d = b * nx + a;
+          if (mark[d] && id[d] < 0) {
+            id[d] = n;
+            stack.push(d);
+          }
+        }
+    }
+  }
+  return { id, count };
+}
+
+/** Border points between each pair of pieces ("a,b", a < b). */
+function bordersOf(piece: Int32Array, nx: number, ny: number, cell: number): Map<string, XY[]> {
+  const borders = new Map<string, XY[]>();
+  for (let j = 0; j < ny; j++)
+    for (let i = 0; i < nx; i++) {
+      const a = piece[j * nx + i];
+      if (a < 0) continue;
+      for (const [di, dj] of [[1, 0], [0, 1]]) {
+        if (i + di >= nx || j + dj >= ny) continue;
+        const b = piece[(j + dj) * nx + i + di];
+        if (b < 0 || b === a) continue;
+        const key = a < b ? `${a},${b}` : `${b},${a}`;
+        const list = borders.get(key) ?? [];
+        list.push([(i + 0.5 + di / 2) * cell, (j + 0.5 + dj / 2) * cell]);
+        borders.set(key, list);
+      }
+    }
+  return borders;
+}
+
+/** Cells of border each piece shares with each neighbour. */
+function touchingFrom(borders: Map<string, XY[]>): Map<number, Map<number, number>> {
+  const touching = new Map<number, Map<number, number>>();
+  const touch = (a: number, b: number, n: number) => {
+    const m = touching.get(a) ?? new Map<number, number>();
+    m.set(b, n);
+    touching.set(a, m);
+  };
+  for (const [key, pts] of borders) {
+    const [a, b] = key.split(",").map(Number);
+    touch(a, b, pts.length);
+    touch(b, a, pts.length);
+  }
+  return touching;
+}
+
+const touchingOf = (piece: Int32Array, nx: number, ny: number) => touchingFrom(bordersOf(piece, nx, ny, 1));
 
 /** Is piece `id` (within its box [i0, j0, i1, j1]) still one 4-connected stretch of cells? */
 function wholePiece(piece: Int32Array, nx: number, ny: number, id: number, box: number[]): boolean {
@@ -1053,17 +1673,7 @@ function joinPieces(piece: Int32Array, nx: number, ny: number, cell: number, ful
         borders.set(key, list);
       }
     }
-  const touching = new Map<number, Map<number, number>>();
-  const touch = (a: number, b: number, n: number) => {
-    const m = touching.get(a) ?? new Map<number, number>();
-    m.set(b, n);
-    touching.set(a, m);
-  };
-  for (const [key, pts] of borders) {
-    const [a, b] = key.split(",").map(Number);
-    touch(a, b, pts.length);
-    touch(b, a, pts.length);
-  }
+  const touching = touchingFrom(borders);
   // Each piece's box of cells, kept up to date as tabs move cells between pieces.
   const boxes = new Map<number, number[]>();
   const pieces = new Set<number>();
@@ -1076,6 +1686,13 @@ function joinPieces(piece: Int32Array, nx: number, ny: number, cell: number, ful
     if (!b) boxes.set(p, [i, j, i, j]);
     else [b[0], b[1], b[2], b[3]] = [Math.min(b[0], i), Math.min(b[1], j), Math.max(b[2], i), Math.max(b[3], j)];
   }
+  // How many separate outlines each piece's mesh has (worked out before a tab is painted, kept up to date as tabs go in).
+  const shellCount = new Map<number, number>();
+  const shells = (id: number) => {
+    let n = shellCount.get(id);
+    if (n === undefined) shellCount.set(id, (n = meshPartCount(piece, nx, ny, cell, spec.fit, id, boxes.get(id)!)));
+    return n;
+  };
   const rnd = seeded(spec.seed * 31 + 17);
   const at = (x: number, y: number) => {
     const [i, j] = [Math.floor(x / cell), Math.floor(y / cell)];
@@ -1135,6 +1752,7 @@ function joinPieces(piece: Int32Array, nx: number, ny: number, cell: number, ful
             return true;
           })();
           if (!ok) continue;
+          const shellsBefore = [shells(from), shells(into)];
           // Paint it, then make sure the piece it went into is still one piece.
           const changed: number[] = [];
           const R = Math.ceil((head + reach) / cell) + 2;
@@ -1163,7 +1781,24 @@ function joinPieces(piece: Int32Array, nx: number, ny: number, cell: number, ful
               }),
             );
           };
-          if (!changed.length || !wholePiece(piece, nx, ny, into, boxes.get(into)!) || !locks()) {
+          // Neither piece's mesh may come apart: a knob joined to its piece only through a strip too thin to print would
+          // fall out (leaving a keyhole), and a socket can cut a thin piece in two.
+          const tabBox = (b: number[]) => {
+            const out = [...b];
+            for (const c of changed) {
+              const [i, j] = [c % nx, Math.floor(c / nx)];
+              [out[0], out[1], out[2], out[3]] = [Math.min(out[0], i), Math.min(out[1], j), Math.max(out[2], i), Math.max(out[3], j)];
+            }
+            return out;
+          };
+          const apart = () => {
+            const now = [meshPartCount(piece, nx, ny, cell, spec.fit, from, tabBox(boxes.get(from)!)), meshPartCount(piece, nx, ny, cell, spec.fit, into, boxes.get(into)!)];
+            if (now[0] > shellsBefore[0] || now[1] > shellsBefore[1]) return true;
+            shellCount.set(from, now[0]);
+            shellCount.set(into, now[1]);
+            return false;
+          };
+          if (!changed.length || !wholePiece(piece, nx, ny, into, boxes.get(into)!) || !locks() || apart()) {
             for (const c of changed) piece[c] = into;
             continue;
           }

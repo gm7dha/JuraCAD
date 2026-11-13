@@ -1553,6 +1553,24 @@
   `settings` of plateFiles/plate3mf/allPlatesZip/bandPlateFiles/bandPlateFile (none = unchanged bytes); no negative parts —
   the mesh's gap is already "don't print here". Full-colour files carry no settings (said in the window). Laid-out plates
   still ignore `bedExclude`. tests/islandInPlace.
+  Holes (the owner's Arran print): after `keepLand`, `fillEnclosed` finds every non-land patch the land closes round (only
+  non-land reachable from the area's edge, diagonal steps too, is open sea) and fills those that can't be the sea: lowest
+  height > 0 (the tiles code the sea as ≤ 0: low land, a gap held above 0), ≤ `SMALL_HOLE` 100 mm² on the puzzle, or under a
+  loch of the map (`inRing` samples); bigger sea-level ones stay sea (a sea loch with a narrow mouth). Notes say how many were
+  filled and kept. `smoothFill` gives filled ones ground: SOR "soap film" from the land round them, over the patch and land
+  within the data's spacing of it (the tiles' interpolation slopes into a gap), never lowered, ≥ the lowest shore; `groundAt`
+  reads it bilinearly (`filledGround`) — no patches = the old function. Map water there is pressed and painted as any loch.
+  `giveAwayCrumbs` (after the dovetails; `touching` counted again if it moved anything): per piece, pieceMesh's own samples
+  (`meshParts`: side by side, or across a saddle with mean > 0 — exactly the mesh's outlines) — a separate inside part of at
+  most `CRUMB_MOST` 3 mm² and the cells nearer it than the body goes whole to the neighbour thickest beside it; a hole in the
+  outline (`outsideFromEdge`) holding only thin cells of other pieces (`thinAt`) is given to the piece. A tab's own knob and
+  stem are never touched; every tab must still catch (`tabHolds` = joinPieces' `locks`), else it's undone with the room round
+  the broken tabs left alone and tried again. A bigger part joined only by a strip too thin to print (a low, narrow neck of
+  coast) is first widened: sea cells within `narrowest` of both it and the body become the piece's land (at base height).
+  Dovetails: `joinPieces` refuses a tab that adds a separate outline to either piece (`meshPartCount` before/after
+  painting): a knob joined through a strip too thin to print fell out of the owner's Arran print, leaving keyholes. Islands with no holes or crumbs are byte-identical (18 settings checked against
+  the old code: 14 the same; the 4 that changed each had a crumb or a slot through a piece in the old mesh). tests/islandHoles (meshes pinned to the old code's hashes;
+  15 mm pieces, pattern 1: every tab catches; a low ragged coast over sizes/patterns: every piece one shell, every tab catches).
   Tests: tests/islandPuzzle (pure; over seeds/sizes on a ragged coast: ≥ 2 joints per piece, outlines from the meshes never
   cross or come within 2·fit, every tab catches when pulled, median play ≤ 0.5 mm — `tests/support/outlineGeom.ts`), tests/islandMarks.
 - Mountain puzzle (a card in the Design library's 3D printing tab under "Puzzles" — `src/library/tools.ts` `LIBRARY_TOOLS`:
@@ -1632,7 +1650,10 @@
   fetches path|footway|bridleway|steps|track, towns/parks (+ woods for hills), natural=water/landuse=reservoir (+ multipolygons),
   waterways only for "all", roads by `ROAD_RANK`, walking route relations bare (`->.hr`); `fetchCovers` says when to fetch
   again. Filament changes go by layers painted lines cross, not their number, so tidy marks cut paint a lot and changes
-  less (tests/mapMarksSwaps). Tests: tests/mapMarks (pure, `hillOsm` in osmSample.ts), thinGrooves, mapMarksSwaps.
+  less (tests/mapMarksSwaps). Paths and roads may be "none"; `WATER_ONLY` (standing water, no paths, no roads; `waterOnly`) also
+  drops buildings, and `marksQuery` then asks only for water (no ways of paths/towns/parks/woods, no walking-route relations);
+  `fetchCovers` knows a water-only fetch holds no paths. `MarkChoices` has a "Lochs, lakes and reservoirs only" box (hides the
+  three rows). Tests: tests/mapMarks (pure, `hillOsm` in osmSample.ts), thinGrooves, mapMarksSwaps.
 - Puzzle colours (Island and Mountain puzzle windows' "Colour" choice; `src/app/PuzzleColour.tsx`: `ColourPanel`, `useColoured`,
   `ColourDownloads`; the photo puzzle stays plain): pure `src/terrain/colour.ts` + `colourFiles.ts`. Colouring runs in
   `src/app/puzzleColour.worker.ts` (`ColourRunner`: a new job while one runs restarts the worker; pieces sent only when new) over
@@ -1688,6 +1709,17 @@
   edge, paint codes, swaps, woods, full colour's sides/snow, 3MF/OBJ/MTL/PNG/WRL counts, the plain writer's hash; levels kept in
   order with a base and a band below the ground; first-layer snapping; plates by level ≤ bands − 1 changes each; warnings; the
   cache not re-cutting for a colour change).
+  Bambu colours and 8 slots: `src/terrain/bambuColours.ts` (pure; Bambu Studio's filaments_color_codes.json, PLA Basic, Matte,
+  Silk+ single colours: code/line/name/hex; `bambu(line, name)`, `spoolFor(hex, code?)`, `spoolLabel`). Every usual colour is a
+  Bambu PLA (SEA_BLUE Matte Marine Blue, WATER_BLUE Basic Cyan, PATH_RED Basic Red, ROAD_BLACK Basic Black, ISLAND_/MOUNTAIN_COLOURS,
+  SPARE_COLOURS). `ColourSpec.spools` (hex → code, where two spools share a colour) → `Filament.spool` ("Charcoal (PLA Matte)"),
+  shown in the Load list. `src/app/SpoolPick.tsx` (PlacedPopup of named swatches + your own colour) for every band, base, water,
+  paths, roads. Filament slots 4/8: `PrinterSetting.amsSlots` (`amsSlotsOf`: missing = 8 on the X2D, else 4; panel row "Filament
+  slots"), `colourWarnings(…, slots)`, `usualBandCount(slots, others)` = 4, or up to 6 beside the base/water/paths/roads;
+  `islandBands(high, n)` / `mountainBands(…, n)` (5: + lowland green; 6: + olive / scree). Modal ignores Esc while a
+  `[data-keeps-escape]` element is up (the spool popup, the enlarged 3D view). `Mountain3D` is taller (clamp 380 px–62vh) with
+  "⤢ Enlarge" (fixed, inset 12 px; Esc or the button back); puzzle windows 1280 wide. `fullColours` pushes corners one by one
+  (a spread overflowed the stack on big pieces). Tests: tests/puzzleColour8 (8 filaments in the 3MF, paint codes 4C/5C, spools).
 - Puzzle designs (`src/library/puzzleDesigns.ts` `PUZZLE_DESIGNS`, group "Puzzles", first in the print tab's GROUP_ORDER;
   LibraryDialog's `GroupedCards` shows the tools first under the same heading). Cylinder maze box (`designs/mazeBox.ts`,
   no variables): `makeMaze` — a perfect maze (seeded backtracker) on `cols` × `rows` cells round HALF the box (repeated, two
