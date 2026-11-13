@@ -1,8 +1,13 @@
 import { sketchFromDxf, type LinkedSketch } from "../link/receive";
+import { defaultTemplate } from "../drawing/templateStorage";
+import { applyTemplate } from "../drawing/templates";
 import { deleteItems } from "../sketch/ops";
 import { followLinks, pruneReferences, type RefEdge, type SketchLinkInfo } from "../sketch/links";
 import { isExtraId, keepSketchExtras, withoutEmptyExtras } from "../sketch/sketchText";
 import { create } from "zustand";
+import { NO_FILTER, type SelectFilter } from "../viewport/selectionFilter";
+import { removeNamedView, removeViewsOf, renameNamedView as renameNamedViewIn, saveNamedView as saveNamedViewIn, type CameraState } from "./namedViews";
+import { pasteFeatures as pasteClip, type FeatureClip, type PasteResult } from "./featureClipboard";
 
 import type { FollowedFrame, PartMesh } from "../kernel/protocol";
 import {
@@ -62,13 +67,13 @@ import { setPartProperties as setPartPropertiesIn } from "../assembly/properties
 import { moveFeature as moveFeatureIn } from "./reorder";
 import { DEFAULT_MATERIAL } from "./materials";
 import { chooseFinish, setColourIn, type FinishId } from "./finishes";
-import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameDrawing as renameDrawingIn, updateDrawing } from "../drawing/drawing";
+import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameDrawing as renameDrawingIn, updateDrawing, numberInspections } from "../drawing/drawing";
 import { withDragChange, type DragChange } from "../assembly/drag";
 import type { Placement } from "../assembly/math";
 import { importName } from "./importFile";
 import { hiddenDatumsOf, keepVisibility, setAllPlanesVisible, setAllSketchesVisible, setDatumHidden, setFeaturesVisible, toggleAllPlanes } from "./visibility";
 import { settlePrintedFit } from "./printSettings";
-import { addStudio, firstStudioId, MAIN_STUDIO, inStudio, moveStudio, renameStudio, studioExists, studioFeatures, studioName, studioView } from "./studios";
+import { addStudio, firstStudioId, MAIN_STUDIO, inStudio, moveStudio, renameStudio, studioExists, studioFeatures, studioName, studioView, studiosOf } from "./studios";
 import { deleteStudio, studioInUse, studioUsers } from "./studioUse";
 import { deleteFeatures as deleteFeaturesIn, findDependents } from "./dependents";
 import { designOf, withVersionsOf } from "./versions";
@@ -129,7 +134,7 @@ export interface Editing {
 }
 
 /** Drawing tools: select, the smart Dimension, baseline / chain / ordinate runs, and section. */
-export type DrawingTool = "select" | "dimension" | "baseline" | "chain" | "ordinate" | "section" | "auxiliary" | "breakout" | "shorten" | "note" | "detail" | "holeCallout" | "chamfer" | "arcLength" | "datum" | "fcf" | "finish";
+export type DrawingTool = "select" | "crop" | "cropShape" | "dimension" | "baseline" | "chain" | "ordinate" | "section" | "auxiliary" | "breakout" | "shorten" | "note" | "detail" | "holeCallout" | "chamfer" | "arcLength" | "datum" | "fcf" | "finish";
 
 export type SketchTool =
   | "select"
@@ -424,6 +429,18 @@ export interface AppState {
    */
   deleteAsk: { ids: string[]; from: "menu" | "key" } | null;
   askDelete: (ask: { ids: string[]; from: "menu" | "key" } | null) => void;
+  /** Selection filter in the 3D view (session only, never saved): the kinds clicks may pick; empty = everything. */
+  selectFilter: SelectFilter;
+  setSelectFilter: (filter: SelectFilter) => void;
+  /** Save the camera as a named view of the Part Studio or assembly on show (a name already there is replaced). One undo step. */
+  saveNamedView: (camera: CameraState, name?: string) => void;
+  renameNamedView: (id: string, name: string) => void;
+  deleteNamedView: (id: string) => void;
+  /** Copied features waiting to be pasted while the user says whether to add the variables they use. Null = none. */
+  pasteAsk: { clip: FeatureClip; missing: string[] } | null;
+  askPaste: (ask: { clip: FeatureClip; missing: string[] } | null) => void;
+  /** Paste copied features into the Part Studio on show (after the rollback bar, else at the end). One undo step; null if they can't go in now. */
+  pasteFeatures: (clip: FeatureClip, addVariables: boolean) => PasteResult | null;
   /** Delete features of the Part Studio on show, with every later feature that uses them (see model/dependents.ts) unless `justThese`. One undo step; returns how many went. */
   deleteFeatures: (ids: string[], justThese?: boolean) => number;
   /** Roll the Part Studio back to just after a feature (null = roll to the end). */
@@ -1370,6 +1387,29 @@ export const useStore = create<AppState>((set, get) => {
 
     deleteAsk: null,
     askDelete: (deleteAsk) => set({ deleteAsk }),
+    selectFilter: NO_FILTER,
+    setSelectFilter: (selectFilter) => set({ selectFilter }),
+    saveNamedView: (camera, name) => {
+      const owner = viewOwner(get());
+      change((doc) => saveNamedViewIn(doc, owner, name ?? "", camera, newId("nv")));
+    },
+    renameNamedView: (id, name) => change((doc) => renameNamedViewIn(doc, id, name)),
+    deleteNamedView: (id) => change((doc) => removeNamedView(doc, id)),
+    pasteAsk: null,
+    askPaste: (pasteAsk) => set({ pasteAsk }),
+    pasteFeatures: (clip, addVariables) => {
+      const s = get();
+      if (s.editing || s.sketch || s.versionView || activeAssembly(s) || activeDrawing(s)) return null;
+      const doc = s.history.present;
+      const features = activeFeatures(s);
+      const allIds = studiosOf(doc).flatMap((st) => st.features.map((f) => f.id));
+      const r = pasteClip(features, clip, { after: s.rollbackTo, allIds, makeId: newId, variables: doc.variables ?? [], addVariables });
+      const vars = r.addVariables.length ? [...(doc.variables ?? []), ...r.addVariables] : null;
+      changeStudio((d) => ({ ...d, ...(vars ? { variables: vars } : {}), features: r.features }));
+      const last = r.pasted.at(-1)?.id ?? null;
+      set({ pasteAsk: null, selectedFeatureId: last, selection: [], ...(s.rollbackTo && last ? { rollbackTo: last } : {}) });
+      return r;
+    },
     deleteFeatures: (ids, justThese = false) => {
       const features = activeFeatures(get());
       const plan = findDependents(features, ids);
@@ -1595,7 +1635,7 @@ export const useStore = create<AppState>((set, get) => {
       const all = s.history.present.assemblies ?? [];
       const name = all.find((a) => a.id === id)?.name ?? "The assembly";
       const users = whereUsed(all, id).filter((a) => a.id !== id);
-      change((doc) => removeAssembly(doc, id));
+      change((doc) => removeViewsOf(removeAssembly(doc, id), id));
       if (users.length) s.showToast(`${name} was also taken out of ${users.map((a) => a.name).join(", ")}. Undo brings it all back.`, "info");
       if (get().activeTab === id) set({ activeTab: null, asmSelection: [] });
     },
@@ -1620,13 +1660,19 @@ export const useStore = create<AppState>((set, get) => {
       const asm = activeAssembly(s);
       const source = asm ? { kind: "assembly" as const, id: asm.id } : partId ? { kind: "part" as const, id: partId } : null;
       const id = newId("d");
-      change((doc) => addDrawingTo(doc, id, source));
+      // (A new drawing starts from the template chosen for new drawings, if any.)
+      const template = defaultTemplate();
+      change((doc) => {
+        const added = addDrawingTo(doc, id, source);
+        return template ? updateDrawing(added, id, (d) => applyTemplate(d, template)) : added;
+      });
       set({ activeTab: id, asmSelection: [], selection: [], selectedPlane: null, selectedFeatureId: null, section: null, mateDraft: null, editingPattern: null, dialog: null });
     },
 
     changeDrawing: (fn) => {
       const d = activeDrawing(get());
-      if (d) change((doc) => updateDrawing(doc, d.id, fn));
+      // (With inspection balloons on, new dimensions get the next numbers — numberInspections.)
+      if (d) change((doc) => updateDrawing(doc, d.id, (x) => numberInspections(fn(x))));
     },
 
     renameDrawing: (id, name) => change((doc) => renameDrawingIn(doc, id, name)),
@@ -1642,7 +1688,10 @@ export const useStore = create<AppState>((set, get) => {
       const before = s.history.present;
       const shown = activeStudioId(s);
       const used = studioInUse(studioUsers(before, id));
-      change((doc) => deleteStudio(doc, id));
+      change((doc) => {
+        const next = deleteStudio(doc, id);
+        return next === doc ? doc : removeViewsOf(next, id);
+      });
       if (get().history.present === before) return;
       // The studio on show stays on show (by its id: the first tab may now be another studio).
       if (shown === id) set({ activeTab: null, selection: [], selectedParts: [], selectedFeatureId: null, selectedPlane: null, section: null, rollbackTo: null });
@@ -2244,6 +2293,11 @@ export function activeStudioId(s: Pick<AppState, "activeTab" | "history">): stri
   if (s.activeTab && doc.assemblies?.some((a) => a.id === s.activeTab)) return null;
   if (s.activeTab && doc.drawings?.some((d) => d.id === s.activeTab)) return null;
   return s.activeTab && studioExists(doc, s.activeTab) ? s.activeTab : firstStudioId(doc);
+}
+
+/** Whose named views are shown: the assembly on show, else the Part Studio on show. */
+export function viewOwner(s: Pick<AppState, "activeTab" | "history">): string {
+  return activeAssembly(s)?.id ?? activeStudioId(s) ?? firstStudioId(s.history.present);
 }
 
 /** The Origin and default planes hidden in the Part Studio on show. Same array each time. */

@@ -66,6 +66,16 @@ export function reachFor(kind: string): number {
   return kind === "touch" ? 2.2 : kind === "pen" ? 1.5 : 1;
 }
 
+/**
+ * Whether a finger's press may become a long press: only where one does something (picking up a part in an assembly,
+ * Select other in a Part Studio), never while sketching (the finger draws) and never on a Move / copy triad handle,
+ * whose drag must move the handle however long the finger rested first (a long press there would hand the drag to
+ * "held" moves, which turn the view).
+ */
+export function longPressWanted(o: { dragEnabled: boolean; selectOther: boolean; sketching: boolean; onTriad: boolean }): boolean {
+  return (o.dragEnabled || o.selectOther) && !o.sketching && !o.onTriad;
+}
+
 /** The usual settings for this kind of pointer; `longPress`: false = none, a number = after that many ms (else 500). */
 export function gestureOptions(kind: string, longPress: boolean | number = true): GestureOptions {
   return { slop: slopFor(kind), longPressMs: longPress === false ? Infinity : typeof longPress === "number" ? longPress : 500, doubleTapMs: 350, doubleTapGap: kind === "touch" ? 32 : 20 };

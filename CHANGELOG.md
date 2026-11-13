@@ -8,6 +8,33 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.69 — Holes and cuts in assemblies, and Edit in context
+
+- New in assemblies: **Hole** and **Cut** drill or cut through the parts in the assembly at once (e.g. two plates mated together). Only that assembly's copies are cut; the parts themselves don't change.
+- Exports, drawings, the clash check and the parts list of the assembly use the cut parts ("… (modified in assembly)").
+- A new **Assembly features** list: choose which parts each cut goes through, switch it off, or delete it.
+- **Edit in context**: right-click a part in an assembly to open its Part Studio with the assembly's other parts shown faint around it. Sketch on them, snap to them and Use their edges. **Update context** picks up where they've moved to.
+- Holes made in a sub-assembly show wherever it's used; you can mate pins and bolts into holes made in the assembly.
+- Claude can drill and cut through parts in an assembly too (`add_assembly_feature`).
+
+## v0.68 — Pick filter, Select other, named views, copy and paste
+
+- **Pick** (selection filter) next to Fit: choose whether clicks pick faces, edges, whole parts, planes or sketches. Selection boxes follow it too.
+- **Select other**: right-click without dragging, or hold the mouse still, to list everything under the pointer, nearest first. Hover a row to see it, click to pick it. On an iPad or other touch screen, a long press in a Part Studio opens it.
+- **Views**: save the way you're looking at the model under a name, and go back to it later. Each Part Studio and assembly has its own views, saved in the file. You can also use them in Save a picture.
+- **Copy and paste features**: Ctrl+C and Ctrl+V in the feature list work in the same Part Studio, another Part Studio or another design. Sketches come along with the features made from them, and missing variables are offered.
+
+## v0.67 — Drawing extras
+
+- **Crop view**: crop a drawing view to a rectangle or a shape you click round; lines, dimensions and marks outside are hidden.
+- Revisions can say who made and approved them (BY and APPROVED columns).
+- Drawing standard **ISO / ANSI** (ANSI numbers read across); first- or third-angle stays its own choice and never moves your
+  views unasked.
+- **Decimal comma** on every number the sheet works out, and **inspection balloons** with numbers that stay put.
+- Your own **title block entries** (Finish, Checked by…) and **drawing templates** kept in the browser, for new drawings.
+- Put a **table from a CSV file** on a drawing.
+- Claude can add revisions, crop views and set the drawing standard and title block entries.
+
 ## v0.66 — Boundary surface and Face blend
 
 - New **Boundary surface**: a surface through curves round its edges in two directions (part edges, 3D curves or sketches).

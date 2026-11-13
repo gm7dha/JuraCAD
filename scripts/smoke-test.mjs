@@ -240,6 +240,61 @@ try {
   await page.setViewportSize({ width: 1180, height: 760 });
   await page.waitForTimeout(200);
 
+  step = "select other, the selection filter, a named view and copying a feature";
+  {
+    const vb = await page.locator(".viewport").boundingBox();
+    const at = { x: vb.x + vb.width * 0.5, y: vb.y + vb.height * 0.55 };
+    const st = (fn) => page.evaluate(fn);
+    // A right-click (no drag) on the part lists what's under the pointer.
+    await page.mouse.click(at.x, at.y, { button: "right" });
+    const menu = page.getByRole("menu", { name: "Select other" });
+    await menu.waitFor({ timeout: 10_000 });
+    const rows = await menu.getByRole("menuitem").allInnerTexts();
+    if (!rows.some((r) => /whole part/.test(r)) || !rows.some((r) => /face of/i.test(r))) throw new Error(`Select other lists ${JSON.stringify(rows)}`);
+    await menu.getByRole("menuitem", { name: /whole part/ }).first().click();
+    await page.waitForFunction(() => window.juracadStore.getState().selectedParts.length === 1);
+    await st(() => window.juracadStore.getState().setSelectedParts([]));
+    // Selection filter: Parts only, so a plain click picks the whole part.
+    await page.getByRole("button", { name: "Selection filter" }).click();
+    await page.getByRole("dialog", { name: "Selection filter" }).getByRole("checkbox", { name: /^Parts/ }).check();
+    await page.keyboard.press("Escape");
+    await page.mouse.click(at.x, at.y);
+    await page.waitForFunction(() => window.juracadStore.getState().selectedParts.length === 1 && window.juracadStore.getState().selection.length === 0, null, { timeout: 5_000 });
+    await st(() => {
+      window.juracadStore.getState().setSelectFilter([]);
+      window.juracadStore.getState().setSelectedParts([]);
+    });
+    // A named view: saved, the view turned away, then back to it.
+    await page.getByRole("button", { name: "Named views" }).click();
+    const views = page.getByRole("dialog", { name: "Named views" });
+    await views.getByLabel("Name for this view").fill("Smoke view");
+    await views.getByRole("button", { name: "Save this view" }).click();
+    await page.waitForFunction(() => (window.juracadStore.getState().history.present.namedViews ?? []).some((v) => v.name === "Smoke view"));
+    await page.keyboard.press("Escape");
+    const saved = await st(() => window.juracadViewport.current.cameraState());
+    await st(() => window.juracadViewport.current.setView("top", false));
+    await page.getByRole("button", { name: "Named views" }).click();
+    await views.getByRole("button", { name: "Smoke view", exact: true }).click();
+    await page.waitForFunction(() => !window.juracadViewport.current.cameraMoving());
+    const back = await st(() => window.juracadViewport.current.cameraState());
+    if (Math.hypot(...back.dir.map((d, i) => d - saved.dir[i])) > 1e-3) throw new Error(`the named view came back looking along ${back.dir} (saved ${saved.dir})`);
+    await page.keyboard.press("Escape");
+    await st(() => window.juracadStore.getState().undo());
+    // Copy the first feature (Ctrl+C) and paste it (the list's Paste: headless Chromium's clipboard stays empty, and
+    // Ctrl+V pastes only features found on the clipboard): one more feature, one undo step.
+    const before = await page.locator(".feature-row:not(.datum)").count();
+    await page.locator(".feature-row:not(.datum)").first().click();
+    await page.keyboard.press("Control+C");
+    await page.locator(".feature-row:not(.datum)").first().click({ button: "right" });
+    await page.getByRole("menuitem", { name: /^Paste features/ }).click();
+    await page.waitForFunction((n) => document.querySelectorAll(".feature-row:not(.datum)").length === n + 1, before, { timeout: 10_000 });
+    await st(() => window.juracadStore.getState().undo());
+    await page.waitForFunction((n) => document.querySelectorAll(".feature-row:not(.datum)").length === n, before);
+    if ((await st(() => window.juracadStore.getState().history.present.namedViews ?? [])).length) throw new Error("undo didn't take the named view back");
+    await st(() => window.juracadViewport.current.setView("iso", false));
+    await st(() => window.juracadStore.getState().selectFeature(null));
+  }
+
   step = "saving a picture of the view";
   let pictureReport;
   {

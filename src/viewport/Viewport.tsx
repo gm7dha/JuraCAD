@@ -7,7 +7,7 @@ import { indexOfRef, type TopoPick } from "../geometry/topoRef";
 import { isPatternFeature, isPickFeature } from "../model/features";
 import { madeByDraft } from "../model/document";
 import { planeVisible, sketchVisible, usedSketches } from "../model/visibility";
-import { activeAssembly, activeDrawing, activeFeatures, activeHiddenDatums, activeStudioId, pickFor, studioParts, useStore, type SelectionItem } from "../model/store";
+import { activeAssembly, activeDrawing, activeFeatures, activeHiddenDatums, activeStudioId, pickFor, studioParts, useStore, type PlaneName, type SelectionItem } from "../model/store";
 import { ghostParts } from "../app/versionActions";
 import { compose, IDENTITY, placementMatrix, rotate, type Placement } from "../assembly/math";
 import { isOrigin } from "../assembly/origin";
@@ -47,6 +47,9 @@ import { sectionPlane } from "./section";
 import { togglePathLine } from "../model/frame";
 import { linePlane, pickableSketchLines, referenceShape, setMirrorReference, setPatternDirection, sketchLine3D, type DirectionChoice, type PickableLine } from "../model/patternRefs";
 import { guardViewportZoom } from "./zoomGuard";
+import { NO_FILTER } from "./selectionFilter";
+import { choiceLabel, orderChoices, type OtherChoice, type OtherHit } from "./selectOther";
+import { setSelectOther } from "./selectOtherState";
 import { finishesByKey, type FinishId } from "../model/finishes";
 import { partsArrived, transformDraft, transformPick, triadCancel, triadEnd, triadFor, triadMove, triadStart } from "./transformTriad";
 
@@ -688,6 +691,14 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     selectPlane(selectedPlane === target.plane ? null : target.plane);
     return;
   }
+  // The selection filter asks for parts: a click picks the whole part (as a click in the Parts list does).
+  if (target.whole) {
+    const id = target.item.partId;
+    const picked = s.selectedParts;
+    s.setSelection([]);
+    s.setSelectedParts(additive ? (picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]) : picked.length === 1 && picked[0] === id ? [] : [id]);
+    return;
+  }
   const item = target.item;
   const same = (x: SelectionItem) => x.partId === item.partId && x.kind === item.kind && x.index === item.index;
   if (additive) {
@@ -741,6 +752,59 @@ function dragCancel() {
 function boxSelect(partIds: string[], additive: boolean) {
   const s = useStore.getState();
   s.setSelectedParts(additive ? [...new Set([...s.selectedParts, ...partIds])] : partIds);
+}
+
+/** A selection box while the filter asks for faces/edges only: select those (Shift/Ctrl adds to the selection). */
+function boxSelectItems(items: SelectionItem[], additive: boolean) {
+  const s = useStore.getState();
+  const key = (x: SelectionItem) => `${x.partId}|${x.kind}|${x.index}`;
+  if (!additive) return s.setSelection(items);
+  const have = new Set(s.selection.map(key));
+  s.setSelection([...s.selection, ...items.filter((x) => !have.has(key(x)))]);
+}
+
+/** What a row of the Select other list picks, as a click would. */
+export function choiceTarget(c: OtherChoice): PickTarget {
+  if (c.kind === "part") return { kind: "part", item: { partId: c.partId, kind: c.via.kind, index: c.via.index }, point: c.via.point, local: c.via.local, whole: true };
+  if (c.kind === "face" || c.kind === "edge") return { kind: "part", item: { partId: c.partId, kind: c.kind, index: c.index }, point: c.point, local: c.local };
+  if (c.kind === "plane") return { kind: "plane", plane: c.plane as PlaneName };
+  if (c.kind === "customPlane") return { kind: "customPlane", id: c.id };
+  if (c.kind === "sketchArea") return { kind: "sketchArea", sketch: c.sketch, index: c.index };
+  if (c.kind === "connector") return { kind: "connector", key: c.key };
+  if (c.kind === "sketchLine") return { kind: "sketchLine", id: c.sketch, line: c.line };
+  return { kind: "curve", id: c.id, point: c.point };
+}
+
+/** Select other: the list of everything under the pointer (what the filter allows), named for people. */
+function openSelectOther(hits: OtherHit[], at: { x: number; y: number }) {
+  const s = useStore.getState();
+  if (activeAssembly(s) || s.sketch) return;
+  const choices = orderChoices(hits, s.selectFilter, !s.editing);
+  if (!choices.length) return;
+  const parts = s.parts;
+  const features = activeFeatures(s);
+  const names = {
+    part: (id: string) => parts.find((p) => p.id === id)?.name ?? "a part",
+    feature: (id: string) => features.find((f) => f.id === id)?.name ?? "a sketch",
+    connector: (key: string) => features.find((f) => f.id === key)?.name ?? "Mate connector",
+    shape: (kind: "face" | "edge", partId: string, index: number) => {
+      const p = parts.find((x) => x.id === partId);
+      const ref = kind === "face" ? p?.faceRefs?.[index] : p?.edgeRefs?.[index];
+      return ref ? (ref.kind === "face" ? ref.surface : ref.curve) : undefined;
+    },
+  };
+  setSelectOther({ at, choices, labels: choices.map((c) => choiceLabel(c, names)) });
+}
+
+/** Light up (or stop lighting up) what a Select other row would pick. */
+export function previewChoice(c: OtherChoice | null) {
+  viewportApi.current?.previewPick(c ? choiceTarget(c) : null);
+}
+
+/** A Select other row chosen: picked exactly as a click on it would be. */
+export function pickChoice(c: OtherChoice, additive: boolean) {
+  viewportApi.current?.previewPick(null);
+  handlePick(choiceTarget(c), additive);
 }
 
 /** Where a fillet's picks are on the parts as shown now (for highlighting). */
@@ -817,6 +881,12 @@ export function Viewport() {
         onDragEnd: dragEnd,
         onDragCancel: dragCancel,
         onBoxSelect: boxSelect,
+        onBoxSelectItems: boxSelectItems,
+        onSelectOther: openSelectOther,
+        onSelectOtherCancel: () => {
+          viewportApi.current?.previewPick(null);
+          setSelectOther(null);
+        },
         onTriadStart: (handle, ray, shift, size) => triadStart(viewportApi.current, handle, ray, shift, size),
         onTriadMove: (ray, shift) => triadMove(viewportApi.current, ray, shift),
         onTriadEnd: () => triadEnd(viewportApi.current),
@@ -930,6 +1000,9 @@ export function Viewport() {
   });
   useEffect(() => viewportApi.current?.setFacesOnly(facesOnly), [facesOnly]);
   useEffect(() => viewportApi.current?.setBoxSelectEnabled(!assembly && !editingAnything), [assembly, editingAnything]);
+  // The selection filter (Part Studios only); whole parts only while nothing is open.
+  const selectFilter = useStore((s) => s.selectFilter);
+  useEffect(() => viewportApi.current?.setSelectFilter(assembly ? NO_FILTER : selectFilter, !editingAnything), [assembly, selectFilter, editingAnything]);
 
   // Arrows showing the mate connectors picked so far.
   useEffect(() => {

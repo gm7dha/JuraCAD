@@ -617,6 +617,23 @@ export const Icons = {
       <path d="m16 8 .5-3M16 8l3-.5" />
     </Svg>
   ),
+  Crop: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M6 2v16h16" />
+      <path d="M2 6h16v16" />
+    </Svg>
+  ),
+  CropShape: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M5 8c2-5 12-6 14-1s-2 11-7 11-9-5-7-10z" strokeDasharray="3 2" />
+    </Svg>
+  ),
+  Table: (p: IconProps) => (
+    <Svg {...p}>
+      <rect x="3" y="5" width="18" height="14" />
+      <path d="M3 10h18M3 14.5h18M10 5v14" />
+    </Svg>
+  ),
   BreakOut: (p: IconProps) => (
     <Svg {...p}>
       <rect x="3" y="5" width="18" height="14" />

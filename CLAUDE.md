@@ -388,6 +388,25 @@
   Safari gesture listeners on the sheet and on the 3D view's area (canvas + `.sketch-overlay` labels, whose wheels are passed
   on to the canvas) always `preventDefault`, so pinch / Ctrl+wheel never zooms the page there (React's onWheel is passive and can't). The engine's `project()` runs OpenCascade's hidden-line removal per view.
   UI in `src/app/DrawingUI.tsx` (the sheet is an SVG drawn over the 3D view, which stays mounted).
+  Crop view (`DrawingView.crop`: `{a, b}` rectangle or `{points, smooth?}` outline, fractions of the view's bounds; pure
+  `src/drawing/crop.ts`: `cropOutline` (smooth = closed Catmull–Rom), `clipToOutline` every drawn line in layoutSheet's `draw`,
+  points on the outline count as inside (`edgeTolerance`), the view's box shrinks to the crop, dimensions/hole tags/balloon
+  targets/detail letters whose points are all outside are skipped (`cropKeeps`), bend lines, detail circles and section lines are
+  clipped (a section's arrows sit at the clipped ends); tools "crop" / "cropShape" (click the first point again to close; while
+  one is on every view is shown and found whole), panel `CropsList`. Revisions may carry `by`/`approved` (BY and APPROVED
+  columns only when any row has them; `addRevision`). `Drawing.standard` "ansi" (`setStandard`: the standard only, nothing moves, a
+  no-op when unchanged; projection stays its own choice — the panel only suggests it; inch designs start ANSI;
+  `DimStyle.unidirectional`: lengths' numbers read across in a gap in the line). `withProjection(whole, third)` re-places the
+  lined-up views on EVERY sheet (panel, templates, edit_drawing). `decimalComma`: `withComma` on every number the sheet works out
+  (dimensions, hole table, scale notes and SCALE, bend list, parts list weights) — never on the user's text.
+  `inspection`: `Dimension.check` numbers given once by `numberInspections` (store `changeDrawing`, MCP `commitDrawing`; next after
+  the biggest on any sheet), so deleting, hiding or cropping never renumbers; `fields` (≤ `MAX_TITLE_FIELDS` 6 entries of the user's own in a
+  `FIELDS_H` row on top of the title block, counted in `bottomReserve`). Templates (`src/drawing/templates.ts`: sheet, standard,
+  projection, company/drawn by/material, fields, number style; `templateFrom`/`applyTemplate`/`parseTemplates`) kept in
+  localStorage by `templateStorage.ts` (`juracad.drawingTemplates`, `juracad.drawingTemplate.default` = new drawings start from it,
+  store `addDrawing`). Tables from CSV: a note with `table` (rows; `tables.ts` `parseCsv` — commas, `;` or tabs, quotes; ≤ 60 × 12),
+  drawn by `tablePrims`, toolbar "Table". Panel parts in `src/app/DrawingExtrasPanel.tsx`. All missing = drawn exactly as before.
+  Claude: `add_revision`, `crop_view`, `set_drawing_style` (drawingExtras.ts). Tests: tests/drawingExtras (pure), mcpDrawingStyle.
 - Sheet metal: `src/sheetmetal/sheet.ts` keeps a sheet as walls joined by bends (base from a sketch, flanges off
   straight edges, flanges on flanges) and works out both the folded walls/bends and the flat pattern from that;
   `src/sheetmetal/profile.ts` turns an open chain of sketch lines into a sheet (first line the base, later lines flanges with a set straight length). `src/kernel/sheetMetal.ts` makes them into solids. The engine stores the sheet on the part (`BuiltPart.sheet`);
@@ -771,6 +790,33 @@
   Tests: tests/splitFaceModel (pure), engineSplitFillet (split counts/volume, draft on the top half, radius 2 → 4, removed, hole rim,
   rounded-rectangle chain, a sharp scoop refused, slanted ends, a fully rounded box off/resized vs direct, mitres, inside corner
   resized vs direct, holes/grooves/pockets/a chamfer beside fillets left alone (exact volumes), imported STEP, all edges), mcpSplitFillet.
+- Everyday picking and views (Onshape's): selection filter `src/viewport/selectionFilter.ts` (pure; `store.selectFilter`, session
+  only; empty = everything; kinds face/edge/part/plane/sketch — no vertices, JuraCAD can't pick corners; `partHitAs`: a face/edge
+  whose kind is off becomes its whole part when Parts is on (`PickTarget.whole`, handlePick → `selectedParts`; only with nothing
+  open, else "Parts" = faces and edges); `SceneManager.setSelectFilter` applies it in `pickAt` (a filtered face still hides what's
+  behind), hover (`hoverWhole`) and box select (`boxPicks`: faces/edges only → `itemsInBox` → `onBoxSelectItems`; else parts as
+  before); Part Studios only, toolbar "Pick" button in `src/app/ViewTools.tsx`). Select other: mouse held still `HOLD_MS` 800 ms (not
+  in sketches/assemblies; the release then picks nothing, `holdFired`; cancelled on leaving the view; dragging on after it opened
+  closes it, `onSelectOtherCancel`), a right-click that didn't orbit, or a touch long press in a Part Studio (`longPressWanted` in
+  gestures.ts: never in a sketch or on a Move/copy triad handle — there the drag must stay the triad's; a drag after the list opened
+  closes it and orbits) → `otherHitsAt` (every face/edge/area/curve/plane on the ray, plus mate connectors and sketch lines a tool
+  wants) → pure `src/viewport/selectOther.ts` `orderChoices` (front to back, edges before their face, once each, filter,
+  whole parts last, ≤ `MOST_CHOICES`) + `choiceLabel` → `selectOtherState.ts` → `SelectOtherMenu` (hover = `previewPick`, click =
+  `pickChoice` → handlePick as a click). Named views `src/model/namedViews.ts` (pure): `doc.namedViews` (`NamedView`: owner = Part
+  Studio or assembly id, dir/target/zoom/up; saved by fileFormat, parsed by parseDocument, missing = none; a same name replaces;
+  views of a deleted studio/assembly are dropped), store `saveNamedView`/`renameNamedView`/`deleteNamedView` (undoable),
+  `viewOwner`; `SceneManager.cameraState`/`goToCamera`; toolbar "Views" (studios and assemblies) and the Picture window's View
+  choice. Not in drawings or the Claude extension. Copy/paste features `src/model/featureClipboard.ts` (pure): `copyFeatures` (picked
+  + the sketches/curves they use + variables used, `outside` = other features referred to), JSON text `juracad-features` v1 read back
+  through document.ts's `parseFeatures`; `pasteFeatures` — new ids, every id remapped as a whole word in the JSON (`remapIds`: also
+  "<id>~2", "<id>@…"; never inside a longer id — "lib_x" ≠ "lib_x_plate", "<id>-2", "<id>.3", "<id>_p3" — except
+  "~<sketch>_<curve>" of frame members), pasted sketches re-solved with the target's variables (`resolveSketches`), outside refs kept if the studio has them else `withoutGone` + `needsPick`, names `freeName`,
+  after the rollback bar (which moves past them); store `pasteFeatures` (one undo step with any variables added), `pasteAsk` →
+  `PasteDialog` (add missing variables?). App side `src/app/featureClipboardApp.ts`: Ctrl/⌘+C on the selected feature (clipboard +
+  localStorage `juracad.copiedFeatures`), Ctrl/⌘+V via the paste event (only features on the clipboard are pasted;
+  this browser's copy only when no paste event comes at all — Safari away from a text box; both skip text boxes, popups,
+  windows and the paste question, `blocked`), row/folder/list menus Copy/Paste.
+  Tests: tests/viewTools, featureClipboard (pure), viewToolsStore.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.
