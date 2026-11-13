@@ -280,11 +280,13 @@ try {
     if (Math.hypot(...back.dir.map((d, i) => d - saved.dir[i])) > 1e-3) throw new Error(`the named view came back looking along ${back.dir} (saved ${saved.dir})`);
     await page.keyboard.press("Escape");
     await st(() => window.juracadStore.getState().undo());
-    // Copy the first feature (Ctrl+C) and paste it (Ctrl+V): one more feature, one undo step.
+    // Copy the first feature (Ctrl+C) and paste it (the list's Paste: headless Chromium's clipboard stays empty, and
+    // Ctrl+V pastes only features found on the clipboard): one more feature, one undo step.
     const before = await page.locator(".feature-row:not(.datum)").count();
     await page.locator(".feature-row:not(.datum)").first().click();
     await page.keyboard.press("Control+C");
-    await page.keyboard.press("Control+V");
+    await page.locator(".feature-row:not(.datum)").first().click({ button: "right" });
+    await page.getByRole("menuitem", { name: /^Paste features/ }).click();
     await page.waitForFunction((n) => document.querySelectorAll(".feature-row:not(.datum)").length === n + 1, before, { timeout: 10_000 });
     await st(() => window.juracadStore.getState().undo());
     await page.waitForFunction((n) => document.querySelectorAll(".feature-row:not(.datum)").length === n, before);
