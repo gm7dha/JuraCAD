@@ -5,7 +5,7 @@
  * come from the height tiles. Shared, unchanged, by JuraCAD's and JuraCUT's Mountain puzzles.
  */
 import type { HeightGrid } from "./elevation";
-import { ALL_MARKS, tidyMarks, type MarkChoice } from "./mapMarks";
+import { ALL_MARKS, tidyMarks, waterOnly, type MarkChoice } from "./mapMarks";
 import { latLonToGrid, type GridPoint, type LatLon } from "./osGrid";
 
 type XY = [number, number];
@@ -396,7 +396,8 @@ export function featuresOnGrid(data: OsmData, detail: OsmDetail, choice: MarkCho
       )
     : null;
   const lines: MapFeatures["lines"] = picked ?? data.lines.filter((l) => all || l.kind !== "road").map((l) => ({ kind: l.kind, pts: l.pts.map(onGrid) }));
-  const kept = data.shapes.filter((s) => (all || s.kind === "water") && !(s.kind === "water" && s.flowing && choice.water !== "all"));
+  // Lochs, lakes and reservoirs only: no buildings either.
+  const kept = data.shapes.filter((s) => (all || s.kind === "water") && !(s.kind !== "water" && waterOnly(choice)) && !(s.kind === "water" && s.flowing && choice.water !== "all"));
   const shapes: MapFeatures["shapes"] = kept.map((s) =>
     s.kind === "water" && choice.water !== "all" ? { kind: s.kind, rings: s.rings.map((r) => r.map(onGrid)), least: LEAST_LOCH } : { kind: s.kind, rings: s.rings.map((r) => r.map(onGrid)) },
   );

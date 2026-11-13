@@ -299,7 +299,7 @@ export function IslandPuzzleDialog() {
   const named = puzzle?.pieces.filter((p) => p.region).length ?? 0;
 
   return (
-    <Modal title="Island puzzle" onClose={close} width={980}>
+    <Modal title="Island puzzle" onClose={close} width={1280}>
       <div className="mountain-layout">
         <div className="mountain-side">
           <h3 className="library-heading">1. The island</h3>
