@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import { addAssemblyFeatures, assemblyFeatureDependents, assemblyHole, assemblySketch, cutsFor, deleteAssemblyFeatures, featureCuts, setFeatureParts } from "../src/assembly/assemblyFeatures";
-import { updateAssembly, withoutInstances } from "../src/assembly/assembly";
+import { billOfMaterials, updateAssembly, withoutInstances } from "../src/assembly/assembly";
 import { instancesForKernel } from "../src/assembly/placed";
 import { contextGone, contextInputs, contextPartOf, contextPartId, removeContext, setContextHidden, takeContext, tidyContexts } from "../src/assembly/inContext";
 import { removeStudio } from "../src/model/studios";
@@ -76,6 +76,20 @@ describe("which copies an assembly feature cuts", () => {
     // A suppressed hole cuts nothing.
     const off = { ...asm, features: asm.features!.map((f) => (f.id === "ho" ? { ...f, suppressed: true } : f)) };
     expect(cutsFor(off, "i1")).toBeUndefined();
+  });
+
+  it("cuts the sub-assembly's own features first, then the assembly's, and marks modified parts inside sub-assemblies in the structured list", () => {
+    const { doc: d } = withHole();
+    // The sub-assembly drills its own plate; the top assembly's hole also takes that plate.
+    const subSketch = assemblySketch(d.assemblies![1], planeOnFace([0, 0, 1], [0, 0, 5], "Top"), addPoint(emptySketch(), { x: 2, y: 2 }).sketch, "ssk");
+    const subHole = assemblyHole({ features: [subSketch] }, subSketch.id, { diameter: 2, throughAll: true }, "sho");
+    const withSub = addAssemblyFeatures(d, "B", [subSketch, subHole]);
+    const top = setFeatureParts(withSub.assemblies![0], "ho", ["i1", "s1/j1"]);
+    const all = [top, withSub.assemblies![1]];
+    const inner = instancesForKernel(top, parts, all).find((i) => i.id === "s1/j1")!;
+    expect(inner.cuts!.map((c) => c.features.map((f) => f.id))).toEqual([["ssk", "sho"], ["sk", "ho"]]);
+    const rows = billOfMaterials(top, { p1: "Plate", p2: "Lid" }, {}, undefined, {}, { assemblies: all, structured: true, modified: new Map([["s1/j1", 900]]) });
+    expect(rows.some((r) => r.level === 1 && r.name === "Plate (modified in assembly)")).toBe(true);
   });
 
   it("deletes a sketch's hole with it, and forgets parts that are gone", () => {

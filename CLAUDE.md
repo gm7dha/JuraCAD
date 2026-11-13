@@ -296,23 +296,33 @@
   `assemblyFeaturesText`, `modifiedCopies`), file-reading bits in `featureParse.ts` (kept light: document.ts imports it). Sketch
   planes are fixed numbers in each assembly's own coordinates (a clicked face is `planeOnFace` with no `face` pick): the cut stays
   where it was made; a copy a mate moves is cut where it sits now. `InstanceInput.cuts` = `CutStage[]` (protocol.ts): one stage
-  per assembly level — the assembly's own features (at the leaf's solved place) then each sub-assembly's own features (at the
-  leaf's place in that sub-assembly, by its own solve; `cutStager`/`hasAssemblyFeatures` in placed.ts) — each with `at` and
+  per assembly level — the deepest sub-assembly's own features first (at the leaf's place in it, by its own solve), out to the
+  assembly's own last (at the leaf's solved place; `cutStager`/`hasAssemblyFeatures` in placed.ts) — each with `at` and
   `mirrored` (the hand in that level), so sub-assemblies' holes carry up to every parent and an exploded view moves the cut copy
   on. Through `instancesForKernel`, exports, drawings, the clash check and Claude's tools all get cut shapes. Engine `cutCopy`
   (part coordinates in and out; per stage: mirror, place, `buildSolid` each tool with `[that placed copy]` as the parts, a box test
   first, cut — a cut leaving nothing is refused with a note —, back; LRU cache ≤ 48 by part object + stages; failures go to
   `errors` and, from placeInstances, to exports' `cutNotes` — shown by the Export dialog and export_model). `assemblyCuts` (worker)
   → meshes (part coordinates), `cut`, `reached` per feature (only features that took material), `errors`. Mates on faces only a
-  cut copy has (a drilled hole's wall): `SolveOptions.cutMeshes` (by instance id) → `connectorFrameFor` tries the part first, then
-  the cut copy, so mates on faces the part always had stay exactly put; the app's `useSolvedAssembly` passes the worker's meshes
-  (`cutMeshMap`; `useAssemblyCuts` keeps the old answer when the new one has the same `cutsSignature`, else solve ↔ cut loops),
-  the extension's `solve` re-solves with `cutMeshesOf`, and `findTarget` gives a cut copy's faces (named by the part's id).
+  cut copy has (a drilled hole's wall): `SolveOptions.cutMeshes` is a `CutMeshes` (assembly id → its own copies cut by its own
+  features, by instance id) → `connectorFrameFor` tries the part first, then the cut copy (`cutMeshAt`, also "copy/inner" keys of
+  flattened flexible views), so mates on faces the part always had stay exactly put; passed down through `frameInside`,
+  `solvedInside`, `flexibleInner` and `solveFlexibly` (cached per CutMeshes), so a sub-assembly's own mate to its own hole holds in
+  its parents and a parent's mate reaches a hole drilled inside one. The solver's copies are cut with each part WHERE THE DOCUMENT
+  HAS IT (`storedCutInputs` → worker `assemblyCuts` → `cutMeshesFrom`; ids "<assembly>|<instance>"), never where a solve put it,
+  so they depend on the design alone and a solve settles at once (the copies shown are cut at the solved place). A mate on a
+  cut-made face of a part the solve moves from its stored place (`cutFaceMoved`, `settledWithCuts`) is switched off and said ("This
+  mate uses a face made by an assembly feature on …"), as the cut wouldn't be there any more. `rememberCutMeshes(assemblies,
+  parts, cuts)` lets every solve of that state find them without being passed (`rememberedCutMeshes`; the app's `useSolverCuts`
+  once the worker answers, the extension's `solverCuts` in `solve`); Accept / add_assembly_feature settle placements first, so
+  the stored places are where the cut was made. `findTarget` gives a cut copy's faces as shown (named by the part's id). "Parts…"
+  lists ticks, and "The parts it reaches now" (`reachNow`: every top-level copy tried once, what it really cut kept).
   Structured STEP: a top-level copy the features may cut gets its own definition ("<part> (modified in assembly)", `cuts`,
   `plain`/`plainName`), turned back into the shared plain one by the engine's `withPlainUncut` when nothing was removed (`stepTree`'s
   `cut` set skips them up front when known); when parts INSIDE sub-assemblies are cut (`cutsInsideSubAssemblies`), callers write
   the flat list instead and say `FLAT_STEP_NOTE`. Parts list: `BomOptions.modified` (key → cut volume) → "(modified in assembly)"
-  lines weighed as cut (copies with the same volume share a line; flattened lists by full key, structured at the top level).
+  lines weighed as cut (copies with the same volume share a line; flattened lists by full key, structured ones by every copy's key at
+  each level — a part inside a sub-assembly is marked when any copy of it is).
   App: `src/app/assemblyFeatureState.ts` (own zustand store: cut meshes for the assembly on show, used by Viewport's
   `instanceMeshes` and connectorAt via `cutMeshFor`; the Hole/Cut draft; `acceptAsmCut` asks the worker what it reaches first;
   actions via `changeDocument`), `src/app/AssemblyFeaturesUI.tsx` (toolbar group "Hole"/"Cut", the "Assembly features" list with

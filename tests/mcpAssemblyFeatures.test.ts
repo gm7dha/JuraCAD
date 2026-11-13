@@ -113,4 +113,23 @@ describe("assembly features for Claude", () => {
     expect(pos[0] + 100).toBeCloseTo(20, 3);
     expect(pos[1]).toBeCloseTo(12, 3);
   });
+
+  it("refuses a mate that would move the drilled part off its own hole, the same way every time", async () => {
+    const { s } = newSession();
+    await ok(s, "new_design", { name: "Pin" });
+    await ok(s, "add_feature", { type: "box", width: 40, depth: 40, height: 5 });
+    await ok(s, "add_feature", { type: "cylinder", diameter: 6, height: 20, x: 100, y: 0, z: 0, operation: "new" });
+    const parts = s.build().parts;
+    await ok(s, "rename_part", { part: parts[0].name, name: "Plate" });
+    await ok(s, "rename_part", { part: parts[1].name, name: "Pin" });
+    await ok(s, "create_assembly", { name: "Pinned" });
+    await ok(s, "insert_into_assembly", { part: "Plate", at: [0, 0, 0], fixed: false });
+    await ok(s, "insert_into_assembly", { part: "Pin", at: [-70, 70, 0], fixed: true });
+    await ok(s, "add_assembly_feature", { kind: "hole", on: { instance: "Plate <1>", face: "top" }, points: [[20, 12]], diameter: 6 });
+    const args = { type: "cylindrical", first: { instance: "Pin <1>", face: { near: [30, 70, 10] } }, second: { instance: "Plate <1>", face: { near: [20, 12, 2.5] } } };
+    const said = await fails(s, "add_mate", args);
+    expect(said).toMatch(/made by an assembly feature on Plate <1>/);
+    expect(await fails(s, "add_mate", args)).toBe(said);
+    expect(s.doc.assemblies![0].instances.find((i) => i.name === "Plate <1>")!.placement.position).toEqual([0, 0, 0]);
+  });
 });
