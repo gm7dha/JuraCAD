@@ -1531,7 +1531,9 @@
   0.4 deep, flat out to `THIN_FLAT` ⅔ of the half-width (`thinDepth`), worked out exactly per point from 2 mm buckets in
   groundMarks (no raster); `grooveOf` for widths (mapRaster); "all" lines keep the old `GROOVES` and top-view look
   (`markStroke(kind, thin)`). Thin lines make the island's cell ≤ `THIN_CELL` 0.4 and the mountain's top samples ≤
-  `THIN_SAMPLE` 0.25 mm (≤ `MOST_THIN_SAMPLES` 240 a side), so a sample always lands on the flat bottom (tests/thinGrooves).
+  `THIN_SAMPLE` 0.25 mm (≤ `MOST_THIN_SAMPLES` 240 a side) — only in the columns a thin line passes (`thinColumns`: its
+  pieces' boxes in cube/4 stretches ± half-width + 0.22 cube for tabs; others keep 64; top pieces stand apart, so neighbours
+  needn't match) — so a sample always lands on the flat bottom (tests/thinGrooves).
   `featuresAtScale(f, k)` (mountain build/preview/colour) and `featuresForIsland` honour `least`. `marksQuery(…, choice)`
   fetches path|footway|bridleway|steps|track, towns/parks (+ woods for hills), natural=water/landuse=reservoir (+ multipolygons),
   waterways only for "all", roads by `ROAD_RANK`, walking route relations bare (`->.hr`); `fetchCovers` says when to fetch

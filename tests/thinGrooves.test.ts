@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 import { gridFrom, heightAt } from "../src/terrain/elevation";
 import { THIN_GROOVE } from "../src/terrain/groundMarks";
 import { ISLAND_DEFAULTS, makeIslandPuzzle, THIN_CELL, type IslandSpec } from "../src/terrain/islandPuzzle";
-import { baseFor, makeMountainPuzzle, MOUNTAIN_DEFAULTS, type PuzzlePiece } from "../src/terrain/mountainPuzzle";
+import { weld } from "../src/geometry/threeMf";
+import { baseFor, makeMountainPuzzle, MOUNTAIN_DEFAULTS, thinColumns, type Body, type PuzzlePiece } from "../src/terrain/mountainPuzzle";
 import type { MapFeatures } from "../src/terrain/osm";
 
 type XY = [number, number];
@@ -86,4 +87,52 @@ describe("Thin grooves at their worst offset", () => {
       expect(checked, `shift ${shift}`).toBeGreaterThan(100);
     }
   });
+
+  it("samples finely only the mountain's top pieces a thin line passes, each still closed", () => {
+    const sw = { e: 201000, n: 770500 };
+    const hill = gridFrom(sw, 4000, 3000, 20, (e, n) => 300 + 700 * Math.exp(-(((e - 202800) / 900) ** 2 + ((n - 771500) / 700) ** 2)));
+    const spec = { ...MOUNTAIN_DEFAULTS, bed: [256, 256, 256] as [number, number, number], snowline: 800 };
+    const L = makeMountainPuzzle(hill, 4000, 3000, spec).layout;
+    // Up the middle of the second column, through its first three or four squares.
+    const x0 = 1.5 * spec.cube;
+    const line: XY[] = [10, 60, 110].map((y) => [L.e0 + x0 / L.k, L.n0 + y / L.k]);
+    const thin = makeMountainPuzzle(hill, 4000, 3000, spec, { lines: [{ kind: "path", pts: line, thin: true }], shapes: [], names: [] });
+    const coarse = makeMountainPuzzle(hill, 4000, 3000, spec, { lines: [{ kind: "path", pts: line }], shapes: [], names: [] });
+    const fine = thinColumns({ lines: [{ kind: "path", pts: line, thin: true }], shapes: [], names: [] }, L.e0, L.n0, L.k, spec.cube, L.cols, L.rows);
+    expect([...fine].every((i) => i % L.cols === 1)).toBe(true);
+    expect(fine.size).toBeGreaterThanOrEqual(3);
+    expect(fine.size).toBeLessThanOrEqual(5);
+    const count = (p: PuzzlePiece) => p.bodies.reduce((a, b) => a + b.triangles.length / 3, 0);
+    let finer = 0;
+    thin.pieces.forEach((p, i) => {
+      const q = coarse.pieces[i];
+      expect(q.name).toBe(p.name);
+      if (!p.top || !fine.has(p.row * L.cols + p.col)) expect(count(p), p.name).toBe(count(q));
+      else {
+        expect(count(p), p.name).toBeGreaterThan(count(q));
+        finer++;
+      }
+      for (const b of p.bodies) expect(openEdges(b), `${p.name} ${b.part}`).toBe(0);
+    });
+    expect(finer).toBe(fine.size);
+    // Far fewer triangles than refining every top piece would make.
+    const total = (pz: typeof thin) => pz.pieces.reduce((a, p) => a + count(p), 0);
+    expect(total(thin)).toBeLessThan(total(coarse) * 2.5);
+  });
 });
+
+function openEdges(b: Body): number {
+  const m = weld(b.vertices, b.triangles);
+  const edges = new Map<string, number>();
+  for (let t = 0; t < m.triangles.length; t += 3)
+    for (let k = 0; k < 3; k++) {
+      const key = `${m.triangles[t + k]}>${m.triangles[t + ((k + 1) % 3)]}`;
+      edges.set(key, (edges.get(key) ?? 0) + 1);
+    }
+  let open = 0;
+  for (const [key, n] of edges) {
+    const [a, c] = key.split(">");
+    if (n !== 1 || edges.get(`${c}>${a}`) !== 1) open++;
+  }
+  return open;
+}
