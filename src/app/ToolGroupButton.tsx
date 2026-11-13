@@ -102,7 +102,15 @@ export function ToolGroupButton({
 
   const allOff = items.every((i) => i.disabled);
   return (
-    <div className="tool-split">
+    <div
+      className="tool-split"
+      // A right-click, or a long press on a touch screen (touchCompat sends it as a contextmenu), opens the list,
+      // so a finger needn't find the ▾ (on the button too when its tool can't be used yet).
+      onContextMenu={(e) => {
+        e.preventDefault();
+        if (!allOff) setOpen(true);
+      }}
+    >
       <button
         className={`tool-button${compact ? " icon-only" : ""}${shown.active || pressed ? " active" : ""}`}
         onClick={() => pick(shown)}
@@ -137,7 +145,7 @@ export function ToolGroupButton({
             className="tool-menu"
             role="menu"
             aria-label={`${name} tools`}
-            style={{ left: at.left, top: at.top }}
+            style={{ left: at.left, top: at.top, maxHeight: `calc(100vh - ${at.top}px - 8px)` }}
             onKeyDown={(e) => {
               if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
               e.preventDefault();

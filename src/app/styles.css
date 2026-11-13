@@ -3225,6 +3225,9 @@ kbd {
   z-index: 1000;
   display: flex;
   flex-direction: column;
+  /* Long lists (planes + curves) scroll rather than run off the bottom of a short window; the top is set where it opens. */
+  max-height: calc(100vh - 8px);
+  overflow-y: auto;
   min-width: 190px;
   padding: 4px;
   background: var(--panel);
@@ -3898,8 +3901,9 @@ kbd {
   .tool-button.icon-only {
     min-width: 44px;
   }
+  /* Wide enough for a finger (a long press on the button opens its list too). */
   .tool-split-arrow {
-    width: 16px;
+    width: 26px;
     height: 52px;
   }
   .relation-button {
@@ -3971,7 +3975,6 @@ kbd {
   }
 }
 
-/* A narrow touch screen (an iPad held upright): a slimmer feature list leaves the view more room. */
 /* A tablet held sideways (an iPad is 1024 px): toolbar buttons as close as fingers allow, so few are past the edge. */
 @media (pointer: coarse) and (max-width: 1100px) {
   .toolbar {
@@ -3985,13 +3988,14 @@ kbd {
     min-width: 40px;
   }
   .tool-split-arrow {
-    width: 15px;
+    width: 22px;
   }
   .tool-divider {
     margin: 0 2px;
   }
 }
 
+/* A narrow touch screen (an iPad held upright): a slimmer feature list leaves the view more room. */
 @media (pointer: coarse) and (max-width: 900px) {
   .workspace {
     grid-template-columns: 220px 1fr;

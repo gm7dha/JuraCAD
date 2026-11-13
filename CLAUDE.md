@@ -573,7 +573,7 @@
   blend, more than two curves each way, smooth sides on both pairs, a solid boundary, trimming a solid's faces that don't meet,
   trimming where the blend ends mid-face, Constrained surface. Tests: tests/boundaryBlendModel (pure), engineBoundaryBlend, mcpBoundaryBlend.
 - Simplify (tidy triangles into real faces): an Import's `Feature.simplify` (`SimplifyLevel` fine/normal/coarse; missing = as
-  before) or a "simplify" feature (`simplifyParts` + `simplify`; Toolbar next to Delete part, Parts list right-click, Claude's
+  before) or a "simplify" feature (`simplifyParts` + `simplify`; in the toolbar's Boolean ▾ list ("parts" group), Parts list right-click, Claude's
   `simplify_part`). Levels/tolerances and the summary text (`simplifyReport`: "4,812 faces → 38 faces: 22 flat, 12 round
   (holes Ø5, Ø8, rounded edges R2), 4 left as mesh.") are pure in `src/model/simplify.ts`; the summary reaches the app as
   `RebuildResult.featureNotes` → `store.featureNotes` (blue `.dialog-note` in the dialog, the row's tooltip; MCP `Build.notes`).
@@ -704,7 +704,7 @@
   part ids meanwhile; `withoutPicking` drops `picking` on Accept); the Composite dialog shows `compositeProblem`
   (src/model/composite.ts) at once; `madeByDraft` refuses its own copies anyway. Parts
   list clicks go to `toggleDraftPart`; the view shows picked faces together with the mirror plane / pattern direction; starting a pattern with parts / faces selected picks them (store startCreate). Composite part:
-  feature "composite", `compositeParts` (≥ 2 solid parts; Toolbar next to Delete part, Parts list's several-parts menu) →
+  feature "composite", `compositeParts` (≥ 2 solid parts; the toolbar's Boolean ▾ list, Parts list's several-parts menu) →
   `applyComposite`: the members are taken out and one part with id = the feature's, name = its name, shape = a compound of
   theirs (separate solids inside), their featureIds/threads, `BuiltPart.members` → `PartMesh.members` (listed under it in
   the Parts list, renamed by partNames; `membersNow`: once later features join or split its solids, one "<name> piece k"
@@ -736,8 +736,8 @@
   are the wire's; GeomPick `curve` (+ end a/b/mid): an end is the wire end nearest `p` across all pieces (`curveEndNear`), mid
   and Curve point `position` are by length (`paramAtLength` on the wire). Helix axes from faces/edges point one fixed way
   (`canonicalAxis`); projected sheets reach 2 × the size of the sketches and faces.
-  Dialog `src/app/CurveOptions.tsx` (`CurveOptions`, `PathChoice`: sketch / curve / "Part edges (click them)"); Toolbar group
-  "curves" (`startCurve`). Claude: add_feature "curve" with `curve_type` (`src/mcp/curveSpec.ts`), sweep `path` (sketch or
+  Dialog `src/app/CurveOptions.tsx` (`CurveOptions`, `PathChoice`: sketch / curve / "Part edges (click them)"); the curves are in the
+  toolbar's "planes" group, after Plane and Mate connector (`startCurve`). Claude: add_feature "curve" with `curve_type` (`src/mcp/curveSpec.ts`), sweep `path` (sketch or
   curve) / `path_edges` + `path_part`; points may be {"curve", "end"}. Newer kinds (`src/kernel/curvesMore.ts`, params
   `distance`/`angle` — `ParamDef.lazy`: left out of `defaultParams`, so older features save byte for byte; `max` 90 on the
   angle): Offset curve (`picks` = edges + at most one face to move across; a face alone = its outline less seams; edges only =
@@ -815,7 +815,7 @@
   "<Frame> member k" by path order; copes cut with the through members' envelope solids), `applyTrimFrame` (to a part: which
   end is told by `alongRange` of the cut solid vs `memberRange`, then a square plane at the measured end, label "coped"),
   `applyGusset` (`frameMembers` per build). A 12-member cube frame builds in ~3 s. UI: Toolbar group "frames" (Frame, Trim
-  frame, Gusset, Cut list → `CutListDialog.tsx`, dialog "cutList", Save as CSV), dialogs in `src/app/FrameOptions.tsx`;
+  frame, Gusset, and Cut list in its ▾ list → `CutListDialog.tsx`, dialog "cutList", Save as CSV), dialogs in `src/app/FrameOptions.tsx`;
   clicking a sketch line while a Frame is open leaves it out / puts it back (lineDraftId), Trim frame's Members / To a plane
   or face / To a part, Gusset picks 2 parts. Dependents: path sketches a list, profile sketch / gusset parts / trim target
   needed, trim members a list, trim plane via planesOf; frames and gussets make solid parts. Claude: add_feature "frame" /
@@ -1775,7 +1775,9 @@
   `STUDIO_TOOLS` = every key, each exactly once — tests/toolbarLayout; Toolbar.tsx's `tools` record must define each), grouped
   as in Onshape so it fits 1280 px (the smoke test checks, and shots toolbar1280/toolbarmenu/toolbaripad): a slot of several
   tools is a `ToolGroupButton` (the last one used shows, `partsmith.toolGroup.<id>`; `GroupItem.short` = a shorter face label,
-  `divider` = a line above it in the list; `compact` = icon only). Undo/Redo, Section, Fit, Views and Pick are icon-only
+  `divider` = a line above it in the list; `compact` = icon only; a right-click / long press on it opens the list too; the
+  list scrolls when taller than the window, `max-height` from its top; the ▾ is 26 px wide (22 on a narrow tablet) under
+  `(pointer: coarse)`). Undo/Redo, Section, Fit, Views and Pick are icon-only
   (`.tool-button.icon-only`) on every toolbar. Sketch families, the relations under "More relations ▾" (`MORE_RELATIONS`) and
   the Text / Insert DXF / Insert image group are listed there too. Smoke: click tools with `tool(name)` (opens the ▾ when needed).
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
