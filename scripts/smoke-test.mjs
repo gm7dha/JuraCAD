@@ -200,7 +200,8 @@ try {
     await page.waitForSelector('[role="menu"]', { state: "detached" });
     await page.setViewportSize({ width: 1180, height: 760 });
     toolbarReport = `The Part Studio toolbar fits 1280 px with ${spare} px to spare`;
-    if (spare < 40) annotate("warning", "Toolbar nearly full", `the Part Studio toolbar has only ${spare} px to spare at 1280 px`);
+    // Its own notice: the long summary at the end is cut short in GitHub's annotations.
+    annotate(spare < 40 ? "warning" : "notice", "Toolbar room", `${toolbarReport} (${sizes[1]} px wide)`);
   }
 
   step = "drilling a hole with a cylinder";
