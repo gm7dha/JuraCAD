@@ -171,4 +171,47 @@ describe("assembly features for Claude", () => {
     expect(after.pin).toBeCloseTo(after.hole, 3);
     expect(await ok(s, "describe_assembly", {})).not.toMatch(/PROBLEM|doesn't work/);
   });
+
+  it("rounds and bevels edges of copies in the assembly only; a mated pin is untouched", async () => {
+    const { s } = newSession();
+    await ok(s, "new_design", { name: "Pin" });
+    await ok(s, "add_feature", { type: "box", width: 40, depth: 40, height: 5 });
+    await ok(s, "add_feature", { type: "cylinder", diameter: 6, height: 20, x: 100, y: 0, z: 0, operation: "new" });
+    const parts = s.build().parts;
+    await ok(s, "rename_part", { part: parts[0].name, name: "Plate" });
+    await ok(s, "rename_part", { part: parts[1].name, name: "Pin" });
+    await ok(s, "create_assembly", { name: "Pinned" });
+    await ok(s, "insert_into_assembly", { part: "Plate", at: [0, 0, 0] });
+    await ok(s, "insert_into_assembly", { part: "Pin", at: [-130, 7, 0] });
+    await ok(s, "add_assembly_feature", { kind: "hole", on: { instance: "Plate <1>", face: "top" }, points: [[20, 12]], diameter: 6 });
+    await ok(s, "add_mate", { type: "cylindrical", first: { instance: "Plate <1>", face: { near: [20, 12, 2.5] } }, second: { instance: "Pin <1>", face: { near: [-30, 7, 10] } } });
+    const pinAt = () => s.doc.assemblies![0].instances.find((i) => i.name === "Pin <1>")!.placement.position;
+    const before = [...pinAt()];
+    const r = 2;
+    const rounded = await ok(s, "add_assembly_feature", { kind: "fillet", edges: [{ instance: "Plate <1>", edge: "along z" }], radius: r });
+    expect(rounded).toMatch(/Made Fillet 1 in Pinned: rounds 4 edges of Plate <1> \(radius 2 mm\) in this assembly only/);
+    const hole = Math.PI * 9 * 5;
+    const corners = 4 * (r * r - (Math.PI * r * r) / 4) * 5;
+    expect(rounded).toContain(`Plate <1> ${Math.round((8000 - hole - corners) * 100) / 100} mm³`);
+    // The hole's top rim, which only the assembly's hole made: the chamfer needs the hole.
+    const bevelled = await ok(s, "add_assembly_feature", { kind: "chamfer", edges: [{ instance: "Plate <1>", edge: { near: [23, 12, 5] } }], distance: 0.5 });
+    expect(bevelled).toMatch(/bevels 1 edge of Plate <1>/);
+    expect(bevelled).toMatch(/edges made by Hole 1, so deleting that deletes it too/);
+    const text = await ok(s, "describe_assembly", {});
+    expect(text).toMatch(/Fillet 1 \(fillet, radius 2 mm, on 4 edges of Plate <1>\)/);
+    expect(text).toMatch(/Chamfer 1 \(chamfer, distance 0.5 mm, on 1 edge of Plate <1>\)/);
+    expect(text).not.toMatch(/PROBLEM|doesn't work/);
+    // The pin mated into the hole hasn't moved and isn't changed; the Part Studio's parts are as they were.
+    expect(pinAt()).toEqual(before);
+    expect(text).toMatch(/Pin × 1/);
+    expect(text).not.toMatch(/Pin \(modified in assembly\)/);
+    expect(s.build().parts.map((p) => Math.round(p.volume!))).toEqual([8000, Math.round(Math.PI * 9 * 20)]);
+    // Refusals: a radius too big, edges of a copy that isn't there, sizes of the other kind.
+    expect(await fails(s, "add_assembly_feature", { kind: "fillet", edges: [{ instance: "Plate <1>", edge: "along z" }], radius: 30 })).toMatch(/smaller radius.*Nothing was changed/);
+    expect(await fails(s, "add_assembly_feature", { kind: "fillet", edges: [{ instance: "Plate <9>", edge: "along z" }] })).toMatch(/no copy called "Plate <9>"/);
+    expect(await fails(s, "add_assembly_feature", { kind: "chamfer", edges: [{ instance: "Plate <1>", edge: "top" }], radius: 1 })).toMatch(/takes "distance"/);
+    // Deleting the hole takes the chamfer of its rim with it (and its sketch stays).
+    expect(await ok(s, "delete_assembly_feature", { feature: "Hole 1" })).toMatch(/Deleted Hole 1, Chamfer 1/);
+    expect(s.doc.assemblies![0].features!.map((f) => f.name)).toEqual(["Sketch 1", "Fillet 1"]);
+  });
 });

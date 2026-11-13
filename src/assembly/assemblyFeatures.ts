@@ -230,10 +230,16 @@ const near = (p: readonly number[], q: readonly number[]) => Math.hypot(p[0] - q
 
 /**
  * Which of the assembly's cuts a new Fillet / Chamfer needs (`Assembly.featureNeeds`): for each picked edge the
- * plain part hasn't got (a drilled hole's rim), the cuts that changed that copy (`reached`, from the worker). Picks'
- * partIds are copy keys; `plainOf` gives each copy's plain part.
+ * plain part hasn't got (a drilled hole's rim), the cuts that changed that copy (`reached`, from the worker; `isCut`
+ * tells cuts from earlier Fillets / Chamfers, which count only when no cut changed it). Picks' partIds are copy keys;
+ * `plainOf` gives each copy's plain part.
  */
-export function edgeNeeds(picks: readonly TopoPick[], plainOf: (key: string) => PartMesh | undefined, reached: Readonly<Record<string, readonly string[]>>): string[] {
+export function edgeNeeds(
+  picks: readonly TopoPick[],
+  plainOf: (key: string) => PartMesh | undefined,
+  reached: Readonly<Record<string, readonly string[]>>,
+  isCut: (id: string) => boolean = () => true,
+): string[] {
   const out = new Set<string>();
   for (const p of picks) {
     if (p.ref.kind !== "edge") continue;
@@ -241,7 +247,10 @@ export function edgeNeeds(picks: readonly TopoPick[], plainOf: (key: string) => 
     const plain = plainOf(p.partId);
     const had = plain?.edgeRefs.some((e) => e.curve === ref.curve && near(e.mid, ref.mid) && ((near(e.a, ref.a) && near(e.b, ref.b)) || (near(e.a, ref.b) && near(e.b, ref.a))));
     if (had) continue;
-    for (const [id, keys] of Object.entries(reached)) if (keys.includes(p.partId)) out.add(id);
+    // The cuts that changed that copy made it — else (no cut did) an earlier Fillet / Chamfer's own new edge.
+    const by = Object.entries(reached).filter(([, keys]) => keys.includes(p.partId)).map(([id]) => id);
+    const cuts = by.filter(isCut);
+    for (const id of cuts.length ? cuts : by) out.add(id);
   }
   return [...out];
 }

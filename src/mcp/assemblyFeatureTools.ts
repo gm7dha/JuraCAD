@@ -4,7 +4,9 @@
  * through two mated plates at once. The parts in their Part Studios don't
  * change; only this assembly's copies are cut (src/assembly/assemblyFeatures.ts).
  */
-import { addAssemblyFeatures, assemblyExtrudeCut, assemblyFeaturesOf, assemblyHole, assemblySketch, deleteAssemblyFeatures, setFeatureParts } from "../assembly/assemblyFeatures";
+import { addAssemblyFeatures, assemblyEdgeFeature, assemblyExtrudeCut, assemblyFeaturesOf, assemblyHole, assemblySketch, deleteAssemblyFeatures, edgeNeeds, isAssemblyEdgeFeature, setFeatureNeeds, setFeatureParts } from "../assembly/assemblyFeatures";
+import { findMesh, meshIdOf } from "../assembly/configured";
+import type { TopoPick } from "../geometry/topoRef";
 import { settlePlacements, updateAssembly } from "../assembly/assembly";
 import { instancesForKernel } from "../assembly/placed";
 import { leavesOf } from "../assembly/subassembly";
@@ -14,7 +16,7 @@ import { planeOnFace, type SketchPlane } from "../sketch/planes";
 import { emptySketch, type SketchData } from "../sketch/types";
 import { amount, bool, InputError, list, noExtras, object, oneOf, text, xy } from "./args";
 import { ASSEMBLY_REF, assembliesOf, builtParts, findAssembly, findTarget, placedFacesAndEdges, solve } from "./assemblyTools";
-import { pickFace } from "./picks";
+import { pickEdges, pickFace } from "./picks";
 import type { Session } from "./session";
 import { byName, r2, say, type ToolDef } from "./toolKit";
 
@@ -43,17 +45,85 @@ function chosenParts(s: Session, asm: Assembly, raw: unknown): string[] | undefi
   return list(raw, "parts").map((r, i) => findTarget(s, asm, r, `parts[${i}]`).leaf.key);
 }
 
+/**
+ * The edges named in "edges" ([{"instance", "edge" | "edges"}]), as picks on the copies: each pick's partId is the
+ * copy's key and its ref in the part's own coordinates (picked on the copy as it sits, with earlier cuts' faces).
+ */
+function edgePicks(s: Session, asm: Assembly, raw: unknown): { picks: TopoPick[]; names: string[] } {
+  const picks: TopoPick[] = [];
+  const names: string[] = [];
+  const items = list(raw, "edges");
+  if (!items.length) throw new InputError('edges: name the edges to round, e.g. [{"instance": "Plate <1>", "edge": "along z"}].');
+  items.forEach((item, i) => {
+    const o = object(item, `edges[${i}]`);
+    noExtras(o, ["instance", "edge", "edges"], `edges[${i}]`);
+    const t = findTarget(s, asm, o.instance, `edges[${i}].instance`);
+    const placed = placedFacesAndEdges(t);
+    const selectors = o.edges !== undefined ? list(o.edges, `edges[${i}].edges`) : [o.edge];
+    if (o.edge === undefined && o.edges === undefined) throw new InputError(`edges[${i}]: give "edge" (E3, "along z", "circles", a face such as "top", or {"near": [x, y, z]}) or a list in "edges".`);
+    for (const p of pickEdges(placed, selectors, `edges[${i}]`)) {
+      // (Back to the part's own coordinates: the edges go with the copy when a mate moves it.)
+      const k = p.ref.kind === "edge" ? placed.edgeRefs.indexOf(p.ref) : placed.faceRefs.indexOf(p.ref);
+      const ref = p.ref.kind === "edge" ? t.mesh.edgeRefs[k] : t.mesh.faceRefs[k];
+      if (ref && !picks.some((q) => q.partId === t.leaf.key && q.ref === ref)) picks.push({ partId: t.leaf.key, ref });
+    }
+    if (!names.includes(t.leaf.name)) names.push(t.leaf.name);
+  });
+  return { picks, names };
+}
+
+/** A Fillet or Chamfer made in an assembly (see add_assembly_feature). */
+async function addEdgeFeature(s: Session, asm: Assembly, kind: "fillet" | "chamfer", a: Record<string, unknown>): Promise<ReturnType<typeof say>> {
+  for (const k of ["on", "points", "diameter", "rectangles", "circles", "through_all", "depth", "flip", "parts"]) {
+    if (a[k] !== undefined) throw new InputError(`A ${kind} takes "edges" and a "${kind === "fillet" ? "radius" : "distance"}", not "${k}".`);
+  }
+  const scope = s.scope();
+  const sizeKey = kind === "fillet" ? "radius" : "distance";
+  const other = kind === "fillet" ? "distance" : "radius";
+  if (a[other] !== undefined) throw new InputError(`A ${kind} takes "${sizeKey}", not "${other}".`);
+  const size = amount(a[sizeKey] ?? (kind === "fillet" ? 2 : 1), sizeKey, scope, { positive: true }).value;
+  const { picks, names } = edgePicks(s, asm, a.edges);
+  let tool = assemblyEdgeFeature(asm, kind, picks, { size });
+  if (a.name !== undefined) tool = { ...tool, name: text(a.name, "name").slice(0, 80) };
+  const next = addAssemblyFeatures(s.doc, asm.id, [tool]);
+  const made = assembliesOf(next).find((x) => x.id === asm.id)!;
+  await s.checkpoint();
+  const all = builtParts(s);
+  const solved = solve(s, asm);
+  const r = s.withWholeEngine((e) => e.assemblyCuts(instancesForKernel(made, all, assembliesOf(next), solved)));
+  const problem = r.errors[tool.id];
+  if (problem) throw new InputError(`${problem} Nothing was changed.`);
+  if (!r.reached[tool.id]?.length) throw new InputError(`${tool.name} wouldn't change anything: check the edges named (list_edges with "assembly" and "instance" shows them). Nothing was changed.`);
+  s.throwIfCancelled();
+  // Edges only the assembly's own cuts made (a drilled hole's rim): deleting that cut takes this with it.
+  const leaves = leavesOf(made, all, assembliesOf(next));
+  const plainOf = (key: string) => {
+    const leaf = leaves.find((l) => l.key === key);
+    return leaf ? findMesh(all, meshIdOf(leaf.instance)) : undefined;
+  };
+  const { [tool.id]: _own, ...earlier } = r.reached;
+  const needs = edgeNeeds(picks, plainOf, earlier, (id) => !isAssemblyEdgeFeature(assemblyFeaturesOf(made).find((f) => f.id === id) ?? { type: "sketch" }));
+  const kept = settlePlacements(next, asm.id, solved.placements);
+  s.commit(updateAssembly(kept, asm.id, (x) => setFeatureNeeds(x, tool.id, needs)));
+  const volumes = r.meshes.filter((m) => r.reached[tool.id].includes(m.id)).map((m) => `${leaves.find((l) => l.key === m.id)?.name ?? m.id} ${r2(m.volume ?? 0)} mm³`);
+  return say(
+    `Made ${tool.name} in ${asm.name}: ${kind === "fillet" ? "rounds" : "bevels"} ${picks.length} edge${picks.length === 1 ? "" : "s"} of ${names.join(", ")} (${sizeKey} ${r2(size)} mm) in this assembly only — their Part Studio parts are unchanged.`,
+    volumes.length ? `Volumes now: ${volumes.join(", ")}.` : null,
+    needs.length ? `It rounds edges made by ${needs.map((id) => assemblyFeaturesOf(made).find((f) => f.id === id)?.name ?? id).join(", ")}, so deleting that deletes it too.` : null,
+  );
+}
+
 export const ASSEMBLY_FEATURE_TOOLS: ToolDef[] = [
   {
     name: "add_assembly_feature",
     title: "Cut or drill through parts in an assembly",
     description:
-      'Make a hole or a cut in an assembly (Onshape\'s assembly features), e.g. drill through two plates that are mated together at once. Only the copies in THIS assembly are cut (its 3D view, exports, drawings, clash check and parts list, which says "modified in assembly"); the parts in their Part Studios are unchanged. The cut stays where it was made in the assembly. "kind": "hole" (plain round holes at "points" [[x, y], …], "diameter") or "cut" (an Extrude that removes, from "rectangles" [{"corner": [x, y], "size": [w, h]}] and/or "circles" [{"centre": [x, y], "diameter": d}]). "on": a copy\'s flat face {"instance": "Plate <1>", "face": "top"} (x, y measured in that face\'s plane: on a face looking up, as the assembly\'s X and Y) or "top" / "front" / "right" (the assembly\'s planes). "through_all" (default true) or "depth" (mm, into the face; "flip": true goes the other way). "parts": copies to cut (default: the top-level parts it reaches now — kept as its list, so parts put there later aren\'t cut; parts inside sub-assemblies only when named, as "Sub <1> / Part <1>"). Refused, nothing changed, if it cuts nothing.',
+      'Make a hole or a cut in an assembly (Onshape\'s assembly features), e.g. drill through two plates that are mated together at once. Only the copies in THIS assembly are cut (its 3D view, exports, drawings, clash check and parts list, which says "modified in assembly"); the parts in their Part Studios are unchanged. The cut stays where it was made in the assembly. "kind": "hole" (plain round holes at "points" [[x, y], …], "diameter") or "cut" (an Extrude that removes, from "rectangles" [{"corner": [x, y], "size": [w, h]}] and/or "circles" [{"centre": [x, y], "diameter": d}]). "on": a copy\'s flat face {"instance": "Plate <1>", "face": "top"} (x, y measured in that face\'s plane: on a face looking up, as the assembly\'s X and Y) or "top" / "front" / "right" (the assembly\'s planes). "through_all" (default true) or "depth" (mm, into the face; "flip": true goes the other way). "parts": copies to cut (default: the top-level parts it reaches now — kept as its list, so parts put there later aren\'t cut; parts inside sub-assemblies only when named, as "Sub <1> / Part <1>"). Or "kind": "fillet" ("radius", default 2) / "chamfer" ("distance", default 1) with "edges": [{"instance": "Plate <1>", "edge": "along z" | "E3" | "circles" | a face like "top" (all its edges) | {"near": [x, y, z]}} or "edges": [...]] — edges of copies (as they sit in the assembly, holes drilled here included), rounded on this assembly\'s copies only; they go with the copy if a mate moves it. Refused, nothing changed, if it cuts or changes nothing.',
     inputSchema: {
       type: "object",
       properties: {
         assembly: ASSEMBLY_REF,
-        kind: { type: "string", enum: ["hole", "cut"] },
+        kind: { type: "string", enum: ["hole", "cut", "fillet", "chamfer"] },
         on: {},
         points: { type: "array", items: { type: "array", items: { type: "number" } } },
         diameter: { type: ["number", "string"] },
@@ -63,16 +133,23 @@ export const ASSEMBLY_FEATURE_TOOLS: ToolDef[] = [
         depth: { type: ["number", "string"] },
         flip: { type: "boolean" },
         parts: { type: "array", items: { type: "string" } },
+        edges: { type: "array", items: { type: "object" } },
+        radius: { type: ["number", "string"] },
+        distance: { type: ["number", "string"] },
         name: { type: "string" },
       },
-      required: ["kind", "on"],
+      required: ["kind"],
     },
     run: async (s, a) => {
-      noExtras(a, ["assembly", "kind", "on", "points", "diameter", "rectangles", "circles", "through_all", "depth", "flip", "parts", "name"], "add_assembly_feature");
+      noExtras(a, ["assembly", "kind", "on", "points", "diameter", "rectangles", "circles", "through_all", "depth", "flip", "parts", "edges", "radius", "distance", "name"], "add_assembly_feature");
       await s.checkpoint();
       await s.buildAllAsync();
       const asm = findAssembly(s, a.assembly);
-      const kind = oneOf(a.kind, ["hole", "cut"] as const, "kind");
+      const any = oneOf(a.kind, ["hole", "cut", "fillet", "chamfer"] as const, "kind");
+      if (any === "fillet" || any === "chamfer") return addEdgeFeature(s, asm, any, a);
+      if (a.edges !== undefined || a.radius !== undefined || a.distance !== undefined) throw new InputError(`A ${any} doesn't take "edges", "radius" or "distance" (those are for "kind": "fillet" or "chamfer").`);
+      if (a.on === undefined) throw new InputError('on: say where it\'s drawn — a copy\'s flat face {"instance": "Plate <1>", "face": "top"}, or "top" / "front" / "right".');
+      const kind = any;
       const { plane, label } = sketchPlane(s, asm, a.on);
       const scope = s.scope();
       const through = bool(a.through_all, "through_all", a.depth === undefined);
@@ -142,7 +219,7 @@ export const ASSEMBLY_FEATURE_TOOLS: ToolDef[] = [
   {
     name: "delete_assembly_feature",
     title: "Delete an assembly feature",
-    description: 'Delete a hole, cut or sketch made in an assembly (add_assembly_feature), by its name (describe_assembly lists them). Deleting a sketch deletes the holes and cuts made from it too.',
+    description: 'Delete a hole, cut, fillet, chamfer or sketch made in an assembly (add_assembly_feature), by its name (describe_assembly lists them). Deleting a sketch deletes the holes and cuts made from it too, and deleting a hole or cut deletes fillets and chamfers of the edges it made.',
     inputSchema: { type: "object", properties: { assembly: ASSEMBLY_REF, feature: { type: "string" } }, required: ["feature"] },
     run: async (s, a) => {
       noExtras(a, ["assembly", "feature"], "delete_assembly_feature");
