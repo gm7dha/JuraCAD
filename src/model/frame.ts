@@ -104,7 +104,7 @@ const reflect = (v: V3, u: V3, c: number): V3 => (c > 1e-24 ? sub(v, mul(u, (2 /
  * its start: carried as little turned as possible (double reflection, as `carryCurve`). The solid's sweep is steered
  * by these (kernel/frame.ts), so the profile arrives at the end exactly as planned.
  */
-export function curveAcross(s: CurveSeg, f: Axes): V3[] {
+export function curveAcross(s: CurveSeg, f: Axes, close = false): V3[] {
   const P = s.pts;
   const T = s.tans;
   const out: V3[] = [];
@@ -118,6 +118,18 @@ export function curveAcross(s: CurveSeg, f: Axes): V3[] {
       r = reflect(reflect(r, v1, c1), v2, dot(v2, v2));
     }
     out.push(unit(sub(r, mul(T[i], dot(r, T[i])))));
+  }
+  if (close && out.length > 2) {
+    // Round a closed curve the carried frame comes back turned (by the curve's twist): that turn shared out along it,
+    // so the across closes up where it started.
+    const last = out.length - 1;
+    const t = T[last];
+    const b0 = cross(t, out[0]);
+    const miss = Math.atan2(dot(out[last], b0), dot(out[last], out[0]));
+    let total = 0;
+    const s0 = [0];
+    for (let i = 1; i < P.length; i++) s0.push((total += dist(P[i], P[i - 1])));
+    for (let i = 0; i <= last; i++) out[i] = unit(rotate(out[i], T[i], (-miss * s0[i]) / (total || 1)));
   }
   return out;
 }
@@ -1443,9 +1455,10 @@ export function edgeKeyFor(pick: TopoPick, taken: Iterable<string> = []): string
  * A part edge clicked while a Frame is open: followed by the frame (added to its edges, with a new lasting name), or
  * left out again (the others keep their names; picked again, it gets its old name back).
  */
-export function togglePathEdge(def: FrameDef, pick: TopoPick, same: (a: TopoPick, b: TopoPick) => boolean): FrameDef {
+export function togglePathEdge(def: FrameDef, pick: TopoPick, same: (a: TopoPick, b: TopoPick) => boolean, builtKey?: string | null): FrameDef {
   const list = def.edges ?? [];
-  const at = list.findIndex((e) => same(e, pick));
+  // The edge as found again in the last build (the part may have changed since it was picked), else as picked.
+  const at = builtKey ? list.findIndex((e) => e.key === builtKey && e.partId === pick.partId) : list.findIndex((e) => same(e, pick));
   const edges = at >= 0 ? list.filter((_, i) => i !== at) : [...list, { partId: pick.partId, ref: pick.ref, key: edgeKeyFor(pick, list.map((e) => e.key)) }];
   const { edges: _old, ...rest } = def;
   return edges.length ? { ...rest, edges } : rest;
@@ -1471,4 +1484,31 @@ export function laterPathMessage(features: { id: string }[], frameId: string, fe
   const me = features.findIndex((f) => f.id === frameId);
   const it = features.findIndex((f) => f.id === featureId);
   return me >= 0 && it > me ? "That comes after this frame in the list, so the frame can't follow it. Move the frame below it, or pick something else." : null;
+}
+
+/** A path piece's middle point. */
+export function segMid(s: PathSeg): V3 {
+  if (s.kind === "line") return mul(add(s.a, s.b), 0.5);
+  if (s.kind === "arc") return add(s.c, rotate(sub(s.a, s.c), s.axis, s.angle / 2));
+  return s.pts[Math.floor((s.pts.length - 1) / 2)];
+}
+
+/**
+ * Which of a frame's picked edges a clicked edge is, as they were found again in the last build (`pieces`, ids
+ * "<part>/<key>"): the key whose piece has the same ends and middle (within 1 µm per mm of size, at least 1 µm), or null.
+ * So an edge clicked after its part changed (a box made wider) is still recognised — to leave it out, or (Claude) to keep
+ * its name when it's given again.
+ */
+export function builtEdgeKey(edges: FrameDef["edges"], pieces: PathSeg[] | undefined, pick: TopoPick): string | null {
+  const r = pick.ref;
+  if (r.kind !== "edge" || !pieces?.length) return null;
+  for (const e of edges ?? []) {
+    if (e.partId !== pick.partId) continue;
+    const piece = pieces.find((x) => x.id === edgeSegId(e.partId, e.key));
+    if (!piece) continue;
+    const tol = Math.max(1e-3, 1e-6 * dist(piece.a, piece.b));
+    const ends = (dist(piece.a, r.a) < tol && dist(piece.b, r.b) < tol) || (dist(piece.a, r.b) < tol && dist(piece.b, r.a) < tol);
+    if (ends && dist(segMid(piece), r.mid) < Math.max(tol, 1e-3 * segLength(piece))) return e.key;
+  }
+  return null;
 }

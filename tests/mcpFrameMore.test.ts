@@ -51,6 +51,14 @@ describe("frames from Claude, more", () => {
     // Its corners could be set in the same call (the edges were found first), and every edge has its lasting name.
     expect(fr.frame!.corners).toHaveLength(1);
     expect(new Set(fr.frame!.edges!.map((e) => e.key)).size).toBe(4);
+    // The box made wider: giving the edges again (where they are now) keeps their names, so the members keep theirs.
+    const names = fr.frame!.edges!.map((e) => e.key);
+    const ids = s.build().parts.filter((p) => p.frame).map((p) => p.id).sort();
+    await ok(s, "edit_feature", { feature: "Box 1", width: 260 });
+    await ok(s, "edit_feature", { feature: fr.name, edges: [{ near: [130, 0, 50] }, { near: [260, 50, 50] }, { near: [130, 100, 50] }, { near: [0, 50, 50] }], edge_part: "Part 1" });
+    const again = s.doc.features.find((f) => f.id === fr.id)!;
+    expect(again.frame!.edges!.map((e) => e.key)).toEqual(names);
+    expect(s.build().parts.filter((p) => p.frame).map((p) => p.id).sort()).toEqual(ids);
     expect(s.build().parts.filter((p) => p.frame)).toHaveLength(4);
     expect(await fails(s, "add_feature", { type: "frame", edges: [{ near: [100, 0, 50] }] })).toContain("edge_part");
     expect(await fails(s, "add_feature", { type: "frame", profile: "timber", size: "44x44" })).toContain("needs a path");

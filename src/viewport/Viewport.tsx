@@ -44,7 +44,7 @@ import { sketchAreas } from "../sketch/areas";
 import { planDrag, type DragPlan } from "../assembly/drag";
 import { connectorFrameFor, frameLookup, solveWithParts } from "../assembly/mates";
 import { sectionPlane } from "./section";
-import { laterPathMessage, togglePathEdge, togglePathLine } from "../model/frame";
+import { builtEdgeKey, laterPathMessage, togglePathEdge, togglePathLine } from "../model/frame";
 import { linePlane, pickableSketchLines, referenceShape, setMirrorReference, setPatternDirection, sketchLine3D, type DirectionChoice, type PickableLine } from "../model/patternRefs";
 import { guardViewportZoom } from "./zoomGuard";
 import { NO_FILTER } from "./selectionFilter";
@@ -539,7 +539,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       const later = laterPathMessage(activeFeatures(s), own, target.item.partId.split(/[~@]/)[0]);
       if (later) return s.showToast(later);
       const pick = pickFor(s.parts, target.item);
-      if (pick) s.setDraftField({ frame: togglePathEdge(fr, pick, (a, b) => a.partId === b.partId && sameRef(a.ref, b.ref)) });
+      if (pick) s.setDraftField({ frame: togglePathEdge(fr, pick, (a, b) => a.partId === b.partId && sameRef(a.ref, b.ref), builtEdgeKey(fr.edges, s.framePaths[own], pick)) });
     }
     return;
   }

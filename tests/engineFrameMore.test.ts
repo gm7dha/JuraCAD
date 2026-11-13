@@ -11,7 +11,7 @@ import type { CurveDef, Feature } from "../src/model/types";
 import type { FrameDef } from "../src/model/frameTypes";
 import type { EdgeRef, TopoPick } from "../src/geometry/topoRef";
 import { helixLength } from "../src/model/curves";
-import { cornerKey, edgeKeyFor, planFrame } from "../src/model/frame";
+import { builtEdgeKey, cornerKey, edgeKeyFor, planFrame, togglePathEdge } from "../src/model/frame";
 import { builtInProfile, placedProfile, type ProfileShape } from "../src/model/frameProfiles";
 import { edgesOf, facesOf } from "../src/kernel/topology";
 import type { FrameEdge } from "../src/model/frameTypes";
@@ -83,6 +83,27 @@ describe("frames along part edges and curves (real OCCT)", () => {
     expect(r3.featureErrors).toEqual({});
     const left = r3.parts.filter((p) => p.frame).map((p) => p.id);
     expect(left.sort()).toEqual([edges[0], edges[2], edges[3]].map((e) => `${f.id}~${box.id}_${e.key}`).sort());
+  });
+
+  it("an edge clicked after its part changed (the box made wider) is recognised and left out, not added again", () => {
+    engine = new GeometryEngine();
+    const box = feature("box", { width: 200, depth: 100, height: 50 });
+    const part = engine.rebuild([box]).parts[0];
+    const edges = [edgeOf(box, part, [0, 0, 50], [200, 0, 50]), edgeOf(box, part, [200, 0, 50], [200, 100, 50]), edgeOf(box, part, [200, 100, 50], [0, 100, 50]), edgeOf(box, part, [0, 100, 50], [0, 0, 50])];
+    const f = frame({ edges });
+    const wider = { ...box, params: { ...box.params, width: "260" } };
+    const r = engine.rebuild([wider, f]);
+    expect(r.featureErrors).toEqual({});
+    const now = r.parts.find((p) => p.id === box.id)!;
+    // The right-hand edge, where it is now (x = 260): as the 3D view would pick it.
+    const click = edgeOf(box, now, [260, 0, 50], [260, 100, 50]);
+    const key = builtEdgeKey(f.frame!.edges, r.framePaths![f.id], click);
+    expect(key).toBe(edges[1].key);
+    const same = (a: TopoPick, b: TopoPick) => a.partId === b.partId && JSON.stringify(a.ref) === JSON.stringify(b.ref);
+    const next = togglePathEdge(f.frame!, click, same, key);
+    expect(next.edges!.map((e) => e.key)).toEqual([edges[0], edges[2], edges[3]].map((e) => e.key));
+    const r2 = engine.rebuild([wider, { ...f, frame: next }]);
+    expect(r2.parts.filter((p) => p.frame)).toHaveLength(3);
   });
 
   it("mixes a sketch line with a part edge: mitred where they meet, no overlap", () => {
@@ -167,6 +188,26 @@ describe("frames along part edges and curves (real OCCT)", () => {
     const l = Math.hypot(...best!.dir);
     const cos = Math.abs(best!.dir[0] * endX[0] + best!.dir[1] * endX[1] + best!.dir[2] * endX[2]) / l;
     expect((Math.acos(Math.min(1, cos)) * 180) / Math.PI).toBeLessThan(0.1);
+  });
+
+  it("a bar round a closed fit spline: builds, sound, area × length", () => {
+    engine = new GeometryEngine();
+    const loop = curve({ kind: "fitSpline", points: [{ p: [0, 0, 0] }, { p: [60, 10, 15] }, { p: [70, 70, 0] }, { p: [-10, 60, -10] }], closed: true });
+    const bar = frame({ curves: [loop.id], profile: { kind: "flat", size: "20x3" } });
+    const r = engine.rebuild([loop, bar]);
+    expect(r.featureErrors).toEqual({});
+    const m = r.parts.find((p) => p.frame)!;
+    expect(m.frame!.curved).toBe(true);
+    expect(relativeError(volumes()[0], 60 * m.frame!.length)).toBeLessThan(5e-3);
+    expect(engine.check("normal").parts.every((p) => p.geometryValid)).toBe(true);
+    // A flat closed curve too (it was the guide's first and last point being the same that broke it).
+    const flat = curve({ kind: "fitSpline", points: [{ p: [0, 0, 0] }, { p: [40, 0, 0] }, { p: [40, 30, 0] }, { p: [0, 30, 0] }], closed: true });
+    const fb = frame({ curves: [flat.id], profile: { kind: "flat", size: "20x3" } });
+    const rf = engine.rebuild([flat, fb]);
+    expect(rf.featureErrors).toEqual({});
+    const mf = rf.parts.find((p) => p.frame)!;
+    expect(relativeError(volumes()[0], 60 * mf.frame!.length)).toBeLessThan(5e-3);
+    expect(engine.check("normal").parts.every((p) => p.geometryValid)).toBe(true);
   });
 
   it("refuses a curve that comes after the frame, and says when an edge's part has gone", () => {

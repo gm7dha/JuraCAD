@@ -5,7 +5,7 @@
 import type { Feature } from "../model/types";
 import type { FrameCornerChoice, FrameDef, FrameProfileKind } from "../model/frameTypes";
 import { PROFILE_KINDS, ANCHORS } from "../model/frameProfiles";
-import { edgeKeyFor, frameLayout, frameCutList, cutListCsv, cutListLines, sketchPathSegments, type PathSeg } from "../model/frame";
+import { builtEdgeKey, edgeKeyFor, frameLayout, frameCutList, cutListCsv, cutListLines, sketchPathSegments, type PathSeg } from "../model/frame";
 import { amount, bool, InputError, list, noExtras, oneOf, text, xyz, type Obj } from "./args";
 import { pickEdges } from "./picks";
 import { basePlane } from "./planeSpec";
@@ -57,9 +57,13 @@ export function applyFrame(f: Feature, a: Obj, ctx: SpecContext): void {
       const edges = pickEdges(part, picked, "edges").filter((p) => p.ref.kind === "edge");
       if (!edges.length) throw new InputError("edges: give edges (E-numbers from list_edges), not faces.");
       // Each with its lasting name (the same edge keeps the name it had, so its member keeps its colour and mates).
+      // An edge the frame already follows (as found again in the last build, if its part has changed since) keeps its name.
+      const before = def.edges;
+      const pieces = before?.length && ctx.editing ? ctx.session.build().framePaths?.[f.id] : undefined;
       const keys: string[] = [];
       def.edges = edges.map((e) => {
-        const key = edgeKeyFor(e, keys);
+        const kept = builtEdgeKey(before, pieces, e) ?? before?.find((b) => b.partId === e.partId && JSON.stringify(b.ref) === JSON.stringify(e.ref))?.key;
+        const key = kept && !keys.includes(kept) ? kept : edgeKeyFor(e, keys);
         keys.push(key);
         return { ...e, key };
       });

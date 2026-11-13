@@ -771,10 +771,16 @@
     the same angle to `normals`, else rotation-minimising (double reflection, exactly undone going back). Curve members are
     `pipeLoop`s (MakePipeShell: Frenet for helices, else steered by `plannedGuide` — a B-spline `curveAcross` puts 0.2 × the
     tightest bend (≤ 5) off the curve along the planned across, as sweep.ts's twistGuide, since CorrectedFrenet drifts ~1° on 3D
-    curves) along the real edge (`FrameSpines`, by seg id; `reversed` walks it back), holes swept and cut. `RebuildResult.framePaths` →
+    curves) along the real edge (`FrameSpines`, by seg id; `reversed` walks it back), holes swept and cut. A closed curve is
+    swept in two halves (`halves`: BRep_Tool.Curve cut at the middle of its parameter — the samples are even, so the middle
+    sample is there), each with an open guide, the frame's turn round the loop shared out (`curveAcross(…, close)`); a pipe
+    round a closed spine unguided is made a solid from its shell (MakeSolid would cap the seam). Each way is tried in turn
+    and the first sound (BRepCheck) result kept; OpenCascade's own error text is never shown (applyFrame's catch). `RebuildResult.framePaths` →
     `store.framePaths` (connect.ts) give the dialog's corners those pieces; Claude's frame builds itself once without corners
     first (`pathSegments` in frameSpec.ts) so corners on edges/curves go in the same call. Clicks: an edge (Viewport, not the
-    frame's own) → `togglePathEdge`, a curve (geomPick) → `togglePathCurve`; things later in the list are refused at once
+    frame's own) → `togglePathEdge` with `builtEdgeKey` (the clicked edge matched — ends and middle — against the pieces as
+    re-found in the last build, "<part>/<key>", so a changed part's edge is still recognised; Claude giving `edges` again
+    keeps the names the same way), a curve (geomPick) → `togglePathCurve`; things later in the list are refused at once
     (`laterPathMessage`). Dependents: the path is one list
     of sketches + curves + edges' parts (`frameUses` pathCurves/pathParts; `withoutGone` drops gone ones).
   - Mitres where 3+ meet: `findCorners` offers "mitre" when `mitreable` (no straight-on pair, `sharpestPair` ≥ SHARPEST); each

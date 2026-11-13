@@ -5791,7 +5791,9 @@ export class GeometryEngine {
       });
     } catch (e) {
       solids.forEach((x) => x.delete());
-      return describeError(e, "Couldn't make this frame.");
+      // Our own plain messages pass on; OpenCascade's own text never reaches the user.
+      const said = e instanceof Error ? e.message : "";
+      return said && !/Standard_|BRep|Geom|TopoDS|OCC|BindingError|is not a function|undefined/.test(said) ? said : "Couldn't make this frame. Try a smaller profile, or a smoother path with gentler bends.";
     } finally {
       envelopes.forEach((x) => x.delete());
       spines.forEach((w) => w.delete());
@@ -5822,7 +5824,8 @@ export class GeometryEngine {
     const fromEdge = (e: Edge, id: string, frenet: boolean): PathSeg | null => {
       const length = measureLength(e);
       const kind = e.geomType;
-      const n = kind === "LINE" ? 4 : kind === "CIRCLE" ? 48 : Math.min(360, Math.max(48, Math.ceil(length / 2)));
+      // (Even, so a closed curve's middle sample is the middle of its parameter: kernel/frame.ts cuts it there.)
+      const n = kind === "LINE" ? 4 : kind === "CIRCLE" ? 48 : 2 * Math.min(180, Math.max(24, Math.ceil(length / 4)));
       const pts: Vec3[] = [];
       const tans: Vec3[] = [];
       for (let i = 0; i <= n; i++) {
