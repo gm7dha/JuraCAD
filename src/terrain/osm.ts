@@ -36,8 +36,10 @@ export interface OsmData {
   nodes: number;
   /** Woods and forests (outline first, then clearings), when the map has any — only coloured, never pressed into the ground. */
   woods?: LatLon[][][];
-  /** Outlines of towns' streets and parks (residential, shops, industry, parks, gardens, golf courses), when the map has any — hill routes leave them out. */
+  /** Outlines of towns (housing, shops, industry), when the map has any — hill routes never run through them. */
   builtUp?: LatLon[][];
+  /** Outlines of parks, gardens, playing fields and golf courses — a hill route there needs a signed route or a big climb. */
+  parks?: LatLon[][];
 }
 
 /**
@@ -45,7 +47,8 @@ export interface OsmData {
  * on the puzzle (mm), a shape's area there (mm²); what's smaller at the puzzle's scale is left off.
  */
 export interface MapFeatures {
-  lines: { kind: OsmLineKind; pts: XY[]; least?: number }[];
+  /** `thin`: a tidy mark — a thin, flat-bottomed line (`THIN_GROOVE`), drawn red (paths) or dark (roads). */
+  lines: { kind: OsmLineKind; pts: XY[]; least?: number; thin?: true }[];
   shapes: { kind: OsmShapeKind; rings: XY[][]; least?: number }[];
   names: { kind: OsmNameKind; text: string; at: XY }[];
   /** Woods (rings, outline first), for full-colour prints only; missing when there are none. */
@@ -107,9 +110,15 @@ const FLOWING = new Set(["river", "stream", "canal", "ditch", "drain", "wastewat
 const isFlowing = (t: Tags) => t.waterway === "riverbank" || t.waterway === "dock" || FLOWING.has(t.water ?? "");
 
 /** Towns' streets and parks: residential, shops and industry, parks, gardens, playing fields, golf courses. */
-const BUILT_UP_LANDUSE = new Set(["residential", "commercial", "retail", "industrial", "recreation_ground", "cemetery", "village_green", "allotments", "garages"]);
-const BUILT_UP_LEISURE = new Set(["park", "garden", "golf_course", "playground", "recreation_ground", "pitch", "sports_centre", "stadium"]);
-const isBuiltUp = (t: Tags) => BUILT_UP_LANDUSE.has(t.landuse ?? "") || BUILT_UP_LEISURE.has(t.leisure ?? "") || !!t.golf;
+const TOWN_LANDUSE = new Set(["residential", "commercial", "retail", "industrial", "garages"]);
+const PARK_LANDUSE = new Set(["recreation_ground", "cemetery", "village_green", "allotments"]);
+const PARK_LEISURE = new Set(["park", "garden", "golf_course", "playground", "recreation_ground", "pitch", "sports_centre", "stadium"]);
+const isTown = (t: Tags) => TOWN_LANDUSE.has(t.landuse ?? "");
+const isPark = (t: Tags) => PARK_LANDUSE.has(t.landuse ?? "") || PARK_LEISURE.has(t.leisure ?? "") || !!t.golf;
+const isBuiltUp = (t: Tags) => isTown(t) || isPark(t);
+const addBuilt = (data: OsmData, t: Tags, ring: LatLon[]) => (isTown(t) ? (data.builtUp ??= []) : (data.parks ??= [])).push(ring);
+/** Pavements and crossings drawn as footways (footway=sidewalk/crossing): never walking routes. */
+const PAVEMENTS = new Set(["sidewalk", "crossing", "access_aisle", "traffic_island"]);
 
 /** Walking route relations. */
 const isWalkingRoute = (t: Tags) => t.type === "route" && ["hiking", "foot", "walking"].includes(t.route ?? "");
@@ -232,7 +241,7 @@ export function readOsm(text: string): OsmData {
       const pts = pointsOf(refs);
       if (pts.length >= 2) {
         const line: OsmData["lines"][number] = { kind, name: tags.name, pts };
-        if (tags.highway) line.highway = tags.highway;
+        if (tags.highway) line.highway = PAVEMENTS.has(tags.footway ?? "") ? "sidewalk" : tags.highway;
         if (onRoute.has(id) || (tags.sac_scale && tags.sac_scale !== "no")) line.hike = true;
         data.lines.push(line);
       }
@@ -240,7 +249,7 @@ export function readOsm(text: string): OsmData {
     }
     if (isBuiltUp(tags) && !isWood(tags) && !shapeKind(tags) && refs.length >= 4 && refs[0] === refs[refs.length - 1]) {
       const ring = pointsOf(refs);
-      if (ring.length === refs.length) (data.builtUp ??= []).push(ring);
+      if (ring.length === refs.length) addBuilt(data, tags, ring);
       continue;
     }
     if (isWood(tags) && refs.length >= 4 && refs[0] === refs[refs.length - 1]) {
@@ -270,7 +279,7 @@ export function readOsm(text: string): OsmData {
       const holes = inners.filter((h) => insideLatLon(h[0], outer));
       if (shape) data.shapes.push(shapeOf(shape, tags, [outer, ...holes]));
       else if (wood) (data.woods ??= []).push([outer, ...holes]);
-      else (data.builtUp ??= []).push(outer);
+      else addBuilt(data, tags, outer);
     }
   }
   for (const { at, tags } of nodeTags) {
@@ -377,7 +386,11 @@ export function featuresOnGrid(data: OsmData, detail: OsmDetail, choice: MarkCho
   const picked = tidy
     ? tidyMarks(
         data.lines.filter((l) => all || l.kind !== "road").map((l) => ({ kind: l.kind, pts: l.pts.map(onGrid), highway: l.highway, hike: l.hike })),
-        (data.builtUp ?? []).map((r) => r.map(onGrid)),
+        {
+          towns: (data.builtUp ?? []).map((r) => r.map(onGrid)),
+          parks: (data.parks ?? []).map((r) => r.map(onGrid)),
+          woods: (data.woods ?? []).map((w) => w[0].map(onGrid)),
+        },
         choice,
         grid,
       )

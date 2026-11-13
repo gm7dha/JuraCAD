@@ -723,9 +723,10 @@ function IslandTopView({ puzzle }: { puzzle: IslandBuilt | null }) {
     for (const line of puzzle.marks.lines) {
       ctx.beginPath();
       line.pts.forEach((p, i) => (i ? ctx.lineTo(...px(p)) : ctx.moveTo(...px(p))));
-      const stroke = markStroke(line.kind);
+      const stroke = markStroke(line.kind, line.thin);
       ctx.strokeStyle = stroke.colour;
       ctx.lineWidth = stroke.width;
+      ctx.setLineDash(stroke.dash);
       ctx.stroke();
     }
     ctx.restore();

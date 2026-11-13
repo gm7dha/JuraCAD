@@ -46,11 +46,14 @@ export const DETAILS: [OsmDetail, string][] = [
   ["all", "Everything: roads and buildings too"],
 ];
 
-/** How a map line is drawn in the windows' top views: paths red, roads near-black, rivers blue — all thin. */
-export function markStroke(kind: OsmLineKind): { colour: string; width: number } {
-  if (kind === "river" || kind === "stream") return { colour: "rgba(40,100,200,0.9)", width: kind === "river" ? 1.4 : 1 };
-  if (kind === "road") return { colour: "rgba(31,31,31,0.9)", width: 1 };
-  return { colour: "rgba(210,42,30,0.95)", width: 1 };
+/** How a map line is drawn in the windows' top views: tidy (thin) paths red and roads near-black; everything else as before. */
+export function markStroke(kind: OsmLineKind, thin?: boolean): { colour: string; width: number; dash: number[] } {
+  if (thin) return { colour: kind === "road" ? "rgba(31,31,31,0.9)" : "rgba(210,42,30,0.95)", width: 1, dash: [] };
+  return {
+    colour: kind === "river" || kind === "stream" ? "rgba(40,100,200,0.9)" : kind === "road" ? "rgba(200,60,40,0.9)" : "rgba(120,60,20,0.9)",
+    width: kind === "river" || kind === "road" ? 1.6 : 1,
+    dash: kind === "path" ? [3, 2] : [],
+  };
 }
 
 /** The three "which marks" choices (lochs, paths, roads) and the hill-route rule in words. */
@@ -76,7 +79,8 @@ export function MarkChoices({ choice, onChange, roads }: { choice: MarkChoice; o
         {choice.paths === "hills" ? `${HILL_RULE} ` : ""}
         {choice.water === "standing" ? "Only lochs, lakes and reservoirs big enough to see are shown — no rivers or streams. " : ""}
         {roads && choice.roads === "trunk" ? "Only motorways and trunk roads are shown. " : ""}
-        Paths and roads are thin lines (0.6 mm), so they print neatly.
+        {roads && choice.roads === "main" ? "Only motorways, trunk roads and A roads are shown. " : ""}
+        {choice.paths === "hills" || (roads && choice.roads !== "all") ? "These are thin lines (0.6 mm wide, 0.4 mm deep), so they print neatly." : ""}
       </p>
     </>
   );
@@ -690,9 +694,10 @@ function TopView({ grid, area, puzzle, picture, features }: { grid: HeightGrid; 
     for (const line of shown.lines) {
       ctx.beginPath();
       line.pts.forEach(([e, n], i) => (i ? ctx.lineTo(...toPx(e, n)) : ctx.moveTo(...toPx(e, n))));
-      const stroke = markStroke(line.kind);
+      const stroke = markStroke(line.kind, line.thin);
       ctx.strokeStyle = stroke.colour;
       ctx.lineWidth = stroke.width;
+      ctx.setLineDash(stroke.dash);
       ctx.stroke();
     }
     ctx.setLineDash([]);

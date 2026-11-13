@@ -948,6 +948,10 @@ export function codeKeys(columns: { joins: (Key | null)[] }[], cols: number, row
 
 const columnName = (c: number): string => (c < 26 ? String.fromCharCode(65 + c) : columnName(Math.floor(c / 26) - 1) + String.fromCharCode(65 + (c % 26)));
 
+/** With thin map lines, top pieces are sampled at least this finely (mm), up to this many a side. */
+export const THIN_SAMPLE = 0.25;
+export const MOST_THIN_SAMPLES = 240;
+
 /** The whole puzzle from the heights of an area `areaWidth` × `areaHeight` m. Throws if `mountainChecks` has problems. */
 export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeight: number, spec: MountainSpec, features: MapFeatures = NO_FEATURES): MountainPuzzle {
   const layout = layoutFor(grid, areaWidth, areaHeight, spec);
@@ -961,11 +965,17 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
   const zOf = (h: number) => base + (h - layout.low) * k * spec.exaggeration;
   const plain = (x: number, y: number) => zOf(heightAt(grid, layout.e0 + x / k, layout.n0 + y / k));
   // Paths, rivers, lochs and buildings from a map, pressed into the ground.
-  const marks = groundMarks(featuresAtScale(features, k).features, layout.e0, layout.n0, k, cols * cube, rows * cube, plain);
+  const used = featuresAtScale(features, k).features;
+  const marks = groundMarks(used, layout.e0, layout.n0, k, cols * cube, rows * cube, plain);
   const Z = marks.empty ? plain : (x: number, y: number) => marks.apply(x, y, plain(x, y));
   const snowZ = spec.snowline === null ? Infinity : zOf(spec.snowline);
   // Samples along each side of a top piece: about one per height-data point (finer for map marks), 8 to 48 (64).
-  const n = marks.empty ? Math.min(48, Math.max(8, Math.ceil(cube / Math.max(0.6, grid.spacing * k)))) : Math.min(64, Math.max(16, Math.ceil(cube / 0.45)));
+  // Thin tidy lines (0.6 mm) need samples at most `THIN_SAMPLE` apart, so one always falls on the groove's flat bottom.
+  const n = marks.empty
+    ? Math.min(48, Math.max(8, Math.ceil(cube / Math.max(0.6, grid.spacing * k))))
+    : used.lines.some((l) => l.thin)
+      ? Math.min(MOST_THIN_SAMPLES, Math.max(16, Math.ceil(cube / THIN_SAMPLE)))
+      : Math.min(64, Math.max(16, Math.ceil(cube / 0.45)));
   const thinnest = g.depth + 2;
   // Layer 0 is the thin plate, the rest full cubes.
   const plate = plateFor(spec);

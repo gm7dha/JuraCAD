@@ -46,10 +46,11 @@ function sampleOsm(): string {
 }
 
 /**
- * A bigger made-up map round the same hill (mapMarks.test.ts): what a tidy puzzle keeps — a reservoir, a trunk road, a long
- * path up the hill in three pieces (with a side path at a junction), a flat signed walking route — and what it leaves out:
- * a river, a canal, a riverbank, a tiny pond, a minor road and a slip road, a footway up the hill, a path through a park
- * on the hill, a path in a housing estate, and a long flat farm track.
+ * A bigger made-up map round the same hill (mapMarks.test.ts): what a tidy puzzle keeps — a reservoir, a trunk road, an A road, a long
+ * path up the hill in three pieces (with a side path at a junction), a public footpath (a footway) up the other side, a
+ * path climbing through a park on the hill (like Arthur's Seat), a flat signed walking route — and what it leaves out: a
+ * river, a canal, a riverbank, a tiny pond, a minor road and a slip road, a pavement up the hill, a path in a housing
+ * estate, and a long flat farm track.
  */
 export function hillOsm(): string {
   const base = { e: 201000, n: 770500 };
@@ -85,6 +86,7 @@ export function hillOsm(): string {
   // Kept.
   ring(box(300, 1800, 900, 2200), { landuse: "reservoir", name: "Big Reservoir" });
   line([[0, 100], [2000, 120], [4000, 150]], { highway: "trunk", ref: "A82" });
+  line([[0, 1500], [4000, 1550]], { highway: "primary", ref: "A841" });
   // The hill path in three pieces, joined at shared nodes; a side path leaves at the second join.
   const a = node(200, 500);
   const b = node(800, 700);
@@ -102,7 +104,8 @@ export function hillOsm(): string {
   ring(box(3000, 2000, 3010, 2010), { natural: "water", water: "pond" });
   line([[0, 300], [4000, 320]], { highway: "unclassified" });
   line([[2000, 120], [2100, 300]], { highway: "trunk_link" });
-  line([[1800, 1000], [1800, 2000]], { highway: "footway" });
+  line([[1800, 1000], [1800, 2000]], { highway: "footway", footway: "sidewalk" });
+  line([[2600, 600], [2300, 850], [2000, 1100]], { highway: "footway", designation: "public_footpath" });
   ring(box(1950, 1250, 2650, 1750), { leisure: "park" });
   line([[2000, 1300], [2300, 1500], [2600, 1700]], { highway: "path" });
   ring(box(3400, 200, 3900, 700), { landuse: "residential" });

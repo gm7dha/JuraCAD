@@ -14,7 +14,7 @@
  * colour at a band's height).
  */
 import { weld } from "../geometry/threeMf";
-import { GROOVES, WATER_DROP } from "./groundMarks";
+import { grooveOf, GROOVES, THIN_GROOVE, WATER_DROP } from "./groundMarks";
 import type { Body } from "./mountainPuzzle";
 import type { MapFeatures, OsmLineKind } from "./osm";
 import type { P2 } from "./triangulate";
@@ -486,7 +486,7 @@ export type MapKind = (typeof MapKind)[keyof typeof MapKind];
 
 /** The map's things in puzzle mm (x east, y north from the puzzle's south-west corner). */
 export interface PuzzleMap {
-  lines: { kind: OsmLineKind; pts: XY[] }[];
+  lines: { kind: OsmLineKind; pts: XY[]; thin?: true }[];
   shapes: { kind: "water" | "building"; rings: XY[][] }[];
   woods: XY[][][];
 }
@@ -497,7 +497,7 @@ export const NO_MAP: PuzzleMap = { lines: [], shapes: [], woods: [] };
 export function mapOnPuzzle(f: MapFeatures, e0: number, n0: number, k: number): PuzzleMap {
   const at = ([e, n]: XY): XY => [(e - e0) * k, (n - n0) * k];
   return {
-    lines: f.lines.map((l) => ({ kind: l.kind, pts: l.pts.map(at) })),
+    lines: f.lines.map((l) => (l.thin ? { kind: l.kind, pts: l.pts.map(at), thin: true as const } : { kind: l.kind, pts: l.pts.map(at) })),
     shapes: f.shapes.map((s) => ({ kind: s.kind, rings: s.rings.map((r) => r.map(at)) })),
     woods: (f.woods ?? []).map((w) => w.map((r) => r.map(at))),
   };
@@ -554,7 +554,7 @@ export function mapRaster(map: PuzzleMap, width: number, height: number): MapRas
   for (const s of map.shapes) fill(s.rings, s.kind === "water" ? MapKind.Water : MapKind.Building);
   const lineKind: Record<OsmLineKind, MapKind> = { path: MapKind.Path, track: MapKind.Track, road: MapKind.Road, river: MapKind.Water, stream: MapKind.Water };
   for (const line of map.lines) {
-    const hw = GROOVES[line.kind].width / 2;
+    const hw = grooveOf(line).width / 2;
     const kind = lineKind[line.kind];
     for (let s = 0; s + 1 < line.pts.length; s++) {
       const [a, b] = [line.pts[s], line.pts[s + 1]];
@@ -824,7 +824,7 @@ export function tintAt(bands: ColourBand[], h: number): RGB {
 }
 
 /** How far the map can press ground below where it would be (mm): the deepest groove, or water below its shore. */
-export const DEEPEST_MARK = Math.max(WATER_DROP, ...Object.values(GROOVES).map((g) => g.depth));
+export const DEEPEST_MARK = Math.max(WATER_DROP, THIN_GROOVE.depth, ...Object.values(GROOVES).map((g) => g.depth));
 
 /** Every triangle corner of a piece coloured; the map's colours only on a column's `top` piece (the others are hidden). */
 export function fullColours(bodies: Body[], ctx: FullContext, top = true): ColouredMesh {

@@ -79,7 +79,7 @@ export interface IslandPiece extends PuzzlePiece {
 
 /** The map marks on the puzzle (mm, x east, y north), for the preview: lines clipped to the land, shapes as they are. */
 export interface IslandMarks {
-  lines: { kind: OsmLineKind; pts: XY[] }[];
+  lines: { kind: OsmLineKind; pts: XY[]; thin?: true }[];
   shapes: { kind: "water" | "building"; rings: XY[][] }[];
   /** Lines and shapes on the land, and how many were too small to show at this scale. */
   shown: number;
@@ -128,6 +128,8 @@ export const smallestPiece = (piece: number) => Math.max(60, (0.4 * piece) ** 2)
 
 /** The thinnest base allowed (mm): map marks never take the ground below it either. */
 export const LEAST_BASE = 1.5;
+/** The finest grid cell is used up to this size (mm) when the island has thin map lines (hill routes, trunk roads). */
+export const THIN_CELL = 0.4;
 /** Shortest line (mm on the puzzle) and smallest loch (mm²) worth pressing in; smaller ones would be dimples. */
 export const LEAST_MARK_LINE = 3;
 export const LEAST_MARK_WATER = 4;
@@ -371,7 +373,9 @@ function buildIsland(
   const k = kGiven ?? Math.min((spec.bed[0] - 10) / areaWidth, (spec.bed[1] - 10) / areaHeight) * spec.scale;
   const W = areaWidth * k;
   const H = areaHeight * k;
-  const cell = Math.min(0.6, Math.max(0.25, Math.sqrt((W * H) / 700000)));
+  // Thin map lines (0.6 mm) need the mesh's points at most `THIN_CELL` apart, so one always lands on a groove's flat bottom.
+  const most = features.lines.some((l) => l.thin) ? THIN_CELL : 0.6;
+  const cell = Math.min(most, Math.max(0.25, Math.sqrt((W * H) / 700000)));
   const nx = Math.ceil(W / cell);
   const ny = Math.ceil(H / cell);
   const N = nx * ny;
@@ -679,7 +683,7 @@ function marksOnLand(f: MapFeatures, tooSmall: number, sw: { e: number; n: numbe
     let any = false;
     const end = () => {
       if (run.length >= 2) {
-        lines.push({ kind: line.kind, pts: run });
+        lines.push(line.thin ? { kind: line.kind, pts: run, thin: true } : { kind: line.kind, pts: run });
         any = true;
       }
       run = [];
