@@ -36,11 +36,12 @@ import { AssemblyFeaturesSection, InstanceMenu } from "./AssemblyFeaturesUI";
 import { editInContext, startAsmCut, useAsmFeatures, useModifiedCopies } from "./assemblyFeatureState";
 import { NamedViewsButton } from "./ViewTools";
 
-function ToolButton({ label, icon, onClick, disabled, active, title }: { label: string; icon: ReactNode; onClick?: () => void; disabled?: boolean; active?: boolean; title?: string }) {
+/** `iconOnly`: Undo, Fit… show just their icon, as on the Part Studio's toolbar (the name is in the tooltip). */
+function ToolButton({ label, icon, onClick, disabled, active, title, iconOnly }: { label: string; icon: ReactNode; onClick?: () => void; disabled?: boolean; active?: boolean; title?: string; iconOnly?: boolean }) {
   return (
-    <button className={`tool-button${active ? " active" : ""}`} onClick={onClick} disabled={disabled} title={title ?? label} aria-label={label}>
+    <button className={`tool-button${iconOnly ? " icon-only" : ""}${active ? " active" : ""}`} onClick={onClick} disabled={disabled} title={title ?? label} aria-label={label}>
       {icon}
-      <span>{label}</span>
+      {!iconOnly && <span>{label}</span>}
     </button>
   );
 }
@@ -108,8 +109,8 @@ export function AssemblyToolbar() {
   return (
     <div className="toolbar" role="toolbar" aria-label="Assembly tools">
       <div className="tool-group">
-        <ToolButton label="Undo" icon={<Icons.Undo />} onClick={undo} disabled={!canUndo} title={`Undo (${shortcut(platform, "Z")})`} />
-        <ToolButton label="Redo" icon={<Icons.Redo />} onClick={redo} disabled={!canRedo} title={`Redo (${shortcut(platform, platform === "mac" ? "Z" : "Y", { shift: platform === "mac" })})`} />
+        <ToolButton label="Undo" icon={<Icons.Undo />} onClick={undo} disabled={!canUndo} title={`Undo (${shortcut(platform, "Z")})`} iconOnly />
+        <ToolButton label="Redo" icon={<Icons.Redo />} onClick={redo} disabled={!canRedo} title={`Redo (${shortcut(platform, platform === "mac" ? "Z" : "Y", { shift: platform === "mac" })})`} iconOnly />
       </div>
       <div className="tool-divider" />
       <div className="tool-group">
@@ -310,11 +311,12 @@ export function AssemblyToolbar() {
           disabled={!asm?.instances.length}
           active={sectionOn}
           title="Section view — slice the view open to see inside"
+          iconOnly
         />
       </div>
       <div className="tool-group">
-        <ToolButton label="Fit" icon={<Icons.Fit />} onClick={() => viewportApi.current?.fit()} title="Zoom to fit (F)" />
-        <NamedViewsButton />
+        <ToolButton label="Fit" icon={<Icons.Fit />} onClick={() => viewportApi.current?.fit()} title="Zoom to fit (F)" iconOnly />
+        <NamedViewsButton compact />
         <ToolButton
           label="Picture"
           icon={<Icons.Picture />}

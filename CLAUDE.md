@@ -1771,6 +1771,13 @@
   make exactly the old features. Tests: libraryBurrPatterns (pure; badges vs the solution for seeds 1–12 of each difficulty), engineBurrPatterns (heavy, own file: volumes lost =
   engraving, no overlaps, the first few free moves of the plain cubes still free half a cube at a time; pieces reach past the plain ones only beyond
   their ends), mcpBurrPatterns.
+- Toolbars: the Part Studio's is laid out by the pure `src/app/toolbarLayout.ts` (`STUDIO_TOOLBAR`: slots of tool keys,
+  `STUDIO_TOOLS` = every key, each exactly once — tests/toolbarLayout; Toolbar.tsx's `tools` record must define each), grouped
+  as in Onshape so it fits 1280 px (the smoke test checks, and shots toolbar1280/toolbarmenu/toolbaripad): a slot of several
+  tools is a `ToolGroupButton` (the last one used shows, `partsmith.toolGroup.<id>`; `GroupItem.short` = a shorter face label,
+  `divider` = a line above it in the list; `compact` = icon only). Undo/Redo, Section, Fit, Views and Pick are icon-only
+  (`.tool-button.icon-only`) on every toolbar. Sketch families, the relations under "More relations ▾" (`MORE_RELATIONS`) and
+  the Text / Insert DXF / Insert image group are listed there too. Smoke: click tools with `tool(name)` (opens the ▾ when needed).
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
   fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);

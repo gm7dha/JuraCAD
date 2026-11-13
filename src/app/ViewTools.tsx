@@ -47,7 +47,8 @@ function CameraIcon() {
 }
 
 /** The selection filter: which kinds of thing a click in the 3D view picks (Part Studios). */
-export function SelectFilterButton() {
+/** `compact`: just the icon while nothing is filtered (the toolbar is short of room); what is picked shows when filtering. */
+export function SelectFilterButton({ compact = false }: { compact?: boolean }) {
   const filter = useStore((s) => s.selectFilter);
   const set = useStore((s) => s.setSelectFilter);
   const [open, setOpen] = useState(false);
@@ -57,14 +58,14 @@ export function SelectFilterButton() {
     <>
       <button
         ref={button}
-        className={`tool-button${on ? " active" : ""}`}
+        className={`tool-button${compact && !on ? " icon-only" : ""}${on ? " active" : ""}`}
         onClick={() => setOpen((o) => !o)}
         aria-label="Selection filter"
         aria-expanded={open}
         title={`Selection filter — choose what a click in the 3D view picks (now: ${filterSummary(filter).toLowerCase()})`}
       >
         <FilterIcon />
-        <span>{on ? filterSummary(filter) : "Pick"}</span>
+        {(on || !compact) && <span>{on ? filterSummary(filter) : "Pick"}</span>}
       </button>
       {open && (
         <PlacedPopup className="colour-popover view-tools-popup" role="dialog" label="Selection filter" anchor={() => boxOf(button.current)} owner={button} onClose={() => setOpen(false)} focusFirst>
@@ -87,15 +88,15 @@ export function SelectFilterButton() {
 }
 
 /** Named views: save the camera under a name, and go back to it (Part Studios and assemblies). */
-export function NamedViewsButton() {
+export function NamedViewsButton({ compact = false }: { compact?: boolean }) {
   const views = useOwnViews();
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   return (
     <>
-      <button ref={button} className="tool-button" onClick={() => setOpen((o) => !o)} aria-label="Named views" aria-expanded={open} title="Named views — save the way you're looking at the model under a name, and come back to it">
+      <button ref={button} className={`tool-button${compact ? " icon-only" : ""}`} onClick={() => setOpen((o) => !o)} aria-label="Named views" aria-expanded={open} title="Named views — save the way you're looking at the model under a name, and come back to it">
         <CameraIcon />
-        <span>Views</span>
+        {!compact && <span>Views</span>}
       </button>
       {open && (
         <PlacedPopup className="colour-popover view-tools-popup" role="dialog" label="Named views" anchor={() => boxOf(button.current)} owner={button} onClose={() => setOpen(false)} focusFirst>

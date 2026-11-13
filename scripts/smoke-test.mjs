@@ -123,23 +123,24 @@ async function pngPixels(png) {
   return out;
 }
 
-async function shot(name) {
+/** A screenshot; `clip` takes just part of the page, `width` is the small copy's (560 unless given), `pg` another tab. */
+async function shot(name, { pg = page, clip, width = 560 } = {}) {
   shotNumber++;
   const base = `${shotDir}/${shotNumber}-${name}`;
-  const buffer = await page.screenshot({ type: "jpeg", quality: 70 });
+  const buffer = await pg.screenshot({ type: "jpeg", quality: 70, ...(clip ? { clip } : {}) });
   writeFileSync(`${base}.jpg`, buffer);
   if (wantShots && (showOnly.length === 0 || showOnly.includes(name) || name === "failure")) {
     // A small copy, sent back as annotations by the next CI steps.
-    const small = await page.evaluate(async (b64) => {
+    const small = await pg.evaluate(async ({ b64, w }) => {
       const img = new Image();
       img.src = `data:image/jpeg;base64,${b64}`;
       await img.decode();
       const c = document.createElement("canvas");
-      c.width = 560;
-      c.height = Math.round((img.height / img.width) * 560);
+      c.width = Math.min(w, img.width);
+      c.height = Math.round((img.height / img.width) * c.width);
       c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
       return c.toDataURL("image/jpeg", 0.5).split(",")[1];
-    }, buffer.toString("base64"));
+    }, { b64: buffer.toString("base64"), w: width });
     writeFileSync(`${base}.b64`, small);
   }
 }
@@ -167,6 +168,31 @@ try {
   await page.waitForFunction(() => document.querySelector(".part-list")?.textContent?.includes("Part 1"), null, {
     timeout: 30_000,
   });
+
+  step = "the Part Studio's toolbar fits a 1280 px window";
+  let toolbarReport;
+  {
+    await page.setViewportSize({ width: 1280, height: 760 });
+    const bar = page.locator('.toolbar[aria-label="Tools"]');
+    await page.waitForFunction(() => {
+      const b = document.querySelector('.toolbar[aria-label="Tools"]');
+      return b && b.clientWidth > 1200;
+    });
+    const sizes = await bar.evaluate((b) => [b.scrollWidth, b.clientWidth]);
+    if (sizes[0] > sizes[1]) throw new Error(`the Part Studio toolbar needs ${sizes[0]} px but a 1280 px window gives it ${sizes[1]}`);
+    if (await page.getByLabel("Scroll tools right").count()) throw new Error("the toolbar shows a scroll arrow at 1280 px");
+    await shot("toolbar1280", { clip: { x: 0, y: 0, width: 1280, height: 130 }, width: 1280 });
+    // A group's ▾ list: planes and connectors, then (after a line) the curves.
+    await page.locator('.tool-split-arrow[data-items*="|Helix|"]').click();
+    await page.waitForSelector('[role="menu"] >> text=Mate connector');
+    const menuBreaks = await page.locator('[role="menu"] .menu-break').count();
+    if (menuBreaks !== 1) throw new Error(`the planes and curves list has ${menuBreaks} section lines, not 1`);
+    await shot("toolbarmenu", { clip: { x: 0, y: 0, width: 1280, height: 520 }, width: 960 });
+    await page.keyboard.press("Escape");
+    await page.waitForSelector('[role="menu"]', { state: "detached" });
+    await page.setViewportSize({ width: 1180, height: 760 });
+    toolbarReport = `The Part Studio toolbar fits 1280 px (${sizes[0]} px of tools)`;
+  }
 
   step = "drilling a hole with a cylinder";
   await page.locator('.tool-split-arrow[data-items*="|Cylinder|"]').click();
@@ -298,7 +324,7 @@ try {
   step = "saving a picture of the view";
   let pictureReport;
   {
-    await page.getByRole("button", { name: "Picture", exact: true }).click();
+    await tool("Picture");
     const dialog = page.getByRole("dialog", { name: "Save a picture" });
     await dialog.getByRole("radio", { name: /Twice as big/ }).check();
     await dialog.getByRole("radio", { name: /See-through/ }).check();
@@ -338,7 +364,7 @@ try {
   await page.waitForSelector(".section-panel", { state: "detached" });
 
   step = "checking it fits on a print bed";
-  await page.getByRole("button", { name: "Print bed", exact: true }).click();
+  await tool("Print bed");
   await page.waitForSelector(".print-bed-panel >> text=Fits on the bed", { timeout: 5_000 });
   await page.locator("#print-bed-printer").selectOption("custom");
   await page.getByLabel("Bed X (width)").fill("10");
@@ -406,7 +432,7 @@ try {
   }
 
   step = "checking the block for 3D printing";
-  await page.getByRole("button", { name: "3D print", exact: true }).click();
+  await tool("3D print");
   // The print bed step above left a 10 mm wide custom printer chosen: the check uses the same printer setting.
   await page.waitForSelector(".print-panel >> text=Too big for the printer", { timeout: 60_000 });
   await page.getByRole("button", { name: /Printer settings/ }).click();
@@ -1145,7 +1171,7 @@ try {
   await page.waitForSelector(".sketch-panel", { state: "detached" });
 
   step = "revolving the sketch";
-  await page.getByRole("button", { name: "Revolve", exact: true }).click();
+  await tool("Revolve");
   const axisChoice = await page.locator("#revolve-axis option:checked").innerText();
   if (!/Construction line/.test(axisChoice)) throw new Error(`revolve didn't pick the construction line, it picked "${axisChoice}"`);
   await page.getByRole("radio", { name: "New" }).click();
@@ -1162,7 +1188,7 @@ try {
   await shot("revolved");
 
   step = "repeating the revolve with a linear pattern";
-  await tool("Pattern");
+  await tool("Linear pattern");
   await page.waitForSelector(".feature-dialog .pick-list li", { timeout: 5_000 });
   const patternSource = await page.locator(".feature-dialog .pick-list li").first().innerText();
   await page.locator("#param-count").fill("2");
@@ -1213,7 +1239,7 @@ try {
   }
 
   step = "choosing a circular pattern's axis";
-  await tool("Circular");
+  await tool("Circular pattern");
   const axisBox = '.feature-dialog fieldset[aria-label="Axis"]';
   await page.waitForSelector(`${axisBox} >> text=Click a round face, an edge or a sketch line in the view`, { timeout: 5_000 });
   await page.locator(axisBox).getByRole("radio", { name: "Z" }).click();
@@ -1257,7 +1283,7 @@ try {
       return s.parts.filter((p) => !p.configuration && ids.has(p.id.split("~")[0])).length;
     });
   const partsBeforeMove = await realParts();
-  await page.getByRole("button", { name: "Move", exact: true }).click();
+  await tool("Move");
   await page.waitForSelector(".feature-dialog >> text=Make a copy");
   await page.getByLabel("Make a copy (keep the original where it is)").check();
   await page.locator("#param-dz").fill("60");
@@ -1293,7 +1319,7 @@ try {
 
   step = "dragging the Move triad's X arrow";
   {
-    await page.getByRole("button", { name: "Move", exact: true }).click();
+    await tool("Move");
     await page.waitForSelector(".feature-dialog >> text=How to move it");
     // The triad appears once the preview is built (it needs the part's centre).
     await page.waitForFunction(() => !!window.juracadViewport.current.triadShown(), null, { timeout: 30_000 });
@@ -1365,7 +1391,7 @@ try {
 
   step = "turning with the Move triad's X ring after a turn about Z";
   {
-    await page.getByRole("button", { name: "Move", exact: true }).click();
+    await tool("Move");
     await page.waitForSelector(".feature-dialog >> text=How to move it");
     // Reopened after Cancel: nothing from the last time to undo.
     if ((await page.getByRole("button", { name: "Undo last change here" }).count()) > 0) throw new Error("Move opened again after Cancel still offers to undo the last dialog's drag");
@@ -1537,7 +1563,7 @@ try {
     const before = await page.locator(".part-row").count();
     const failedBefore = await page.locator(".feature-row.failed").count();
     const importChooser = page.waitForEvent("filechooser", { timeout: 10_000 });
-    await page.getByRole("button", { name: "Import", exact: true }).click();
+    await tool("Import");
     await (await importChooser).setFiles(file);
     await page.waitForSelector('form[aria-label="Import feature"]', { timeout: 10_000 });
     await page.getByRole("button", { name: "Accept" }).click();
@@ -1558,7 +1584,7 @@ try {
     const plainFaces = await facesOfLast();
     const before = await page.locator(".part-row").count();
     const importChooser = page.waitForEvent("filechooser", { timeout: 10_000 });
-    await page.getByRole("button", { name: "Import", exact: true }).click();
+    await tool("Import");
     await (await importChooser).setFiles(path);
     await page.waitForSelector('form[aria-label="Import feature"]', { timeout: 10_000 });
     await page.getByLabel("Simplify: tidy into real faces (for editing)").check();
@@ -2754,7 +2780,7 @@ try {
   }
 
   step = "adding a construction plane and sketching on it";
-  await page.getByRole("button", { name: "Plane", exact: true }).click();
+  await tool("Plane");
   await page.locator("#param-distance").fill("30");
   await page.getByRole("button", { name: "Accept" }).click();
   await page.waitForSelector(".feature-row >> text=Plane 1");
@@ -3934,6 +3960,12 @@ try {
       await tab.goto(`http://localhost:4173${basePath}?smoke`);
       await tab.waitForSelector(".topbar", { timeout: 30_000 });
       await tab.waitForSelector(".engine-status", { state: "detached", timeout: 120_000 });
+      {
+        // The iPad-sized page: how much of the Part Studio's toolbar is past the edge (a little scrolling is fine).
+        const [need, have] = await tab.locator('.toolbar[aria-label="Tools"]').evaluate((b) => [b.scrollWidth, b.clientWidth]);
+        await shot("toolbaripad", { pg: tab, clip: { x: 0, y: 0, width: 1024, height: 140 }, width: 1024 });
+        touchReport += `the toolbar ${need > have ? `scrolls ${need - have} px` : "fits"} at 1024 px; `;
+      }
       const cdp = await touchContext.newCDPSession(tab);
       const touches = (type, points) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: points.map(([x, y], i) => ({ x, y, id: i + 1, radiusX: 4, radiusY: 4, force: 1 })) });
       const view = () => tab.evaluate(() => {
@@ -3970,7 +4002,7 @@ try {
       if (after.pageScale !== 1) throw new Error(`the pinch zoomed the whole page (scale ${after.pageScale})`);
       // The touch bar is there now that a finger has touched the screen.
       await tab.locator(".touch-bar").waitFor({ timeout: 5_000 });
-      touchReport = `pinch zoomed the 3D view ${(after.zoom / before.zoom).toFixed(1)}× (page scale stayed 1)`;
+      touchReport += `pinch zoomed the 3D view ${(after.zoom / before.zoom).toFixed(1)}× (page scale stayed 1)`;
 
       step = "touch screen: double-tap fits the view again";
       // (CI's software-drawn browser can take over half a second to get a tap through: not a long press here.)
@@ -4053,7 +4085,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part), then the STL with Simplify (${simplifySmoke}); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${convertReport}; ${libraryReport}; ${subReport}; ${pictureReport}; ${laserReport}; touch screen: ${touchReport}; ${tabsReport}. ${liveReport}.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part), then the STL with Simplify (${simplifySmoke}); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${convertReport}; ${libraryReport}; ${subReport}; ${pictureReport}; ${laserReport}; touch screen: ${touchReport}; ${toolbarReport}; ${tabsReport}. ${liveReport}.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

@@ -5,6 +5,7 @@ import { RELATION_HINTS, RELATION_LABELS, type RelationTool } from "../sketch/op
 import { RELATION_SYMBOLS } from "../sketch/layout";
 import { Icons } from "./icons";
 import { ToolGroupButton } from "./ToolGroupButton";
+import { MAIN_RELATIONS, MORE_RELATIONS, SKETCH_FAMILIES as FAMILIES, SKETCH_INSERT_TOOLS } from "./toolbarLayout";
 import { detectPlatform, shortcut } from "./platform";
 import { applySketchRelation, deleteSketchSelection, insertImageFile, pickFile, setSketchTool, toggleSketchConstruction } from "./sketchActions";
 
@@ -39,34 +40,6 @@ const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hi
   { tool: "text", label: "Text", key: "", icon: <Icons.Text />, hint: "Type the words in the sketch panel, then click where they go. Their letters are shapes you can extrude" },
 ];
 
-/** Tools shown as one button with a ▾ list (the first is shown until another is used). */
-const FAMILIES: { name: string; tools: SketchTool[] }[] = [
-  { name: "rectangle", tools: ["rectangle", "centreRectangle", "alignedRectangle"] },
-  { name: "circle", tools: ["circle", "circle3", "ellipse"] },
-  { name: "arc", tools: ["arc", "centreArc", "tangentArc"] },
-  { name: "spline", tools: ["spline", "conic"] },
-  { name: "trim", tools: ["trim", "extend", "split"] },
-  { name: "copy", tools: ["mirror", "sketchPattern", "sketchTransform"] },
-  { name: "use", tools: ["useEdge", "intersect"] },
-];
-
-const RELATIONS: RelationTool[] = [
-  "coincident",
-  "horizontal",
-  "vertical",
-  "parallel",
-  "perpendicular",
-  "equal",
-  "tangent",
-  "concentric",
-  "midpoint",
-  "symmetric",
-  "normal",
-  "curvature",
-  "pierce",
-  "fix",
-];
-
 /** Replaces the main toolbar while a sketch is open, like Onshape's sketch toolbar. */
 export function SketchToolbar() {
   const tool = useStore((s) => s.sketch?.tool ?? "select");
@@ -82,12 +55,13 @@ export function SketchToolbar() {
   return (
     <div className="toolbar sketch-toolbar" role="toolbar" aria-label="Sketch tools">
       <div className="tool-group">
-        <ToolBtn label="Undo" icon={<Icons.Undo />} onClick={sketchUndo} disabled={!canUndo} title={`Undo in this sketch (${shortcut(platform, "Z")})`} />
-        <ToolBtn label="Redo" icon={<Icons.Redo />} onClick={sketchRedo} disabled={!canRedo} title={`Redo in this sketch (${shortcut(platform, platform === "mac" ? "Z" : "Y", { shift: platform === "mac" })})`} />
+        <ToolBtn label="Undo" icon={<Icons.Undo />} onClick={sketchUndo} disabled={!canUndo} title={`Undo in this sketch (${shortcut(platform, "Z")})`} iconOnly />
+        <ToolBtn label="Redo" icon={<Icons.Redo />} onClick={sketchRedo} disabled={!canRedo} title={`Redo in this sketch (${shortcut(platform, platform === "mac" ? "Z" : "Y", { shift: platform === "mac" })})`} iconOnly />
       </div>
       <div className="tool-divider" />
       <div className="tool-group">
         {TOOLS.map((t) => {
+          if (SKETCH_INSERT_TOOLS.includes(t.tool)) return null;
           const family = FAMILIES.find((f) => f.tools.includes(t.tool));
           if (family && family.tools[0] !== t.tool) return null;
           if (family)
@@ -124,10 +98,21 @@ export function SketchToolbar() {
           );
         })}
         <ToolGroupButton
-          id="sketch-insert"
-          name="insert"
+          id="sketch-text"
+          name="text and insert"
           items={[
+            ...TOOLS.filter((t) => SKETCH_INSERT_TOOLS.includes(t.tool)).map((d) => ({
+              key: d.tool,
+              label: d.label,
+              icon: d.icon,
+              title: `${d.label}${d.key ? ` (${d.key})` : ""} — ${d.hint}`,
+              shortcut: d.key || undefined,
+              active: tool === d.tool,
+              disabled: !hasPlane,
+              onClick: () => setSketchTool(d.tool),
+            })),
             {
+              divider: true,
               key: "dxf",
               label: "Insert DXF",
               icon: <Icons.InsertDxf />,
@@ -156,7 +141,7 @@ export function SketchToolbar() {
       </div>
       <div className="tool-divider" />
       <div className="tool-group relations">
-        {RELATIONS.map((r) => (
+        {MAIN_RELATIONS.map((r) => (
           <button
             key={r}
             className="relation-button"
@@ -165,10 +150,23 @@ export function SketchToolbar() {
             title={`${RELATION_LABELS[r]} — ${RELATION_HINTS[r]}`}
             aria-label={RELATION_LABELS[r]}
           >
-            <span className="relation-symbol">{r === "pierce" ? "⊗" : RELATION_SYMBOLS[r]}</span>
+            <span className="relation-symbol">{relationSymbol(r)}</span>
             <span>{RELATION_LABELS[r]}</span>
           </button>
         ))}
+        <ToolGroupButton
+          id="sketch-more-relations"
+          name="relation"
+          compact
+          items={MORE_RELATIONS.map((r) => ({
+            key: r,
+            label: RELATION_LABELS[r],
+            icon: <span className="relation-symbol">{relationSymbol(r)}</span>,
+            title: `${RELATION_LABELS[r]} — ${RELATION_HINTS[r]}`,
+            disabled: !hasPlane,
+            onClick: () => applySketchRelation(r),
+          }))}
+        />
       </div>
       <div className="toolbar-spacer" />
       <div className="tool-group">
@@ -178,6 +176,10 @@ export function SketchToolbar() {
   );
 }
 
+function relationSymbol(r: RelationTool): string {
+  return r === "pierce" ? "⊗" : RELATION_SYMBOLS[r] ?? "";
+}
+
 function ToolBtn({
   label,
   icon,
@@ -185,6 +187,7 @@ function ToolBtn({
   disabled,
   active,
   title,
+  iconOnly,
 }: {
   label: string;
   icon: ReactNode;
@@ -192,11 +195,13 @@ function ToolBtn({
   disabled?: boolean;
   active?: boolean;
   title?: string;
+  /** Just the icon (Undo, Redo), the name being in the tooltip. */
+  iconOnly?: boolean;
 }) {
   return (
-    <button className={`tool-button${active ? " active" : ""}`} onClick={onClick} disabled={disabled} title={title ?? label} aria-label={label} aria-pressed={active}>
+    <button className={`tool-button${iconOnly ? " icon-only" : ""}${active ? " active" : ""}`} onClick={onClick} disabled={disabled} title={title ?? label} aria-label={label} aria-pressed={active}>
       {icon}
-      <span>{label}</span>
+      {!iconOnly && <span>{label}</span>}
     </button>
   );
 }
