@@ -12,6 +12,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DesignFolder } from "../src/mcp/files";
 import { Session } from "../src/mcp/session";
 import { callTool, type ToolResult } from "../src/mcp/tools";
+import { cutMeshesOf, solve } from "../src/mcp/assemblyTools";
 
 beforeAll(async () => {
   setOC(await opencascade());
@@ -131,5 +132,43 @@ describe("assembly features for Claude", () => {
     expect(said).toMatch(/made by an assembly feature on Plate <1>/);
     expect(await fails(s, "add_mate", args)).toBe(said);
     expect(s.doc.assemblies![0].instances.find((i) => i.name === "Plate <1>")!.placement.position).toEqual([0, 0, 0]);
+  });
+
+  it("keeps a pin in the hole shown when the base under the drilled plate is made wider (the plate slides along)", async () => {
+    const { s } = newSession();
+    await ok(s, "new_design", { name: "Slide" });
+    await ok(s, "set_variables", { variables: [{ name: "w", value: 40 }] });
+    await ok(s, "add_feature", { type: "box", width: "w", depth: 40, height: 5 });
+    await ok(s, "add_feature", { type: "box", width: 20, depth: 20, height: 5, x: 100, operation: "new" });
+    await ok(s, "add_feature", { type: "cylinder", diameter: 6, height: 20, x: 200, y: 0, z: 0, operation: "new" });
+    const parts = s.build().parts;
+    await ok(s, "rename_part", { part: parts[0].name, name: "Base" });
+    await ok(s, "rename_part", { part: parts[1].name, name: "Plate" });
+    await ok(s, "rename_part", { part: parts[2].name, name: "Pin" });
+    await ok(s, "create_assembly", { name: "Slide" });
+    await ok(s, "insert_into_assembly", { part: "Base", at: [0, 0, 0] });
+    await ok(s, "insert_into_assembly", { part: "Plate", at: [0, 0, 20], fixed: false });
+    await ok(s, "insert_into_assembly", { part: "Pin", at: [-250, 0, 0], fixed: false });
+    // The plate fastened centred on the base, a hole drilled off its middle, a pin mated into the hole.
+    await ok(s, "add_mate", { type: "fasten", first: { instance: "Base <1>", face: "top" }, second: { instance: "Plate <1>", face: "bottom" } });
+    await ok(s, "add_assembly_feature", { kind: "hole", on: { instance: "Plate <1>", face: "top" }, points: [[22, 20]], diameter: 6 });
+    await ok(s, "add_mate", { type: "cylindrical", first: { instance: "Plate <1>", face: { near: [22 + 3, 20, 7.5] } }, second: { instance: "Pin <1>", face: { near: [-47, 3, 10] } } });
+    const pinAt = () => {
+      const asm = s.doc.assemblies![0];
+      const solved = solve(s, asm);
+      const id = asm.instances.find((i) => i.name === "Pin <1>")!.id;
+      const plate = asm.instances.find((i) => i.name === "Plate <1>")!.id;
+      const wall = cutMeshesOf(s, asm, s.doc.assemblies!, solved)![plate].faceRefs.find((f) => f.surface === "CYLINDRE")!.center;
+      return { pin: solved.placements[id].position[0] + 200, hole: wall[0] + solved.placements[plate].position[0] };
+    };
+    const before = pinAt();
+    expect(before.hole).toBeCloseTo(22, 3);
+    expect(before.pin).toBeCloseTo(22, 3);
+    // The base 46 wide: the plate slides 3 mm along X; the hole stays where it was drilled, and so does the pin.
+    await ok(s, "set_variables", { variables: [{ name: "w", value: 46 }] });
+    const after = pinAt();
+    expect(after.hole).toBeCloseTo(22, 3);
+    expect(after.pin).toBeCloseTo(after.hole, 3);
+    expect(await ok(s, "describe_assembly", {})).not.toMatch(/PROBLEM|doesn't work/);
   });
 });

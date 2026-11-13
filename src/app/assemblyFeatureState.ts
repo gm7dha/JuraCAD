@@ -29,6 +29,7 @@ import { addCircle, addPoint, addRectangle } from "../sketch/ops";
 import type { SketchPlane } from "../sketch/planes";
 import { emptySketch, type SketchData } from "../sketch/types";
 import { useSolvedAssembly } from "./assemblySolve";
+import { settleCutCopiesIn } from "../assembly/cutSettle";
 import { carryCutMeshesOver, rememberCutMeshes, solveWithParts, type CutMeshes } from "../assembly/mates";
 
 /** What the Hole / Cut dialog is making (null = closed). */
@@ -89,6 +90,24 @@ carryCutMeshesOver((assemblies, parts) => {
   return { cuts: was.cuts, same: was.parts === parts && signatureOf(assemblies, parts) === was.signature };
 });
 
+/** The parts the drilled copies were last settled for (once per rebuild, never again for the same parts). */
+let settledFor: readonly PartMesh[] | null = null;
+
+/**
+ * After a rebuild, drilled copies a Part Studio change moved (the base a plate is fastened to made wider) are stored
+ * where the solve now puts them (settleCutCopies), without an undo step of their own — so the solver's copies are cut
+ * where they're shown, and a pin mated into a hole stays in the hole shown. Once per set of parts: the settle changes
+ * the assemblies, not the parts, so it never runs again for its own change.
+ */
+function settleAfterRebuild(list: readonly Assembly[], parts: readonly PartMesh[], cuts: CutMeshes): void {
+  if (settledFor === parts) return;
+  settledFor = parts;
+  const s = useStore.getState();
+  if (s.versionView || s.dragPreview || s.history.present.assemblies !== list) return;
+  const next = settleCutCopiesIn(s.history.present, parts, cuts);
+  if (next !== s.history.present) s.changeVersions(() => next);
+}
+
 /**
  * Keeps the mate solver's cut copies up to date: whenever the document's assemblies or the parts change, the worker
  * cuts each assembly's copies where the document has them. They depend on the document alone (never on a solve), so
@@ -127,6 +146,7 @@ function useSolverCuts(): void {
           const cuts = cutMeshesFrom(result.meshes);
           rememberCutMeshes(list, parts, cuts);
           useAsmFeatures.setState({ solverCuts: { assemblies: list, parts, cuts, signature } });
+          settleAfterRebuild(list, parts, cuts);
         },
         () => undefined,
       );
