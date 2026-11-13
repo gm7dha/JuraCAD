@@ -317,6 +317,45 @@ describe("Sketches using curve features", () => {
     }
   });
 
+  it("keeps each circle on its own hole when two holes' loops come back in the other order", () => {
+    engine = new GeometryEngine();
+    const make = (ax: number) => {
+      const box = { ...feature("box", { width: 60, depth: 30, height: 10 }), id: "box", name: "Box" };
+      const a = { ...feature("cylinder", { diameter: 4, height: 10, x: ax, y: 15 }, "remove"), id: "ha", name: "A" };
+      const b = { ...feature("cylinder", { diameter: 8, height: 10, x: 40, y: 15 }, "remove"), id: "hb", name: "B" };
+      const top = engine.rebuild([box, a, b]).parts[0].faceRefs.find((f) => f.surface === "PLANE" && f.normal[2] > 0.99)!;
+      const oc = { ...curve({ kind: "offset" }, { distance: 1 }, { picks: [{ partId: "box", ref: top }] }), id: "oc", name: "Offset" };
+      return [box, a, b, oc];
+    };
+    const sk = { ...sketchFeature({ kind: "default", name: "Top" }, emptySketch()), id: "sk" };
+    engine.rebuild([...make(10), sk]);
+    const circles = engine.sketchCandidates("main", sk.id)!.filter((e) => e.source?.sketch === "oc" && e.kind === "circle");
+    expect(circles).toHaveLength(2);
+    let data = sk.sketch!.data;
+    const ids: { id: string; r: number }[] = [];
+    for (const e of circles) {
+      const used = linkEdge(data, e, false);
+      data = used.sketch;
+      ids.push({ id: used.curveId, r: e.radius! });
+    }
+    const linkedSk = { ...sk, sketch: { ...sk.sketch!, data } };
+    for (const ax of [50, 10]) {
+      engine.rebuild([...make(ax), sk]);
+      const now = engine.sketchCandidates("main", sk.id)!.filter((e) => e.source?.sketch === "oc" && e.kind === "circle");
+      // (Moved, the holes' loops really do come back the other way round.)
+      if (ax === 50) expect(now.find((e) => e.source!.item === circles[0].source!.item)!.radius).not.toBeCloseTo(circles[0].radius!, 3);
+      const r = engine.rebuild([...make(ax), linkedSk]);
+      const info = r.sketchLinks![sk.id];
+      for (const { id, r: radius } of ids) {
+        const got = info.links[id];
+        expect(got).toBeTruthy();
+        expect(got!.radius).toBeCloseTo(radius, 6);
+        // Each stays on its own hole: A's (r 3) wherever A went, B's (r 5) at x = 40.
+        expect(got!.centre![0]).toBeCloseTo(radius < 4 ? ax : 40, 6);
+      }
+    }
+  });
+
   it("matches by nearness when an edge number no longer fits (a line pointed at a circle)", () => {
     engine = new GeometryEngine();
     const feats = holedOffset(40, true);

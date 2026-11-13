@@ -28,6 +28,7 @@ import { materialRuns, shapeDistance, upToFaceSolid, upToPartsSolid } from "./up
 import { loftSketches, pathWire, sweepAlongSpine, sweepSketch } from "./sweep";
 import { bezierEdge, chainEdges, compoundOf, endFrame, helixWire, interpolatedEdge, planeSheet, reversedWire, sectionEdges, sheetAlong, squareTo, takeVec, wirePolyline } from "./curves";
 import { isoclineWires, offsetOnFace, trimWire } from "./curvesMore";
+import { assignCheapest } from "../geometry/assign";
 import { bridgePoints, curveKindInfo, fitSplineProblem, helixSizes, type BridgeEnd } from "../model/curves";
 import { walkPoints } from "../sketch/pathSample";
 import { buildLoft } from "./loft";
@@ -2655,10 +2656,12 @@ export class GeometryEngine {
   }
 
   /**
-   * Links from a sketch to curve features' edges, found again (see followSketch): per curve feature, edge k when every
-   * link to it still fits its edge k; else each matched to the nearest edge of the right kind — ends only from open
-   * edges, centres only from round ones, never a closed edge's seam — after the move (per axis scale and shift) that
-   * the links which do fit show, so a curve that grew is followed; a link with nothing near enough is lost (null).
+   * Links from a sketch to curve features' edges, found again (see followSketch). Per curve feature, edge k is trusted
+   * when every link to it still fits its edge k — the right kind (an open edge for ends, a round one for centres, never
+   * a closed edge's seam) and, for lines, arcs and circles, the right size (as it was, or stretched as the other links
+   * show). Otherwise all its links are matched again together: for each kind of link, one edge per link (an assignment
+   * by `assignCheapest`), scored by size and by position after the move (per-axis scale and shift) the fitting links
+   * show; a link whose edge is neither near nor the only one of its size, or which has an equally good rival, is lost.
    */
   private followCurveLinks(
     data: SketchData,
@@ -2681,35 +2684,58 @@ export class GeometryEngine {
       return q ? [q.x, q.y] : id === "origin" ? [0, 0] : null;
     };
     const d2 = (a: P, b: P) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-    // What each use of a curve feature compares: its points where the sketch has them, and for a candidate edge the
-    // matching points (null: that edge can't be it) and the value to use.
+    /** A link's size: a line's length (and its run, to stretch it), an arc's or circle's radius. */
+    type Size = { kind: "length"; old: number; run: P } | { kind: "radius"; old: number };
+    interface Fit {
+      at: P[];
+      value: RefEdge | P;
+      size?: number;
+      /** How big the edge is (for how near counts as near). */
+      span: number;
+    }
     interface Use {
       id: string;
       k: number;
+      /** Links of one group compete for edges (curves; each end of points). */
+      group: string;
       old: P[];
-      fit: (got: { seen: RefEdge | null; edge: Edge; ref: EdgeRef }) => { at: P[]; value: RefEdge | P } | null;
+      size?: Size;
+      fit: (got: { seen: RefEdge | null; edge: Edge; ref: EdgeRef }) => Fit | null;
       pierce?: true;
       set: (v: RefEdge | P | null) => void;
     }
     const byCurve = new Map<string, Use[]>();
     const add = (curveId: string, u: Use) => byCurve.set(curveId, [...(byCurve.get(curveId) ?? []), u]);
     const closedRef = (r: EdgeRef) => Math.hypot(r.a[0] - r.b[0], r.a[1] - r.b[1], r.a[2] - r.b[2]) < 1e-6;
+    const spanOf = (r: EdgeRef) => Math.max(Math.hypot(r.a[0] - r.b[0], r.a[1] - r.b[1], r.a[2] - r.b[2]), 2 * Math.hypot(r.mid[0] - r.a[0], r.mid[1] - r.a[1], r.mid[2] - r.a[2]));
     for (const c of linked) {
       const link = (c as { link?: CurveLink }).link;
       if (!link || isPartLink(link) || !this.curves.has(link.sketch)) continue;
       const { k } = parse(link.item);
       const round = c.type === "circle" || c.type === "ellipse" || (c.type === "spline" && c.closed);
       const ids = c.type === "line" ? [c.p1, c.p2] : c.type === "arc" ? [c.start, c.end] : c.type === "circle" || c.type === "ellipse" ? [c.center] : c.type === "spline" ? (c.closed ? [] : [c.points[0], c.points[c.points.length - 1]]) : [];
+      const old = ids.map(pos).filter((x): x is P => !!x);
+      let size: Size | undefined;
+      if (c.type === "line" && old.length === 2) size = { kind: "length", old: d2(old[0], old[1]), run: [old[1][0] - old[0][0], old[1][1] - old[0][1]] };
+      if (c.type === "circle") size = { kind: "radius", old: c.radius };
+      if (c.type === "arc") {
+        const cc = pos(c.center);
+        if (cc && old[0]) size = { kind: "radius", old: d2(cc, old[0]) };
+      }
       add(link.sketch, {
         id: c.id,
         k,
-        old: ids.map(pos).filter((x): x is P => !!x),
+        group: "curve",
+        old,
+        ...(size ? { size } : {}),
         fit: (got) => {
           const seen = got.seen ? sameKind(c, shaped(c, got.seen, got.edge)) : null;
           if (!seen) return null;
-          if (round) return { at: seen.centre ? [seen.centre] : [], value: seen };
+          const span = spanOf(got.ref);
+          const sz = c.type === "line" ? d2(seen.a, seen.b) : seen.radius;
+          if (round) return { at: seen.centre ? [seen.centre] : [], value: seen, ...(sz !== undefined ? { size: sz } : {}), span };
           if (closedRef(got.ref)) return null;
-          return { at: [seen.a, seen.b], value: seen };
+          return { at: [seen.a, seen.b], value: seen, ...(sz !== undefined ? { size: sz } : {}), span };
         },
         set: (v) => (links[c.id] = v as RefEdge | null),
       });
@@ -2721,24 +2747,54 @@ export class GeometryEngine {
       add(link.sketch, {
         id: p.id,
         k,
+        group: link.end === "pierce" ? `pierce:${p.id}` : `point:${end ?? link.end ?? ""}`,
         old: [[p.x, p.y]],
         ...(link.end === "pierce" ? { pierce: true as const } : {}),
         fit: (got) => {
           if (link.end === "pierce") {
             const walk = remembered(edgeAt(got.edge));
             const at = nearestPlace(edgePierces(frame, walk, got.ref.curve === "LINE" ? 1 : pierceSamples(walk, edgeSpans(got.edge))), [p.x, p.y]);
-            return at ? { at: [at], value: at } : null;
+            return at ? { at: [at], value: at, span: spanOf(got.ref) } : null;
           }
           if ((end === "a" || end === "b") && closedRef(got.ref)) return null;
           if (end === "c" && got.ref.curve !== "CIRCLE") return null;
           const q = edgePoint3(got.ref, end === "a" ? "a" : end === "b" ? "b" : end === "c" ? "centre" : "mid");
           if (!q) return null;
           const at = toSketch(frame, q);
-          return { at: [at], value: at };
+          return { at: [at], value: at, span: spanOf(got.ref) };
         },
         set: (v) => (pointLinks[p.id] = v as P | null),
       });
     }
+    /** The per-axis scale and shift taking old places to new ones, from pairs (none: no move). */
+    const moveFrom = (pairs: [P, P][]): { map: (o: P) => P; kx: number; ky: number } => {
+      const axis = (ax: 0 | 1): { f: (x: number) => number; k: number } => {
+        if (!pairs.length) return { f: (x) => x, k: 1 };
+        const xs = pairs.map((q) => q[0][ax]);
+        const ys = pairs.map((q) => q[1][ax]);
+        const mx = xs.reduce((t, x) => t + x, 0) / xs.length;
+        const my = ys.reduce((t, y) => t + y, 0) / ys.length;
+        let sxx = 0;
+        let sxy = 0;
+        xs.forEach((x, i) => {
+          sxx += (x - mx) ** 2;
+          sxy += (x - mx) * (ys[i] - my);
+        });
+        const k = sxx > 1e-6 ? sxy / sxx : 1;
+        return { f: (x) => my + k * (x - mx), k };
+      };
+      const X = axis(0);
+      const Y = axis(1);
+      return { map: (o) => [X.f(o[0]), Y.f(o[1])], kx: X.k, ky: Y.k };
+    };
+    /** Does a size fit: as it was, or stretched by the move? (No size: yes.) */
+    const sizeFits = (u: Use, f: Fit, kx: number, ky: number): boolean => {
+      if (!u.size || f.size === undefined) return true;
+      const near = (want: number) => Math.abs(f.size! - want) <= Math.max(0.2, 0.25 * want);
+      if (near(u.size.old)) return true;
+      const stretched = u.size.kind === "length" ? Math.hypot(u.size.run[0] * kx, u.size.run[1] * ky) : u.size.old * Math.sqrt(Math.abs(kx * ky));
+      return near(stretched);
+    };
     for (const [curveId, uses] of byCurve) {
       const built = this.curves.get(curveId)!;
       const { byItem } = this.curveFeatureRefs(curveId, "", built.wires, frame);
@@ -2747,57 +2803,62 @@ export class GeometryEngine {
           const got = byItem.get(u.k);
           return got ? u.fit(got) : null;
         });
-        if (atK.every((x) => x !== null)) {
+        const pairsOf = (keep: (i: number) => boolean) => {
+          const pairs: [P, P][] = [];
           uses.forEach((u, i) => {
-            u.set(atK[i]!.value);
-            done.add(u.id);
+            const f = atK[i];
+            if (f && keep(i) && f.at.length === u.old.length) u.old.forEach((o, j) => pairs.push([o, f.at[j]]));
           });
+          return pairs;
+        };
+        const first = moveFrom(pairsOf(() => true));
+        const fitsK = uses.map((u, i) => !!atK[i] && sizeFits(u, atK[i]!, first.kx, first.ky));
+        uses.forEach((u) => done.add(u.id));
+        if (fitsK.every(Boolean)) {
+          uses.forEach((u, i) => u.set(atK[i]!.value));
           continue;
         }
-        // The move the links that still fit show: per axis, a scale and shift (or just a shift, or nothing).
-        const pairs: [P, P][] = [];
-        uses.forEach((u, i) => {
-          const f = atK[i];
-          if (f && f.at.length === u.old.length) u.old.forEach((o, j) => pairs.push([o, f.at[j]]));
-        });
-        const axisMap = (ax: 0 | 1): ((x: number) => number) => {
-          if (!pairs.length) return (x) => x;
-          const xs = pairs.map((q) => q[0][ax]);
-          const ys = pairs.map((q) => q[1][ax]);
-          const mx = xs.reduce((s2, x) => s2 + x, 0) / xs.length;
-          const my = ys.reduce((s2, y) => s2 + y, 0) / ys.length;
-          let sxx = 0;
-          let sxy = 0;
-          xs.forEach((x, i) => {
-            sxx += (x - mx) ** 2;
-            sxy += (x - mx) * (ys[i] - my);
+        // Something changed: the move the still-fitting links show, then every group's links matched again together.
+        const move = moveFrom(pairsOf((i) => fitsK[i]));
+        const edges = [...byItem.entries()];
+        const groups = new Map<string, Use[]>();
+        for (const u of uses) groups.set(u.group, [...(groups.get(u.group) ?? []), u]);
+        for (const [, list] of groups) {
+          if (list[0].pierce) {
+            for (const u of list) {
+              const got = byItem.get(u.k);
+              const f = got ? u.fit(got) : null;
+              u.set(f ? f.value : null);
+            }
+            continue;
+          }
+          const fits = list.map((u) => edges.map(([, got]) => u.fit(got)));
+          const where = (u: Use, f: Fit) => {
+            const want = u.old.map(move.map);
+            if (!want.length || f.at.length !== want.length) return 0;
+            return want.length === 2 ? Math.min(d2(want[0], f.at[0]) + d2(want[1], f.at[1]), d2(want[0], f.at[1]) + d2(want[1], f.at[0])) / 2 : d2(want[0], f.at[0]);
+          };
+          const BIG = 1e12;
+          const cost = list.map((u, i) =>
+            edges.map((_, j) => {
+              const f = fits[i][j];
+              if (!f || !sizeFits(u, f, move.kx, move.ky)) return BIG;
+              return where(u, f) + (u.size && f.size !== undefined ? 10 * Math.abs(f.size - u.size.old) : 0);
+            }),
+          );
+          const chosen = assignCheapest(cost, BIG);
+          list.forEach((u, i) => {
+            const j = chosen[i];
+            const f = j >= 0 ? fits[i][j] : null;
+            if (!f || cost[i][j] >= BIG) return u.set(null);
+            const feasible = cost[i].map((c, jj) => (c < BIG ? jj : -1)).filter((jj) => jj >= 0);
+            // Near where the move puts it, or the only edge of its size; and no other edge as good.
+            const near = where(u, f) <= Math.max(0.5, 0.3 * f.span);
+            const onlyOne = !!u.size && feasible.length === 1;
+            const rival = feasible.some((jj) => jj !== j && Math.abs(cost[i][jj] - cost[i][j]) < 1e-6);
+            u.set((near || onlyOne) && !rival ? f.value : null);
           });
-          const k = sxx > 1e-6 ? sxy / sxx : 1;
-          return (x) => my + k * (x - mx);
-        };
-        const mx = axisMap(0);
-        const my = axisMap(1);
-        const moved = (o: P): P => [mx(o[0]), my(o[1])];
-        uses.forEach((u) => {
-          done.add(u.id);
-          if (u.pierce) {
-            const got = byItem.get(u.k);
-            const f = got ? u.fit(got) : null;
-            u.set(f ? f.value : null);
-            return;
-          }
-          const want = u.old.map(moved);
-          let best: { score: number; value: RefEdge | P; size: number; k: number } | null = null;
-          for (const [i, got] of byItem) {
-            const f = u.fit(got);
-            if (!f || f.at.length !== want.length) continue;
-            const score = !want.length ? 0 : want.length === 2 ? Math.min(d2(want[0], f.at[0]) + d2(want[1], f.at[1]), d2(want[0], f.at[1]) + d2(want[1], f.at[0])) / 2 : d2(want[0], f.at[0]);
-            const r = got.ref;
-            const size = Math.max(Math.hypot(r.a[0] - r.b[0], r.a[1] - r.b[1], r.a[2] - r.b[2]), 2 * Math.hypot(r.mid[0] - r.a[0], r.mid[1] - r.a[1], r.mid[2] - r.a[2]));
-            if (!best || score < best.score - 1e-9 || (Math.abs(score - best.score) <= 1e-9 && i === u.k)) best = { score, value: f.value, size, k: i };
-          }
-          u.set(best && best.score <= Math.max(0.5, 0.3 * best.size) ? best.value : null);
-        });
+        }
       } finally {
         this.freeCurveRefs(byItem);
       }

@@ -172,3 +172,14 @@ describe("Delete with dependents: sketches using curve features", () => {
     expect(left.sketch!.data.points[0].link).toBeUndefined();
   });
 });
+
+describe("assignCheapest", () => {
+  it("gives each row its own column at least cost, never a forbidden one", async () => {
+    const { assignCheapest } = await import("../src/geometry/assign");
+    // Greedy would give row 0 column 0 (1) and leave row 1 with 100; the best is 2 + 2.
+    expect(assignCheapest([[1, 2], [2, 100]], 1e9)).toEqual([1, 0]);
+    expect(assignCheapest([[5, 1e9], [1e9, 1e9]], 1e9)).toEqual([0, -1]);
+    expect(assignCheapest([[3, 1, 2]], 1e9)).toEqual([1]);
+    expect(assignCheapest([[1], [0]], 1e9)).toEqual([-1, 0]);
+  });
+});

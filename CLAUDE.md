@@ -731,10 +731,14 @@
   links are ordinary SketchItemLinks (old files unchanged; Delete with dependents counts them as "references brought in");
   `workOutCandidates` offers curves before the sketch (from `StudioBuild.curves`); `followCurveLinks` (engine; links whose
   id `this.curves` has, else the old sketch lookup) takes each curve feature's links together: when every one still fits its
-  edge k (an edge k of the right kind — sameKind for curves, an open edge for ends a/b, a round one for centre c) the numbers are
-  trusted however far the curve moved or grew; otherwise each is matched to the nearest edge of the right kind — ends only from
-  open edges, centres only from round ones, never a closed edge's seam point — after the per-axis scale + shift that the links
-  still fitting show (none: no move), within 0.3 × the edge's size (≥ 0.5 mm), else lost (null); Pierce points stay on edge k.
+  edge k (an edge k of the right kind — sameKind for curves, an open edge for ends a/b, a round one for centre c — and, for
+  lines/arcs/circles, the right size: as it was or stretched by the per-axis scale the links show, ±25% / 0.2 mm) the numbers
+  are trusted however far the curve moved or grew; otherwise ALL its links are matched again together, per group (curves; each
+  kind of point end), one edge per link by `assignCheapest` (`src/geometry/assign.ts`, Hungarian), cost = position after the
+  per-axis scale + shift the still-fitting links show + 10 × size difference, edges of the wrong kind or size excluded — ends only
+  from open edges, centres only from round ones, never a closed edge's seam point; kept only when near (≤ 0.3 × the edge's size,
+  ≥ 0.5 mm) or the only edge of its size, and with no equally good rival, else lost (null) — so two holes whose loops come back
+  swapped keep their own circles. Pierce points stay on edge k.
   Whole-face inward offsets on flat faces also check nesting (`checkNesting`: each moved hole inside a moved outer outline and
   none round it — roles by the way round the loops run, or from which source loop they came). The controller's `skipRef` treats a curve as shown unless its eye is off. Not done: surface sweeps along
   curves; trimming an offset that runs off its face (it's refused). Tests: tests/curves, curveClicks (pure), engineCurves
@@ -743,7 +747,7 @@
   (box top 5 mm in/out, an L of edges in (60 mm, cut back) and out (rounded), an L with a corner across a cylinder, a hole's
   outline growing off the face refused, ball isocline at 45° = R/√2 circle and on a cut ball up to the cut, helix trimmed by a
   plane/a face/only touching at its start, a sketch using/piercing a helix and following it, every edge of an offset (with and
-  without a hole) followed as the box grows 40 → 80 → 120, a number that no longer fits matched by nearness, a hole grown round
+  without a hole) followed as the box grows 40 → 80 → 120, two holes' circles kept on their own holes when their loops swap order, a number that no longer fits matched by nearness, a hole grown round
   the outline refused), mcpCurvesMore.
 - Frames (Onshape's Frame, Trim frame, Gusset, Cut list): feature types "frame" (`Feature.frame`, `FrameDef` in
   model/frameTypes.ts: `paths` = sketches, all their lines/arcs/circles or `items`; `profile` = a built-in family + size key
