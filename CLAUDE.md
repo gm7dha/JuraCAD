@@ -312,9 +312,12 @@
   HAS IT (`storedCutInputs` → worker `assemblyCuts` → `cutMeshesFrom`; ids "<assembly>|<instance>"), never where a solve put it,
   so they depend on the design alone and a solve settles at once (the copies shown are cut at the solved place). A mate on a
   cut-made face of a part the solve moves from its stored place (`cutFaceMoved`, `settledWithCuts`) is switched off and said ("This
-  mate uses a face made by an assembly feature on …"), as the cut wouldn't be there any more. `rememberCutMeshes(assemblies,
+  mate uses a face made by an assembly feature on …") only when it is what moves the part: solved without such mates, a part that
+  still goes to the same place (moved by something upstream — the part under it made thicker, a Fasten following it) keeps them;
+  at most three solves. `rememberCutMeshes(assemblies,
   parts, cuts)` lets every solve of that state find them without being passed (`rememberedCutMeshes`; the app's `useSolverCuts`
-  once the worker answers, the extension's `solverCuts` in `solve`); Accept / add_assembly_feature settle placements first, so
+  once the worker answers, the extension's `solverCuts` in `solve`); a state not cut yet takes the app's latest copies
+  (`carryCutMeshesOver`; kept for it when its `storedCutInputs` are the same), so edits never make mated parts jump; Accept / add_assembly_feature settle placements first, so
   the stored places are where the cut was made. `findTarget` gives a cut copy's faces as shown (named by the part's id). "Parts…"
   lists ticks, and "The parts it reaches now" (`reachNow`: every top-level copy tried once, what it really cut kept).
   Structured STEP: a top-level copy the features may cut gets its own definition ("<part> (modified in assembly)", `cuts`,

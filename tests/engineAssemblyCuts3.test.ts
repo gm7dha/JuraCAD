@@ -43,7 +43,8 @@ describe("mates on faces made by assembly features", () => {
     wall = { partId: plate.id, ref: r.meshes.find((m) => m.id === "i1")!.faceRefs.find((f) => f.surface === "CYLINDRE")! };
     side = { partId: pin.id, ref: parts.find((p) => p.id === pin.id)!.faceRefs.find((f) => f.surface === "CYLINDRE")! };
   });
-  const cutsOf = (list: Assembly[]) => cutMeshesFrom(engine.assemblyCuts(storedCutInputs(list, parts)).meshes);
+  const cutsOfIn = (list: Assembly[], built: PartMesh[]) => cutMeshesFrom(engine.assemblyCuts(storedCutInputs(list, built)).meshes);
+  const cutsOf = (list: Assembly[]) => cutsOfIn(list, parts);
 
   it("settles when the mate would move the drilled part: switched off with a plain message, the same every time", () => {
     const asm: Assembly = {
@@ -70,6 +71,52 @@ describe("mates on faces made by assembly features", () => {
     const again = solveWithParts(asm, parts, { assemblies: [asm], cutMeshes: cutsOf([asm]) });
     expect(again.placements).toEqual(first.placements);
     expect(again.mateErrors).toEqual(first.mateErrors);
+  });
+
+  it("keeps a pin in its hole when the part under the drilled plate is made thicker in its Part Studio", () => {
+    // A fixed Base 5 mm thick, a Plate fastened on top, a hole drilled through the Plate, a Pin mated into the hole.
+    const base = feature("box", { width: 40, depth: 40, height: 5 });
+    const plate2 = feature("box", { width: 40, depth: 40, height: 5, x: 100 });
+    const pin2 = feature("cylinder", { diameter: 6, height: 20, x: 200 });
+    const built = (h: number) => engine.rebuild([{ ...base, params: { ...base.params, height: String(h) } }, plate2, pin2]).parts;
+    let list = built(5);
+    const face = (id: string, n: number, z: number) => {
+      const m = list.find((p) => p.id === id)!;
+      return { partId: id, ref: m.faceRefs.find((f) => f.surface === "PLANE" && Math.abs(f.normal[2] - n) < 1e-6 && Math.abs(f.center[2] - z) < 1e-6)! };
+    };
+    const fasten: Mate = { id: "m0", name: "Fastened 1", type: "fastened", a: { instanceId: "b", pick: face(base.id, 1, 5) }, b: { instanceId: "p", pick: face(plate2.id, -1, 0) }, flip: false, values: {} };
+    let asm: Assembly = {
+      id: "U",
+      name: "Upstream",
+      instances: [
+        { id: "b", partId: base.id, name: "Base <1>", placement: at(0, 0, 0), fixed: true },
+        { id: "p", partId: plate2.id, name: "Plate <1>", placement: at(0, 0, 0), fixed: false },
+        { id: "n", partId: pin2.id, name: "Pin <1>", placement: at(-250, 0, 0), fixed: false },
+      ],
+      mates: [fasten],
+    };
+    // Where the Plate goes, kept (as the app does after a mate is made), then drilled there.
+    const placed = solveWithParts(asm, list, { assemblies: [asm] });
+    expect(placed.mateErrors).toEqual({});
+    asm = { ...asm, instances: asm.instances.map((i) => ({ ...i, placement: placed.placements[i.id] ?? i.placement })) };
+    asm = setFeatureParts(drill(asm, 20, 20, 10), "h1", ["p"]);
+    const cutWall = engine.assemblyCuts(instancesForKernel(asm, list, [asm])).meshes.find((m) => m.id === "p")!.faceRefs.find((f) => f.surface === "CYLINDRE")!;
+    const pinSide = list.find((p) => p.id === pin2.id)!.faceRefs.find((f) => f.surface === "CYLINDRE")!;
+    asm = { ...asm, mates: [fasten, { id: "m1", name: "Cylindrical 1", type: "cylindrical", a: { instanceId: "p", pick: { partId: plate2.id, ref: cutWall } }, b: { instanceId: "n", pick: { partId: pin2.id, ref: pinSide } }, flip: false, values: {} }] };
+    const before = solveWithParts(asm, list, { assemblies: [asm], cutMeshes: cutsOfIn([asm], list) });
+    expect(before.mateErrors).toEqual({});
+    expect(before.placements.n.position[0] + 200).toBeCloseTo(20, 4);
+    // The Base made 8 mm thick: the Plate lifts to sit on it, its hole goes with it, and the pin stays in the hole.
+    list = built(8);
+    const after = solveWithParts(asm, list, { assemblies: [asm], cutMeshes: cutsOfIn([asm], list) });
+    expect(after.mateErrors).toEqual({});
+    expect(after.placements.p.position[2] - before.placements.p.position[2]).toBeCloseTo(3, 4);
+    expect(after.placements.n.position[0] + 200).toBeCloseTo(20, 4);
+    expect(after.placements.n.position[1]).toBeCloseTo(20, 4);
+    // Solving again gives the same answer.
+    expect(solveWithParts(asm, list, { assemblies: [asm], cutMeshes: cutsOfIn([asm], list) }).placements).toEqual(after.placements);
+    // (The engine back to the parts the other cases use.)
+    parts = engine.rebuild([plate, pin]).parts;
   });
 
   it("a pin mated into the hole of a part that stays put goes in", () => {

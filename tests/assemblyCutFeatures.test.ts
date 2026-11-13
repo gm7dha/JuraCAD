@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { addAssemblyFeatures, assemblyFeatureDependents, assemblyHole, assemblySketch, cutsFor, deleteAssemblyFeatures, featureCuts, setFeatureParts } from "../src/assembly/assemblyFeatures";
 import { billOfMaterials, updateAssembly, withoutInstances } from "../src/assembly/assembly";
 import { instancesForKernel } from "../src/assembly/placed";
+import { carryCutMeshesOver, rememberedCutMeshes } from "../src/assembly/mates";
 import { contextGone, contextInputs, contextPartOf, contextPartId, removeContext, setContextHidden, takeContext, tidyContexts } from "../src/assembly/inContext";
 import { removeStudio } from "../src/model/studios";
 import { emptyDocument } from "../src/model/document";
@@ -90,6 +91,24 @@ describe("which copies an assembly feature cuts", () => {
     expect(inner.cuts!.map((c) => c.features.map((f) => f.id))).toEqual([["ssk", "sho"], ["sk", "ho"]]);
     const rows = billOfMaterials(top, { p1: "Plate", p2: "Lid" }, {}, undefined, {}, { assemblies: all, structured: true, modified: new Map([["s1/j1", 900]]) });
     expect(rows.some((r) => r.level === 1 && r.name === "Plate (modified in assembly)")).toBe(true);
+  });
+
+  it("solves a state not cut yet with the latest cut copies, keeping them when it would be cut the same", () => {
+    const { asm } = withHole();
+    const cuts = () => undefined;
+    const same = [asm];
+    const changed = [asm];
+    carryCutMeshesOver((list) => ({ cuts, same: list === same }));
+    try {
+      expect(rememberedCutMeshes(same, parts)).toBe(cuts);
+      expect(rememberedCutMeshes(changed, parts)).toBe(cuts);
+      carryCutMeshesOver(null);
+      // Kept only for the state that would be cut exactly the same.
+      expect(rememberedCutMeshes(same, parts)).toBe(cuts);
+      expect(rememberedCutMeshes(changed, parts)).toBeUndefined();
+    } finally {
+      carryCutMeshesOver(null);
+    }
   });
 
   it("deletes a sketch's hole with it, and forgets parts that are gone", () => {

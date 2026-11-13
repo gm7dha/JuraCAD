@@ -29,7 +29,7 @@ import { addCircle, addPoint, addRectangle } from "../sketch/ops";
 import type { SketchPlane } from "../sketch/planes";
 import { emptySketch, type SketchData } from "../sketch/types";
 import { useSolvedAssembly } from "./assemblySolve";
-import { rememberCutMeshes, solveWithParts, type CutMeshes } from "../assembly/mates";
+import { carryCutMeshesOver, rememberCutMeshes, solveWithParts, type CutMeshes } from "../assembly/mates";
 
 /** What the Hole / Cut dialog is making (null = closed). */
 export interface AsmCutDraft {
@@ -71,6 +71,24 @@ export function solverCutsNow(): CutMeshes | undefined {
   return useAsmFeatures.getState().solverCuts?.cuts;
 }
 
+/** What `storedCutInputs` gives for a state, worked out once (compared to decide whether the latest copies still hold). */
+const signatures = new WeakMap<readonly Assembly[], WeakMap<readonly PartMesh[], string>>();
+function signatureOf(assemblies: readonly Assembly[], parts: readonly PartMesh[]): string {
+  let byParts = signatures.get(assemblies);
+  if (!byParts) signatures.set(assemblies, (byParts = new WeakMap()));
+  let sig = byParts.get(parts);
+  if (sig === undefined) byParts.set(parts, (sig = JSON.stringify(storedCutInputs(assemblies, parts))));
+  return sig;
+}
+
+// A state the worker hasn't cut yet (every edit makes a new assemblies array) is solved with the latest copies — kept
+// for it when it would be cut exactly the same — so nothing jumps while the worker works.
+carryCutMeshesOver((assemblies, parts) => {
+  const was = useAsmFeatures.getState().solverCuts;
+  if (!was || !assemblies.some((a) => a.features?.length)) return undefined;
+  return { cuts: was.cuts, same: was.parts === parts && signatureOf(assemblies, parts) === was.signature };
+});
+
 /**
  * Keeps the mate solver's cut copies up to date: whenever the document's assemblies or the parts change, the worker
  * cuts each assembly's copies where the document has them. They depend on the document alone (never on a solve), so
@@ -88,7 +106,7 @@ function useSolverCuts(): void {
       if (useAsmFeatures.getState().solverCuts) useAsmFeatures.setState({ solverCuts: null });
       return;
     }
-    const signature = JSON.stringify(inputs);
+    const signature = signatureOf(list, parts);
     const was = useAsmFeatures.getState().solverCuts;
     if (was && was.signature === signature && was.parts === parts) {
       // (The same copies to cut: kept, said for the new assemblies too.)

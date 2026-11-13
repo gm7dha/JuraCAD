@@ -254,7 +254,25 @@ export function rememberCutMeshes(assemblies: readonly Assembly[], parts: readon
 
 /** The cut copies remembered for these assemblies and parts, if any. */
 export function rememberedCutMeshes(assemblies: readonly Assembly[] | undefined, parts: readonly PartMesh[]): CutMeshes | undefined {
-  return assemblies ? remembered.get(assemblies)?.get(parts) : undefined;
+  if (!assemblies) return undefined;
+  const known = remembered.get(assemblies)?.get(parts);
+  if (known || !carryOver) return known;
+  // A state not cut yet (an edit made a new assemblies array): the latest copies, while new ones are on their way.
+  const carried = carryOver(assemblies, parts);
+  if (carried?.same) rememberCutMeshes(assemblies, parts, carried.cuts);
+  return carried?.cuts;
+}
+
+/** (Set by the app: the latest cut copies for a state not cut yet, and whether they're exactly what it would cut.) */
+let carryOver: ((assemblies: readonly Assembly[], parts: readonly PartMesh[]) => { cuts: CutMeshes; same: boolean } | undefined) | null = null;
+
+/**
+ * How the solve finds cut copies for a document state the worker hasn't cut yet: the app gives the latest ones it has
+ * (`same` when that state would be cut exactly the same — they're then kept for it), so an edit elsewhere never makes a
+ * pin in a drilled hole jump out until the worker answers.
+ */
+export function carryCutMeshesOver(fn: typeof carryOver): void {
+  carryOver = fn;
 }
 
 /** The cut copy of instance `key` of `a` (a "copy/inner" key reaches into the sub-assemblies it names). */
@@ -280,8 +298,8 @@ const samePlace = (p: Placement, q: Placement): boolean =>
  * document has it. The feature's cut stays where it was made in the assembly, so once the part moves the face isn't
  * there any more: solving with such a mate would only flip between two answers. They're switched off and said instead.
  */
-function cutFaceMoved(assembly: Assembly, parts: PartMesh[], assemblies: readonly Assembly[] | undefined, cuts: CutMeshes, places: Record<string, Placement>): Record<string, string> {
-  const out: Record<string, string> = {};
+function cutFaceMoved(assembly: Assembly, parts: PartMesh[], assemblies: readonly Assembly[] | undefined, cuts: CutMeshes, places: Record<string, Placement>): Record<string, { part: string; text: string }> {
+  const out: Record<string, { part: string; text: string }> = {};
   for (const m of assembly.mates ?? []) {
     if (m.suppressed) continue;
     for (const side of ["a", "b"] as const) {
@@ -293,21 +311,35 @@ function cutFaceMoved(assembly: Assembly, parts: PartMesh[], assemblies: readonl
       if (!now || samePlace(now, instance.placement)) continue;
       if (connectorFrameFor(assembly, parts, c, assemblies)) continue;
       if (!connectorFrameFor(assembly, parts, c, assemblies, [], cuts)) continue;
-      out[m.id] = `This mate uses a face made by an assembly feature on ${instance.name}, and the mate would move ${instance.name} away from where the feature cut it — so the face wouldn't be there any more. Mate the other part to it instead, or fix ${instance.name} where it is.`;
+      out[m.id] = { part: instance.id, text: `This mate uses a face made by an assembly feature on ${instance.name}, and the mate would move ${instance.name} away from where the feature cut it — so the face wouldn't be there any more. Mate the other part to it instead, or fix ${instance.name} where it is.` };
       break;
     }
   }
   return out;
 }
 
-/** Solve once; if a mate on a cut-made face moves its part, solve again without it and say why (see cutFaceMoved). */
+/**
+ * Solve once; if a mate on a cut-made face is what moves its part off where it was cut, solve again without it and
+ * say why (see cutFaceMoved). A part moved by something else — the part under it made thicker in its Part Studio, a
+ * Fasten mate following it — keeps its mates: solved without the suspects it goes to the same place, so they aren't
+ * what moves it. Never more than three solves, so it always settles.
+ */
 function settledWithCuts(assembly: Assembly, parts: PartMesh[], options: SolveOptions, solve: (a: Assembly) => SolveResult): SolveResult {
   const r = solve(assembly);
   if (!options.cutMeshes) return r;
   const moved = cutFaceMoved(assembly, parts, options.assemblies, options.cutMeshes, r.placements);
-  if (!Object.keys(moved).length) return r;
-  const again = solve({ ...assembly, mates: (assembly.mates ?? []).map((m) => (moved[m.id] ? { ...m, suppressed: true } : m)) });
-  return { ...again, mateErrors: { ...again.mateErrors, ...moved } };
+  const ids = Object.keys(moved);
+  if (!ids.length) return r;
+  const off = (list: readonly string[]): Assembly => ({ ...assembly, mates: (assembly.mates ?? []).map((m) => (list.includes(m.id) ? { ...m, suppressed: true } : m)) });
+  const without = solve(off(ids));
+  const blamed = ids.filter((id) => {
+    const part = moved[id].part;
+    const there = without.placements[part];
+    return !there || !samePlace(there, r.placements[part]);
+  });
+  if (!blamed.length) return r;
+  const again = blamed.length === ids.length ? without : solve(off(blamed));
+  return { ...again, mateErrors: { ...again.mateErrors, ...Object.fromEntries(blamed.map((id) => [id, moved[id].text])) } };
 }
 
 export interface SolveResult {
