@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { clipText, copyFeatures, freeName, idsMentioned, missingVariables, pasteFeatures, pasteMessage, readClip, remapIds, variablesUsed } from "../src/model/featureClipboard";
 import type { Feature } from "../src/model/types";
 import { emptySketch } from "../src/sketch/types";
+import { addDimension, addRectangle } from "../src/sketch/ops";
+import { setCurrentScope } from "../src/model/expr";
 import type { TopoPick } from "../src/geometry/topoRef";
 
 const feat = (id: string, type: Feature["type"], extra: Partial<Feature> = {}): Feature => ({ id, name: id, type, operation: "new", suppressed: false, params: {}, ...extra });
@@ -23,7 +25,26 @@ describe("finding and changing ids", () => {
     expect(idsMentioned({ a: "f_e12" }, ["f_e1"]).size).toBe(0);
     expect(idsMentioned({ a: "f_e1~2", b: "f_e1@cfg" }, ["f_e1"]).size).toBe(1);
     const map = new Map([["f_e1", "f_X"]]);
-    expect(remapIds({ a: "f_e1", b: "f_e1~2", c: "f_e12", d: "f_e1_p3", k: { f_e1: 1 } }, map)).toEqual({ a: "f_X", b: "f_X~2", c: "f_e12", d: "f_X_p3", k: { f_X: 1 } });
+    // "<id>_p3" is the sketch's own point name, not this id: left alone (references to it pair it with the sketch).
+    expect(remapIds({ a: "f_e1", b: "f_e1~2", c: "f_e12", d: "f_e1_p3", k: { f_e1: 1 } }, map)).toEqual({ a: "f_X", b: "f_X~2", c: "f_e12", d: "f_e1_p3", k: { f_X: 1 } });
+  });
+
+  it("tells library-style ids apart", () => {
+    const ids = ["lib_x", "lib_x_plate"];
+    expect([...idsMentioned({ a: "lib_x_plate" }, ids)]).toEqual(["lib_x_plate"]);
+    expect(idsMentioned({ a: "lib_x_plate-2" }, ["lib_x_plate"]).size).toBe(0);
+    expect(idsMentioned({ a: "lib_x_plate.3" }, ["lib_x_plate"]).size).toBe(0);
+    expect(idsMentioned({ a: "lib_x_plate" }, ["lib_x"]).size).toBe(0);
+    const map = new Map([["lib_x_plate", "f_new"], ["lib_s", "f_s2"]]);
+    expect(remapIds({ a: "lib_x_plate", b: "lib_x_plate-2", c: "lib_x_plate~2", d: "lib_x_plate@cfg", e: "lib_x_platex" }, map)).toEqual({
+      a: "f_new",
+      b: "lib_x_plate-2",
+      c: "f_new~2",
+      d: "f_new@cfg",
+      e: "lib_x_platex",
+    });
+    // A frame member's part id: the frame and its sketch, after "~", both follow.
+    expect(remapIds({ p: "lib_x_plate~lib_s_c3" }, map)).toEqual({ p: "f_new~f_s2_c3" });
   });
 
   it("names copies like Onshape", () => {
@@ -65,6 +86,23 @@ describe("copy", () => {
 });
 
 describe("paste", () => {
+  it("re-solves pasted sketches with this design's variables", () => {
+    const rect = addRectangle(emptySketch(), { x: 0, y: 0 }, { x: 50, y: 10 });
+    const bottom = rect.lineIds[0];
+    setCurrentScope({ w: 50 });
+    const added = addDimension(rect.sketch, [bottom], { x: 0, y: -5 });
+    const data = { ...added.sketch, constraints: added.sketch.constraints.map((c) => (c.id === added.dimensionId ? { ...c, value: "w" } : c)) };
+    const sketch = feat("f_sk", "sketch", { name: "Sketch 1", sketch: { plane: { kind: "default", name: "Top" }, data } });
+    const c = copyFeatures([sketch], ["f_sk"], [{ id: "v1", name: "w", value: "50" }])!;
+    const r = pasteFeatures([], c.clip, { allIds: [], makeId, variables: [{ id: "v9", name: "w", value: "20" }] });
+    const solved = r.pasted[0].sketch!.data;
+    const line = solved.curves.find((x) => x.id === bottom)!;
+    const pos = (id: string) => solved.points.find((p) => p.id === id)!;
+    const [a, b] = line.type === "line" ? [pos(line.p1), pos(line.p2)] : [];
+    expect(Math.hypot(a!.x - b!.x, a!.y - b!.y)).toBeCloseTo(20, 4);
+    setCurrentScope({});
+  });
+
   it("gives new ids and points the copy at its own sketch", () => {
     const list = studio();
     const c = copyFeatures(list, ["f_e1"])!;

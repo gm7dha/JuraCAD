@@ -72,6 +72,16 @@ describe("select other", () => {
     expect(orderChoices(hits, NO_FILTER, false).some((c) => c.kind === "part")).toBe(false);
   });
 
+  it("lists mate connectors and sketch lines too", () => {
+    const hits: OtherHit[] = [face("a", 0, 5), { kind: "connector", key: "mc1", distance: 5 }, { kind: "sketchLine", sketch: "s1", line: "l2", distance: 3 }];
+    const list = orderChoices(hits, NO_FILTER);
+    expect(list.slice(0, 3).map((c) => c.kind)).toEqual(["sketchLine", "connector", "face"]);
+    expect(orderChoices(hits, ["sketch"]).map((c) => c.kind)).toEqual(["sketchLine"]);
+    expect(orderChoices(hits, ["plane"]).map((c) => c.kind)).toEqual(["connector"]);
+    const names = { part: () => "P", feature: (id: string) => (id === "s1" ? "Sketch 1" : id), connector: () => "Mate connector 1" };
+    expect(list.map((c) => choiceLabel(c, names)).slice(0, 2)).toEqual(["Line in Sketch 1", "Mate connector 1"]);
+  });
+
   it("keeps the list short", () => {
     const hits = Array.from({ length: 40 }, (_, i) => face("p" + i, 0, i));
     expect(orderChoices(hits, NO_FILTER)).toHaveLength(MOST_CHOICES);

@@ -747,6 +747,8 @@ export function choiceTarget(c: OtherChoice): PickTarget {
   if (c.kind === "plane") return { kind: "plane", plane: c.plane as PlaneName };
   if (c.kind === "customPlane") return { kind: "customPlane", id: c.id };
   if (c.kind === "sketchArea") return { kind: "sketchArea", sketch: c.sketch, index: c.index };
+  if (c.kind === "connector") return { kind: "connector", key: c.key };
+  if (c.kind === "sketchLine") return { kind: "sketchLine", id: c.sketch, line: c.line };
   return { kind: "curve", id: c.id, point: c.point };
 }
 
@@ -761,6 +763,7 @@ function openSelectOther(hits: OtherHit[], at: { x: number; y: number }) {
   const names = {
     part: (id: string) => parts.find((p) => p.id === id)?.name ?? "a part",
     feature: (id: string) => features.find((f) => f.id === id)?.name ?? "a sketch",
+    connector: (key: string) => features.find((f) => f.id === key)?.name ?? "Mate connector",
     shape: (kind: "face" | "edge", partId: string, index: number) => {
       const p = parts.find((x) => x.id === partId);
       const ref = kind === "face" ? p?.faceRefs?.[index] : p?.edgeRefs?.[index];
@@ -857,6 +860,10 @@ export function Viewport() {
         onBoxSelect: boxSelect,
         onBoxSelectItems: boxSelectItems,
         onSelectOther: openSelectOther,
+        onSelectOtherCancel: () => {
+          viewportApi.current?.previewPick(null);
+          setSelectOther(null);
+        },
         onTriadStart: (handle, ray, shift, size) => triadStart(viewportApi.current, handle, ray, shift, size),
         onTriadMove: (ray, shift) => triadMove(viewportApi.current, ray, shift),
         onTriadEnd: () => triadEnd(viewportApi.current),

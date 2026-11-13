@@ -4,7 +4,7 @@ import type { OtherHit } from "./selectOther";
 import type { CameraState } from "../model/namedViews";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { eventTime, GestureTracker, gestureOptions, reachFor, TouchRouter, type Gesture } from "./gestures";
+import { eventTime, GestureTracker, gestureOptions, longPressWanted, reachFor, TouchRouter, type Gesture } from "./gestures";
 import { addHeld, additive, shiftHeld } from "./touchKeys";
 
 import type { PartMesh } from "../kernel/protocol";
@@ -207,6 +207,8 @@ export interface SceneCallbacks {
    * everything under the pointer at (x, y) in the view, nearest first; `at` = the place in the window (CSS px).
    */
   onSelectOther?: (hits: OtherHit[], at: { x: number; y: number }) => void;
+  /** The press that opened Select other moved on (the view turns): close the list. */
+  onSelectOtherCancel?: () => void;
   /**
    * Move / copy's triad: a drag began on one of its handles (`size`: the triad's size in mm as drawn now; `shift`:
    * no snapping). Return false to ignore it. Then each move (with Shift as it is now), and the end or (a second
@@ -336,7 +338,7 @@ export class SceneManager {
    * What one finger (or the pen) is doing: drawing in the sketch (`sent`: the sketch tools have had its press),
    * pressing on the view cube, or (`holdDrag`) dragging a part after a long press in an assembly.
    */
-  private touchStroke: { sketch: boolean; cube: boolean; sent: boolean; holdDrag: boolean; triad?: TriadHandle | null; triadOn?: boolean } | null = null;
+  private touchStroke: { sketch: boolean; cube: boolean; sent: boolean; holdDrag: boolean; triad?: TriadHandle | null; triadOn?: boolean; /** A long press opened Select other. */ menu?: boolean } | null = null;
   /** Move / copy's triad (null: none shown), drawn in `triadGroup`, with each handle's materials for highlighting. */
   private triad: Triad | null = null;
   private readonly triadGroup = new THREE.Group();
@@ -648,6 +650,11 @@ export class SceneManager {
       this.hoverCustomPlane = custom;
       this.setCustomPlanes(this.customPlaneData);
     }
+    const line = t?.kind === "sketchLine" ? this.pickLines.find((l) => l.sketch === t.id && l.line === t.line) ?? null : null;
+    if (line !== this.hoverLine) {
+      this.hoverLine = line;
+      this.drawReference();
+    }
     const curve = t?.kind === "curve" ? t.id : null;
     if (curve !== this.hoverCurve) {
       this.hoverCurve = curve;
@@ -696,6 +703,14 @@ export class SceneManager {
     const squares: THREE.Object3D[] = [];
     for (const [name, pl] of this.planes) if (!this.hiddenDatums.has(name)) squares.push(pl.square);
     for (const h of this.raycaster.intersectObjects(squares, false)) out.push({ kind: "plane", plane: h.object.userData.plane as string, distance: h.distance });
+    // Mate connectors (while the tool open takes one) and sketch lines (while a mirror or pattern wants one).
+    if (this.connectorPicking && this.connectorMarks.length) {
+      const key = this.connectorAt(x, y, 1, () => true);
+      const mark = key ? this.connectorMarks.find((m) => m.key === key) : null;
+      if (mark) out.push({ kind: "connector", key: mark.key, distance: new THREE.Vector3(...mark.origin).sub(this.raycaster.ray.origin).dot(this.raycaster.ray.direction) });
+    }
+    const line = this.nearestPickLine(EDGE_PICK_PIXELS * this.worldPerPixel());
+    if (line) out.push({ kind: "sketchLine", sketch: line.line.sketch, line: line.line.line, distance: line.distance });
     return out;
   }
 
@@ -2402,6 +2417,7 @@ export class SceneManager {
     }
     this.cancelHold();
     this.holdFired = false;
+    this.holdMoved = false;
     if (e.button === 0 && this.callbacks.onSelectOther && !this.sketchController && !this.dragEnabled && !this.viewCube.contains(x, y, this.width)) {
       // Held still: Select other (everything under the pointer, to choose from).
       this.holdTimer = setTimeout(() => {
@@ -2431,9 +2447,16 @@ export class SceneManager {
       this.callbacks.onTriadMove?.(this.rayAt(x, y), shiftHeld(e));
       return;
     }
-    if (this.holdTimer && this.pointerDown) {
+    if ((this.holdTimer || this.holdFired) && this.pointerDown && (e.buttons & 1) === 1) {
       const { x, y } = this.localPoint(e);
-      if (Math.hypot(x - this.pointerDown.x, y - this.pointerDown.y) > CLICK_SLOP) this.cancelHold();
+      if (Math.hypot(x - this.pointerDown.x, y - this.pointerDown.y) > CLICK_SLOP) {
+        this.cancelHold();
+        // Held, the list opened, then dragged on (turning the view): the list goes.
+        if (this.holdFired && !this.holdMoved) {
+          this.holdMoved = true;
+          this.callbacks.onSelectOtherCancel?.();
+        }
+      }
     }
     const orbit = this.orbit;
     if (orbit && orbit.id === e.pointerId) {
@@ -2496,6 +2519,7 @@ export class SceneManager {
   };
 
   private onPointerLeave = () => {
+    this.cancelHold();
     this.pendingMove = null;
     this.sketchController?.pointerLeave();
     this.viewCube.setHover(null, null, this.width);
@@ -2626,7 +2650,9 @@ export class SceneManager {
       this.touchKind = e.pointerType;
       // A long press only where it does something: picking up a part in an assembly. (Elsewhere a still press
       // then a drag just turns the view, and in a sketch it must still draw.)
-      const longPress = (this.dragEnabled || !!this.callbacks.onSelectOther) && !this.sketchController && this.touchTiming.longPressMs;
+      const onTriad = !this.sketchController && !this.viewCube.contains(x, y, this.width) && !!this.triadHandleAt(x, y, reachFor(e.pointerType));
+      const wanted = longPressWanted({ dragEnabled: this.dragEnabled, selectOther: !!this.callbacks.onSelectOther, sketching: !!this.sketchController, onTriad });
+      const longPress = wanted && this.touchTiming.longPressMs;
       this.gestures.options = { ...gestureOptions(e.pointerType, longPress), doubleTapMs: this.touchTiming.doubleTapMs };
       this.animation = null;
     }
@@ -2757,7 +2783,7 @@ export class SceneManager {
         if (!st || st.sketch || st.cube) break;
         // A Part Studio: a long press opens Select other (a drag after it still turns the view).
         if (!this.dragEnabled) {
-          if (!st.triad) this.openSelectOther(g.x, g.y);
+          if (!st.triad && this.openSelectOther(g.x, g.y)) st.menu = true;
           break;
         }
         const hit = this.pickAt(g.x, g.y, reachFor(this.touchKind));
@@ -2765,6 +2791,11 @@ export class SceneManager {
         break;
       }
       case "holdDrag":
+        // The finger moves on after Select other opened: the list goes (it mustn't sit over a turning view).
+        if (st?.menu) {
+          st.menu = false;
+          this.callbacks.onSelectOtherCancel?.();
+        }
         // Held on a part: it moves; held anywhere else, the drag turns the view as usual.
         if (st?.holdDrag) this.callbacks.onDragMove?.(this.rayAt(g.x, g.y));
         else if (st && !st.cube && !st.sketch) this.orbitBy(g.dx, g.dy);
@@ -2845,6 +2876,8 @@ export class SceneManager {
   private holdTimer: ReturnType<typeof setTimeout> | null = null;
   /** The mouse press now down opened Select other (its release mustn't pick). */
   private holdFired = false;
+  /** …and then the pointer moved on with the button still down. */
+  private holdMoved = false;
 
   private cancelHold(): void {
     if (this.holdTimer) clearTimeout(this.holdTimer);

@@ -102,12 +102,18 @@ export function hasCopiedFeatures(): boolean {
  * features from the clipboard (the browser's paste, so no permission is asked for), or — where a browser sends no paste
  * without a text box — what was last copied in this browser.
  */
+/** Keys and pastes meant for something else: a text box, a popup or window that's open, or the paste question itself. */
+function blocked(target: EventTarget | null): boolean {
+  const s = useStore.getState();
+  return isTyping(target) || inPopup(target, document) || !!s.dialog || !!s.pasteAsk || !canUseFeatures();
+}
+
 export function startFeatureClipboard(): () => void {
   let waiting: ReturnType<typeof setTimeout> | null = null;
   const onKey = (e: KeyboardEvent) => {
     const mod = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey;
     const key = e.key.toLowerCase();
-    if (!mod || (key !== "c" && key !== "v") || isTyping(e.target) || inPopup(e.target, document) || useStore.getState().dialog || !canUseFeatures()) return;
+    if (!mod || (key !== "c" && key !== "v") || blocked(e.target)) return;
     if (key === "c") {
       // Text picked on the page (a message, a label) is copied as usual.
       if (window.getSelection?.()?.toString()) return;
@@ -125,25 +131,19 @@ export function startFeatureClipboard(): () => void {
     waiting = setTimeout(() => {
       waiting = null;
       const clip = kept();
-      if (clip) pasteClip(clip);
+      if (clip && !useStore.getState().pasteAsk) pasteClip(clip);
     }, 120);
   };
   const onPaste = (e: ClipboardEvent) => {
-    if (isTyping(e.target) || !canUseFeatures()) return;
-    const text = e.clipboardData?.getData("text/plain") ?? "";
-    const clip = readClip(text);
-    // Something else on the clipboard (words copied elsewhere): nothing is pasted. Nothing readable: this browser's copy.
-    if (!clip && text) {
-      if (waiting) clearTimeout(waiting);
-      waiting = null;
-      return;
-    }
+    // The browser could read the clipboard: no need for this browser's own copy, whatever happens next.
     if (waiting) clearTimeout(waiting);
     waiting = null;
-    const use = clip ?? kept();
-    if (!use) return;
+    if (blocked(e.target)) return;
+    // Features on the clipboard are pasted; anything else (words, a picture, a file) is left alone.
+    const clip = readClip(e.clipboardData?.getData("text/plain"));
+    if (!clip) return;
     e.preventDefault();
-    pasteClip(use);
+    pasteClip(clip);
   };
   window.addEventListener("keydown", onKey);
   document.addEventListener("paste", onPaste);

@@ -12,7 +12,7 @@
 import { withoutGone } from "./dependents";
 import { parseFeatures } from "./document";
 import type { Feature } from "./types";
-import type { Variable } from "./variables";
+import { resolveSketches, resolveVariables, type Variable } from "./variables";
 
 export const CLIP_FORMAT = "juracad-features";
 
@@ -30,13 +30,18 @@ const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
  * A pattern for any of `ids` standing as a word of its own in some text: not inside a longer id ("f_1" isn't found in
- * "f_12"), but it may be followed by "_" ("<id>_p3": its sketch's points), "~" or "@" (its parts).
+ * "f_12", "lib_x" isn't found in "lib_x_plate", "lib_x_plate" isn't found in "lib_x_plate-2"), but it may be followed by
+ * "~" or "@" (its parts: "<id>~2", "<id>@<configuration>"). A "_" after it counts only straight after a "~" (a frame
+ * member's part id, "<frame>~<sketch>_<curve>"); anywhere else it makes a longer id. Check each match with `accepted`.
  */
 function idPattern(ids: Iterable<string>): RegExp | null {
   const list = [...ids].filter(Boolean).sort((a, b) => b.length - a.length);
   if (!list.length) return null;
-  return new RegExp(`(^|[^A-Za-z0-9_])(${list.map(escape).join("|")})(?![A-Za-z0-9])`, "g");
+  return new RegExp(`(^|[^A-Za-z0-9_.\\-])(${list.map(escape).join("|")})(?=$|[^A-Za-z0-9.\\-])`, "g");
 }
+
+/** Is this match a whole id (see idPattern)? `after` = the text just after it. */
+const accepted = (before: string, after: string) => !after.startsWith("_") || before === "~";
 
 /** The ids among `ids` mentioned anywhere in a feature (any string or key in it). */
 export function idsMentioned(value: unknown, ids: Iterable<string>): Set<string> {
@@ -44,7 +49,10 @@ export function idsMentioned(value: unknown, ids: Iterable<string>): Set<string>
   const re = idPattern(ids);
   if (!re) return found;
   const text = JSON.stringify(value);
-  for (const m of text.matchAll(re)) found.add(m[2]);
+  for (const m of text.matchAll(re)) {
+    const end = (m.index ?? 0) + m[0].length;
+    if (accepted(m[1], text.slice(end, end + 1))) found.add(m[2]);
+  }
   return found;
 }
 
@@ -52,8 +60,12 @@ export function idsMentioned(value: unknown, ids: Iterable<string>): Set<string>
 export function remapIds<T>(value: T, map: Map<string, string>): T {
   const re = idPattern(map.keys());
   if (!re) return value;
-  const text = JSON.stringify(value).replace(re, (_m, before: string, id: string) => before + (map.get(id) ?? id));
-  return JSON.parse(text) as T;
+  const text = JSON.stringify(value);
+  const out = text.replace(re, (whole: string, before: string, id: string, at: number) => {
+    const end = at + whole.length;
+    return accepted(before, text.slice(end, end + 1)) ? before + (map.get(id) ?? id) : whole;
+  });
+  return JSON.parse(out) as T;
 }
 
 /** Words in a feature's typed sizes that could be variable names. */
@@ -192,10 +204,13 @@ export function pasteFeatures(
     }
     return out;
   });
-  const at = opts.after ? features.findIndex((f) => f.id === opts.after) : -1;
-  const next = at >= 0 ? [...features.slice(0, at + 1), ...pasted, ...features.slice(at + 1)] : [...features, ...pasted];
   const addVariables = opts.addVariables ? missingVariables(clip, opts.variables ?? []).map((v) => ({ ...v, id: opts.makeId("v") })) : [];
-  return { features: next, pasted, addVariables, needsPick };
+  // Sketches sized by variables take this design's values (a width "w" is 20 here even if it was 50 where copied).
+  const { values } = resolveVariables([...(opts.variables ?? []), ...addVariables]);
+  const solved = resolveSketches({ format: "partsmith", version: 1, name: "", features: pasted }, values).features;
+  const at = opts.after ? features.findIndex((f) => f.id === opts.after) : -1;
+  const next = at >= 0 ? [...features.slice(0, at + 1), ...solved, ...features.slice(at + 1)] : [...features, ...solved];
+  return { features: next, pasted: solved, addVariables, needsPick };
 }
 
 /** The toast after a paste: what came in, and what needs looking at. */

@@ -20,7 +20,11 @@ export type OtherHit =
   | { kind: "plane"; plane: string; distance: number }
   | { kind: "customPlane"; id: string; distance: number }
   | { kind: "sketchArea"; sketch: string; index: number; distance: number }
-  | { kind: "curve"; id: string; distance: number; point: [number, number, number] };
+  | { kind: "curve"; id: string; distance: number; point: [number, number, number] }
+  /** A mate connector drawn for the tool open (its key, as setConnectorMarks gave it). */
+  | { kind: "connector"; key: string; distance: number }
+  /** A straight sketch line a mirror or pattern can take (its sketch's feature id and the line's id). */
+  | { kind: "sketchLine"; sketch: string; line: string; distance: number };
 
 /** A choice in the list: the hit, or a whole part (`whole`). */
 export type OtherChoice = OtherHit | { kind: "part"; whole: true; partId: string; distance: number; via: PartHit };
@@ -31,10 +35,11 @@ export const MOST_CHOICES = 16;
 /** Two hits nearer than this (as a share of the nearest distance, or absolutely) count as at the same place. */
 const SAME_PLACE = 1e-6;
 
-const filterKind = (h: OtherHit): FilterKind => (h.kind === "face" || h.kind === "edge" ? h.kind : h.kind === "sketchArea" || h.kind === "curve" ? "sketch" : "plane");
+const filterKind = (h: OtherHit): FilterKind =>
+  h.kind === "face" || h.kind === "edge" ? h.kind : h.kind === "sketchArea" || h.kind === "curve" || h.kind === "sketchLine" ? "sketch" : "plane";
 
 /** Which comes first at the same distance: edges sit on faces, so they're listed first; planes after parts. */
-const RANK: Record<OtherHit["kind"], number> = { edge: 0, curve: 1, sketchArea: 2, face: 3, customPlane: 4, plane: 5 };
+const RANK: Record<OtherHit["kind"], number> = { connector: 0, edge: 1, sketchLine: 2, curve: 3, sketchArea: 4, face: 5, customPlane: 6, plane: 7 };
 
 export function choiceKey(c: OtherChoice): string {
   if (c.kind === "part") return `part:${c.partId}`;
@@ -42,6 +47,8 @@ export function choiceKey(c: OtherChoice): string {
   if (c.kind === "plane") return `plane:${c.plane}`;
   if (c.kind === "customPlane") return `customPlane:${c.id}`;
   if (c.kind === "sketchArea") return `area:${c.sketch}:${c.index}`;
+  if (c.kind === "connector") return `connector:${c.key}`;
+  if (c.kind === "sketchLine") return `line:${c.sketch}:${c.line}`;
   return `curve:${c.id}`;
 }
 
@@ -100,6 +107,8 @@ export interface ChoiceNames {
   feature: (id: string) => string;
   /** The face's surface or edge's curve type (e.g. "PLANE", "LINE"), if known. */
   shape?: (kind: "face" | "edge", partId: string, index: number) => string | undefined;
+  /** A mate connector's name, by its key. */
+  connector?: (key: string) => string;
 }
 
 /** The row's words: "Flat face of Part 1", "Straight edge of Part 1", "Part 1 (whole part)", "Top plane", "Area of Sketch 2"… */
@@ -113,5 +122,7 @@ export function choiceLabel(c: OtherChoice, names: ChoiceNames): string {
   if (c.kind === "plane") return `${c.plane} plane`;
   if (c.kind === "customPlane") return names.feature(c.id);
   if (c.kind === "sketchArea") return `Area of ${names.feature(c.sketch)}`;
+  if (c.kind === "connector") return names.connector?.(c.key) ?? "Mate connector";
+  if (c.kind === "sketchLine") return `Line in ${names.feature(c.sketch)}`;
   return names.feature(c.id);
 }
