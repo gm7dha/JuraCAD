@@ -8,6 +8,13 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.76 — A tidier toolbar
+
+- The Part Studio toolbar fits a normal window without scrolling: related tools are grouped into dropdowns (Revolve/Sweep/Loft, Fillet/Chamfer…, Hole/Thread, Move and patterns, Boolean and part tools, Plane, connectors and curves, surfaces, frames, sheet metal, shapes, Library/Import, Variables/Configurations, 3D print/Laser/Picture).
+- Each dropdown shows the tool you used last, so favourites stay one click away; Sketch and Extrude keep their own buttons.
+- The sketch toolbar is tidier too (Slot and Polygon with Rectangle, Offset with Trim, Text with the inserts, rarer relations under "More relations").
+- Undo, Redo, Section, Fit, Views and Pick are icons; long lists scroll on short windows; on a touch screen a long press opens a dropdown and its ▾ is bigger.
+
 ## v0.75 — No loose plugs or pinholes in island puzzles
 
 - Island puzzle: a dovetail knob joined too thinly to its piece no longer prints as a loose plug; that dovetail is left out and the knob joins the piece around it.
