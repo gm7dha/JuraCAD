@@ -8,6 +8,11 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.75 — No loose plugs or pinholes in island puzzles
+
+- Island puzzle: a dovetail knob joined too thinly to its piece no longer prints as a loose plug; that dovetail is left out and the knob joins the piece around it.
+- Island puzzle: tiny pinholes through pieces on low coasts are filled.
+
 ## v0.74 — Island puzzle fixes, 8 filaments and Bambu colours
 
 - The puzzles' 3D preview is much bigger, and **⤢ Enlarge** fills the window with it (Esc to go back).
