@@ -1553,15 +1553,21 @@
   `settings` of plateFiles/plate3mf/allPlatesZip/bandPlateFiles/bandPlateFile (none = unchanged bytes); no negative parts —
   the mesh's gap is already "don't print here". Full-colour files carry no settings (said in the window). Laid-out plates
   still ignore `bedExclude`. tests/islandInPlace.
-  Holes (the owner's Arran print): after `keepLand`, `fillEnclosed` makes land of every non-land patch the land closes round
-  (only non-land reachable from the area's edge, diagonal steps too, stays sea — inland ground at/below `sea`, lochs the tiles
-  hold at 0, data gaps), and `smoothFill` gives them ground: SOR "soap film" from the land round them, over the patch and land
+  Holes (the owner's Arran print): after `keepLand`, `fillEnclosed` finds every non-land patch the land closes round (only
+  non-land reachable from the area's edge, diagonal steps too, is open sea) and fills those that can't be the sea: lowest
+  height > 0 (the tiles code the sea as ≤ 0: low land, a gap held above 0), ≤ `SMALL_HOLE` 100 mm² on the puzzle, or under a
+  loch of the map (`inRing` samples); bigger sea-level ones stay sea (a sea loch with a narrow mouth). Notes say how many were
+  filled and kept. `smoothFill` gives filled ones ground: SOR "soap film" from the land round them, over the patch and land
   within the data's spacing of it (the tiles' interpolation slopes into a gap), never lowered, ≥ the lowest shore; `groundAt`
-  reads it bilinearly (`filledGround`) — no patches = the old function, byte for byte; a note says how many. Map water there is
-  pressed and painted as any loch. `giveAwaySlivers` (after the dovetails): a piece's cells its mesh can't keep — a crumb of
-  its core cut off from the main body, or cells past the outline's reach from it — go to the piece beside them (spread over
-  them), only in runs that matter (a crumb, or ≥ `SLIVER_LEAST` 2 mm²), so plain puzzles stay as they were; wiggly boundary
-  lines once left loose crumbs and gaps right through. tests/islandHoles.
+  reads it bilinearly (`filledGround`) — no patches = the old function. Map water there is pressed and painted as any loch.
+  `giveAwayCrumbs` (after the dovetails; `touching` counted again if it moved anything): per piece, pieceMesh's own samples
+  (`meshParts`: side by side, or across a saddle with mean > 0 — exactly the mesh's outlines) — a separate inside part of at
+  most `CRUMB_MOST` 3 mm² and the cells nearer it than the body goes whole to the neighbour thickest beside it; a hole in the
+  outline (`outsideFromEdge`) holding only thin cells of other pieces (`thinAt`) is given to the piece. A tab's own knob and
+  stem are never touched; every tab must still catch (`tabHolds` = joinPieces' `locks`), else it's undone with the room round
+  the broken tabs left alone and tried again. Islands with no holes or crumbs are byte-identical (18 settings checked against
+  the old code: 14 the same; the 4 that changed each had a crumb or a slot through a piece in the old mesh). tests/islandHoles (meshes pinned to the old code's hashes;
+  15 mm pieces, pattern 1: every tab catches).
   Tests: tests/islandPuzzle (pure; over seeds/sizes on a ragged coast: ≥ 2 joints per piece, outlines from the meshes never
   cross or come within 2·fit, every tab catches when pulled, median play ≤ 0.5 mm — `tests/support/outlineGeom.ts`), tests/islandMarks.
 - Mountain puzzle (a card in the Design library's 3D printing tab under "Puzzles" — `src/library/tools.ts` `LIBRARY_TOOLS`:
