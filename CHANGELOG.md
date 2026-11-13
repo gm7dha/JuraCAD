@@ -8,6 +8,16 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.74 — Island puzzle fixes, 8 filaments and Bambu colours
+
+- The puzzles' 3D preview is much bigger, and **⤢ Enlarge** fills the window with it (Esc to go back).
+- No more holes through the island: low ground inside the coast (lochs held at sea level, gaps in the height data) is filled in as land, and blue with map water on. Big sea-level patches that look like sea lochs stay sea.
+- Fixed the keyhole-shaped holes and thin slits by the coast: a dovetail that would make a piece come apart isn't used, thin necks of low coast are widened so every piece prints as one solid, and loose crumbs join the piece beside them.
+- New "Lochs, lakes and reservoirs only" choice under From the map (and "No paths" / "No roads"): a smaller, quicker fetch, and no red or black filament.
+- Colour bands know about two AMS units: choose 4 or 8 filament slots (8 on the X2D to start with), with richer usual colours that fit in 8.
+- Every colour can be picked from Bambu Lab's real PLA colours (Basic, Matte, Silk+) by name, the usual colours are Bambu spools, and the filament list says which spool to load.
+- Fixed a crash in full colour on very big pieces.
+
 ## v0.73 — Tidier map marks on the puzzles
 
 - Island and Mountain puzzles: from the map, only lochs, lakes and reservoirs are shown in blue. Rivers, streams and tiny ponds are left out.
