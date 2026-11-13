@@ -1029,6 +1029,7 @@ function withAssemblyFeatures(assemblies: Assembly[], raw: unknown, seen: Set<st
     if (!features.length) return a;
     for (const f of features) seen.add(f.id);
     const parts = parseFeatureParts(r.featureParts, features);
-    return { ...a, features, ...(parts ? { featureParts: parts } : {}) };
+    const needs = parseFeatureParts(r.featureNeeds, features, true);
+    return { ...a, features, ...(parts ? { featureParts: parts } : {}), ...(needs ? { featureNeeds: needs } : {}) };
   });
 }

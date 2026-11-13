@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.70 — Assembly fillets, chamfers and Edit in context for Claude
+
+- A pin mated into a hole drilled in an assembly now stays in the hole when a Part Studio change moves the drilled part.
+- New Fillet and Chamfer in assemblies: round or bevel edges of the parts there (holes drilled in the assembly too), in that assembly only.
+- Deleting an assembly hole also deletes the fillet or chamfer of its rim (and only of its own rim).
+- An older file with assembly holes may show as unsaved right after opening, if its drilled parts get moved to where their mates now put them.
+- Claude can make assembly fillets and chamfers, and set up and remove Edit in context.
+
 ## v0.69 — Holes and cuts in assemblies, and Edit in context
 
 - New in assemblies: **Hole** and **Cut** drill or cut through the parts in the assembly at once (e.g. two plates mated together). Only that assembly's copies are cut; the parts themselves don't change.

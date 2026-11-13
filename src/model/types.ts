@@ -1263,6 +1263,11 @@ export interface Assembly {
   features?: Feature[];
   /** Which parts each assembly feature cuts, by feature id (part keys); missing = every top-level part it reaches. */
   featureParts?: Record<string, string[]>;
+  /**
+   * Assembly Fillets/Chamfers whose picked edges only the assembly's own cuts made (a drilled hole's rim): fillet id →
+   * those cuts' ids, so deleting the cut takes the fillet with it. Missing = none.
+   */
+  featureNeeds?: Record<string, string[]>;
 }
 
 /**

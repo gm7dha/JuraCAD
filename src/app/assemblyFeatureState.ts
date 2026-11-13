@@ -16,11 +16,28 @@
 import { create } from "zustand";
 import { useEffect, useMemo } from "react";
 
-import { addAssemblyFeatures, assemblyExtrudeCut, assemblyFeaturesOf, assemblyHole, assemblySketch, deleteAssemblyFeatures, modifiedCopies, setFeatureParts } from "../assembly/assemblyFeatures";
+import {
+  addAssemblyFeatures,
+  assemblyEdgeFeature,
+  assemblyExtrudeCut,
+  assemblyFeaturesOf,
+  assemblyHole,
+  assemblySketch,
+  deleteAssemblyFeatures,
+  edgeNeeds,
+  hasRef,
+  modifiedCopies,
+  setFeatureNeeds,
+  storedEdgePicks,
+  setFeatureParts,
+} from "../assembly/assemblyFeatures";
+import { findMesh, meshIdOf } from "../assembly/configured";
+import { leavesOf } from "../assembly/subassembly";
+import type { TopoPick } from "../geometry/topoRef";
 import { settlePlacements, updateAssembly } from "../assembly/assembly";
 import { contextGone, contextPartOf, removeContext, setContextHidden, takeContext, updateContext } from "../assembly/inContext";
 import { cutMeshesFrom, hasAssemblyFeatures, instancesForKernel, storedCutInputs } from "../assembly/placed";
-import type { Placement } from "../assembly/math";
+import { compose, type Placement } from "../assembly/math";
 import { getKernel } from "../kernel/connect";
 import type { AssemblyCutsResult, PartMesh } from "../kernel/protocol";
 import { activeAssembly, activeStudioId, useStore } from "../model/store";
@@ -29,11 +46,17 @@ import { addCircle, addPoint, addRectangle } from "../sketch/ops";
 import type { SketchPlane } from "../sketch/planes";
 import { emptySketch, type SketchData } from "../sketch/types";
 import { useSolvedAssembly } from "./assemblySolve";
+import { settleCutCopiesIn } from "../assembly/cutSettle";
 import { carryCutMeshesOver, rememberCutMeshes, solveWithParts, type CutMeshes } from "../assembly/mates";
 
 /** What the Hole / Cut dialog is making (null = closed). */
 export interface AsmCutDraft {
-  kind: "hole" | "cut";
+  /** A Fillet / Chamfer rounds `edges` by `size`; a Hole / Cut uses the rest. */
+  kind: "hole" | "cut" | "fillet" | "chamfer";
+  /** A Fillet / Chamfer's edges clicked (partId = the copy's key, the edge in the part's own coordinates). */
+  edges: TopoPick[];
+  /** A Fillet's radius or a Chamfer's distance (mm). */
+  size: number;
   /** The face clicked (in the assembly's coordinates), once one is. */
   plane: SketchPlane | null;
   label: string;
@@ -89,6 +112,25 @@ carryCutMeshesOver((assemblies, parts) => {
   return { cuts: was.cuts, same: was.parts === parts && signatureOf(assemblies, parts) === was.signature };
 });
 
+/** The parts the drilled copies were last settled for (once per rebuild, never again for the same parts). */
+let settledFor: readonly PartMesh[] | null = null;
+
+/**
+ * After a rebuild, drilled copies a Part Studio change moved (the base a plate is fastened to made wider) are stored
+ * where the solve now puts them (settleCutCopies), without an undo step of their own — so the solver's copies are cut
+ * where they're shown, and a pin mated into a hole stays in the hole shown. Once per set of parts: the settle changes
+ * the assemblies, not the parts, so it never runs again for its own change.
+ */
+function settleAfterRebuild(list: readonly Assembly[], parts: readonly PartMesh[], cuts: CutMeshes): void {
+  if (settledFor === parts) return;
+  const s = useStore.getState();
+  // (Not now — an old version on show, a drag, or the design changed meanwhile: the next answer for these parts settles.)
+  if (s.versionView || s.dragPreview || s.history.present.assemblies !== list) return;
+  settledFor = parts;
+  const next = settleCutCopiesIn(s.history.present, parts, cuts);
+  if (next !== s.history.present) s.changeVersions(() => next);
+}
+
 /**
  * Keeps the mate solver's cut copies up to date: whenever the document's assemblies or the parts change, the worker
  * cuts each assembly's copies where the document has them. They depend on the document alone (never on a solve), so
@@ -127,6 +169,7 @@ function useSolverCuts(): void {
           const cuts = cutMeshesFrom(result.meshes);
           rememberCutMeshes(list, parts, cuts);
           useAsmFeatures.setState({ solverCuts: { assemblies: list, parts, cuts, signature } });
+          settleAfterRebuild(list, parts, cuts);
         },
         () => undefined,
       );
@@ -247,10 +290,92 @@ export function cutMeshFor(key: string): PartMesh | undefined {
 // ---------------------------------------------------------------------------
 // The Hole / Cut dialog
 
-export function startAsmCut(kind: "hole" | "cut"): void {
+export function startAsmCut(kind: AsmCutDraft["kind"]): void {
   useAsmFeatures.setState({
-    draft: { kind, plane: null, label: "", points: [], diameter: kind === "hole" ? 5 : 10, shape: "rectangle", width: 10, height: 10, throughAll: true, depth: 5, flip: false, parts: null },
+    draft: {
+      kind,
+      edges: [],
+      size: kind === "chamfer" ? 1 : 2,
+      plane: null,
+      label: "",
+      points: [],
+      diameter: kind === "hole" ? 5 : 10,
+      shape: "rectangle",
+      width: 10,
+      height: 10,
+      throughAll: true,
+      depth: 5,
+      flip: false,
+      parts: null,
+    },
   });
+}
+
+/** A Fillet / Chamfer's edge clicked on copy `key` (`ref` in the part's own coordinates): added, or taken out again. */
+export function toggleAsmEdge(key: string, ref: TopoPick["ref"]): void {
+  const d = useAsmFeatures.getState().draft;
+  if (!d) return;
+  const same = (p: TopoPick) => p.partId === key && JSON.stringify(p.ref) === JSON.stringify(ref);
+  changeAsmCut({ edges: d.edges.some(same) ? d.edges.filter((p) => !same(p)) : [...d.edges, { partId: key, ref }] });
+}
+
+/**
+ * Accept a Fillet / Chamfer: added at the end of the assembly's features (one undo step) if the worker can make it.
+ * Edges only the assembly's own cuts made (a drilled hole's rim) are noted, so deleting that cut takes it with it.
+ */
+async function acceptAsmEdges(d: AsmCutDraft, asm: Assembly): Promise<string | null> {
+  if (d.kind !== "fillet" && d.kind !== "chamfer") return null;
+  if (!d.edges.length) return "Click the edges to round first.";
+  if (!(d.size > 0)) return d.kind === "fillet" ? "The radius must be more than 0." : "The distance must be more than 0.";
+  const s = useStore.getState();
+  const before = s.history.present.assemblies ?? [];
+  const solved = solveWithParts(asm, s.parts, { assemblies: before });
+  const leavesNow = leavesOf(asm, s.parts, before);
+  const plainOf = (key: string) => {
+    const leaf = leavesNow.find((l) => l.key === key);
+    return leaf ? findMesh(s.parts, meshIdOf(leaf.instance)) : undefined;
+  };
+  const placeOf = (key: string) => {
+    const leaf = leavesNow.find((l) => l.key === key);
+    if (!leaf) return undefined;
+    const top = solved.placements[leaf.top] ?? asm.instances.find((i) => i.id === leaf.top)!.placement;
+    return { at: leaf.path.length ? compose(top, leaf.relative) : top, mirrored: !!leaf.instance.mirrored };
+  };
+  // Edges of the part itself go with the copy; a hole's rim the assembly drilled stays with the hole (storedEdgePicks).
+  const tool = assemblyEdgeFeature(asm, d.kind, storedEdgePicks(d.edges, plainOf, placeOf), { size: d.size });
+  const trial = addAssemblyFeatures(s.history.present, asm.id, [tool]);
+  const made = trial.assemblies?.find((a) => a.id === asm.id);
+  if (!made) return null;
+  const assemblies = trial.assemblies ?? [];
+  let needs: string[];
+  try {
+    const kernel = getKernel();
+    const r = await kernel.assemblyCuts(instancesForKernel(made, s.parts, assemblies, solved));
+    if (r.errors[tool.id]) return r.errors[tool.id];
+    if (!r.reached[tool.id]?.length) return "It wouldn't change anything: click edges of the parts.";
+    // The feature each edge only the assembly made comes from: the copy made without it hasn't got the edge.
+    const own = new Set(assemblyFeaturesOf(asm).map((f) => f.id));
+    const earlier = Object.fromEntries(Object.entries(r.reached).filter(([id]) => own.has(id)));
+    const keys = [...new Set(d.edges.map((p) => p.partId))];
+    const without = new Map<string, Record<string, PartMesh>>();
+    for (const p of d.edges) {
+      const plain = plainOf(p.partId);
+      if (!plain || hasRef(plain, p.ref)) continue;
+      for (const [id, reached] of Object.entries(earlier)) {
+        if (without.has(id) || !reached.includes(p.partId)) continue;
+        const off = { ...asm, features: assemblyFeaturesOf(asm).map((f) => (f.id === id ? { ...f, suppressed: true } : f)) };
+        const inputs = instancesForKernel(off, s.parts, before.map((x) => (x.id === asm.id ? off : x)), solved).filter((i) => keys.includes(i.id));
+        const cut = await kernel.assemblyCuts(inputs);
+        without.set(id, Object.fromEntries(cut.meshes.map((m) => [m.id, m])));
+      }
+    }
+    needs = edgeNeeds(d.edges, plainOf, earlier, (id, key) => without.get(id)?.[key]);
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+  useStore.getState().changeDocument((doc) => updateAssembly(addAssemblyFeatures(settlePlacements(doc, asm.id, solved.placements), asm.id, [tool]), asm.id, (a) => setFeatureNeeds(a, tool.id, needs)));
+  useAsmFeatures.setState({ draft: null });
+  return null;
 }
 
 export const changeAsmCut = (patch: Partial<AsmCutDraft>): void => {
@@ -281,6 +406,7 @@ export async function acceptAsmCut(): Promise<string | null> {
   const s = useStore.getState();
   const asm = activeAssembly(s);
   if (!d || !asm) return null;
+  if (d.kind === "fillet" || d.kind === "chamfer") return acceptAsmEdges(d, asm);
   if (!d.plane) return "Click a flat face of a part first: that's where it's drawn.";
   if (!d.points.length) return d.kind === "hole" ? "Click on the face where each hole goes." : "Click on the face where the cut goes.";
   if (d.kind === "hole" && !(d.diameter > 0)) return "The diameter must be more than 0.";

@@ -220,6 +220,24 @@ export function AssemblyToolbar() {
               onClick: () => startAsmCut("cut"),
               title: "Cut (in the assembly) — an extrude that removes a rectangle or circle through the parts here. Only this assembly's copies are cut",
             },
+            {
+              key: "fillet",
+              label: "Fillet",
+              icon: <Icons.Fillet />,
+              disabled: !asm?.instances.length,
+              active: cutDraft === "fillet",
+              onClick: () => startAsmCut("fillet"),
+              title: "Fillet (in the assembly) — round edges of parts here, holes drilled in the assembly too. Only this assembly's copies change",
+            },
+            {
+              key: "chamfer",
+              label: "Chamfer",
+              icon: <Icons.Chamfer />,
+              disabled: !asm?.instances.length,
+              active: cutDraft === "chamfer",
+              onClick: () => startAsmCut("chamfer"),
+              title: "Chamfer (in the assembly) — bevel edges of parts here. Only this assembly's copies change",
+            },
           ]}
         />
         <ToolButton

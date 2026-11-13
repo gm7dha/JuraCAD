@@ -6910,6 +6910,27 @@ export class GeometryEngine {
           errors[f.id] = `${wrong.label}: ${bad[wrong.key]}`;
           continue;
         }
+        if (f.type === "fillet" || f.type === "chamfer") {
+          // Edges picked on the copy as it is (in the part's own coordinates): taken back there, rounded, put back.
+          if (moves) shape = shape.translate([-at[0], -at[1], -at[2]]);
+          if (turns) shape = shape.rotate(-angle, [0, 0, 0], axis);
+          if (stage.mirrored) shape = shape.mirror("YZ", [0, 0, 0]);
+          const own: BuiltPart = { id: part.id, name: part.name, featureIds: [], shape, ...(part.surface ? { surface: true } : {}) };
+          const problem = this.edgeFeatureOnCopy(own, { ...f, picks: (f.picks ?? []).map((p) => ({ ...p, partId: part.id })) });
+          shape = own.shape;
+          if (stage.mirrored) shape = shape.mirror("YZ", [0, 0, 0]);
+          if (turns) shape = shape.rotate(angle, [0, 0, 0], axis);
+          if (moves) shape = shape.translate(at);
+          if (problem) {
+            errors[f.id] = problem;
+            continue;
+          }
+          const now = measureVolume(shape);
+          // (Rounding an outside edge takes material away, an inside corner adds some: either way it changed the copy.)
+          if (Math.abs(volume - now) > 1e-6) by.push(f.id);
+          volume = now;
+          continue;
+        }
         const here: BuiltPart = { id: part.id, name: part.name, featureIds: [], shape };
         let tool: Shape3D;
         try {
@@ -6954,6 +6975,17 @@ export class GeometryEngine {
       this.cutCopies.delete(oldest);
     }
     return { shape, cut, by, errors, names };
+  }
+
+  /** An assembly Fillet or Chamfer on one copy (`own`, whose shape is replaced when it works): the Part Studio's own code, on that copy alone. */
+  private edgeFeatureOnCopy(own: BuiltPart, f: Feature): string | null {
+    const saved = this.parts;
+    this.parts = [own];
+    try {
+      return this.applyEdgeFeature(f);
+    } finally {
+      this.parts = saved;
+    }
   }
 
   /**
