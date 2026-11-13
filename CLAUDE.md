@@ -1781,7 +1781,7 @@
   their ends), mcpBurrPatterns.
 - Toolbars: the Part Studio's is laid out by the pure `src/app/toolbarLayout.ts` (`STUDIO_TOOLBAR`: slots of tool keys,
   `STUDIO_TOOLS` = every key, each exactly once — tests/toolbarLayout; Toolbar.tsx's `tools` record must define each), grouped
-  as in Onshape so it fits 1280 px with ~90 px to spare (`.tool-button` min-width 43 under 1400 px; the smoke test checks,
+  as in Onshape so it fits 1280 px with ~80 px to spare in CI's font (`.tool-button` 42 px, 10 px text under 1400 px; the smoke test checks,
   reports the room left — warns under 40 — and shots toolbar1280/toolbarmenu/toolbaripad): a slot of several
   tools is a `ToolGroupButton` (the last one used shows, `partsmith.toolGroup.<id>`; `GroupItem.short` = a shorter face label,
   `divider` = a line above it in the list; `compact` = icon only; a right-click / long press on it opens the list too; the

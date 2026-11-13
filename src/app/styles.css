@@ -2521,11 +2521,11 @@ kbd {
 
 /* Narrow screens (kept last so these win over the rules above). */
 @media (max-width: 1400px) {
-  /* 43 px: a Part Studio's tools then fit a 1280 px window with room to spare (the smoke test reports how much). */
+  /* A Part Studio's tools then fit a 1280 px window with ~80 px to spare even in CI's wide font (the smoke test reports it). */
   .tool-button {
-    min-width: 43px;
-    padding: 2px 3px;
-    font-size: 10.5px;
+    min-width: 42px;
+    padding: 2px 2px;
+    font-size: 10px;
   }
   /* Constraint buttons show just their symbol; the name is in the tooltip. */
   .relation-button {
