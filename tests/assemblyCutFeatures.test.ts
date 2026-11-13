@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { addAssemblyFeatures, assemblyFeatureDependents, assemblyHole, assemblySketch, cutsFor, deleteAssemblyFeatures, featureCuts, setFeatureParts } from "../src/assembly/assemblyFeatures";
+import { addAssemblyFeatures, assemblyEdgeFeature, assemblyFeaturesText, setFeatureNeeds, assemblyFeatureDependents, assemblyHole, assemblySketch, cutsFor, deleteAssemblyFeatures, featureCuts, setFeatureParts } from "../src/assembly/assemblyFeatures";
 import { billOfMaterials, updateAssembly, withoutInstances } from "../src/assembly/assembly";
 import { instancesForKernel } from "../src/assembly/placed";
 import { carryCutMeshesOver, rememberedCutMeshes } from "../src/assembly/mates";
@@ -136,6 +136,47 @@ describe("which copies an assembly feature cuts", () => {
     const old = doc().doc;
     const again = readDocumentFile(serializeDocument(old));
     expect(again.ok && serializeDocument(again.doc, new Date(0))).toBe(serializeDocument(old, new Date(0)));
+  });
+});
+
+describe("Fillet and Chamfer in an assembly", () => {
+  const edge = (z: number) => ({ kind: "edge" as const, curve: "LINE", a: [0, 0, z] as [number, number, number], b: [10, 0, z] as [number, number, number], mid: [5, 0, z] as [number, number, number] });
+
+  it("reaches only the copies it has edges on, each given just its own edges; copies removed drop their edges", () => {
+    const { doc: d, asm } = withHole();
+    const f = assemblyEdgeFeature(asm, "fillet", [{ partId: "i1", ref: edge(0) }, { partId: "i2", ref: edge(5) }, { partId: "s1/j1", ref: edge(1) }], { size: 2 }, "fi");
+    expect(f).toMatchObject({ name: "Fillet 1", type: "fillet", params: { radius: "2 mm" } });
+    const a = { ...asm, features: [...asm.features!, f], featureParts: { ho: ["i1"] } };
+    expect(featureCuts(a, f, "i2")).toBe(true);
+    expect(featureCuts(setFeatureParts(a, "fi", []), f, "i2")).toBe(true);
+    expect(cutsFor(a, "i2")!.map((x) => [x.id, x.picks?.length ?? 0])).toEqual([["fi", 1]]);
+    expect(cutsFor(a, "i1")!.map((x) => x.id)).toEqual(["sk", "ho", "fi"]);
+    expect(cutsFor(a, "i1")!.at(-1)!.picks).toEqual([{ partId: "i1", ref: edge(0) }]);
+    // The same object each time (the engine's cache and the solver's signatures compare them).
+    expect(cutsFor(a, "i1")!.at(-1)).toBe(cutsFor(a, "i1")!.at(-1));
+    const placed = instancesForKernel(a, parts, [a, d.assemblies![1]]);
+    expect(placed.find((i) => i.id === "s1/j1")!.cuts!.at(-1)!.features.map((x) => x.id)).toEqual(["fi"]);
+    const fewer = updateAssembly({ ...d, assemblies: [a, d.assemblies![1]] }, "A", (x) => withoutInstances(x, ["i2"]));
+    expect(fewer.assemblies![0].features!.find((x) => x.id === "fi")!.picks!.map((p) => p.partId)).toEqual(["i1", "s1/j1"]);
+    expect(assemblyFeaturesText(a, (k) => k)).toMatch(/Fillet 1 \(fillet, radius 2 mm, on 3 edges of i1, i2, s1\/j1\)/);
+  });
+
+  it("saves and reads back a chamfer and what it needs", () => {
+    const { doc: d, asm } = withHole();
+    const c = assemblyEdgeFeature(asm, "chamfer", [{ partId: "i1", ref: edge(5) }], { size: 1 }, "ch");
+    const a = setFeatureNeeds({ ...asm, features: [...asm.features!, c] }, "ch", ["ho"]);
+    expect(assemblyFeatureDependents(a, ["ho"])).toEqual(["ho", "ch"]);
+    expect(assemblyFeatureDependents(a, ["sk"])).toEqual(["sk", "ho", "ch"]);
+    const saved = { ...d, assemblies: [a, d.assemblies![1]] };
+    const back = readDocumentFile(serializeDocument(saved));
+    if (!back.ok) throw new Error(back.error);
+    expect(back.doc.assemblies![0].features).toEqual(a.features);
+    expect(back.doc.assemblies![0].featureNeeds).toEqual({ ch: ["ho"] });
+    // Needs naming features that aren't there are dropped.
+    const odd = JSON.parse(serializeDocument(saved));
+    odd.assemblies[0].featureNeeds = { ch: ["gone"], ho: "x" };
+    const read = readDocumentFile(JSON.stringify(odd));
+    expect(read.ok && read.doc.assemblies![0].featureNeeds).toBeUndefined();
   });
 });
 

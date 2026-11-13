@@ -26,9 +26,11 @@ import type { SketchData } from "../sketch/types";
 import type { SketchPlane } from "../sketch/planes";
 import { updateAssembly } from "./assembly";
 import { PATH_SEP } from "./subassembly";
-import { isAssemblyFeature } from "./featureParse";
+import { isAssemblyEdgeFeature, isAssemblyFeature } from "./featureParse";
+import type { TopoPick } from "../geometry/topoRef";
+import type { PartMesh } from "../kernel/protocol";
 
-export { ASSEMBLY_CUT_TYPES, ASSEMBLY_FEATURE_TYPES, isAssemblyFeature, parseFeatureParts } from "./featureParse";
+export { ASSEMBLY_CUT_TYPES, ASSEMBLY_FEATURE_TYPES, isAssemblyEdgeFeature, isAssemblyFeature, parseFeatureParts } from "./featureParse";
 
 const NO_FEATURES: Feature[] = [];
 
@@ -41,9 +43,10 @@ export const sketchOfCut = (f: Feature): string | undefined => (f.type === "hole
 /** True when a feature with no chosen parts would cut `key` (top-level plain parts only). */
 const cutsByDefault = (key: string) => !key.includes(PATH_SEP);
 
-/** Whether assembly feature `f` cuts the part with key `key`. */
+/** Whether assembly feature `f` cuts the part with key `key` (a Fillet / Chamfer: has edges picked on it). */
 export function featureCuts(a: Pick<Assembly, "featureParts">, f: Feature, key: string): boolean {
   if (f.suppressed || f.type === "sketch") return false;
+  if (isAssemblyEdgeFeature(f)) return (f.picks ?? []).some((p) => p.partId === key);
   const chosen = a.featureParts?.[f.id];
   return chosen ? chosen.includes(key) : cutsByDefault(key);
 }
@@ -60,7 +63,21 @@ export function cutsFor(a: Pick<Assembly, "features" | "featureParts">, key: str
   const tools = list.filter((f) => isAssemblyFeature(f) && featureCuts(a, f, key));
   if (!tools.length) return undefined;
   const sketches = new Set(tools.map(sketchOfCut).filter((x): x is string => !!x));
-  return list.filter((f) => tools.includes(f) || (f.type === "sketch" && !f.suppressed && sketches.has(f.id)));
+  return list
+    .filter((f) => tools.includes(f) || (f.type === "sketch" && !f.suppressed && sketches.has(f.id)))
+    .map((f) => (isAssemblyEdgeFeature(f) ? onlyPicksOn(f, key) : f));
+}
+
+/** A Fillet / Chamfer with only its edges on copy `key` (the same object when they all are). */
+const ownPicks = new WeakMap<Feature, Map<string, Feature>>();
+function onlyPicksOn(f: Feature, key: string): Feature {
+  const picks = f.picks ?? [];
+  if (picks.every((p) => p.partId === key)) return f;
+  let byKey = ownPicks.get(f);
+  if (!byKey) ownPicks.set(f, (byKey = new Map()));
+  let out = byKey.get(key);
+  if (!out) byKey.set(key, (out = { ...f, picks: picks.filter((p) => p.partId === key) }));
+  return out;
 }
 
 /** The keys an assembly's features may cut (those with any cut reaching them), among `keys`. */
@@ -104,7 +121,15 @@ export function setFeatureParts(a: Assembly, id: string, keys: string[] | null):
  * Delete with dependents in a Part Studio: the features picked and those using them.
  */
 export function assemblyFeatureDependents(a: Assembly, ids: string[]): string[] {
-  return findDependents(assemblyFeaturesOf(a), ids).going;
+  const list = assemblyFeaturesOf(a);
+  const going = new Set(findDependents(list, ids).going);
+  // A Fillet / Chamfer of edges only a cut made (a drilled hole's rim) goes with that cut, and what uses it with it.
+  for (;;) {
+    const more = list.filter((f) => !going.has(f.id) && (a.featureNeeds?.[f.id] ?? []).some((id) => going.has(id))).map((f) => f.id);
+    if (!more.length) break;
+    for (const id of findDependents(list, [...going, ...more]).going) going.add(id);
+  }
+  return list.filter((f) => going.has(f.id)).map((f) => f.id);
 }
 
 /** Delete assembly features, and the ones using them (cuts of a deleted sketch). */
@@ -112,8 +137,14 @@ export function deleteAssemblyFeatures(a: Assembly, ids: string[]): Assembly {
   const going = new Set(assemblyFeatureDependents(a, ids));
   const features = assemblyFeaturesOf(a).filter((f) => !going.has(f.id));
   const parts = Object.fromEntries(Object.entries(a.featureParts ?? {}).filter(([id]) => !going.has(id)));
-  const { features: _f, featureParts: _p, ...plain } = a;
-  return { ...plain, ...(features.length ? { features } : {}), ...(Object.keys(parts).length ? { featureParts: parts } : {}) };
+  const needs = Object.fromEntries(Object.entries(a.featureNeeds ?? {}).filter(([id]) => !going.has(id)));
+  const { features: _f, featureParts: _p, featureNeeds: _n, ...plain } = a;
+  return {
+    ...plain,
+    ...(features.length ? { features } : {}),
+    ...(Object.keys(parts).length ? { featureParts: parts } : {}),
+    ...(Object.keys(needs).length ? { featureNeeds: needs } : {}),
+  };
 }
 
 export { tidyFeatureParts } from "./assembly";
@@ -172,18 +203,74 @@ export function assemblyExtrudeCut(a: Pick<Assembly, "features">, sketchId: stri
   };
 }
 
+export interface EdgeSpec {
+  /** The fillet's radius, or the chamfer's distance (mm). */
+  size: number;
+}
+
+/**
+ * A Fillet or Chamfer in an assembly: edges picked on copies (each pick's `partId` = the copy's key, its `ref` in the
+ * part's own coordinates, on the copy as the assembly's earlier features left it), rounded on this assembly's copies
+ * only. The edges go with their copy when a mate moves it.
+ */
+export function assemblyEdgeFeature(a: Pick<Assembly, "features">, kind: "fillet" | "chamfer", picks: TopoPick[], spec: EdgeSpec, id = newId("af")): Feature {
+  const size = `${spec.size} mm`;
+  return {
+    id,
+    name: nextFeatureName(a, kind === "fillet" ? "Fillet" : "Chamfer"),
+    type: kind,
+    operation: "new",
+    suppressed: false,
+    params: { ...defaultParams(kind), ...(kind === "fillet" ? { radius: size } : { distance: size }) },
+    picks,
+  };
+}
+
+const near = (p: readonly number[], q: readonly number[]) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < 1e-3;
+
+/**
+ * Which of the assembly's cuts a new Fillet / Chamfer needs (`Assembly.featureNeeds`): for each picked edge the
+ * plain part hasn't got (a drilled hole's rim), the cuts that changed that copy (`reached`, from the worker). Picks'
+ * partIds are copy keys; `plainOf` gives each copy's plain part.
+ */
+export function edgeNeeds(picks: readonly TopoPick[], plainOf: (key: string) => PartMesh | undefined, reached: Readonly<Record<string, readonly string[]>>): string[] {
+  const out = new Set<string>();
+  for (const p of picks) {
+    if (p.ref.kind !== "edge") continue;
+    const ref = p.ref;
+    const plain = plainOf(p.partId);
+    const had = plain?.edgeRefs.some((e) => e.curve === ref.curve && near(e.mid, ref.mid) && ((near(e.a, ref.a) && near(e.b, ref.b)) || (near(e.a, ref.b) && near(e.b, ref.a))));
+    if (had) continue;
+    for (const [id, keys] of Object.entries(reached)) if (keys.includes(p.partId)) out.add(id);
+  }
+  return [...out];
+}
+
+/** Keep what a new Fillet / Chamfer needs (see edgeNeeds). */
+export function setFeatureNeeds(a: Assembly, id: string, needs: readonly string[]): Assembly {
+  if (!needs.length) return a;
+  return { ...a, featureNeeds: { ...(a.featureNeeds ?? {}), [id]: [...new Set(needs)] } };
+}
+
 /** One line per assembly feature, for describe_assembly. */
 export function assemblyFeaturesText(asm: Assembly, nameOf: (key: string) => string, errors: Record<string, string> = {}): string | null {
   const list = assemblyFeaturesOf(asm);
   if (!list.length) return null;
   const lines = list.map((f) => {
     if (f.type === "sketch") return `- ${f.name} (a sketch)${f.suppressed ? " — suppressed" : ""}`;
+    if (isAssemblyEdgeFeature(f)) {
+      const picks = f.picks ?? [];
+      const on = [...new Set(picks.map((p) => p.partId))].map(nameOf);
+      const size = f.type === "fillet" ? `radius ${f.params.radius}` : `distance ${f.params.distance}`;
+      const what = picks.length ? `${picks.length} edge${picks.length === 1 ? "" : "s"} of ${on.join(", ")}` : "no edges left (their parts were removed)";
+      return `- ${f.name} (${f.type}, ${size}, on ${what})${f.suppressed ? " — suppressed" : ""}${errors[f.id] ? ` — PROBLEM: ${errors[f.id]}` : ""}`;
+    }
     const chosen = asm.featureParts?.[f.id];
     const whom = chosen ? (chosen.length ? `cuts only ${chosen.map(nameOf).join(", ")}` : "cuts nothing (no parts chosen)") : "cuts every part it reaches";
     const sketch = list.find((x) => x.id === sketchOfCut(f))?.name ?? "its sketch";
     return `- ${f.name} (${f.type === "hole" ? "hole" : `${f.type}, removing`}, from ${sketch}; ${whom})${f.suppressed ? " — suppressed" : ""}${errors[f.id] ? ` — PROBLEM: ${errors[f.id]}` : ""}`;
   });
-  return `Assembly features (cut only in this assembly; the parts themselves are unchanged):\n${lines.join("\n")}`;
+  return `Assembly features (made only in this assembly; the parts themselves are unchanged):\n${lines.join("\n")}`;
 }
 
 /** The copies the engine found cut (AssemblyCutsResult), with what's left of each (mm³), for the parts list. */
