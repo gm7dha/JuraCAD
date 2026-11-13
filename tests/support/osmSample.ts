@@ -44,3 +44,80 @@ function sampleOsm(): string {
  <relation id="1"><member type="way" ref="4" role="outer"/><member type="way" ref="5" role="outer"/><member type="way" ref="6" role="inner"/><tag k="type" v="multipolygon"/><tag k="natural" v="water"/><tag k="name" v="Lochan Meall"/></relation>
 </osm>`;
 }
+
+/**
+ * A bigger made-up map round the same hill (mapMarks.test.ts): what a tidy puzzle keeps — a reservoir, a trunk road, an A road, a long
+ * path up the hill in three pieces (with a side path at a junction), a public footpath (a footway) up the other side, a
+ * path climbing through a park on the hill (like Arthur's Seat), a flat signed walking route — and what it leaves out: a
+ * river, a canal, a riverbank, a tiny pond, a minor road and a slip road, a pavement up the hill, a path in a housing
+ * estate, and a long flat farm track.
+ */
+export function hillOsm(): string {
+  const base = { e: 201000, n: 770500 };
+  const ll = (de: number, dn: number) => gridToLatLon({ e: base.e + de, n: base.n + dn });
+  const nodes: string[] = [];
+  const ways: string[] = [];
+  let id = 0;
+  let wid = 0;
+  const node = (de: number, dn: number) => {
+    const p = ll(de, dn);
+    nodes.push(`<node id="${++id}" lat="${p.lat.toFixed(7)}" lon="${p.lon.toFixed(7)}"/>`);
+    return id;
+  };
+  const way = (refs: number[], tags: Record<string, string>) => {
+    ways.push(
+      `<way id="${++wid}">${refs.map((r) => `<nd ref="${r}"/>`).join("")}${Object.entries(tags)
+        .map(([k, v]) => `<tag k="${k}" v="${v}"/>`)
+        .join("")}</way>`,
+    );
+    return wid;
+  };
+  const line = (pts: [number, number][], tags: Record<string, string>) => way(pts.map(([e, n]) => node(e, n)), tags);
+  const ring = (pts: [number, number][], tags: Record<string, string>) => {
+    const refs = pts.map(([e, n]) => node(e, n));
+    return way([...refs, refs[0]], tags);
+  };
+  const box = (e0: number, n0: number, e1: number, n1: number): [number, number][] => [
+    [e0, n0],
+    [e1, n0],
+    [e1, n1],
+    [e0, n1],
+  ];
+  // Kept.
+  ring(box(300, 1800, 900, 2200), { landuse: "reservoir", name: "Big Reservoir" });
+  line([[0, 100], [2000, 120], [4000, 150]], { highway: "trunk", ref: "A82" });
+  line([[0, 1500], [4000, 1550]], { highway: "primary", ref: "A841" });
+  // The hill path in three pieces, joined at shared nodes; a side path leaves at the second join.
+  const a = node(200, 500);
+  const b = node(800, 700);
+  const c = node(1300, 850);
+  const d = node(1800, 1000);
+  way([a, node(500, 600), b], { highway: "path" });
+  way([b, c], { highway: "path" });
+  way([c, node(1550, 920), d], { highway: "path" });
+  way([c, node(1330, 1000)], { highway: "path" });
+  const route = line([[100, 2800], [2000, 2820], [3900, 2800]], { highway: "path" });
+  // Left out.
+  line([[0, 2400], [4000, 2450]], { waterway: "river", name: "River Flow" });
+  line([[0, 2300], [4000, 2320]], { waterway: "canal" });
+  ring(box(1000, 2380, 1600, 2470), { waterway: "riverbank" });
+  ring(box(3000, 2000, 3010, 2010), { natural: "water", water: "pond" });
+  line([[0, 300], [4000, 320]], { highway: "unclassified" });
+  line([[2000, 120], [2100, 300]], { highway: "trunk_link" });
+  line([[1800, 1000], [1800, 2000]], { highway: "footway", footway: "sidewalk" });
+  line([[2600, 600], [2300, 850], [2000, 1100]], { highway: "footway", designation: "public_footpath" });
+  ring(box(1950, 1250, 2650, 1750), { leisure: "park" });
+  line([[2000, 1300], [2300, 1500], [2600, 1700]], { highway: "path" });
+  ring(box(3400, 200, 3900, 700), { landuse: "residential" });
+  line([[3500, 300], [3800, 600]], { highway: "path" });
+  line([[0, 2900], [4000, 2900]], { highway: "track" });
+  const lo = ll(0, 0);
+  const hi = ll(4000, 3000);
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="test">
+ <bounds minlat="${lo.lat.toFixed(7)}" minlon="${lo.lon.toFixed(7)}" maxlat="${hi.lat.toFixed(7)}" maxlon="${hi.lon.toFixed(7)}"/>
+ ${nodes.join("\n ")}
+ ${ways.join("\n ")}
+ <relation id="1"><member type="way" ref="${route}" role=""/><tag k="type" v="route"/><tag k="route" v="hiking"/><tag k="network" v="lwn"/><tag k="name" v="Loch Walk"/></relation>
+</osm>`;
+}

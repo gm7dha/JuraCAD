@@ -3,6 +3,7 @@
  * land running off the box's edge (the mainland) can be left out. Boxes are given by their middle (degrees) and size.
  * Also the query that fetches boundaries round an area from OpenStreetMap.
  */
+import { ROAD_RANK, TIDY_MARKS, type MarkChoice } from "./mapMarks";
 import { gridToLatLon, latLonToGrid, type GridPoint } from "./osGrid";
 
 export interface IslandPlace {
@@ -60,15 +61,18 @@ export const BOUNDARY_LEVELS: [number, string][] = [
   [10, "Parishes and communities"],
 ];
 
-/** The widest area (m, the longer side) whose paths, rivers and lochs are fetched from OpenStreetMap; bigger needs a map file. */
+/** The widest area (m, the longer side) whose paths, lochs and roads are fetched from OpenStreetMap; bigger needs a map file. */
 export const MARKS_MOST = 130_000;
 
 /**
- * The query for what "From the map" puts on an island, round an area, as an .osm file: footpaths, tracks, rivers,
- * streams and lochs ("water"), and main roads too ("all"). Buildings aren't fetched (a town is tens of thousands, and at an
- * island's scale almost all are too small to print): they come only from a map file. Null when the area is too big.
+ * The query for what "From the map" puts on an island, round an area, as an .osm file. With `choice` tidy (the usual):
+ * paths, footways, steps, bridleways and tracks with the walking routes they're on and the towns, parks and woods they're
+ * judged against,
+ * lochs, lakes and reservoirs ("water"), and motorways, trunk roads and A roads too ("all"; only the first two for "trunk"). With everything chosen: also
+ * rivers and streams, and every main road. Buildings aren't fetched (a town is tens of thousands, and
+ * at an island's scale almost all are too small to print): they come only from a map file. Null when the area is too big.
  */
-export function marksQuery(sw: GridPoint, width: number, height: number, detail: "water" | "all"): string | null {
+export function marksQuery(sw: GridPoint, width: number, height: number, detail: "water" | "all", choice: MarkChoice = TIDY_MARKS): string | null {
   if (Math.max(width, height) > MARKS_MOST) return null;
   const corners = [
     gridToLatLon(sw),
@@ -79,12 +83,42 @@ export function marksQuery(sw: GridPoint, width: number, height: number, detail:
   const r = (x: number) => x.toFixed(4);
   const box = [Math.min(...corners.map((c) => c.lat)), Math.min(...corners.map((c) => c.lon)), Math.max(...corners.map((c) => c.lat)), Math.max(...corners.map((c) => c.lon))].map(r).join(",");
   const parts = [
+    // Footways too: England's public footpaths often are, and so are some hill paths (pavements are told apart later).
     `way["highway"~"^(path|footway|bridleway|steps|track)$"](${box});`,
-    `way["waterway"~"^(river|canal|stream|burn)$"](${box});`,
+    // Towns, parks and woods, which hill routes are judged against.
+    `way["landuse"~"^(residential|commercial|retail|industrial)$"](${box});`,
+    `way["leisure"~"^(park|garden|golf_course|recreation_ground)$"](${box});`,
     `way["natural"="water"](${box});`,
     `relation["type"="multipolygon"]["natural"="water"](${box});`,
+    `way["landuse"="reservoir"](${box});`,
+    `relation["type"="multipolygon"]["landuse"="reservoir"](${box});`,
   ];
-  if (detail === "all") parts.push(`way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified)$"](${box});`);
-  // One request, at most 120 s and 60 MB of answer — the same as the biggest map file read.
-  return `[out:xml][timeout:120][maxsize:62914560];(${parts.join("")});(._;>;);out qt;`;
+  if (choice.paths !== "all") parts.push(`way["natural"="wood"](${box});`, `way["landuse"="forest"](${box});`);
+  if (choice.water === "all") parts.push(`way["waterway"~"^(river|canal|stream|burn)$"](${box});`);
+  if (detail === "all")
+    parts.push(
+      choice.roads === "all"
+        ? `way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified)$"](${box});`
+        : choice.roads === "main"
+          ? `way["highway"~"^(motorway|trunk|primary)$"](${box});`
+          : `way["highway"~"^(motorway|trunk)$"](${box});`,
+    );
+  // One request, at most 120 s and 60 MB of answer — the same as the biggest map file read. Walking routes come as
+  // relations only (which ways they hold), not every member far outside the area.
+  return `[out:xml][timeout:120][maxsize:62914560];relation["route"~"^(hiking|foot|walking)$"](${box})->.hr;(${parts.join("")});(._;>;);(._;.hr;);out qt;`;
+}
+
+/** What one fetch of marks asked for. */
+export interface MarksFetched {
+  detail: "water" | "all";
+  choice: MarkChoice;
+}
+
+/** Does a fetch hold everything `detail` and `choice` need (everything fetched covers the tidy choices too)? */
+export function fetchCovers(fetched: MarksFetched, detail: "water" | "all", choice: MarkChoice): boolean {
+  if (detail === "all" && fetched.detail !== "all") return false;
+  if (choice.water === "all" && fetched.choice.water !== "all") return false;
+  if (choice.paths === "hills" && fetched.choice.paths !== "hills") return false;
+  if (detail === "all" && ROAD_RANK[fetched.choice.roads] < ROAD_RANK[choice.roads]) return false;
+  return true;
 }

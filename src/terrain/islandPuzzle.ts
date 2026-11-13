@@ -79,7 +79,7 @@ export interface IslandPiece extends PuzzlePiece {
 
 /** The map marks on the puzzle (mm, x east, y north), for the preview: lines clipped to the land, shapes as they are. */
 export interface IslandMarks {
-  lines: { kind: OsmLineKind; pts: XY[] }[];
+  lines: { kind: OsmLineKind; pts: XY[]; thin?: true }[];
   shapes: { kind: "water" | "building"; rings: XY[][] }[];
   /** Lines and shapes on the land, and how many were too small to show at this scale. */
   shown: number;
@@ -128,6 +128,8 @@ export const smallestPiece = (piece: number) => Math.max(60, (0.4 * piece) ** 2)
 
 /** The thinnest base allowed (mm): map marks never take the ground below it either. */
 export const LEAST_BASE = 1.5;
+/** The finest grid cell is used up to this size (mm) when the island has thin map lines (hill routes, trunk roads). */
+export const THIN_CELL = 0.4;
 /** Shortest line (mm on the puzzle) and smallest loch (mm²) worth pressing in; smaller ones would be dimples. */
 export const LEAST_MARK_LINE = 3;
 export const LEAST_MARK_WATER = 4;
@@ -371,7 +373,9 @@ function buildIsland(
   const k = kGiven ?? Math.min((spec.bed[0] - 10) / areaWidth, (spec.bed[1] - 10) / areaHeight) * spec.scale;
   const W = areaWidth * k;
   const H = areaHeight * k;
-  const cell = Math.min(0.6, Math.max(0.25, Math.sqrt((W * H) / 700000)));
+  // Thin map lines (0.6 mm) need the mesh's points at most `THIN_CELL` apart, so one always lands on a groove's flat bottom.
+  const most = features.lines.some((l) => l.thin) ? THIN_CELL : 0.6;
+  const cell = Math.min(most, Math.max(0.25, Math.sqrt((W * H) / 700000)));
   const nx = Math.ceil(W / cell);
   const ny = Math.ceil(H / cell);
   const N = nx * ny;
@@ -635,14 +639,15 @@ function buildIsland(
 /**
  * The map's features worth pressing into an island at `k` mm per metre: lines at least `LEAST_MARK_LINE` long, lochs
  * at least `LEAST_MARK_WATER` mm², buildings at least half `BUILDING_LEAST` across (groundMarks draws those a little
- * bigger so they print; smaller ones at an island's scale would be specks).
+ * bigger so they print; smaller ones at an island's scale would be specks) — or bigger, a feature's own `least` (hill
+ * routes, lochs and reservoirs when only those are kept).
  */
 export function featuresForIsland(f: MapFeatures, k: number): { features: MapFeatures; tooSmall: number } {
   let tooSmall = 0;
   const lines = f.lines.filter((l) => {
     let len = 0;
     for (let i = 1; i < l.pts.length; i++) len += Math.hypot(l.pts[i][0] - l.pts[i - 1][0], l.pts[i][1] - l.pts[i - 1][1]);
-    const ok = len * k >= LEAST_MARK_LINE;
+    const ok = len * k >= Math.max(LEAST_MARK_LINE, l.least ?? 0);
     if (!ok) tooSmall++;
     return ok;
   });
@@ -655,7 +660,7 @@ export function featuresForIsland(f: MapFeatures, k: number): { features: MapFea
         const [p, q] = [ring[i], ring[(i + 1) % ring.length]];
         a += p[0] * q[1] - q[0] * p[1];
       }
-      ok = (Math.abs(a) / 2) * k * k >= LEAST_MARK_WATER;
+      ok = (Math.abs(a) / 2) * k * k >= Math.max(LEAST_MARK_WATER, s.least ?? 0);
     } else {
       const xs = ring.map((p) => p[0]);
       const ys = ring.map((p) => p[1]);
@@ -678,7 +683,7 @@ function marksOnLand(f: MapFeatures, tooSmall: number, sw: { e: number; n: numbe
     let any = false;
     const end = () => {
       if (run.length >= 2) {
-        lines.push({ kind: line.kind, pts: run });
+        lines.push(line.thin ? { kind: line.kind, pts: run, thin: true } : { kind: line.kind, pts: run });
         any = true;
       }
       run = [];

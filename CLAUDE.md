@@ -1609,6 +1609,30 @@
   (≥ `BUILDING_LEAST` across), on a ≥ 0.25 mm grid; `makeMountainPuzzle(…, features)` wraps the ground height with it
   (so `full`, snow and every mesh see it) and samples top pieces finer (≤ 64 a side). Names aren't printed. Tests:
   tests/osm.test.ts (sample file in tests/support/osmSample.ts).
+  Tidy marks (both puzzles, the owner's wish; pure `src/terrain/mapMarks.ts`): `MarkChoice` {water standing|all, paths
+  hills|all, roads trunk|main|all}, `TIDY_MARKS` (standing, hills, main) the windows' default (`MarkChoices` in
+  MountainPuzzleDialog.tsx, shared with the island window, says the rule — `HILL_RULE`), `ALL_MARKS` = the old behaviour and
+  `featuresOnGrid`'s default (old callers/tests unchanged). osm.ts keeps per line `highway` (footway=sidewalk/crossing →
+  "sidewalk") and `hike` (member of a route=hiking/foot/walking relation, or sac_scale), per water shape `flowing`
+  (riverbank, water=river/canal…), `builtUp` = towns (residential/commercial/retail/industrial) and `parks` (parks, gardens,
+  golf…) outer rings. `featuresOnGrid(data, detail, choice, grid)`: standing water drops waterway lines and flowing areas and
+  gives lochs `least` = `LEAST_LOCH` 16 mm²; roads trunk = motorway/trunk, main = + primary (`MAIN_ROADS`), no links; hills =
+  `hillRoutes`: path/footway/steps/bridleway/track (`NOT_HILL` pavements, cycleways…), pieces ≥ half in a town dropped (towns
+  beat everything), joined through shared points straightest pair first, ≤ 90° turn (`joinRoutes`, steps join routes);
+  a route is kept if `hike`, else (needs `grid`): mostly in parks → climb ≥ `HILL_CLIMB` 150 m; tracks only → ≥ `TRACK_CLIMB`
+  300 m and not mostly in woods; else ≥ 150 m or ≥ `HIGH_CLIMB` 50 m into the top `HIGH_GROUND` 30% of the grid's range;
+  `least` = `LEAST_ROUTE` 10 mm. Tidy lines carry `thin` (MapFeatures, PuzzleMap, IslandMarks): `THIN_GROOVE` 0.6 wide ×
+  0.4 deep, flat out to `THIN_FLAT` ⅔ of the half-width (`thinDepth`), worked out exactly per point from 2 mm buckets in
+  groundMarks (no raster); `grooveOf` for widths (mapRaster); "all" lines keep the old `GROOVES` and top-view look
+  (`markStroke(kind, thin)`). Thin lines make the island's cell ≤ `THIN_CELL` 0.4 and the mountain's top samples ≤
+  `THIN_SAMPLE` 0.25 mm (≤ `MOST_THIN_SAMPLES` 240 a side) — only in the columns a thin line passes (`thinColumns`: its
+  pieces' boxes in cube/4 stretches ± half-width + 0.22 cube for tabs; others keep 64; top pieces stand apart, so neighbours
+  needn't match) — so a sample always lands on the flat bottom (tests/thinGrooves).
+  `featuresAtScale(f, k)` (mountain build/preview/colour) and `featuresForIsland` honour `least`. `marksQuery(…, choice)`
+  fetches path|footway|bridleway|steps|track, towns/parks (+ woods for hills), natural=water/landuse=reservoir (+ multipolygons),
+  waterways only for "all", roads by `ROAD_RANK`, walking route relations bare (`->.hr`); `fetchCovers` says when to fetch
+  again. Filament changes go by layers painted lines cross, not their number, so tidy marks cut paint a lot and changes
+  less (tests/mapMarksSwaps). Tests: tests/mapMarks (pure, `hillOsm` in osmSample.ts), thinGrooves, mapMarksSwaps.
 - Puzzle colours (Island and Mountain puzzle windows' "Colour" choice; `src/app/PuzzleColour.tsx`: `ColourPanel`, `useColoured`,
   `ColourDownloads`; the photo puzzle stays plain): pure `src/terrain/colour.ts` + `colourFiles.ts`. Colouring runs in
   `src/app/puzzleColour.worker.ts` (`ColourRunner`: a new job while one runs restarts the worker; pieces sent only when new) over

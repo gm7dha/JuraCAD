@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.73 — Tidier map marks on the puzzles
+
+- Island and Mountain puzzles: from the map, only lochs, lakes and reservoirs are shown in blue. Rivers, streams and tiny ponds are left out.
+- Roads: motorways, trunk roads and A roads, as thin lines (or trunk roads only, or all roads).
+- Walking paths are thin red lines, and only the main hill routes: signed walking routes, mountain paths, and paths and public footpaths that climb at least 150 m. Pavements, paths in towns, park strolls and forestry tracks are left out.
+- New choices under "From the map": "Lochs, lakes and reservoirs only" / "With rivers and streams too", "Main hill routes only" / "All paths and tracks", "Main trunk roads only" / "Main roads (A roads)" / "All roads". The "all" choices look exactly as before.
+- Tidy paths and roads are pressed in as 0.6 mm lines, 0.4 mm deep, so they print neatly.
+
 ## v0.72 — More curves, and sketches that use them
 
 - Sketches can Use, snap to and pierce 3D curves (helix, bridging curve, fit spline…), and follow them when they change.
