@@ -1590,7 +1590,16 @@
   mm × patterns 1–3, every piece one outer loop and no hole, every tab catching; those 36 builds are byte-identical to v0.74.
   Tests: tests/islandPuzzle (pure; over seeds/sizes on a ragged coast: ≥ 2 joints per piece, outlines from the meshes never
   cross or come within 2·fit, every tab catches when pulled, median play ≤ 0.5 mm — `tests/support/outlineGeom.ts`), tests/islandMarks.
-- Mountain puzzle (a card in the Design library's 3D printing tab under "Puzzles" — `src/library/tools.ts` `LIBRARY_TOOLS`:
+- Map puzzles tab (the owner's wish): the Mountain, Photo relief and Island puzzle cards (`LIBRARY_TOOLS`, `section: "maps"`) are a
+  third library tab after Laser cutting and 3D printing (`src/library/sections.ts` `LIBRARY_SECTIONS`/`LibrarySection`, `sectionFrom`,
+  `sectionLocked`; designs keep `DesignCategory`), behind a LIGHT lock (the code is public — it only stops casual visitors):
+  `src/library/puzzleLock.ts` compares SHA-256 hex of `PUZZLE_SALT` + what's typed (trimmed too) with `PUZZLE_HASH` — never write the
+  password anywhere; tests use their own via `passwordHash(typed, expected)`. The hash is kept in localStorage
+  `juracad.puzzlesUnlocked` and counts only while it equals `PUZZLE_HASH` (a new password relocks everyone). App side
+  `src/app/puzzleLockState.ts` (`usePuzzleLock`, re-read each time the library opens, `syncPuzzleLock`; unlocked for the tab even
+  without storage); locked, the tab shows `UnlockBox` and the search hides them (`shownTools(unlocked)`); `openMountain` opens nothing
+  while locked. The maze box and burr stay under 3D printing › Puzzles. The smoke test unlocks by setting the kept hash.
+- Mountain puzzle (a card in the Design library's Map puzzles tab — `src/library/tools.ts` `LIBRARY_TOOLS`:
   cards that open their own window instead of inserting features, found by the search via `searchTools`/`searchWords`;
   LibraryDialog's `ToolCards` — then `src/app/MountainPuzzleDialog.tsx`; `mountainState.kind` "photo" = the Photo relief
   puzzle, the same window and puzzle with a picture for heights: `src/terrain/photoRelief.ts` (pure: `greyFromRgba`,

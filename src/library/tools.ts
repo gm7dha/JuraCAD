@@ -1,16 +1,18 @@
 /**
  * Tools in the Design library (pure): cards that open their own window instead of inserting features — the Mountain,
- * Photo relief and Island puzzles, which make print plates rather than a design in the Part Studio. They sit in a section's
- * tab under their own heading, and the library's search finds them like designs.
+ * Photo relief and Island puzzles, which make print plates rather than a design in the Part Studio. They sit in the library's
+ * "Map puzzles" tab, which is locked until its password is typed (`puzzleLock.ts`); while it is, neither the tab nor the
+ * search shows them (`shownTools`). Unlocked, the search finds them like designs.
  */
 import { searchWords } from "./browse";
-import type { DesignCategory } from "./types";
+import { sectionLocked, type LibrarySection } from "./sections";
 
 export interface LibraryTool {
   id: "mountain" | "photo" | "island";
   name: string;
   description: string;
-  category: DesignCategory;
+  /** The library tab it's in. */
+  section: LibrarySection;
   /** The heading it sits under in its tab (before the designs). */
   group: string;
   /** Extra words the search finds it by. */
@@ -24,8 +26,8 @@ export const LIBRARY_TOOLS: readonly LibraryTool[] = [
     id: "mountain",
     name: "Mountain puzzle",
     description: "A real mountain or Munro as a 3D printed puzzle of interlocking cubes, with snow caps in a second filament.",
-    category: "print",
-    group: "Puzzles",
+    section: "maps",
+    group: "From maps",
     words: "munro hill peak map terrain landscape jigsaw ben nevis snow openstreetmap os grid",
     icon: '<path d="M4 40 18 14l8 13 5-7 13 20z"/><path d="m13.5 23.5 4.5-9.5 4.6 7.5-2.8-1.6-2 1.8-2-1.7z" opacity=".55"/><path d="M4 40h40"/>',
   },
@@ -33,8 +35,8 @@ export const LIBRARY_TOOLS: readonly LibraryTool[] = [
     id: "photo",
     name: "Photo relief puzzle",
     description: "Any picture — a face, a pet, a logo — as a 3D printed puzzle of interlocking cubes, light parts standing high.",
-    category: "print",
-    group: "Puzzles",
+    section: "maps",
+    group: "From a picture",
     words: "picture image lithophane portrait relief jigsaw custom gift",
     icon: '<rect x="5" y="9" width="38" height="30" rx="2"/><circle cx="17" cy="20" r="4"/><path d="m5 35 12-9 8 6 7-8 11 11"/>',
   },
@@ -42,15 +44,18 @@ export const LIBRARY_TOOLS: readonly LibraryTool[] = [
     id: "island",
     name: "Island puzzle",
     description: "An island — or all of Great Britain — as a flat jigsaw: the coast is its edge, the hills stand up, and it can be cut along county or parish boundaries.",
-    category: "print",
-    group: "Puzzles",
+    section: "maps",
+    group: "From maps",
     words: "island country county counties map jigsaw coast great britain uk arran skye wight man orkney shetland boundaries parish relief",
     icon: '<path d="M14 8c6-3 13 1 15 6 3-1 7 1 8 5 3 3 1 8-2 9 2 5-2 10-8 10-3 4-10 3-12-1-6 0-9-6-6-10-4-4-1-11 5-12z"/><path d="M24 12c-2 6 4 8 0 14s3 8 0 12M12 22c6 1 8-3 12 0s9 0 12 2" opacity=".55"/>',
   },
 ];
 
-/** The tools in a section's tab. */
-export const toolsIn = (category: DesignCategory) => LIBRARY_TOOLS.filter((t) => t.category === category);
+/** The tools in a tab. */
+export const toolsIn = (section: LibrarySection) => LIBRARY_TOOLS.filter((t) => t.section === section);
+
+/** The tools that may be shown: those in locked tabs only once unlocked. */
+export const shownTools = (unlocked: boolean): LibraryTool[] => LIBRARY_TOOLS.filter((t) => unlocked || !sectionLocked(t.section));
 
 /** Tools matching what was typed: every word typed must start a word of its name, heading, description or extra words. */
 export function searchTools(query: string, tools: readonly LibraryTool[] = LIBRARY_TOOLS): LibraryTool[] {

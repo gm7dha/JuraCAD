@@ -3675,6 +3675,33 @@ try {
     const lidded = await shown();
     if (lidded.errors) throw new Error(`the box with lid has ${lidded.errors} feature problem(s)`);
     await shot("library-lid");
+    step = "Design library: the Map puzzles tab is locked";
+    await tool("Library");
+    // Locked, the search doesn't show the puzzles, and the tab asks for the password (a wrong one is refused).
+    await page.getByLabel("Search the library").fill("mountain");
+    await page.getByRole("heading", { name: "Nothing found" }).waitFor({ timeout: 5_000 });
+    await page.getByLabel("Search the library").fill("");
+    await page.getByRole("tab", { name: "Map puzzles" }).click();
+    await page.getByText("This section is locked. Type the password to open it.").waitFor({ timeout: 5_000 });
+    if (await page.getByRole("button", { name: /^Mountain puzzle:/ }).count()) throw new Error("the locked Map puzzles tab shows its cards");
+    await page.getByLabel("Password", { exact: true }).fill("not the password");
+    await page.getByLabel("Password", { exact: true }).press("Enter");
+    await page.getByText("That's not the password.").waitFor({ timeout: 5_000 });
+    await page.keyboard.press("Escape");
+    await page.getByLabel("Search the library").waitFor({ state: "detached", timeout: 5_000 });
+    // Unlocked the test's way (the kept hash, never the password itself): the cards show, then it's locked again.
+    await page.evaluate(() => localStorage.setItem("juracad.puzzlesUnlocked", "df24f371b7f39e083ea1257fe81741315784d2efb7f17cb91c6af9b858914fac"));
+    await tool("Library");
+    await page.getByRole("button", { name: /^Island puzzle:/ }).waitFor({ timeout: 5_000 });
+    await page.getByLabel("Search the library").fill("munro");
+    await page.getByRole("button", { name: /^Mountain puzzle:/ }).waitFor({ timeout: 5_000 });
+    await page.getByLabel("Search the library").fill("");
+    await page.getByRole("button", { name: "Lock this section again" }).click();
+    await page.getByText("This section is locked. Type the password to open it.").waitFor({ timeout: 5_000 });
+    if (await page.evaluate(() => localStorage.getItem("juracad.puzzlesUnlocked"))) throw new Error("locking again didn't forget the unlock");
+    await page.getByRole("tab", { name: "3D printing" }).click();
+    await page.keyboard.press("Escape");
+    await page.getByLabel("Search the library").waitFor({ state: "detached", timeout: 5_000 });
     step = "Design library: a bolt, nut and washer set, found by searching";
     await tool("Library");
     await page.getByLabel("Search the library").fill("bolt");

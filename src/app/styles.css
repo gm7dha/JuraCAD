@@ -4069,6 +4069,21 @@ kbd {
   color: var(--accent);
   font-weight: 600;
 }
+.library-padlock {
+  vertical-align: -2px;
+  margin-right: 5px;
+}
+.library-lock {
+  max-width: 420px;
+}
+.library-lock-row {
+  display: flex;
+  gap: 8px;
+}
+.library-lock-row input {
+  flex: 1;
+  min-width: 0;
+}
 .library-heading {
   font-size: 13px;
   margin: 14px 0 6px;
