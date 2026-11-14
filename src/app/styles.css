@@ -313,7 +313,7 @@ button:disabled {
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   height: 58px;
   padding: 0 8px;
   background: var(--panel);
@@ -331,7 +331,7 @@ button:disabled {
   width: 1px;
   height: 36px;
   background: var(--line);
-  margin: 0 4px;
+  margin: 0 3px;
 }
 
 .tool-button {
@@ -2521,10 +2521,11 @@ kbd {
 
 /* Narrow screens (kept last so these win over the rules above). */
 @media (max-width: 1400px) {
+  /* A Part Studio's tools then fit a 1280 px window with ~80 px to spare even in CI's wide font (the smoke test reports it). */
   .tool-button {
-    min-width: 46px;
-    padding: 2px 3px;
-    font-size: 10.5px;
+    min-width: 42px;
+    padding: 2px 2px;
+    font-size: 10px;
   }
   /* Constraint buttons show just their symbol; the name is in the tooltip. */
   .relation-button {
