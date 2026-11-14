@@ -23,12 +23,15 @@ import {
   type MountainSpec,
   type PuzzlePiece,
 } from "../terrain/mountainPuzzle";
+import { BORDER_WALL, borderWords, makeBorder, type BorderPiece } from "../terrain/mountainBorder";
+import { cropGrid, cropPixels, MOST_TRIM, NO_TRIM, noTrim, type Trim } from "../terrain/mountainCrop";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
 import { HILL_RULE, PATH_CHOICES, ROAD_CHOICES, TIDY_MARKS, WATER_CHOICES, WATER_ONLY, waterOnly, type MarkChoice } from "../terrain/mapMarks";
 import { featuresAtScale, featuresOnGrid, featureSummary, NO_FEATURES, osmArea, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail, type OsmLineKind } from "../terrain/osm";
 import { PEAKS } from "../terrain/peaks";
 import { blurred, greyFromRgba, photoGrid, photoReadSize, type PhotoPixels } from "../terrain/photoRelief";
-import { allPlatesZip, plate3mf, platesByLevel, platesFor } from "../terrain/puzzle3mf";
+import { allPlatesZip, bandPlate3mf, plate3mf, platesByLevel, platesFor, type BandPartFile } from "../terrain/puzzle3mf";
+import { weld, zipStored } from "../geometry/threeMf";
 import { mapOnPuzzle, mapRaster, mountainBands, NO_MAP, PLAIN_COLOUR, WATER_BLUE, type ColourSpec, type HeightScale, type PreviewMesh } from "../terrain/colour";
 import { ColourDownloads, ColourPanel, useColoured } from "./PuzzleColour";
 import { downloadFile, safeFileName } from "./download";
@@ -106,6 +109,57 @@ const ROCK = "#9b8f7c";
 /** Bytes as a Blob (copied, so it's a plain ArrayBuffer whatever TypeScript's lib says). */
 const blobOf = (bytes: Uint8Array, type: string) => new Blob([new Uint8Array(bytes)], { type });
 const SNOW = "#f3f5f9";
+/** The frame round the puzzle and its words, in the 3D view. */
+const FRAME = "#6f7f95";
+const WORDS = "#c8a02a";
+
+/** A border piece's parts for its 3MF: the frame on filament 1, the words on filament 2. */
+const borderParts = (p: { name: string }): BandPartFile[] => {
+  const b = p as BorderPiece;
+  return [
+    { filament: 1, label: "frame", ...weld(b.bodies[0].vertices, b.bodies[0].triangles) },
+    ...(b.words ? [{ filament: 2, label: "words", ...weld(b.words.vertices, b.words.triangles) }] : []),
+  ];
+};
+
+/** The four "trim from" sliders: how much of the area to cut off each side before it's sized to the bed. */
+function TrimSliders({ trim, setTrim, size, unit }: { trim: Trim; setTrim: (t: Trim) => void; size: [number, number]; unit: (v: number) => string }) {
+  const row = (key: keyof Trim, label: string, across: number) => (
+    <label className="mountain-row" key={key}>
+      <span>{label}</span>
+      <span>
+        <input
+          type="range"
+          min={0}
+          max={Math.round(MOST_TRIM * 100)}
+          step={1}
+          value={Math.round(trim[key] * 100)}
+          onChange={(e) => setTrim({ ...trim, [key]: Number(e.target.value) / 100 })}
+        />{" "}
+        <span className="muted small">{trim[key] ? `${Math.round(trim[key] * 100)}% (${unit(trim[key] * across)})` : "none"}</span>
+      </span>
+    </label>
+  );
+  return (
+    <>
+      {row("n", "Trim from the north", size[1])}
+      {row("e", "Trim from the east", size[0])}
+      {row("s", "Trim from the south", size[1])}
+      {row("w", "Trim from the west", size[0])}
+      <p className="muted small">
+        Cuts the area in from each side before it's sized to the bed, so what's left is printed bigger.
+        {!noTrim(trim) && (
+          <>
+            {" "}
+            <button type="button" className="text-button" onClick={() => setTrim(NO_TRIM)}>
+              Trim nothing
+            </button>
+          </>
+        )}
+      </p>
+    </>
+  );
+}
 
 /** The area the choices describe, or a plain-English reason why not. */
 function areaFrom(source: Source, peakId: string, ref: string, km: [number, number], corners: [string, string], osm: { name: string; data: OsmData } | null): Area | string {
@@ -195,15 +249,25 @@ export function MountainPuzzleDialog() {
   const [working, setWorking] = useState(false);
   const [buildError, setBuildError] = useState<string | null>(null);
   const [explode, setExplode] = useState(0);
+  const [trim, setTrim] = useState<Trim>(NO_TRIM);
+  const [borderOn, setBorderOn] = useState(false);
+  // The words on the border's front: null = the usual ones for this mountain.
+  const [borderText, setBorderText] = useState<string | null>(null);
 
   // A photo's heights depend on the puzzle's size (its relief is set in mm), so they're worked out again as that changes.
   const photoLoaded = useMemo(() => {
     if (!photoMode || !photo) return null;
     const { width: w, height: h } = photo.pixels;
-    const grid = photoGrid(blurred(photo.pixels, smooth), { ...spec, bed, snowline: null }, relief, invert);
-    return { area: { sw: { e: 0, n: 0 }, width: w - 1, height: h - 1, name: photo.name }, grid };
-  }, [photoMode, photo, smooth, relief, invert, spec.cube, spec.scale, bed[0], bed[1]]);
+    // Trimmed first, so the relief is the asked-for height on what's left; the grid keeps its place in the picture.
+    const cut = cropPixels(blurred(photo.pixels, smooth), trim);
+    const made = photoGrid(cut.pixels, { ...spec, bed, snowline: null }, relief, invert);
+    const grid = cut.west || cut.south ? { ...made, e0: cut.west, n0: cut.south } : made;
+    return { area: { sw: { e: 0, n: 0 }, width: w - 1, height: h - 1, name: photo.name }, grid, used: { grid, width: cut.pixels.width - 1, height: cut.pixels.height - 1 } };
+  }, [photoMode, photo, smooth, relief, invert, spec.cube, spec.scale, bed[0], bed[1], trim]);
   const loaded = photoMode ? photoLoaded : mapLoaded;
+  // The heights the puzzle is made from: the area as loaded, less what's trimmed off each side.
+  const mapUsed = useMemo(() => (mapLoaded ? cropGrid(mapLoaded.grid, mapLoaded.area.width, mapLoaded.area.height, trim) : null), [mapLoaded, trim]);
+  const used = photoMode ? photoLoaded?.used ?? null : mapUsed;
   const area = areaFrom(source, peakId, ref, km, corners, osm);
   const features: MapFeatures = useMemo(
     () => (source === "osm" && osm ? featuresOnGrid(osm.data, detail, marks, mapLoaded?.grid) : NO_FEATURES),
@@ -231,20 +295,20 @@ export function MountainPuzzleDialog() {
   };
 
   const fullSpec: MountainSpec = photoMode ? { ...spec, bed, exaggeration: 1, snowline: null } : { ...spec, bed, snowline: snowOn && !colourOn ? snowline : null };
-  const layout = useMemo(() => (loaded ? layoutFor(loaded.grid, loaded.area.width, loaded.area.height, { ...spec, bed, snowline: null }) : null), [loaded, spec, bed[0], bed[1], bed[2]]);
+  const layout = useMemo(() => (used ? layoutFor(used.grid, used.width, used.height, { ...spec, bed, snowline: null }) : null), [used, spec, bed[0], bed[1], bed[2]]);
   const checks = mountainChecks(fullSpec, layout ?? undefined);
 
   // Make the puzzle a moment after the last change (it takes a second or two for big ones).
   const specKey = JSON.stringify(fullSpec);
   useEffect(() => {
-    if (!loaded || checks.problems.length) {
+    if (!loaded || !used || checks.problems.length) {
       setPuzzle(null);
       return;
     }
     setWorking(true);
     const timer = setTimeout(() => {
       try {
-        setPuzzle(makeMountainPuzzle(loaded.grid, loaded.area.width, loaded.area.height, fullSpec, features));
+        setPuzzle(makeMountainPuzzle(used.grid, used.width, used.height, fullSpec, features));
         setBuildError(null);
       } catch (e) {
         setPuzzle(null);
@@ -255,7 +319,7 @@ export function MountainPuzzleDialog() {
     }, 350);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, specKey, features]);
+  }, [loaded, used, specKey, features]);
 
   // Colour bands: pieces at different heights get plates of their own, so a plate changes colour on the same layers.
   const byLevel = colourOn && colour.mode === "bands";
@@ -269,6 +333,23 @@ export function MountainPuzzleDialog() {
   const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap);
   const usualBands = (n = 4) => (puzzle ? mountainBands(puzzle.layout.low, puzzle.layout.high, snowline, n) : mountainBands(0, 1000, snowline, n));
   const fileName = safeFileName(`${loaded?.area.name ?? "Mountain"} puzzle`, "Mountain puzzle");
+  // The frame round the finished puzzle: its words are the mountain's name, height, grid reference and scale unless typed.
+  const usualWords = useMemo(() => {
+    if (!puzzle || !loaded) return "";
+    if (photoMode) return loaded.area.name;
+    const L = puzzle.layout;
+    const peak = source === "peak" ? PEAKS.find((p) => p.id === peakId) : undefined;
+    const ref = formatGridRef((peak && parseGridRef(peak.ref)) || { e: L.e0 + L.width / 2, n: L.n0 + L.height / 2 }, 6);
+    return borderWords(loaded.area.name, peak?.height ?? L.high, ref, 1000 / L.k);
+  }, [puzzle, loaded, photoMode, source, peakId]);
+  const words = borderText ?? usualWords;
+  const border = useMemo(() => (borderOn && puzzle ? makeBorder(puzzle, words, bed) : null), [borderOn, puzzle, words, bed[0], bed[1], bed[2]]);
+  const borderPlates = useMemo(() => (border && !border.problems.length ? platesFor(border.pieces, bed) : []), [border, bed[0], bed[1], bed[2]]);
+  const saveBorder = async () => {
+    const files = await Promise.all(borderPlates.map((p, i) => bandPlate3mf(p, `${fileName} - border ${i + 1}`, borderParts, () => "")));
+    if (files.length === 1) downloadFile(blobOf(files[0], "model/3mf"), `${fileName} - border.3mf`);
+    else downloadFile(blobOf(zipStored(files.map((f, i) => ({ name: `${fileName} - border plate ${i + 1} of ${files.length}.3mf`, data: f }))), "application/zip"), `${fileName} - border.zip`);
+  };
   const set = <K extends keyof typeof spec>(key: K, value: (typeof spec)[K]) => setSpec((s) => ({ ...s, [key]: value }));
   const numberBox = (value: number, onChange: (v: number) => void, step: number, min: number, max: number, unit: string) => (
     <span className="mountain-number">
@@ -477,6 +558,14 @@ export function MountainPuzzleDialog() {
               <span className="muted small"> 100% = the finished puzzle covers the bed ({bed[0]} × {bed[1]} mm)</span>
             </span>
           </div>
+          {loaded && (
+            <TrimSliders
+              trim={trim}
+              setTrim={setTrim}
+              size={[loaded.area.width, loaded.area.height]}
+              unit={(v) => (photoMode ? `${Math.round(v)} px` : `${(v / 1000).toFixed(2)} km`)}
+            />
+          )}
           <div className="mountain-row">
             <span>Cube size</span>
             <span>
@@ -552,6 +641,34 @@ export function MountainPuzzleDialog() {
           )}
             </>
           )}
+
+          <h3 className="library-heading">{photoMode ? "3. Border" : colourOn ? "4. Border" : "5. Border"}</h3>
+          <label className="mountain-check">
+            <input type="checkbox" checked={borderOn} onChange={(e) => setBorderOn(e.target.checked)} /> Border (frame round the puzzle)
+          </label>
+          {borderOn && (
+            <>
+              <p className="muted small">
+                A low wall round the finished puzzle that hides its steep cut sides: each side as tall as the puzzle's highest point
+                along it, in pieces that fit the bed and lock together with lugs. It's a file of its own.
+              </p>
+              <label className="mountain-row">
+                <span>Words on the front</span>
+                <textarea rows={2} value={words} onChange={(e) => setBorderText(e.target.value)} placeholder="Leave empty for no words" />
+              </label>
+              <p className="muted small">
+                Raised on the front's outside face as a part of their own, set to filament 2 — load a colour that stands out there.
+                {borderText !== null && (
+                  <>
+                    {" "}
+                    <button type="button" className="text-button" onClick={() => setBorderText(null)}>
+                      Usual words
+                    </button>
+                  </>
+                )}
+              </p>
+            </>
+          )}
         </div>
 
         <div className="mountain-main">
@@ -572,7 +689,7 @@ export function MountainPuzzleDialog() {
             <>
               <div className="mountain-previews">
                 <TopView grid={loaded.grid} area={loaded.area} puzzle={puzzle} picture={photoMode ? photo?.url ?? null : source === "picture" ? picture : null} features={photoMode ? NO_FEATURES : features} />
-                <Mountain3D puzzle={puzzle} explode={explode} paint={colourOn ? (coloured?.preview ?? null) : null} />
+                <Mountain3D puzzle={puzzle} explode={explode} paint={colourOn ? (coloured?.preview ?? null) : null} border={border && !border.problems.length ? border.pieces : null} />
               </div>
               <label className="mountain-explode small">
                 Pull apart <input type="range" min={0} max={20} value={explode} onChange={(e) => setExplode(Number(e.target.value))} />
@@ -633,6 +750,35 @@ export function MountainPuzzleDialog() {
                   <button className="primary-button" onClick={() => downloadFile(blobOf(allPlatesZip(plates, fileName), "application/zip"), `${fileName}.zip`)}>
                     All plates (.zip)
                   </button>
+                </div>
+              )}
+              {border && (
+                <div className="mountain-summary small">
+                  {border.problems.map((p) => (
+                    <p key={p} className="error-text">
+                      {p}
+                    </p>
+                  ))}
+                  {!border.problems.length && (
+                    <p>
+                      <strong>Border: {border.pieces.length} pieces</strong> — walls {border.heights.S} mm tall at the front, {border.heights.E} mm on the
+                      east, {border.heights.N} mm at the back and {border.heights.W} mm on the west (the corners as tall as the taller side),{" "}
+                      {(BORDER_WALL - 2 * puzzle!.spec.fit).toFixed(1)} mm thick.
+                      {border.caps.length > 0 && ` Words ${border.caps.map((c) => c.toFixed(1)).join(" and ")} mm tall.`}
+                    </p>
+                  )}
+                  {border.warnings.map((w) => (
+                    <p key={w} className="mountain-warn">
+                      {w}
+                    </p>
+                  ))}
+                  {borderPlates.length > 0 && (
+                    <div className="mountain-downloads">
+                      <button className="primary-button" onClick={() => void saveBorder()}>
+                        Border ({borderPlates.length === 1 ? "1 plate, .3mf" : `${borderPlates.length} plates, .zip`})
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
               {puzzle && (
@@ -758,7 +904,7 @@ function TopView({ grid, area, puzzle, picture, features }: { grid: HeightGrid; 
 }
 
 /** The puzzle in 3D, to turn round; pulled apart by `explode` mm per step. */
-export function Mountain3D({ puzzle, explode, paint }: { puzzle: { pieces: PuzzlePiece[] } | null; explode: number; paint?: PreviewMesh[] | null }) {
+export function Mountain3D({ puzzle, explode, paint, border }: { puzzle: { pieces: PuzzlePiece[] } | null; explode: number; paint?: PreviewMesh[] | null; border?: BorderPiece[] | null }) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<{ renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera; controls: OrbitControls; group: THREE.Group; framed: boolean } | null>(null);
 
@@ -857,6 +1003,22 @@ export function Mountain3D({ puzzle, explode, paint }: { puzzle: { pieces: Puzzl
       geo.computeVertexNormals();
       v.group.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: part === "rock" ? ROCK : SNOW, roughness: 0.85, flatShading: true })));
     }
+    // The border, its frame and its words, moved out with the puzzle's edge as it's pulled apart.
+    if (border?.length)
+      for (const words of [false, true]) {
+        const pos: number[] = [];
+        for (const p of border) {
+          const b = words ? p.words : p.bodies[0];
+          if (!b) continue;
+          const [dx, dy] = [Math.max(-1, p.col) * explode, Math.max(-1, p.row) * explode];
+          for (const t of b.triangles) pos.push(b.vertices[t * 3] + dx, b.vertices[t * 3 + 1] + dy, b.vertices[t * 3 + 2]);
+        }
+        if (!pos.length) continue;
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+        geo.computeVertexNormals();
+        v.group.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: words ? WORDS : FRAME, roughness: 0.85, flatShading: true })));
+      }
     if (!v.framed) {
       const box = new THREE.Box3().setFromObject(v.group);
       const centre = box.getCenter(new THREE.Vector3());
@@ -870,7 +1032,7 @@ export function Mountain3D({ puzzle, explode, paint }: { puzzle: { pieces: Puzzl
       v.framed = true;
     }
     v.renderer.render(v.scene, v.camera);
-  }, [puzzle, explode, paint]);
+  }, [puzzle, explode, paint, border]);
 
   // Enlarged to (nearly) the whole window; Esc or the button puts it back (the window's own Esc is held off meanwhile).
   const [big, setBig] = useState(false);
