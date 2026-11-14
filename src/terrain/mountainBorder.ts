@@ -21,7 +21,7 @@ import type { Body, MountainPuzzle, PuzzlePiece } from "./mountainPuzzle";
 import { triangulate, type P2 } from "./triangulate";
 
 /** The wall's thickness as drawn (mm); each piece is then shrunk by the fit gap on every side. */
-export const BORDER_WALL = 9;
+export const BORDER_WALL = 10;
 /**
  * The lugs (mm, as drawn): a neck `LUG_NECK` wide and `LUG_NECK_LENGTH` long, then a head `LUG_HEAD` wide reaching
  * `LUG_DEPTH` in all. The head's shoulders face straight back, so pulled apart along the wall a piece moves only the
@@ -33,8 +33,10 @@ export const LUG_NECK_LENGTH = 2;
 export const LUG_DEPTH = 5;
 /** How far each corner piece's arms reach along the puzzle's sides past the inside corner (mm). */
 export const CORNER_ARM = 20;
-/** No straight piece shorter than this (mm). */
+/** Pieces left beside the name plate are never shorter than this (mm). */
 export const MIN_PIECE = 15;
+/** No straight piece may be shorter than its lug plus the fit gaps and this much (mm): a shorter one would overlap its neighbours. */
+export const PIECE_MARGIN = 3;
 /** Each wall stands at least this much (mm) above the highest point of the puzzle along its edge. */
 export const RISE = 1;
 /** How far the words stand off the front (mm). */
@@ -42,7 +44,7 @@ export const RELIEF = 0.8;
 /** Capital letters' heights (mm): the first line, and the others; never smaller than `MIN_CAPS` (shrunk to fit). */
 export const NAME_CAPS = 7;
 export const INFO_CAPS = 4.5;
-export const MIN_CAPS = 2.5;
+export const MIN_CAPS = 3;
 /** Room (mm) above and below the words on the wall, and at the ends of the name plate. */
 export const TEXT_MARGIN = 2;
 export const TEXT_END = 6;
@@ -202,7 +204,9 @@ export function makeBorder(puzzle: MountainPuzzle, words: string, bed: [number, 
   let block: { contours: P2[][]; box: [number, number, number, number]; caps: number[] } | null = null;
   const [f0, f1] = arms.S;
   if (lines.length) {
-    const room = Math.min(most.S, f1 - f0) - 2 * TEXT_END;
+    // The name plate is the whole middle when that fits the bed; else it leaves at least MIN_PIECE beside it.
+    const M = f1 - f0;
+    const room = (M <= most.S ? M : Math.min(most.S, M - MIN_PIECE)) - 2 * TEXT_END;
     const lay = (k: number) => {
       const caps = lines.map((_, i) => (i === 0 ? NAME_CAPS : INFO_CAPS) * k);
       const contours: P2[][] = [];
@@ -244,14 +248,30 @@ export function makeBorder(puzzle: MountainPuzzle, words: string, bed: [number, 
   for (const s of ["E", "N", "W"] as BorderSide[]) cuts[s] = tidy([arms[s][0], ...even(arms[s][0], arms[s][1], s), arms[s][1]]);
   let plate: [number, number] | null = null;
   if (block) {
-    const half = (block.box[2] - block.box[0]) / 2 + TEXT_END;
-    let [l0, l1] = [Math.max(f0, W / 2 - half), Math.min(f1, W / 2 + half)];
-    // A short piece left beside the name plate is taken into it, where the plate still fits the bed.
-    if (l0 - f0 < MIN_PIECE && l1 - f0 <= most.S) l0 = f0;
-    if (f1 - l1 < MIN_PIECE && f1 - l0 <= most.S) l1 = f1;
+    // What's left beside the plate is nothing or at least MIN_PIECE: shared out both sides when each half is long
+    // enough, else all on one side (the plate grown as far as the bed lets it); the words go in the plate's middle.
+    const M = f1 - f0;
+    const need = block.box[2] - block.box[0] + 2 * TEXT_END;
+    let [l0, l1] = [f0, f1];
+    if (M > most.S) {
+      let P = Math.min(most.S, Math.max(need, 0));
+      if ((M - P) / 2 >= MIN_PIECE) [l0, l1] = [f0 + (M - P) / 2, f1 - (M - P) / 2];
+      else {
+        P = Math.min(most.S, M - MIN_PIECE);
+        [l0, l1] = [f0, f0 + P];
+      }
+    }
     plate = [l0, l1];
     cuts.S = tidy([f0, ...even(f0, l0, "S"), l0, l1, ...even(l1, f1, "S"), f1]);
   } else cuts.S = tidy([f0, ...even(f0, f1, "S"), f1]);
+
+  // A safety net: every straight piece long enough for the lug reaching into it.
+  for (const side of ["S", "E", "N", "W"] as BorderSide[])
+    for (let i = 0; i + 1 < cuts[side].length; i++)
+      if (cuts[side][i + 1] - cuts[side][i] < d + 2 * fit + PIECE_MARGIN) {
+        problems.push("The border's pieces would come out too short to join here: try another scale or fewer words.");
+        break;
+      }
 
   // The front stands tall enough for the words.
   const blockH = block ? block.box[3] - block.box[1] : 0;
@@ -301,12 +321,12 @@ export function makeBorder(puzzle: MountainPuzzle, words: string, bed: [number, 
       let text: Body | null = null;
       if (side === "S" && block && plate && Math.abs(s0 - plate[0]) < 1e-9 && Math.abs(s1 - plate[1]) < 1e-9) {
         // Raised off the outside face: (u, v) on the face as read from the front, w out of it.
-        const [cx, cy] = [(block.box[0] + block.box[2]) / 2, (block.box[1] + block.box[3]) / 2];
+        const [cx, cy] = [(block.box[0] + block.box[2]) / 2 - (plate[0] + plate[1]) / 2, (block.box[1] + block.box[3]) / 2];
         const zc = heights.S / 2;
         const v: number[] = [];
         const t: number[] = [];
         for (const shape of nestContours(block.contours)) {
-          const m = prism(shape.outer, shape.holes, 0, RELIEF, (a, b, c) => [W / 2 + a - cx, face - c, zc + b - cy]);
+          const m = prism(shape.outer, shape.holes, 0, RELIEF, (a, b, c) => [a - cx, face - c, zc + b - cy]);
           const base = v.length / 3;
           v.push(...m.v);
           for (const k of m.t) t.push(k + base);

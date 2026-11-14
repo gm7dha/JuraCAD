@@ -339,11 +339,30 @@ export function MountainPuzzleDialog() {
     if (photoMode) return loaded.area.name;
     const L = puzzle.layout;
     const peak = source === "peak" ? PEAKS.find((p) => p.id === peakId) : undefined;
-    const ref = formatGridRef((peak && parseGridRef(peak.ref)) || { e: L.e0 + L.width / 2, n: L.n0 + L.height / 2 }, 6);
-    return borderWords(loaded.area.name, peak?.height ?? L.high, ref, 1000 / L.k);
-  }, [puzzle, loaded, photoMode, source, peakId]);
+    const summit = peak ? parseGridRef(peak.ref) : null;
+    // The famous summit only while it's on the puzzle (a trim may cut it off); else the highest point that is.
+    const onPuzzle = !!summit && summit.e >= L.e0 && summit.e <= L.e0 + L.width && summit.n >= L.n0 && summit.n <= L.n0 + L.height;
+    let top = { e: L.e0 + L.width / 2, n: L.n0 + L.height / 2 };
+    if (!onPuzzle && used) {
+      let best = -Infinity;
+      for (let j = 0; j <= 60; j++)
+        for (let i = 0; i <= 60; i++) {
+          const at = { e: L.e0 + (L.width * i) / 60, n: L.n0 + (L.height * j) / 60 };
+          const h = heightAt(used.grid, at.e, at.n);
+          if (h > best) [best, top] = [h, at];
+        }
+    }
+    const ref = formatGridRef(onPuzzle && summit ? summit : top, 6);
+    return borderWords(loaded.area.name, onPuzzle && peak ? peak.height : L.high, ref, 1000 / L.k);
+  }, [puzzle, loaded, used, photoMode, source, peakId]);
   const words = borderText ?? usualWords;
-  const border = useMemo(() => (borderOn && puzzle ? makeBorder(puzzle, words, bed) : null), [borderOn, puzzle, words, bed[0], bed[1], bed[2]]);
+  // Remade a moment after typing stops, like the puzzle.
+  const [settledWords, setSettledWords] = useState(words);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettledWords(words), 350);
+    return () => clearTimeout(timer);
+  }, [words]);
+  const border = useMemo(() => (borderOn && puzzle ? makeBorder(puzzle, settledWords, bed) : null), [borderOn, puzzle, settledWords, bed[0], bed[1], bed[2]]);
   const borderPlates = useMemo(() => (border && !border.problems.length ? platesFor(border.pieces, bed) : []), [border, bed[0], bed[1], bed[2]]);
   const saveBorder = async () => {
     const files = await Promise.all(borderPlates.map((p, i) => bandPlate3mf(p, `${fileName} - border ${i + 1}`, borderParts, () => "")));
@@ -954,9 +973,15 @@ export function Mountain3D({ puzzle, explode, paint, border }: { puzzle: { piece
     };
   }, []);
 
+  // Seen whole again when the border is switched on or off.
+  const hadBorder = useRef(false);
   useEffect(() => {
     const v = view.current;
     if (!v) return;
+    if (!!border?.length !== hadBorder.current) {
+      hadBorder.current = !!border?.length;
+      v.framed = false;
+    }
     for (const child of [...v.group.children]) {
       (child as THREE.Mesh).geometry?.dispose();
       v.group.remove(child);

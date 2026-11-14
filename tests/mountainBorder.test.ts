@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { weld } from "../src/geometry/threeMf";
 import { crossesItself, outlineGap, type P2 } from "../src/library/outlines";
 import { gridFrom, heightAt } from "../src/terrain/elevation";
-import { BORDER_WALL, borderWords, LUG_DEPTH, makeBorder, MIN_CAPS, RELIEF, type BorderPiece } from "../src/terrain/mountainBorder";
+import { BORDER_WALL, borderWords, LUG_DEPTH, makeBorder, MIN_CAPS, MIN_PIECE, RELIEF, type BorderPiece } from "../src/terrain/mountainBorder";
 import { cropGrid, cropPixels, NO_TRIM } from "../src/terrain/mountainCrop";
 import { layoutFor, makeMountainPuzzle, MOUNTAIN_DEFAULTS, type Body, type MountainSpec } from "../src/terrain/mountainPuzzle";
 import { BED_MARGIN, bandPlateFiles, platesFor } from "../src/terrain/puzzle3mf";
@@ -228,4 +228,43 @@ describe("Border round the puzzle", () => {
     expect(s.problems).toEqual([]);
     for (const p of s.pieces) expect(closed(p.bodies[0]).open).toBe(0);
   });
+});
+
+describe("Border on a small bed", () => {
+  const bed: [number, number, number] = [180, 180, 180];
+  const spans = (b: ReturnType<typeof makeBorder>) =>
+    b.pieces
+      .filter((p) => p.side.length === 1)
+      .map((p) => {
+        const xs = p.outline.map((q) => q[0]);
+        const ys = p.outline.map((q) => q[1]);
+        return Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+      });
+  for (const scale of [1.2, 1.25, 1.3])
+    for (const words of ["Carn Mor Dearg Arete and the North Face", borderWords("Carn Mor Dearg Arete and the North Face", 1220, "NN 177 722", 25000)])
+      it(`leaves no sliver beside the name plate (scale ${scale}, ${words.includes("\n") ? "two lines" : "one line"})`, () => {
+        const puzzle = makeMountainPuzzle(hill, W, H, { ...SPEC, bed, scale });
+        const b = makeBorder(puzzle, words, bed);
+        if (b.problems.length) {
+          expect(b.problems[0]).toMatch(/too long|too short/);
+          return;
+        }
+        for (const len of spans(b)) expect(len).toBeGreaterThanOrEqual(LUG_DEPTH + 2 * SPEC.fit + 3);
+        for (const p of b.pieces) expect(crossesItself(p.outline), p.name).toBe(false);
+        for (let i = 0; i < b.pieces.length; i++)
+          for (let j = i + 1; j < b.pieces.length; j++) expect(outlineGap(b.pieces[i].outline, b.pieces[j].outline)).toBeGreaterThanOrEqual(2 * SPEC.fit - 1e-6);
+        // Front pieces beside the plate are 0 or a proper piece.
+        const front = b.pieces.filter((p) => p.side === "S");
+        expect(front.filter((p) => p.words)).toHaveLength(1);
+        for (const p of front) {
+          const xs = p.outline.map((q) => q[0]);
+          expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThanOrEqual(MIN_PIECE);
+        }
+        // The words sit on their plate.
+        const plate = front.find((p) => p.words)!;
+        const xs = plate.outline.map((q) => q[0]);
+        const wv = plate.words!.vertices.filter((_, i) => i % 3 === 0);
+        expect(Math.min(...wv)).toBeGreaterThan(Math.min(...xs));
+        expect(Math.max(...wv)).toBeLessThan(Math.max(...xs));
+      });
 });

@@ -1630,12 +1630,14 @@
   unchanged), `cropPixels` for the photo puzzle (cropped before `photoGrid`, then e0/n0 = pixels off west/south); the dialog's
   "Trim from the north/east/south/west" sliders feed `used` (grid + size) to layoutFor/makeMountainPuzzle; the top view keeps the
   whole area. `src/terrain/mountainBorder.ts` `makeBorder(puzzle, words, bed)`: a frame drawn from the puzzle's edge (t 0) out
-  `BORDER_WALL` 9, every piece shrunk by fit (2·fit from the puzzle and at joins); each side `RISE` + its `edgePeaks` (corners
+  `BORDER_WALL` 10, every piece shrunk by fit (2·fit from the puzzle and at joins); each side `RISE` + its `edgePeaks` (corners
   within fit + 0.5 of the face), rounded up; L corners (`CORNER_ARM` 20, the taller side's height) and straight pieces ≤ the
   bed (`most`), joined by full-height lugs (neck `LUG_NECK` 3.6 × 2 long, head `LUG_HEAD` 5.6 to `LUG_DEPTH` 5, shoulders
   square to the pull — a shallow dovetail slid 1.5 mm); `BorderJoint` lower/upper/dir. Words (`borderWords`: name, m, 6-figure
-  ref, 1:scale) raised `RELIEF` 0.8 off the front's outside face on one name-plate piece centred on the front (caps
-  `NAME_CAPS` 7 / `INFO_CAPS` 4.5 shrunk to fit, refused under `MIN_CAPS` 2.5; the front raised to hold them),
+  ref, 1:scale; the dialog uses the famous summit only while it's on the trimmed puzzle, else its highest point) raised `RELIEF`
+  0.8 off the front's outside face, centred on one name-plate piece (the whole front middle if that fits the bed, else what's
+  left beside it is shared both sides or put on one, never under `MIN_PIECE`; any straight span < lug + 2·fit + `PIECE_MARGIN`
+  is a plain problem) (caps `NAME_CAPS` 7 / `INFO_CAPS` 4.5 shrunk to fit, refused under `MIN_CAPS` 3; the front raised to hold them),
   `BorderPiece.words` (a Body) → filament 2 via `bandPlate3mf` (`borderParts` in the dialog), plates by `platesFor`.
   Tests: tests/mountainBorder.
   OpenStreetMap files: source "An OpenStreetMap file" + "From the map" (`OsmDetail`: area / water — paths, tracks, rivers,
