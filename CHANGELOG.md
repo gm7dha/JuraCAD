@@ -8,6 +8,10 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.77 — A little more room on the toolbar
+
+- The toolbar's buttons sit a touch closer together, so the Part Studio toolbar fits a 1280-pixel-wide window with room to spare and no scroll arrows.
+
 ## v0.76 — A tidier toolbar
 
 - The Part Studio toolbar fits a normal window without scrolling: related tools are grouped into dropdowns (Revolve/Sweep/Loft, Fillet/Chamfer…, Hole/Thread, Move and patterns, Boolean and part tools, Plane, connectors and curves, surfaces, frames, sheet metal, shapes, Library/Import, Variables/Configurations, 3D print/Laser/Picture).
