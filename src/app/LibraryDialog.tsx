@@ -1,13 +1,15 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useDocument, useStore } from "../model/store";
-import { currentValues, defaultValues, designGroups, findDesign, type DesignGroup, findInsert, LIBRARY_CATEGORIES, liveInserts, valueProblems } from "../library/insert";
+import { currentValues, defaultValues, designGroups, findDesign, type DesignGroup, findInsert, liveInserts, valueProblems } from "../library/insert";
 import { rememberedTab, rememberTab } from "../library/tabMemory";
 import { searchDesigns } from "../library/browse";
-import { searchTools, toolsIn, type LibraryTool } from "../library/tools";
+import { searchTools, shownTools, toolsIn, type LibraryTool } from "../library/tools";
+import { LIBRARY_SECTIONS, sectionLocked, type LibrarySection } from "../library/sections";
 import { openMountain } from "./mountainState";
+import { lockMapPuzzles, syncPuzzleLock, unlockMapPuzzles, usePuzzleLock } from "./puzzleLockState";
 import { previewPicture } from "../library/preview";
-import type { DesignCategory, DesignInput, DesignValues, LibraryDesign } from "../library/types";
+import type { DesignInput, DesignValues, LibraryDesign } from "../library/types";
 import { Modal } from "./Modal";
 
 /** A design's small drawing (the icons are fixed drawings written in the code, never user data). */
@@ -117,6 +119,66 @@ function GroupedCards({ groups, tools = [], onPick, onOpen }: { groups: DesignGr
   );
 }
 
+/** A small padlock, shown on a locked tab and above its password box. */
+function Padlock({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" aria-hidden="true" className="library-padlock">
+      <rect x="3" y="7" width="10" height="7" rx="1.5" />
+      <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+    </svg>
+  );
+}
+
+/** A locked tab's password box: the right password opens it in this browser until it's locked again. */
+function UnlockBox() {
+  const [typed, setTyped] = useState("");
+  const [wrong, setWrong] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const tryIt = async () => {
+    if (busy || !typed) return;
+    setBusy(true);
+    let ok = false;
+    try {
+      ok = await unlockMapPuzzles(typed);
+    } catch {
+      ok = false;
+    }
+    setBusy(false);
+    if (!ok) setWrong(true);
+  };
+  return (
+    <form
+      className="library-lock"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void tryIt();
+      }}
+    >
+      <p className="small">
+        <Padlock /> This section is locked. Type the password to open it.
+      </p>
+      <div className="library-lock-row">
+        <input
+          type="password"
+          aria-label="Password"
+          autoComplete="off"
+          spellCheck={false}
+          value={typed}
+          onChange={(e) => (setTyped(e.target.value), setWrong(false))}
+        />
+        <button type="submit" className="primary-button" disabled={busy || !typed}>
+          Unlock
+        </button>
+      </div>
+      {wrong && (
+        <p className="error-text small" role="alert">
+          That's not the password.
+        </p>
+      )}
+    </form>
+  );
+}
+
 /** Numbers are kept as typed (so "1." or "" can be on the way to something) and read when used. */
 type Typed = Record<string, string | boolean>;
 
@@ -217,14 +279,20 @@ export function LibraryDialog() {
   const [typed, setTyped] = useState<Typed | null>(null);
   const [into, setInto] = useState<"new" | "current">("new");
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<DesignCategory>(() => rememberedTab());
+  const [tab, setTab] = useState<LibrarySection>(() => rememberedTab());
+  const unlocked = usePuzzleLock((s) => s.unlocked);
+  const isOpen = !!view;
+  useEffect(() => {
+    if (isOpen) syncPuzzleLock();
+  }, [isOpen]);
   const found = useMemo(() => searchDesigns(search), [search]);
-  const foundTools = useMemo(() => searchTools(search), [search]);
+  // While the Map puzzles are locked, the search doesn't show them either.
+  const foundTools = useMemo(() => searchTools(search, shownTools(unlocked)), [search, unlocked]);
   const openTool = (t: LibraryTool) => {
     close();
     openMountain(true, t.id);
   };
-  const chooseTab = (t: DesignCategory) => {
+  const chooseTab = (t: LibrarySection) => {
     setTab(t);
     rememberTab(t);
   };
@@ -270,12 +338,12 @@ export function LibraryDialog() {
             {found.length + foundTools.length === 0 ? (
               <p className="muted small">Try another word, or clear the search to see every design.</p>
             ) : (
-              LIBRARY_CATEGORIES.filter((c) => found.some((d) => d.category === c.id) || foundTools.some((t) => t.category === c.id)).map((c) => (
+              LIBRARY_SECTIONS.filter((c) => found.some((d) => d.category === c.id) || foundTools.some((t) => t.section === c.id)).map((c) => (
                 <div key={c.id}>
                   <h4 className="library-group">{c.label}</h4>
                   <div className="library-grid">
                     {foundTools
-                      .filter((t) => t.category === c.id)
+                      .filter((t) => t.section === c.id)
                       .map((t) => (
                         <ToolCard key={t.id} tool={t} onOpen={openTool} />
                       ))}
@@ -292,7 +360,7 @@ export function LibraryDialog() {
         ) : (
           <>
             <div className="library-tabs" role="tablist" aria-label="Kinds of design">
-              {LIBRARY_CATEGORIES.map((c) => (
+              {LIBRARY_SECTIONS.map((c) => (
                 <button
                   key={c.id}
                   id={`library-tab-${c.id}`}
@@ -304,21 +372,35 @@ export function LibraryDialog() {
                   onClick={() => chooseTab(c.id)}
                   onKeyDown={(e) => {
                     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-                    const i = LIBRARY_CATEGORIES.findIndex((x) => x.id === tab);
-                    const next = LIBRARY_CATEGORIES[(i + (e.key === "ArrowRight" ? 1 : LIBRARY_CATEGORIES.length - 1)) % LIBRARY_CATEGORIES.length];
+                    const i = LIBRARY_SECTIONS.findIndex((x) => x.id === tab);
+                    const next = LIBRARY_SECTIONS[(i + (e.key === "ArrowRight" ? 1 : LIBRARY_SECTIONS.length - 1)) % LIBRARY_SECTIONS.length];
                     chooseTab(next.id);
                     document.getElementById(`library-tab-${next.id}`)?.focus();
                   }}
                 >
+                  {c.locked && !unlocked && <Padlock size={12} />}
                   {c.label}
                 </button>
               ))}
             </div>
-            {LIBRARY_CATEGORIES.filter((c) => c.id === tab).map((c) => (
+            {LIBRARY_SECTIONS.filter((c) => c.id === tab).map((c) => (
               <section key={c.id} id="library-section" role="tabpanel" aria-labelledby={`library-tab-${c.id}`}>
                 <h3 className="library-heading">{c.label}</h3>
-                <p className="muted small">{c.blurb}</p>
-                <GroupedCards groups={designGroups(c.id)} tools={toolsIn(c.id)} onPick={pick} onOpen={openTool} />
+                {sectionLocked(c.id) && !unlocked ? (
+                  <UnlockBox />
+                ) : (
+                  <>
+                    <p className="muted small">{c.blurb}</p>
+                    <GroupedCards groups={c.id === "maps" ? [] : designGroups(c.id)} tools={toolsIn(c.id)} onPick={pick} onOpen={openTool} />
+                    {sectionLocked(c.id) && (
+                      <p className="small">
+                        <button className="text-button" onClick={lockMapPuzzles}>
+                          Lock this section again
+                        </button>
+                      </p>
+                    )}
+                  </>
+                )}
               </section>
             ))}
           </>
