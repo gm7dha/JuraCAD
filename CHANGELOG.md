@@ -8,6 +8,12 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.78 — More islands for the Island puzzle
+
+- New islands: Ailsa Craig and Jura.
+- Islay now comes without Jura.
+- The Isle of Skye now comes without the mainland: the height data joined them at the Skye Bridge and Kylerhea, so it's cut free there.
+
 ## v0.77 — A little more room on the toolbar
 
 - The toolbar's buttons sit a touch closer together, so the Part Studio toolbar fits a 1280-pixel-wide window with room to spare and no scroll arrows.
