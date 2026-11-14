@@ -8,6 +8,12 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.80 — Map puzzles get their own locked tab
+
+- The Mountain, Photo relief and Island puzzles have moved to a new "Map puzzles" tab in the Design library.
+- The tab is locked with a password; once it's typed, that browser stays unlocked until you choose "Lock this section again".
+- While it's locked, the library search doesn't show these puzzles. The maze box and burr stay under 3D printing › Puzzles.
+
 ## v0.79 — Trim the mountain, and a border for it
 
 - Mountain puzzle: new sliders trim the area in from the north, east, south and west before it's sized to the bed, so what's left prints bigger. They work for the photo puzzle too.
