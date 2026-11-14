@@ -51,7 +51,24 @@ export interface IslandSpec {
   keepOut?: BedRect[];
   /** Put together in several filaments: leave a spot for Bambu Studio's prime tower. */
   tower?: boolean;
+  /** One island only (a list entry's): only its land is kept, whatever `land` says, and parted from land it's joined to. */
+  only?: IslandOnly;
 }
+
+/**
+ * Just one island's land (points on the OS grid, metres): the land holding a `keep` point (or the nearest land, within
+ * `KEEP_REACH`) is kept and everything else dropped. Where the height data joins it to other land — a bridge, or narrows
+ * too fine for the data — it's parted at the narrowest neck between them: from land holding an `apart` point and from
+ * land on the area's edge (the island itself has sea round it, so land there is something else).
+ */
+export interface IslandOnly {
+  keep: { e: number; n: number }[];
+  apart?: { e: number; n: number }[];
+}
+
+/** How far (m) a keep or apart point looks for land when it falls on sea, and the widest neck (m, half of it) parted. */
+export const KEEP_REACH = 2000;
+export const WIDEST_NECK = 1500;
 
 export const ISLAND_DEFAULTS: Omit<IslandSpec, "bed"> = { scale: 1, piece: 35, base: 3, relief: 8, fit: 0.1, seed: 1, sea: 0.5, land: "islands" };
 
@@ -257,11 +274,12 @@ function spreadOwners(owner: Int32Array, nx: number, ny: number, land: (c: numbe
  * Keep only the land asked for (`isLand` changed in place): every island (land touching the area's edge dropped), the
  * biggest, or all of it. Throws when there's no land at all.
  */
-function keepLand(isLand: Uint8Array, nx: number, ny: number, land: IslandLand, warnings: string[]) {
+function keepLand(isLand: Uint8Array, nx: number, ny: number, land: IslandLand, warnings: string[], only?: OnlyCells) {
   const N = nx * ny;
   const spec = { land };
   const masses = stretches(nx, ny, (c) => isLand[c] === 1);
   if (!masses.count) throw new Error("There's no land in this area — it's all sea.");
+  if (only && keepOnly(isLand, nx, ny, only, warnings)) return;
   if (spec.land !== "all") {
     const size = new Int32Array(masses.count);
     const edge = new Uint8Array(masses.count);
@@ -285,6 +303,122 @@ function keepLand(isLand: Uint8Array, nx: number, ny: number, land: IslandLand, 
     }
     for (let c = 0; c < N; c++) if (isLand[c] && !keep(masses.id[c])) isLand[c] = 0;
   }
+}
+
+/** An `IslandOnly` on one grid: its points in cells (fractional, from the grid's south-west corner) and distances in cells. */
+export interface OnlyCells {
+  keep: XY[];
+  apart: XY[];
+  reach: number;
+  widest: number;
+}
+
+/** `only` on a grid of `cellM`-metre cells whose south-west corner is `sw`. */
+export function onlyCells(only: IslandOnly, sw: { e: number; n: number }, cellM: number): OnlyCells {
+  const at = (p: { e: number; n: number }): XY => [(p.e - sw.e) / cellM, (p.n - sw.n) / cellM];
+  return { keep: only.keep.map(at), apart: (only.apart ?? []).map(at), reach: KEEP_REACH / cellM, widest: WIDEST_NECK / cellM };
+}
+
+/** The land cell nearest a point (cells), within `reach` cells; −1 when the point is off the grid or there's none. */
+function landNear(isLand: Uint8Array, nx: number, ny: number, p: XY, reach: number): number {
+  const [i0, j0] = [Math.floor(p[0]), Math.floor(p[1])];
+  if (i0 < 0 || j0 < 0 || i0 >= nx || j0 >= ny) return -1;
+  if (isLand[j0 * nx + i0]) return j0 * nx + i0;
+  const r = Math.ceil(reach);
+  let [best, bd] = [-1, Infinity];
+  for (let j = Math.max(0, j0 - r); j <= Math.min(ny - 1, j0 + r); j++)
+    for (let i = Math.max(0, i0 - r); i <= Math.min(nx - 1, i0 + r); i++) {
+      if (!isLand[j * nx + i]) continue;
+      const d = (i + 0.5 - p[0]) ** 2 + (j + 0.5 - p[1]) ** 2;
+      if (d < bd && d <= reach * reach) [bd, best] = [d, j * nx + i];
+    }
+  return best;
+}
+
+/**
+ * Keep just the land holding `only`'s keep points (`isLand` changed in place), parted first from other land it's
+ * joined to (see `IslandOnly`). False (nothing changed) when no keep point finds land.
+ */
+export function keepOnly(isLand: Uint8Array, nx: number, ny: number, only: OnlyCells, warnings: string[]): boolean {
+  const N = nx * ny;
+  const keep = only.keep.map((p) => landNear(isLand, nx, ny, p, only.reach)).filter((c) => c >= 0);
+  if (!keep.length) {
+    warnings.push("The island wasn't found where it should be in the height data, so the usual choice of land is used.");
+    return false;
+  }
+  const points = only.apart.map((p) => landNear(isLand, nx, ny, p, only.reach)).filter((c) => c >= 0);
+  let masses = stretches(nx, ny, (c) => isLand[c] === 1);
+  const keepMasses = new Set(keep.map((c) => masses.id[c]));
+  let parted = false;
+  let joined = false;
+  for (const m of keepMasses) {
+    // Other land in this mass: apart points, and its cells on the area's edge.
+    const others = points.filter((c) => masses.id[c] === m);
+    for (let i = 0; i < nx; i++) for (const j of ny > 1 ? [0, ny - 1] : [0]) if (masses.id[j * nx + i] === m) others.push(j * nx + i);
+    for (let j = 1; j < ny - 1; j++) for (const i of nx > 1 ? [0, nx - 1] : [0]) if (masses.id[j * nx + i] === m) others.push(j * nx + i);
+    if (!others.length) continue;
+    const mine = keep.filter((c) => masses.id[c] === m);
+    const outside = new Uint8Array(N);
+    for (let c = 0; c < N; c++) outside[c] = masses.id[c] === m ? 0 : 1;
+    const d2 = distanceTransform(outside, nx, ny);
+    // The thinnest shaving (cells) at which what's left of the island no longer joins what's left of the other land.
+    let split: { core: Int32Array; mineCores: Set<number>; otherCores: Set<number> } | null = null;
+    for (let t = 1; t <= only.widest && !split; t++) {
+      // Points too near the coast to be left in the shaved land stop counting; with none left on a side, it can't be parted.
+      if (!mine.some((c) => d2[c] > t * t)) break;
+      const core = stretches(nx, ny, (c) => masses.id[c] === m && d2[c] > t * t).id;
+      const otherCores = new Set(others.filter((c) => d2[c] > t * t).map((c) => core[c]));
+      if (!otherCores.size) break;
+      const mineCores = new Set(mine.filter((c) => d2[c] > t * t).map((c) => core[c]));
+      if ([...mineCores].some((q) => otherCores.has(q))) continue;
+      split = { core, mineCores, otherCores };
+    }
+    if (!split) {
+      joined = true;
+      continue;
+    }
+    // Both sides grow back over the land shaved off, step by step; whatever the other side reaches first goes.
+    const side = new Uint8Array(N);
+    let frontier: number[] = [];
+    for (let c = 0; c < N; c++) {
+      const q = split.core[c];
+      if (q < 0) continue;
+      if (split.mineCores.has(q)) side[c] = 1;
+      else if (split.otherCores.has(q)) side[c] = 2;
+      else continue;
+      frontier.push(c);
+    }
+    while (frontier.length) {
+      const next: number[] = [];
+      for (const c of frontier) {
+        const [i, j] = [c % nx, Math.floor(c / nx)];
+        for (const [di, dj] of STEPS) {
+          const [a, b] = [i + di, j + dj];
+          if (a < 0 || b < 0 || a >= nx || b >= ny) continue;
+          const d = b * nx + a;
+          if (!side[d] && masses.id[d] === m) {
+            side[d] = side[c];
+            next.push(d);
+          }
+        }
+      }
+      frontier = next;
+    }
+    for (let c = 0; c < N; c++) if (side[c] === 2) isLand[c] = 0;
+    parted = true;
+  }
+  if (parted) warnings.push("The island is joined to other land in the height data (at a bridge or narrow strait), so it was cut free there.");
+  if (joined) warnings.push("The island is joined to other land too broadly to cut it free, so that land is kept too.");
+  if (parted) masses = stretches(nx, ny, (c) => isLand[c] === 1);
+  const kept = new Set(keep.map((c) => masses.id[c]));
+  let dropped = false;
+  for (let c = 0; c < N; c++)
+    if (isLand[c] && !kept.has(masses.id[c])) {
+      isLand[c] = 0;
+      dropped = true;
+    }
+  if (dropped || parted) warnings.push("Only the island itself is kept: other land in the area is left out.");
+  return true;
 }
 
 /** A patch at sea level bigger than this (mm² on the puzzle) and not a loch on the map is taken to be the sea (a sea loch). */
@@ -493,7 +627,7 @@ export function makeIslandPuzzle(
   // Put together: the area is cut down to the land kept (plus a little sea where the land doesn't reach the area's edge,
   // so "every island" still sees which land ran off it — never past the area, which has no heights there), and that —
   // not the whole area — is what fills the bed (or the best free part of it) at 100%.
-  const box = landBox(grid, sw, areaWidth, areaHeight, spec.sea, spec.land);
+  const box = landBox(grid, sw, areaWidth, areaHeight, spec.sea, spec.land, spec.only);
   const pad = Math.max(box.w, box.h) * 0.01 + box.cell;
   const x0 = box.x0 > 0 ? Math.max(0, box.x0 - pad) : 0;
   const y0 = box.y0 > 0 ? Math.max(0, box.y0 - pad) : 0;
@@ -522,13 +656,13 @@ export function makeIslandPuzzle(
 }
 
 /** Where the land asked for lies in the area (m from its south-west corner), found on a grid of about 1500 a side. */
-export function landBox(grid: HeightGrid, sw: { e: number; n: number }, areaWidth: number, areaHeight: number, sea: number, land: IslandLand) {
+export function landBox(grid: HeightGrid, sw: { e: number; n: number }, areaWidth: number, areaHeight: number, sea: number, land: IslandLand, only?: IslandOnly) {
   const cell = Math.max(areaWidth, areaHeight) / 1500;
   const nx = Math.max(1, Math.ceil(areaWidth / cell));
   const ny = Math.max(1, Math.ceil(areaHeight / cell));
   const isLand = new Uint8Array(nx * ny);
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) isLand[j * nx + i] = heightAt(grid, sw.e + (i + 0.5) * cell, sw.n + (j + 0.5) * cell) > sea ? 1 : 0;
-  keepLand(isLand, nx, ny, land, []);
+  keepLand(isLand, nx, ny, land, [], only && onlyCells(only, sw, cell));
   let [i0, j0, i1, j1] = [nx, ny, -1, -1];
   for (let j = 0; j < ny; j++)
     for (let i = 0; i < nx; i++)
@@ -572,7 +706,7 @@ function buildIsland(
   // Land, then only the land asked for.
   const isLand = new Uint8Array(N);
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) isLand[j * nx + i] = rawGround((i + 0.5) * cell, (j + 0.5) * cell) > spec.sea ? 1 : 0;
-  keepLand(isLand, nx, ny, spec.land, warnings);
+  keepLand(isLand, nx, ny, spec.land, warnings, spec.only && onlyCells(spec.only, sw, cell / k));
   // Low ground the land closes round (a loch whose height data sits at sea level, a gap in the data) is filled in as land,
   // smoothly from the ground round it, so it never prints as a hole right through the island.
   const cellHeight = (c: number) => rawGround(((c % nx) + 0.5) * cell, (Math.floor(c / nx) + 0.5) * cell);

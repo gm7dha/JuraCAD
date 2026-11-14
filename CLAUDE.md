@@ -1507,6 +1507,14 @@
   points. Ground on top (base + h × relief/high), flat at 0, walls. Pieces are `PuzzlePiece`s (layer 0, bbox outline) so
   `platesFor`/`plate3mf` work. `src/terrain/islands.ts`:
   `ISLANDS` (boxes by lat/lon middle; Great Britain = sw (0, 0), 665 × 1230 km — Ireland and France touch its edges),
+  One island only: `IslandPlace.only` (`IslandOnly`: `keep` / `apart` OS grid points, from lat/lon in `around`) → the dialog's
+  `spec.only` (the Land choice is hidden then) → `keepOnly` (from keepLand, in landBox and buildIsland; `onlyCells` puts the
+  points on each grid): land holding a keep point (nearest within `KEEP_REACH`) is kept, everything else dropped, whatever
+  `land` says; a keep mass also holding an apart point or land on the area's edge is first parted at its narrowest neck — land
+  shaved 1, 2… cells (distance transform) until the two sides' cores separate (≤ `WIDEST_NECK`), then both grow back, the other
+  side's share made sea. Skye: the tiles (zoom 10, ~80 m) join it to the mainland at Kyle Akin / Kylerhea, so with "every
+  island" both went (touching the edge) and "biggest" gave both. Ailsa Craig (3 × 3 km box), Islay (no Jura), Jura (no Islay,
+  Scarba, Knapdale), Skye (no mainland, Raasay or Small Isles). tests/islandPlaces.
   `boundaryQuery` (Overpass: one admin_level's relations in the box, recursed; fetched by POST from the dialog — CORS),
   `BOUNDARY_LEVELS`. osm.ts reads `boundaries`/`regionNames` (`boundaryLevels`, `boundariesOnGrid`, `levelName`).
   elevation.ts: `zoomFor` (finest zoom with ≤ MAX_TILES), `areaProblem(…, most, z)`, `readHeights(…, spacing, z)`.

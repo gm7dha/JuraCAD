@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CUSTOM_PRINTER, printerOf, PRINTERS } from "../model/printBed";
 import { areaProblem, readHeights, zoomFor, type HeightGrid } from "../terrain/elevation";
-import { featuresForIsland, IN_PLACE_FIT, ISLAND_DEFAULTS, islandChecks, type IslandBuilt, type IslandCuts, type IslandLand, type IslandSpec } from "../terrain/islandPuzzle";
+import { featuresForIsland, IN_PLACE_FIT, ISLAND_DEFAULTS, islandChecks, type IslandBuilt, type IslandCuts, type IslandLand, type IslandOnly, type IslandSpec } from "../terrain/islandPuzzle";
 import { BOUNDARY_LEVELS, boundaryQuery, fetchCovers, ISLANDS, MARKS_MOST, marksQuery, OVERPASS_URL, type MarksFetched } from "../terrain/islands";
 import { TIDY_MARKS, type MarkChoice } from "../terrain/mapMarks";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
@@ -32,6 +32,8 @@ interface Area {
   width: number;
   height: number;
   name: string;
+  /** A list island's own land only. */
+  only?: IslandOnly;
 }
 
 const blobOf = (bytes: Uint8Array, type: string) => new Blob([new Uint8Array(bytes)], { type });
@@ -224,7 +226,11 @@ export function IslandPuzzleDialog() {
   const printerInfo = printerOf(printer.printer);
   const placeBed: [number, number, number] = spec.inPlace ? (printerInfo?.slicerBed ?? bed) : bed;
   const keepOut: BedRect[] = [...(printerInfo?.bedExclude ?? []), ...(printerInfo?.oneNozzleOnly ?? [])];
-  const fullSpec: IslandSpec = spec.inPlace ? { ...spec, bed: placeBed, keepOut, tower: colourOn && !towerOff } : { ...spec, bed };
+  const only = loaded?.area.only;
+  const fullSpec: IslandSpec = {
+    ...(spec.inPlace ? { ...spec, bed: placeBed, keepOut, tower: colourOn && !towerOff } : { ...spec, bed }),
+    ...(only ? { only } : {}),
+  };
   const problems = islandChecks(fullSpec);
   const specKey = JSON.stringify(fullSpec);
   useEffect(() => {
@@ -337,6 +343,9 @@ export function IslandPuzzleDialog() {
               <p className="muted small">Leave sea all round the island; land running off the edge (the mainland) can be left out.</p>
             </>
           )}
+          {typeof area !== "string" && area.only ? (
+            <p className="muted small">Just {area.name} itself is used: other land in the area is left out, and cut free where the height data joins it on.</p>
+          ) : (
           <div className="mountain-row">
             <span>Land</span>
             <select value={spec.land} onChange={(e) => set("land", e.target.value as IslandLand)}>
@@ -345,6 +354,7 @@ export function IslandPuzzleDialog() {
               <option value="all">All the land in the area</option>
             </select>
           </div>
+          )}
           {typeof area === "string" ? (
             <p className="error-text small">{area}</p>
           ) : (
