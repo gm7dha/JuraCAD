@@ -344,7 +344,7 @@ export function IslandPuzzleDialog() {
             </>
           )}
           {typeof area !== "string" && area.only ? (
-            <p className="muted small">Just {area.name} itself is used: other land in the area is left out, and cut free where the height data joins it on.</p>
+            <p className="muted small">Only {area.name} itself is used. Other land in the area is left out, and any land the height data wrongly joins on (at a bridge or narrow strait) is cut away.</p>
           ) : (
           <div className="mountain-row">
             <span>Land</span>

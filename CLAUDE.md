@@ -1512,7 +1512,8 @@
   points on each grid): land holding a keep point (nearest within `KEEP_REACH`) is kept, everything else dropped, whatever
   `land` says; a keep mass also holding an apart point or land on the area's edge is first parted at its narrowest neck — land
   shaved 1, 2… cells (distance transform) until the two sides' cores separate (≤ `WIDEST_NECK`), then both grow back, the other
-  side's share made sea. Skye: the tiles (zoom 10, ~80 m) join it to the mainland at Kyle Akin / Kylerhea, so with "every
+  side's share made sea (thick land of neither side's core handed over — past `MOST_HANDED` 2 km² or `MOST_HANDED_SHARE` 3% — gets its own
+  warning; no keep point found = the hidden Land choice, said). Skye: the tiles (zoom 10, ~80 m) join it to the mainland at Kyle Akin / Kylerhea, so with "every
   island" both went (touching the edge) and "biggest" gave both. Ailsa Craig (3 × 3 km box), Islay (no Jura), Jura (no Islay,
   Scarba, Knapdale), Skye (no mainland, Raasay or Small Isles). tests/islandPlaces.
   `boundaryQuery` (Overpass: one admin_level's relations in the box, recursed; fetched by POST from the dialog — CORS),

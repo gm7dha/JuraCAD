@@ -48,7 +48,8 @@ export const ISLANDS: IslandPlace[] = [
   // Jura without Islay, Scarba or Knapdale: points north and south of Loch Tarbert, where it's narrowest.
   around("jura", "Jura", 55.98, -5.89, 40, 48, [[55.89, -5.97], [56.05, -5.83]]),
   // Skye without the mainland, which the height data joins to it at the Skye Bridge (Kyle Akin) and Kylerhea, or the
-  // Small Isles: points in the Cuillin, Trotternish, Duirinish and Sleat; others on Lochalsh, Glenelg, Applecross and Knoydart.
+  // Small Isles: points in the Cuillin, Trotternish, Duirinish, Sleat, the Kyleakin hills and Beinn na Caillich (so
+  // east Skye, beside the joins, is kept whatever its own waist); others on Lochalsh, Glenelg, Applecross and Knoydart.
   around(
     "skye",
     "Isle of Skye",
@@ -56,7 +57,7 @@ export const ISLANDS: IslandPlace[] = [
     -6.22,
     90,
     92,
-    [[57.23, -6.2], [57.507, -6.183], [57.4, -6.65], [57.1, -5.94]],
+    [[57.23, -6.2], [57.507, -6.183], [57.4, -6.65], [57.1, -5.94], [57.245, -5.75], [57.235, -5.975]],
     [[57.31, -5.6], [57.2, -5.58], [57.45, -5.7], [57.07, -5.6]],
   ),
   around("lewis-harris", "Lewis and Harris", 58.1, -6.65, 70, 105),

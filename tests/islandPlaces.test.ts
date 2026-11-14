@@ -83,8 +83,41 @@ describe("one island only", () => {
     expect(a.slice(0).reduce((s, v) => s + v, 0)).toBe(100);
     expect(a[10 * nx + 30]).toBe(0);
     const b = Uint8Array.from(land);
-    expect(keepOnly(b, nx, ny, { keep: [[20, 10]], apart: [], reach: 2, widest: 5 }, [])).toBe(false);
+    const lost: string[] = [];
+    expect(keepOnly(b, nx, ny, { keep: [[20, 10]], apart: [], reach: 2, widest: 5 }, lost)).toBe(false);
+    expect(lost.join(" ")).toMatch(/usual Land choice/);
     expect(b).toEqual(land);
+  });
+
+  it("says so when cutting free hands a piece of the island to the other side", () => {
+    const [nx, ny] = [60, 30];
+    const land = new Uint8Array(nx * ny);
+    const fill = (i0: number, i1: number, j0: number, j1: number) => {
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) land[j * nx + i] = 1;
+    };
+    fill(2, 20, 2, 27); // the island
+    fill(45, 59, 0, 29); // the mainland, off the edge
+    fill(21, 44, 14, 16); // a causeway three cells wide
+    fill(33, 43, 18, 28); // a lobe hanging off it by a one-cell waist, nearer the mainland
+    fill(38, 38, 17, 17);
+    const warnings: string[] = [];
+    expect(keepOnly(land, nx, ny, { keep: [[10, 14]], apart: [], reach: 4, widest: 8 }, warnings)).toBe(true);
+    expect(land[5 * nx + 10]).toBe(1);
+    expect(land[15 * nx + 50]).toBe(0);
+    expect(land[23 * nx + 38]).toBe(0);
+    expect(warnings.join(" ")).toMatch(/cut free/);
+    expect(warnings.join(" ")).toMatch(/sizeable piece/);
+    // Without the lobe, only the causeway goes, and nothing more is said.
+    const plain = new Uint8Array(nx * ny);
+    for (let c = 0; c < nx * ny; c++) plain[c] = land[c];
+    const again = new Uint8Array(nx * ny);
+    for (let j = 2; j <= 27; j++) for (let i = 2; i <= 20; i++) again[j * nx + i] = 1;
+    for (let j = 0; j <= 29; j++) for (let i = 45; i <= 59; i++) again[j * nx + i] = 1;
+    for (let j = 14; j <= 16; j++) for (let i = 21; i <= 44; i++) again[j * nx + i] = 1;
+    const quiet: string[] = [];
+    keepOnly(again, nx, ny, { keep: [[10, 14]], apart: [], reach: 4, widest: 8 }, quiet);
+    expect(quiet.join(" ")).toMatch(/cut free/);
+    expect(quiet.join(" ")).not.toMatch(/sizeable piece/);
   });
 
   it("works out points on the grid's own cells", () => {

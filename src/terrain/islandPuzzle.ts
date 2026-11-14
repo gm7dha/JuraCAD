@@ -66,6 +66,10 @@ export interface IslandOnly {
   apart?: { e: number; n: number }[];
 }
 
+/** Land (m², or share of what's kept) the cut may give to the other side, beyond its own shaved coast, before saying so. */
+export const MOST_HANDED = 2_000_000;
+export const MOST_HANDED_SHARE = 0.03;
+
 /** How far (m) a keep or apart point looks for land when it falls on sea, and the widest neck (m, half of it) parted. */
 export const KEEP_REACH = 2000;
 export const WIDEST_NECK = 1500;
@@ -311,12 +315,14 @@ export interface OnlyCells {
   apart: XY[];
   reach: number;
   widest: number;
+  /** m² per cell (missing: only the share of the island counts). */
+  cellArea?: number;
 }
 
 /** `only` on a grid of `cellM`-metre cells whose south-west corner is `sw`. */
 export function onlyCells(only: IslandOnly, sw: { e: number; n: number }, cellM: number): OnlyCells {
   const at = (p: { e: number; n: number }): XY => [(p.e - sw.e) / cellM, (p.n - sw.n) / cellM];
-  return { keep: only.keep.map(at), apart: (only.apart ?? []).map(at), reach: KEEP_REACH / cellM, widest: WIDEST_NECK / cellM };
+  return { keep: only.keep.map(at), apart: (only.apart ?? []).map(at), reach: KEEP_REACH / cellM, widest: WIDEST_NECK / cellM, cellArea: cellM * cellM };
 }
 
 /** The land cell nearest a point (cells), within `reach` cells; −1 when the point is off the grid or there's none. */
@@ -343,7 +349,7 @@ export function keepOnly(isLand: Uint8Array, nx: number, ny: number, only: OnlyC
   const N = nx * ny;
   const keep = only.keep.map((p) => landNear(isLand, nx, ny, p, only.reach)).filter((c) => c >= 0);
   if (!keep.length) {
-    warnings.push("The island wasn't found where it should be in the height data, so the usual choice of land is used.");
+    warnings.push("The island wasn't found where it should be in the height data, so the usual Land choice (hidden for this island) was used instead: the puzzle may hold other land too.");
     return false;
   }
   const points = only.apart.map((p) => landNear(isLand, nx, ny, p, only.reach)).filter((c) => c >= 0);
@@ -351,6 +357,7 @@ export function keepOnly(isLand: Uint8Array, nx: number, ny: number, only: OnlyC
   const keepMasses = new Set(keep.map((c) => masses.id[c]));
   let parted = false;
   let joined = false;
+  let handedAway = false;
   for (const m of keepMasses) {
     // Other land in this mass: apart points, and its cells on the area's edge.
     const others = points.filter((c) => masses.id[c] === m);
@@ -362,7 +369,7 @@ export function keepOnly(isLand: Uint8Array, nx: number, ny: number, only: OnlyC
     for (let c = 0; c < N; c++) outside[c] = masses.id[c] === m ? 0 : 1;
     const d2 = distanceTransform(outside, nx, ny);
     // The thinnest shaving (cells) at which what's left of the island no longer joins what's left of the other land.
-    let split: { core: Int32Array; mineCores: Set<number>; otherCores: Set<number> } | null = null;
+    let split: { core: Int32Array; mineCores: Set<number>; otherCores: Set<number>; t: number } | null = null;
     for (let t = 1; t <= only.widest && !split; t++) {
       // Points too near the coast to be left in the shaved land stop counting; with none left on a side, it can't be parted.
       if (!mine.some((c) => d2[c] > t * t)) break;
@@ -371,7 +378,7 @@ export function keepOnly(isLand: Uint8Array, nx: number, ny: number, only: OnlyC
       if (!otherCores.size) break;
       const mineCores = new Set(mine.filter((c) => d2[c] > t * t).map((c) => core[c]));
       if ([...mineCores].some((q) => otherCores.has(q))) continue;
-      split = { core, mineCores, otherCores };
+      split = { core, mineCores, otherCores, t };
     }
     if (!split) {
       joined = true;
@@ -388,6 +395,9 @@ export function keepOnly(isLand: Uint8Array, nx: number, ny: number, only: OnlyC
       else continue;
       frontier.push(c);
     }
+    // Thick land that was neither side's (a lobe of the island with a waist narrower than the join) and went to the other
+    // side is counted, so a cut that took a real part of the island says so. Thin strips (the join itself) aren't.
+    let handed = 0;
     while (frontier.length) {
       const next: number[] = [];
       for (const c of frontier) {
@@ -399,15 +409,21 @@ export function keepOnly(isLand: Uint8Array, nx: number, ny: number, only: OnlyC
           if (!side[d] && masses.id[d] === m) {
             side[d] = side[c];
             next.push(d);
+            if (side[d] === 2 && split.core[d] >= 0) handed++;
           }
         }
       }
       frontier = next;
     }
+    let mineCount = 0;
+    for (let c = 0; c < N; c++) if (side[c] === 1) mineCount++;
+    if ((only.cellArea !== undefined && handed * only.cellArea > MOST_HANDED) || handed > MOST_HANDED_SHARE * mineCount) handedAway = true;
     for (let c = 0; c < N; c++) if (side[c] === 2) isLand[c] = 0;
     parted = true;
   }
   if (parted) warnings.push("The island is joined to other land in the height data (at a bridge or narrow strait), so it was cut free there.");
+  if (handedAway)
+    warnings.push("Cutting it free also took away a sizeable piece of land beside the cut — check the island hasn't lost part of itself (a narrow headland, say).");
   if (joined) warnings.push("The island is joined to other land too broadly to cut it free, so that land is kept too.");
   if (parted) masses = stretches(nx, ny, (c) => isLand[c] === 1);
   const kept = new Set(keep.map((c) => masses.id[c]));
