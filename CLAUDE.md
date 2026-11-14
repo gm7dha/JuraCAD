@@ -1634,6 +1634,21 @@
   part watertight with positive volume, gaps, keys ↔ pockets, snow above the line, limits, plates; every piece's dovetails
   found on its outline for several patterns, top pieces' printed footprints never cross and stay ≥ 2·fit apart, segment to segment, at fit 0.1 and 0.15 on rugged ground — `tests/support/outlineGeom.ts`; the warning's count; every upward triangle of a dovetailed top within 0.2 mm of the ground). A laser version (layered contour
   sheets) was tried in JuraCUT and taken out at the owner's request (JuraCUT v0.12): the mountain puzzle is 3D printing only.
+  Trim and border: pure `src/terrain/mountainCrop.ts` — `Trim` {n,e,s,w} shares (≤ `MOST_TRIM` 0.45, ≥ `LEAST_LEFT` 0.1 left
+  each way), `cropGrid` (whole grid steps, the same heights, e0/n0 moved; NO_TRIM = the same grid object, so files are
+  unchanged), `cropPixels` for the photo puzzle (cropped before `photoGrid`, then e0/n0 = pixels off west/south); the dialog's
+  "Trim from the north/east/south/west" sliders feed `used` (grid + size) to layoutFor/makeMountainPuzzle; the top view keeps the
+  whole area. `src/terrain/mountainBorder.ts` `makeBorder(puzzle, words, bed)`: a frame drawn from the puzzle's edge (t 0) out
+  `BORDER_WALL` 10, every piece shrunk by fit (2·fit from the puzzle and at joins); each side `RISE` + its `edgePeaks` (corners
+  within fit + 0.5 of the face), rounded up; L corners (`CORNER_ARM` 20, the taller side's height) and straight pieces ≤ the
+  bed (`most`), joined by full-height lugs (neck `LUG_NECK` 3.6 × 2 long, head `LUG_HEAD` 5.6 to `LUG_DEPTH` 5, shoulders
+  square to the pull — a shallow dovetail slid 1.5 mm); `BorderJoint` lower/upper/dir. Words (`borderWords`: name, m, 6-figure
+  ref, 1:scale; the dialog uses the famous summit only while it's on the trimmed puzzle, else its highest point) raised `RELIEF`
+  0.8 off the front's outside face, centred on one name-plate piece (the whole front middle if that fits the bed, else what's
+  left beside it is shared both sides or put on one, never under `MIN_PIECE`; any straight span < lug + 2·fit + `PIECE_MARGIN`
+  is a plain problem) (caps `NAME_CAPS` 7 / `INFO_CAPS` 4.5 shrunk to fit, refused under `MIN_CAPS` 3; the front raised to hold them),
+  `BorderPiece.words` (a Body) → filament 2 via `bandPlate3mf` (`borderParts` in the dialog), plates by `platesFor`.
+  Tests: tests/mountainBorder.
   OpenStreetMap files: source "An OpenStreetMap file" + "From the map" (`OsmDetail`: area / water — paths, tracks, rivers,
   streams, lochs / all — roads, buildings, names too). `src/terrain/osm.ts` (pure): a small
   regex reader for .osm XML (`readOsm`: bounds, ways by tag — `lineKind`/`shapeKind`, multipolygon water joined from

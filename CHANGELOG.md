@@ -8,6 +8,12 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.79 — Trim the mountain, and a border for it
+
+- Mountain puzzle: new sliders trim the area in from the north, east, south and west before it's sized to the bed, so what's left prints bigger. They work for the photo puzzle too.
+- New "Border (frame round the puzzle)": a wall round the finished puzzle, as tall as the puzzle along each side. It comes in bed-sized pieces that lock together with lugs and is a download of its own.
+- The border's front carries the mountain's name, height, grid reference and scale as raised letters on a second filament. You can change the words.
+
 ## v0.78 — More islands for the Island puzzle
 
 - New islands: Ailsa Craig and Jura.
