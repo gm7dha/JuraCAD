@@ -4,6 +4,7 @@
  * Also the query that fetches boundaries round an area from OpenStreetMap.
  */
 import { ROAD_RANK, TIDY_MARKS, type MarkChoice } from "./mapMarks";
+import type { IslandOnly } from "./islandPuzzle";
 import { gridToLatLon, latLonToGrid, type GridPoint } from "./osGrid";
 
 export interface IslandPlace {
@@ -13,25 +14,52 @@ export interface IslandPlace {
   sw: GridPoint;
   width: number;
   height: number;
+  /** Just this island: points on it (and on land it may be joined to in the height data), on the OS grid. */
+  only?: IslandOnly;
 }
 
-const around = (id: string, name: string, lat: number, lon: number, kmWide: number, kmTall: number): IslandPlace => {
+type LatLon = [number, number];
+
+const around = (id: string, name: string, lat: number, lon: number, kmWide: number, kmTall: number, keep?: LatLon[], apart?: LatLon[]): IslandPlace => {
   const c = latLonToGrid({ lat, lon });
   const width = kmWide * 1000;
   const height = kmTall * 1000;
-  return { id, name, sw: { e: Math.round(c.e - width / 2), n: Math.round(c.n - height / 2) }, width, height };
+  const place: IslandPlace = { id, name, sw: { e: Math.round(c.e - width / 2), n: Math.round(c.n - height / 2) }, width, height };
+  const grid = ([la, lo]: LatLon) => {
+    const g = latLonToGrid({ lat: la, lon: lo });
+    return { e: Math.round(g.e), n: Math.round(g.n) };
+  };
+  if (keep) place.only = { keep: keep.map(grid), ...(apart ? { apart: apart.map(grid) } : {}) };
+  return place;
 };
 
 export const ISLANDS: IslandPlace[] = [
   // The whole grid's land: Ireland and France run off its edges, so they're left out.
   { id: "great-britain", name: "Great Britain", sw: { e: 0, n: 0 }, width: 665000, height: 1230000 },
   around("arran", "Isle of Arran", 55.58, -5.22, 32, 40),
+  // Tiny (about 1.2 × 0.9 km, 338 m high), so a small area: it's then printed about 10 cm long.
+  around("ailsa-craig", "Ailsa Craig", 55.2525, -5.1158, 3, 3, [[55.2525, -5.1158]]),
   around("wight", "Isle of Wight", 50.67, -1.33, 46, 28),
   around("man", "Isle of Man", 54.23, -4.55, 42, 60),
   around("anglesey", "Anglesey", 53.28, -4.37, 52, 42),
   around("mull", "Isle of Mull", 56.45, -6.05, 60, 50),
-  around("islay", "Islay", 55.76, -6.27, 46, 44),
-  around("skye", "Isle of Skye", 57.33, -6.22, 90, 92),
+  // Islay without Jura (across the Sound of Islay): points in its east, on the Rinns and on the Oa.
+  around("islay", "Islay", 55.76, -6.27, 46, 44, [[55.82, -6.17], [55.76, -6.42], [55.62, -6.25]]),
+  // Jura without Islay, Scarba or Knapdale: points north and south of Loch Tarbert, where it's narrowest.
+  around("jura", "Jura", 55.98, -5.89, 40, 48, [[55.89, -5.97], [56.05, -5.83]]),
+  // Skye without the mainland, which the height data joins to it at the Skye Bridge (Kyle Akin) and Kylerhea, or the
+  // Small Isles: points in the Cuillin, Trotternish, Duirinish, Sleat, the Kyleakin hills and Beinn na Caillich (so
+  // east Skye, beside the joins, is kept whatever its own waist); others on Lochalsh, Glenelg, Applecross and Knoydart.
+  around(
+    "skye",
+    "Isle of Skye",
+    57.33,
+    -6.22,
+    90,
+    92,
+    [[57.23, -6.2], [57.507, -6.183], [57.4, -6.65], [57.1, -5.94], [57.245, -5.75], [57.235, -5.975]],
+    [[57.31, -5.6], [57.2, -5.58], [57.45, -5.7], [57.07, -5.6]],
+  ),
   around("lewis-harris", "Lewis and Harris", 58.1, -6.65, 70, 105),
   around("orkney", "Orkney", 59.06, -2.9, 72, 82),
   around("shetland", "Shetland", 60.36, -1.35, 90, 125),
