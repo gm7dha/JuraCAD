@@ -2181,7 +2181,7 @@ export class SceneManager {
       const s = this.worldToScreen(p);
       return s ? [s.x, s.y] : null;
     };
-    const manip = this.manips.length ? manipHandleAt(this.manips, MANIP_PIXELS * this.worldPerPixel(), project, x, y, reach) : null;
+    const manip = this.manips.length ? manipHandleAt(this.manips, MANIP_PIXELS * this.worldPerPixel(), project, x, y, reach, this.viewDirection()) : null;
     if (manip || !this.triad) return manip;
     return handleAt(this.triad, this.triadSize(), project, x, y, reach, this.viewDirection());
   }

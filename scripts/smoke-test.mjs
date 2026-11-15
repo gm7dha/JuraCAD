@@ -995,6 +995,12 @@ try {
   step = "dragging the Extrude's depth arrow (a manipulator)";
   {
     await page.waitForFunction(() => window.juracadViewport.current.manipulatorsShown().some((m) => m.id === "depth"), null, { timeout: 30_000 });
+    // (Looking straight down at the sketch the arrow points at you and can't be grabbed: turn to the usual 3D view.)
+    await page.evaluate(() => {
+      window.juracadViewport.current.setView("iso", false);
+      window.juracadViewport.current.fit(false);
+    });
+    await page.waitForTimeout(300);
     const plan = await page.evaluate(() => {
       const v = window.juracadViewport.current;
       const m = v.manipulatorsShown().find((x) => x.id === "depth");

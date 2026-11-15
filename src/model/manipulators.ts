@@ -286,6 +286,7 @@ export function manipBoxText(m: Pick<Manipulator, "angle">, value: number): stri
  */
 export function manipPatch(start: Feature, m: Manipulator, value: number, flipped: boolean): { params: Record<string, string>; fields?: Partial<Feature> } {
   const params = { [m.key]: manipBoxText(m, value) };
-  if (flipped && m.flips && start.type === "extrude" && start.extrude) return { params, fields: { extrude: { ...start.extrude, flip: !start.extrude.flip } } };
+  // (Always said, so dragging back over zero turns it round again.)
+  if (m.flips && start.type === "extrude" && start.extrude) return { params, fields: { extrude: { ...start.extrude, flip: flipped ? !start.extrude.flip : start.extrude.flip } } };
   return { params };
 }

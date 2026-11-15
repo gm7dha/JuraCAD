@@ -12,7 +12,7 @@
  */
 import { arcPoints, manipArrowDir, manipPoint, type Manipulator } from "../model/manipulators";
 import { add, cross, dot, scale, sub, unit, type Vec3 } from "../model/transformMath";
-import { axisParam, planeHit, snapTo, type Projector, type Ray } from "./transformDrag";
+import { axisParam, MIN_ARROW_SIDE, planeHit, snapTo, type Projector, type Ray } from "./transformDrag";
 
 /** A manipulator's handle, as the 3D view's hit tests hand it on (beside the triad's handles). */
 export interface ManipHandle {
@@ -58,9 +58,15 @@ export function arrowEnds(m: Manipulator, size: number): [Vec3, Vec3] {
  * The handle under the pointer at (x, y), or null. `size`: the arrow's length in world units; `reach` widens it for
  * fingers. Locked handles are found too (so their tooltip shows); the glue refuses to drag them.
  */
-export function manipHandleAt(manips: readonly Manipulator[], size: number, project: Projector, x: number, y: number, reach = 1): ManipHandle | null {
+export function manipHandleAt(manips: readonly Manipulator[], size: number, project: Projector, x: number, y: number, reach = 1, view?: Vec3): ManipHandle | null {
   let best: { id: string; d: number } | null = null;
+  const v = view ? unit(view) : null;
   for (const m of manips) {
+    // Pointing (almost) straight at you, an arrow is a dot that can't be dragged: it mustn't take clicks meant for what's behind it.
+    if (v) {
+      const c = dot(v, manipArrowDir(m));
+      if (1 - c * c < MIN_ARROW_SIDE) continue;
+    }
     const [foot, tip] = arrowEnds(m, size);
     const a = project(foot);
     const b = project(tip);

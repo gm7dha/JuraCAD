@@ -135,6 +135,8 @@ describe("dragging a manipulator", () => {
     expect(d.move(front(20, 0.2), { snap: true, step: 1 })).toEqual({ value: 1, flipped: false });
     const patch = manipPatch(draft("extrude", { extrude: { end: "blind", flip: false } }), m, 6, true);
     expect(patch).toEqual({ params: { depth: "6" }, fields: { extrude: { end: "blind", flip: true } } });
+    // Back over zero: turned round again.
+    expect(manipPatch(draft("extrude", { extrude: { end: "blind", flip: false } }), m, 3, false).fields).toEqual({ extrude: { end: "blind", flip: false } });
     const sym = manipulatorsFor(draft("extrude", { sketchRef: "s", extrude: { end: "symmetric", flip: false } }, { depth: "10" }), top)[0];
     const ds = startManipDrag(sym, front(20, 5))!;
     // Half each way: the handle moved 3 mm = 6 mm more depth.
@@ -168,6 +170,9 @@ describe("dragging a manipulator", () => {
     const project = (p: V): [number, number] => [p[0], -p[2]];
     expect(manipHandleAt([m], 30, project, 20, -30)).toEqual({ kind: "manip", id: "depth" });
     expect(manipHandleAt([m], 30, project, 40, -30)).toBeNull();
+    // Looking straight along it (from above), it's a dot that takes no clicks.
+    expect(manipHandleAt([m], 30, project, 20, -30, 1, [0, 0, -1])).toBeNull();
+    expect(manipHandleAt([m], 30, project, 20, -30, 1, [0, -1, 0])).toEqual({ kind: "manip", id: "depth" });
   });
 
   it("snaps to 1 mm (0.05 in) at usual zooms, finer right in, coarser out", () => {
