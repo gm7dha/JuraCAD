@@ -89,8 +89,8 @@ describe("Move face: Offset", () => {
     expect(build([base, boss, { ...off, params: { distance: "-5" } }]).featureErrors[off.id]).toMatch(/shrink the round face to nothing/);
   });
 
-  it("refuses a face moved in out through the other side of the part", () => {
-    // A pocket's floor pushed down past the part's bottom.
+  it("flat faces moved in past other faces cut as the original Move face did", () => {
+    // A pocket's floor pushed down past the part's bottom opens a window, as before (only round faces are refused).
     const box = feature("box", { width: 20, depth: 20, height: 10 });
     const pocket = feature("box", { width: 10, depth: 10, height: 5, x: 5, y: 5, z: 5 }, "remove");
     const floor = faces(build([box, pocket]), (f) => f.surface === "PLANE" && f.normal![2] > 0.99 && Math.abs(f.center![2] - 5) < 1e-6);
@@ -99,7 +99,20 @@ describe("Move face: Offset", () => {
     expect(build([box, pocket, deeper]).featureErrors).toEqual({});
     expect(volume()).toBeCloseTo(4000 - 500 - 300, 6);
     const r = build([box, pocket, { ...deeper, params: { distance: "-8" } }]);
-    expect(r.featureErrors[deeper.id]).toBeTruthy();
+    expect(r.featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(4000 - 500 - 500, 6);
+    const classic: Feature = { ...feature("moveFace", { distance: -8 }), picks: floor };
+    expect(build([box, pocket, classic]).featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(3000, 6);
+    // A plate with a pocket cut up from below: its top pushed down into the pocket opens it, as before.
+    const plate = feature("box", { width: 20, depth: 20, height: 10 });
+    const under = feature("box", { width: 6, depth: 6, height: 9, x: 7, y: 7 }, "remove");
+    const top = faces(build([plate, under]), (f) => f.surface === "PLANE" && f.normal![2] > 0.99);
+    const down = move({ mode: "offset" }, { distance: -2 }, top);
+    expect(build([plate, under, down]).featureErrors).toEqual({});
+    const v = volume();
+    expect(build([plate, under, { ...feature("moveFace", { distance: -2 }), picks: top }]).featureErrors).toEqual({});
+    expect(v).toBeCloseTo(volume(), 6);
   });
 });
 

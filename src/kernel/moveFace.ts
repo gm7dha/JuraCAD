@@ -206,6 +206,9 @@ export function moveFacesBy(shape: Shape3D, faces: Face[], how: { offset: number
   const grow: { room: Shape3D; v: number }[] = [];
   const shrink: { room: Shape3D; v: number }[] = [];
   const free = () => [...grow, ...shrink].forEach((x) => x.room.delete());
+  // Flat faces' rooms are plain prisms, added and cut exactly as the original Move face did (a top pushed down into a
+  // pocket below opens it, as before); only rooms of curved faces (thick solids) are checked by volume.
+  let curved = false;
   try {
     for (const face of faces) {
       let room: Shape3D;
@@ -214,6 +217,7 @@ export function moveFacesBy(shape: Shape3D, faces: Face[], how: { offset: number
         if (Math.abs(how.offset) < 1e-9) continue;
         room = offsetRoom(face, how.offset);
         out = how.offset > 0;
+        if (face.geomType !== "PLANE") curved = true;
       } else {
         if (face.geomType !== "PLANE") throw new MoveFaceError("Translate moves flat faces. To make a round face (a hole or a boss) bigger or smaller, use Offset.");
         const n = take(face.normalAt());
@@ -252,7 +256,7 @@ export function moveFacesBy(shape: Shape3D, faces: Face[], how: { offset: number
     const warning = neighbourNote(shape, faces, dirAt);
     const after = measureVolume(result);
     const tol = 1e-6 * Math.max(1, before) + 1e-6;
-    if (Math.abs(after - expect) > tol && !warning) {
+    if (curved && Math.abs(after - expect) > tol && !warning) {
       const less = shrink.length && after > expect;
       result.delete();
       throw new MoveFaceError(
