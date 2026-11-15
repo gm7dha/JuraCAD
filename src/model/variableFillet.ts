@@ -8,7 +8,7 @@
  * end of the edge as it is now lies nearer the pick's `a`, so a radius set at one end stays at that end even when
  * OpenCascade hands the edge back the other way round.
  */
-import type { EdgeRef, TopoPick, Vec3 } from "../geometry/topoRef";
+import { sameRef, type EdgeRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
 import type { Feature, FilletRadiusPoint, VariableFillet } from "./types";
 
 /** Is this pick the edge the point is on? */
@@ -88,7 +88,8 @@ export function radiusPointAt(ref: EdgeRef, at: number): Vec3 | null {
  */
 export function clickRadiusPoint(f: Feature, pick: TopoPick): Feature | null {
   if (f.type !== "fillet" || !f.variableFillet || pick.ref.kind !== "edge") return null;
-  const own = (f.picks ?? []).find((k) => k.partId === pick.partId && k.ref.kind === "edge" && pointOnPick(k, { part: pick.partId, edge: (pick.ref as EdgeRef).mid }));
+  // The same edge as picked (by the usual tolerance: the part may have moved a little since it was picked).
+  const own = (f.picks ?? []).find((k) => k.partId === pick.partId && k.ref.kind === "edge" && sameRef(k.ref, pick.ref));
   if (!own || own.ref.kind !== "edge") return null;
   let share = pick.at ? clickShare(own.ref, pick.at) : null;
   if (share === null) share = 0.5;

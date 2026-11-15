@@ -10,7 +10,7 @@ import { setMirrorReference, setPatternDirection } from "../model/patternRefs";
 import type { BoundaryCurve, Feature, FilletRadiusPoint, FeatureType, JuraCADDocument, LoftDef, LoftProfile, Operation } from "../model/types";
 import { endChoices, loftProfiles, profilesProblem, tidyEnds, withEndPoint, withLoftDef, withProfiles } from "../model/loft";
 import { tidyRadiusPoints } from "../model/variableFillet";
-import type { EdgeRef } from "../geometry/topoRef";
+import { sameRef } from "../geometry/topoRef";
 import type { PartMesh } from "../kernel/protocol";
 import { SCREW_SIZES, standardParams } from "../model/holes";
 import { planeFrame, planeOnFace, type SketchPlane, type Vec3 } from "../sketch/planes";
@@ -134,7 +134,7 @@ function variableFilletSpec(f: Feature, a: Obj, ctx: SpecContext) {
         if (!q || typeof q !== "object") throw new InputError(`${where}: give {"edge": "E3", "at": "start", "radius": 2}.`);
         const o = q as Obj;
         const [pick] = pickEdges(part, [o.edge], `${where}.edge`);
-        const own = pick && (f.picks ?? []).find((k) => k.partId === pick.partId && k.ref.kind === "edge" && pick.ref.kind === "edge" && Math.hypot(...k.ref.mid.map((v, j) => v - (pick.ref as EdgeRef).mid[j])) < 1e-6);
+        const own = pick && (f.picks ?? []).find((k) => k.partId === pick.partId && k.ref.kind === "edge" && sameRef(k.ref, pick.ref));
         if (!own || own.ref.kind !== "edge") throw new InputError(`${where}.edge: give one of the fillet's own edges (listed in "edges").`);
         let at: number;
         if (o.at === "start" || o.at === undefined) at = 0;

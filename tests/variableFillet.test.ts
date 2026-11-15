@@ -87,6 +87,10 @@ describe("variable fillet (pure)", () => {
     const g = filletOf([arc], { variableFillet: { points: [] } });
     expect(clickRadiusPoint(g, { ...arc, at: [9, 0.5, 0] })!.variableFillet!.points[0].at).toBe(1);
     expect(clickRadiusPoint(g, { ...arc, at: [5, 6, 0] })!.variableFillet!.points[0].at).toBe(0.5);
+    // The edge as it's clicked now may lie a hair from where it was picked: still a point on the picked edge, kept on the pick.
+    const nudged = edge("box1", [0, 0, 10.0002], [10, 0, 10.0002]);
+    const moved = clickRadiusPoint(f, { ...nudged, at: [0.5, 0, 10] })!;
+    expect(moved.variableFillet!.points).toEqual([{ part: "box1", edge: [5, 0, 10], at: 0, radius: "2" }]);
   });
 
   it("drops points when their edge goes", () => {

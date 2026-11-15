@@ -31,11 +31,19 @@ function vertexPoint(oc: any, v: any): Vec3 {
   return out;
 }
 
+/** The edge's vertices (each a new wrapper: the caller deletes them). */
 function edgeVertices(oc: any, e: any): any[] {
   const out: any[] = [];
   const ex = new oc.TopExp_Explorer(e, oc.TopAbs_ShapeEnum.TopAbs_VERTEX, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
-  for (; ex.More(); ex.Next()) out.push(oc.TopoDS.Vertex(ex.Current()));
-  ex.delete();
+  try {
+    for (; ex.More(); ex.Next()) {
+      const current = ex.Current();
+      out.push(oc.TopoDS.Vertex(current));
+      current.delete?.();
+    }
+  } finally {
+    ex.delete();
+  }
   return out;
 }
 
@@ -47,6 +55,8 @@ export function variableFillet(shape: Shape3D, edges: { edge: Edge; points: Edge
   const oc = getOC() as any;
   const builder = new oc.BRepFilletAPI_MakeFillet(shape.wrapped, oc.ChFi3d_FilletShape.ChFi3d_Rational);
   const arrays: any[] = [];
+  // Wrappers OpenCascade hands back (the contours' edges): JuraCAD rebuilds often, so every one is freed.
+  const fetched: any[] = [];
   try {
     for (const { edge } of edges) builder.Add(edge.wrapped);
     const contours = builder.NbContours();
@@ -57,8 +67,10 @@ export function variableFillet(shape: Shape3D, edges: { edge: Edge; points: Edge
       const spans: { edge: any; u0: number; u1: number; p0: Vec3; p1: Vec3 }[] = [];
       for (let j = 1; j <= n; j++) {
         const e = builder.Edge(ic, j);
+        fetched.push(e);
         const vs = edgeVertices(oc, e);
         const ends = vs.map((v) => ({ p: vertexPoint(oc, v), u: builder.RelativeAbscissa(ic, v) as number }));
+        vs.forEach((v) => v.delete());
         if (ends.length < 2) ends.push({ ...ends[0] });
         if (n === 1 && closed) {
           ends[0].u = 0;
@@ -106,6 +118,7 @@ export function variableFillet(shape: Shape3D, edges: { edge: Edge; points: Edge
     return cast(builder.Shape()) as Shape3D;
   } finally {
     arrays.forEach((a) => a.delete());
+    fetched.forEach((e) => e.delete?.());
     builder.delete();
   }
 }

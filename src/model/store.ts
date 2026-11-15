@@ -1325,9 +1325,10 @@ export const useStore = create<AppState>((set, get) => {
         // Variable fillet: a click on an edge it already rounds puts a radius point there (the list's × still removes it).
         const pointed = clickRadiusPoint(s.editing.draft, pick);
         if (pointed) return pointed === s.editing.draft ? {} : { editing: { ...s.editing, draft: pointed }, ...steps };
+        // (A variable fillet's click point on an edge only says where a radius goes; a face keeps its own.)
         const { at: _at, ...plain } = pick;
         const i = picks.findIndex((p) => p.partId === pick.partId && sameRef(p.ref, pick.ref));
-        const next = i >= 0 ? picks.filter((_, j) => j !== i) : [...picks, s.editing.draft.variableFillet ? plain : pick];
+        const next = i >= 0 ? picks.filter((_, j) => j !== i) : [...picks, s.editing.draft.variableFillet && pick.ref.kind === "edge" ? plain : pick];
         return { editing: { ...s.editing, draft: tidyRadiusPoints({ ...s.editing.draft, picks: next }) }, ...steps };
       }),
 
