@@ -80,6 +80,7 @@ import { deleteStudio, studioInUse, studioUsers } from "./studioUse";
 import { deleteFeatures as deleteFeaturesIn, findDependents } from "./dependents";
 import { designOf, withVersionsOf } from "./versions";
 import { newKeepId, readKept } from "./browserKeep";
+import { rememberOptions, withRemembered, type OptionsMemory } from "./lastOptions";
 
 /** Which instances show a symmetric part, or a symmetric sub-assembly (for mirrors that show such things as themselves). */
 const symmetricIn = (parts: readonly PartMesh[], assemblies: readonly Assembly[] = []) => (i: Instance) => {
@@ -320,6 +321,8 @@ export interface AppState {
   sketch: SketchSession | null;
   /** Feature highlighted in the feature list. */
   selectedFeatureId: string | null;
+  /** Several features picked in the list (Shift / Ctrl + click): counts only while it holds `selectedFeatureId`; read with `pickedFeatures`. */
+  featureSelection: string[];
   /** The section view, when one is on. */
   section: SectionView | null;
   /** The print bed preview, when on: which printer (or a custom size). */
@@ -469,6 +472,8 @@ export interface AppState {
   /** Move a feature to just before another (null = the end), if what it uses stays above it. One undo step. */
   moveFeature: (id: string, beforeId: string | null) => void;
   toggleSuppressed: (id: string) => void;
+  /** Suppress (or unsuppress) several features as one undo step. */
+  setFeaturesSuppressed: (ids: string[], suppressed: boolean) => void;
   renameFeature: (id: string, name: string) => void;
   /** Feature list folders: put features in one (null takes them out), or rename one. */
   setFeatureFolder: (ids: string[], folder: string | null) => void;
@@ -628,6 +633,8 @@ export interface AppState {
   undo: () => void;
   redo: () => void;
   selectFeature: (id: string | null) => void;
+  /** Pick several features in the list; `primary` is the one clicked last (the one Edit, the eye etc. act on). */
+  selectFeatures: (ids: string[], primary: string | null) => void;
   setSelection: (items: SelectionItem[]) => void;
   setAreaSelection: (selection: AreaSelection | null) => void;
   toggleHidden: (partId: string) => void;
@@ -806,6 +813,8 @@ function sameDesign(next: JuraCADDocument, from: JuraCADDocument) {
 }
 
 export const useStore = create<AppState>((set, get) => {
+  /** The last options each kind of new feature was made with, this session (lastOptions.ts). */
+  let remembered: OptionsMemory = {};
   /**
    * Apply a document change and record it for undo. Refused while an old
    * version is open, except changes to what's shown (`display`: the eye, P),
@@ -902,6 +911,7 @@ export const useStore = create<AppState>((set, get) => {
     editing: null,
     sketch: null,
     selectedFeatureId: null,
+    featureSelection: NO_DIMS,
     selection: [],
     areaSelection: null,
     section: null,
@@ -988,7 +998,8 @@ export const useStore = create<AppState>((set, get) => {
         s.startSketch(planeFeature && frame ? planeAsSketchPlane(planeFeature, frame) : s.selectedPlane ? { kind: "default", name: s.selectedPlane } : areaPlane);
         return;
       }
-      const draft = createFeature(view(), type);
+      // The last options used for this kind of feature (Onshape keeps them for the next one).
+      const draft = withRemembered(createFeature(view(), type), remembered);
       const features = activeFeatures(s);
       // Extrude or revolve the sketch that's highlighted in the list, if any.
       if (isSketchSolid(type)) {
@@ -1115,12 +1126,12 @@ export const useStore = create<AppState>((set, get) => {
       // (Onshape does the same), rather than quietly using the origin.
       if (draft.mirror) draft.mirror = { ...draft.mirror, unset: true };
       if (type === "circularPattern" && draft.pattern) draft.pattern = { ...draft.pattern, unset: true };
-      // Mirror and patterns start with the feature highlighted in the list, if it makes a solid.
+      // Mirror and patterns start with the features highlighted in the list (every one picked), if they make solids.
       if (isPatternFeature(type)) {
-        const picked = features.find((f) => f.id === s.selectedFeatureId && isSolidFeature(f.type));
-        if (picked) {
-          if (draft.mirror) draft.mirror = { ...draft.mirror, sources: [picked.id] };
-          if (draft.pattern) draft.pattern = { ...draft.pattern, sources: [picked.id] };
+        const picked = pickedFeatures(s).filter((id) => features.some((f) => f.id === id && isSolidFeature(f.type)));
+        if (picked.length) {
+          if (draft.mirror) draft.mirror = { ...draft.mirror, sources: picked };
+          if (draft.pattern) draft.pattern = { ...draft.pattern, sources: picked };
         }
       }
       // As in Onshape: a pattern started with parts picked (in the Parts list) repeats those parts; with faces picked in
@@ -1143,7 +1154,7 @@ export const useStore = create<AppState>((set, get) => {
           .map((item) => pickFor(s.parts, item))
           .filter((p): p is TopoPick => p !== null);
       }
-      set({ editing: { mode: "create", draft }, sketch: null, selectedFeatureId: null, selection: [], areaSelection: null, selectedPlane: null, showFlat: false });
+      set({ editing: { mode: "create", draft }, sketch: null, selectedFeatureId: null, featureSelection: NO_DIMS, selection: [], areaSelection: null, selectedPlane: null, showFlat: false });
     },
 
     startImport: (file) => {
@@ -1169,6 +1180,7 @@ export const useStore = create<AppState>((set, get) => {
         showFlat: false,
         sketch: f.type === "sketch" ? newSession() : null,
         selectedFeatureId: id,
+        featureSelection: NO_DIMS,
         selectedPlane: null,
         selection: [],
       });
@@ -1388,6 +1400,7 @@ export const useStore = create<AppState>((set, get) => {
         const vars = fitted.variables;
         change((doc) => inStudio({ ...doc, variables: vars }, activeStudioId(get()) ?? firstStudioId(get().history.present), place));
       } else changeStudio(place);
+      if (editing.mode === "create") remembered = rememberOptions(remembered, draft);
       set({ editing: null, sketch: null, selectedFeatureId: draft.id, draftSteps: null, transformLive: null, ...(at && editing.mode === "create" ? { rollbackTo: draft.id } : {}) });
       return true;
     },
@@ -1492,6 +1505,11 @@ export const useStore = create<AppState>((set, get) => {
       if (f) changeStudio((doc) => setSuppressed(doc, id, !f.suppressed));
     },
 
+    setFeaturesSuppressed: (ids, suppressed) => {
+      const list = activeFeatures(get());
+      const todo = ids.filter((id) => list.some((f) => f.id === id && f.suppressed !== suppressed));
+      if (todo.length) changeStudio((doc) => todo.reduce((d, id) => setSuppressed(d, id, suppressed), doc));
+    },
     renameFeature: (id, name) => changeStudio((doc) => renameFeature(doc, id, name)),
     setFeatureFolder: (ids, folder) => changeStudio((doc) => setFolder(doc, ids, folder)),
     setFeaturesVisible: (ids, visible) => {
@@ -2184,7 +2202,11 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     // Picking a feature or picking parts: one at a time (the other side is then shown as "linked").
-    selectFeature: (id) => set((s) => ({ selectedFeatureId: id, selectedPlane: id ? null : s.selectedPlane, selectedParts: id ? [] : s.selectedParts })),
+    selectFeature: (id) => set((s) => ({ selectedFeatureId: id, featureSelection: NO_DIMS, selectedPlane: id ? null : s.selectedPlane, selectedParts: id ? [] : s.selectedParts })),
+    selectFeatures: (ids, primary) => {
+      const main = primary && ids.includes(primary) ? primary : (ids[ids.length - 1] ?? null);
+      set((s) => ({ selectedFeatureId: main, featureSelection: ids.length > 1 ? ids : NO_DIMS, selectedPlane: main ? null : s.selectedPlane, selectedParts: main ? [] : s.selectedParts }));
+    },
     setSelection: (items) =>
       set((s) => ({ selection: items, selectedPlane: items.length > 0 ? null : s.selectedPlane, areaSelection: null })),
     // Areas are selected on their own: faces, edges and planes are let go (and the other way round).
@@ -2352,6 +2374,28 @@ export function viewOwner(s: Pick<AppState, "activeTab" | "history">): string {
 /** The Origin and default planes hidden in the Part Studio on show. Same array each time. */
 export function activeHiddenDatums(s: Pick<AppState, "activeTab" | "history">): DatumName[] {
   return hiddenDatumsOf(s.history.present, activeStudioId(s) ?? firstStudioId(s.history.present));
+}
+
+/**
+ * The features picked in the list, in list-pick order (selector-safe): several after Shift / Ctrl + click, else just
+ * the highlighted one, else none. Ids no longer in the Part Studio on show (after an undo, or a change from Claude) are
+ * left out.
+ */
+let lastSingle: string[] = [];
+let lastPicked: { sel: string[]; features: Feature[]; result: string[] } | null = null;
+export function pickedFeatures(s: Pick<AppState, "selectedFeatureId" | "featureSelection" | "activeTab" | "history">): string[] {
+  const id = s.selectedFeatureId;
+  if (!id) return NO_DIMS;
+  if (s.featureSelection.length > 1 && s.featureSelection.includes(id)) {
+    const features = activeFeatures(s);
+    if (!lastPicked || lastPicked.sel !== s.featureSelection || lastPicked.features !== features) {
+      const left = s.featureSelection.filter((x) => features.some((f) => f.id === x));
+      lastPicked = { sel: s.featureSelection, features, result: left.length === s.featureSelection.length ? s.featureSelection : left };
+    }
+    if (lastPicked.result.length > 1 && lastPicked.result.includes(id)) return lastPicked.result;
+  }
+  if (lastSingle[0] !== id) lastSingle = [id];
+  return lastSingle;
 }
 
 /** Features of the Part Studio on show (the first one while an assembly is on show). Same array each time. */

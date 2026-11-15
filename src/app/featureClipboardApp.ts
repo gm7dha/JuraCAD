@@ -5,7 +5,7 @@
  * model/featureClipboard.ts.
  */
 import { clipText, copyFeatures, missingVariables, pasteMessage, readClip, type FeatureClip } from "../model/featureClipboard";
-import { activeAssembly, activeDrawing, activeFeatures, useStore } from "../model/store";
+import { activeAssembly, activeDrawing, activeFeatures, pickedFeatures, useStore } from "../model/store";
 import { inPopup } from "./popupGuard";
 
 function isTyping(target: EventTarget | null): boolean {
@@ -117,9 +117,10 @@ export function startFeatureClipboard(): () => void {
     if (key === "c") {
       // Text picked on the page (a message, a label) is copied as usual.
       if (window.getSelection?.()?.toString()) return;
-      const id = useStore.getState().selectedFeatureId;
-      if (!id) return;
-      const text = copyFeaturesNow([id]);
+      // Every feature picked in the list (Shift / Ctrl + click), else the one highlighted.
+      const ids = pickedFeatures(useStore.getState());
+      if (!ids.length) return;
+      const text = copyFeaturesNow(ids);
       if (text) {
         e.preventDefault();
         void navigator.clipboard?.writeText(text).catch(() => undefined);
