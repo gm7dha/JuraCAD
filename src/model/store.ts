@@ -1,4 +1,5 @@
 import { sketchFromDxf, type LinkedSketch } from "../link/receive";
+import { clickRadiusPoint, tidyRadiusPoints } from "./variableFillet";
 import { defaultTemplate } from "../drawing/templateStorage";
 import { applyTemplate } from "../drawing/templates";
 import { deleteItems } from "../sketch/ops";
@@ -400,7 +401,7 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert" | "connector" | "thin" | "loft" | "modifyFillet" | "allEdges" | "curve" | "pathEdges" | "frame" | "trimFrame" | "gusset" | "boundary" | "blend">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert" | "connector" | "thin" | "loft" | "modifyFillet" | "allEdges" | "variableFillet" | "curve" | "pathEdges" | "frame" | "trimFrame" | "gusset" | "boundary" | "blend">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Part pattern / Composite part: add a part to the open feature's parts, or take it out. */
@@ -1307,7 +1308,7 @@ export const useStore = create<AppState>((set, get) => {
       set((s) => {
         if (!s.editing) return {};
         const d = s.editing.draft;
-        const next = { ...d, ...patch };
+        const next = patch.picks && d.variableFillet ? tidyRadiusPoints({ ...d, ...patch }) : { ...d, ...patch };
         // Move / copy: a change is a step of its own undo — except only choosing what a click picks next.
         const { picking: _a, ...was } = d.transform ?? ({} as NonNullable<Feature["transform"]>);
         const { picking: _b, ...now } = next.transform ?? ({} as NonNullable<Feature["transform"]>);
@@ -1320,10 +1321,14 @@ export const useStore = create<AppState>((set, get) => {
       set((s) => {
         if (!s.editing) return {};
         const picks = s.editing.draft.picks ?? [];
-        const i = picks.findIndex((p) => p.partId === pick.partId && sameRef(p.ref, pick.ref));
-        const next = i >= 0 ? picks.filter((_, j) => j !== i) : [...picks, pick];
         const steps = keepsSteps(s.editing.draft) ? { draftSteps: draftStepAfter(s.draftSteps, s.editing.draft) } : {};
-        return { editing: { ...s.editing, draft: { ...s.editing.draft, picks: next } }, ...steps };
+        // Variable fillet: a click on an edge it already rounds puts a radius point there (the list's × still removes it).
+        const pointed = clickRadiusPoint(s.editing.draft, pick);
+        if (pointed) return pointed === s.editing.draft ? {} : { editing: { ...s.editing, draft: pointed }, ...steps };
+        const { at: _at, ...plain } = pick;
+        const i = picks.findIndex((p) => p.partId === pick.partId && sameRef(p.ref, pick.ref));
+        const next = i >= 0 ? picks.filter((_, j) => j !== i) : [...picks, s.editing.draft.variableFillet ? plain : pick];
+        return { editing: { ...s.editing, draft: tidyRadiusPoints({ ...s.editing.draft, picks: next }) }, ...steps };
       }),
 
     toggleDraftPart: (partId) => {

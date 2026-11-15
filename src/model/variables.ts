@@ -82,6 +82,10 @@ function mapExpressions(doc: JuraCADDocument, fn: (src: string) => string): Jura
           sketch = { ...sketch, data: { ...sketch.data, constraints } };
         }
       }
+      // A variable fillet's radii are boxes too.
+      let variableFillet = f.variableFillet;
+      if (variableFillet?.points.some((p) => fn(p.radius) !== p.radius)) variableFillet = { ...variableFillet, points: variableFillet.points.map((p) => ({ ...p, radius: fn(p.radius) })) };
+      if (variableFillet !== f.variableFillet) return { ...f, params: changedParams ? params : f.params, sketch, variableFillet };
       return changedParams || sketch !== f.sketch ? { ...f, params: changedParams ? params : f.params, sketch } : f;
   });
 }

@@ -274,7 +274,7 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     type: "fillet",
     label: "Fillet",
     namePrefix: "Fillet",
-    description: "Rounds off sharp edges — the same all along, or growing from one radius to another.",
+    description: "Rounds off sharp edges — the same all along, growing from one radius to another, or (Variable) with radii you set at points along the edges.",
     params: [
       { key: "radius", label: "Radius", defaultValue: "2", positive: true, group: "size" },
       { key: "endRadius", label: "Radius at the far end (0 = the same all along)", defaultValue: "0", min: 0, group: "size" },
@@ -636,7 +636,7 @@ export function isSolidFeature(type: FeatureType): boolean {
 }
 
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */
-export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo" | "sweepControl" | "sheetConvert" | "transform" | "thin" | "revolve" | "modifyFillet" | "curve" | "frame" | "gusset">>): Set<string> {
+export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo" | "sweepControl" | "sheetConvert" | "transform" | "thin" | "revolve" | "modifyFillet" | "curve" | "frame" | "gusset" | "variableFillet">>): Set<string> {
   const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
   // Curves: only the boxes their kind uses.
   if (f.type === "curve") return new Set(curveParamKeys(f.curve));
@@ -653,6 +653,8 @@ export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | 
   if ((f.type === "flange" || f.type === "hem") && !f.mitreCorners) keys.delete("cornerGap");
   if (f.type === "extendSurface" && f.extendTo) keys.delete("distance");
   if (f.type === "modifyFillet" && f.modifyFillet?.remove) keys.delete("radius");
+  // A variable fillet's radii are its points (the main radius is for edges and ends without one).
+  if (f.type === "fillet" && f.variableFillet) keys.delete("endRadius");
   // Frames: width / height / wall only for a custom size (a tube has no height, a flat bar or timber no wall).
   if (f.type === "frame") {
     const pr = f.frame?.profile;

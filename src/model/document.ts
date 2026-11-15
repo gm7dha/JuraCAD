@@ -1,4 +1,5 @@
 import { isSimplifyLevel } from "./simplify";
+import { parseVariableFillet } from "./variableFillet";
 import { parseNamedViews } from "./namedViews";
 import { parsePick } from "../geometry/topoRef";
 import { parseLineRef } from "./patternRefs";
@@ -796,6 +797,10 @@ export function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | n
       if (Object.keys(def).length) feature.modifyFillet = def;
     }
     if ((feature.type === "fillet" || feature.type === "chamfer") && f.allEdges === true) feature.allEdges = true;
+    if (feature.type === "fillet" && f.variableFillet) {
+      const vf = parseVariableFillet(f.variableFillet);
+      if (vf) feature.variableFillet = vf;
+    }
     if (feature.type === "replaceFace") {
       const rd = (f.replaceDef ?? {}) as Record<string, unknown>;
       feature.replaceDef = { target: rd.target ? parsePlane(rd.target) ?? null : null, picking: rd.picking === "target" ? "target" : "faces" };

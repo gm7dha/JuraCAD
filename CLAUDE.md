@@ -972,6 +972,23 @@
   Tests: tests/splitFaceModel (pure), engineSplitFillet (split counts/volume, draft on the top half, radius 2 → 4, removed, hole rim,
   rounded-rectangle chain, a sharp scoop refused, slanted ends, a fully rounded box off/resized vs direct, mitres, inside corner
   resized vs direct, holes/grooves/pockets/a chamfer beside fillets left alone (exact volumes), imported STEP, all edges), mcpSplitFillet.
+  Variable fillet (Onshape's Fillet › Variable): `Feature.variableFillet` (`{points, straight?}`; missing = the ordinary fillet,
+  byte for byte; `endRadius` hidden and ignored while it's set). A `FilletRadiusPoint` = `part` + `edge` (its pick's `ref.mid`, so
+  `tidyRadiusPoints` — store toggle/setDraftField, withoutGone, featureSpec — drops it with the pick), `at` (share of the LENGTH from
+  the pick's `a`), `radius` (expression; renamed with variables, mapExpressions). Pure `src/model/variableFillet.ts`: `runRadii` (a
+  run's points + the main radius at ends without one; a closed run's ends are one place; two radii at one place refused),
+  `radiusAt` (straight, or monotone cubic — never past the radii typed), `edgeRadii` (one edge's (share, r) list: ends, points,
+  `SAMPLES_BETWEEN` samples when > 2 radii), `clickRadiusPoint` (a click on an already-picked edge adds a point, `END_SNAP` to the
+  ends, by `clickShare`; the Viewport passes `at` only for variable fillets). Engine: `applyEdgeFeature` → `radiusPointsOf` /
+  `variableEdges` → `src/kernel/variableFillet.ts` (`Add(E)` each edge, then per contour `SetRadius(UandR, IC, j)` for every edge
+  j, spans from OCCT's `RelativeAbscissa` — run shares by length — so tangent chains agree at their joins; the pick's stored a/b
+  decide which end is which; runs without points `SetRadius(r, IC, 1)`). Law_Function overloads don't build in this OCCT
+  (Add/SetRadius with a Law fail), hence samples for straight steps. Dialog `src/app/VariableFilletOptions.tsx` (tick, points list:
+  edge, start/part way %/end, radius; Smooth/Straight). Manipulators: an arrow per placeable point (`radiusPointAt`), key `vf:<i>`
+  (`manipPatch` writes the point; `noEdit` — typed in the list). Claude: fillet `variable` [{edge, at, radius}] / false,
+  `variable_straight`. Not done: vertex radii shared by a chain's edges in one box (each edge's point is its own), `allEdges` +
+  variable, conic sections. Tests: tests/variableFillet (pure), engineVariableFillet (1 → 4 probed at both ends, three points smooth
+  and straight, a reversed pick, main radius on the rest, a tangent run, the ordinary fillet unchanged, too big refused), mcpVariableFillet.
 - Everyday picking and views (Onshape's): selection filter `src/viewport/selectionFilter.ts` (pure; `store.selectFilter`, session
   only; empty = everything; kinds face/edge/part/plane/sketch — no vertices, JuraCAD can't pick corners; `partHitAs`: a face/edge
   whose kind is off becomes its whole part when Parts is on (`PickTarget.whole`, handlePick → `selectedParts`; only with nothing
