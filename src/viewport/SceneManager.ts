@@ -72,6 +72,9 @@ export interface PictureOptions {
 /** Which way to look at each default plane for "View normal to". */
 const PLANE_VIEWS: Record<PlaneName, StandardView> = { Top: "top", Front: "front", Right: "right" };
 
+/** Two clicks within this many ms (and CLICK_SLOP px) are a double-click. */
+const DOUBLE_CLICK_MS = 450;
+
 /** The page was opened for the browser smoke test (?smoke). */
 const SMOKE = typeof location !== "undefined" && /[?&]smoke\b/.test(location.search);
 
@@ -223,6 +226,8 @@ export interface SceneCallbacks {
   onTriadMove?: (ray: ScreenRay, shift: boolean) => void;
   onTriadEnd?: () => void;
   onTriadCancel?: () => void;
+  /** A double-click in the view (mouse): what's under the pointer (Onshape: a face's feature opens for editing). */
+  onDoubleClick?: (target: PickTarget | null) => void;
 }
 
 /** Manipulators' colours: Onshape's blue arrows; grey when the box holds a variable. */
@@ -1153,6 +1158,62 @@ export class SceneManager {
     this.selection = items;
     this.applyHighlights();
   }
+
+  /**
+   * Things lit up while a feature's row in the list is under the pointer: per part, the faces it made (null = the
+   * whole part). Drawn in the hover colour.
+   */
+  setListHover(hover: Map<string, number[] | null> | null): void {
+    this.listHover = hover;
+    this.applyHighlights();
+  }
+  private listHover: Map<string, number[] | null> | null = null;
+
+  /** Mass properties' centre of mass: a small black-and-white quartered disc, always on top (null hides it). */
+  setCentreMark(at: [number, number, number] | null): void {
+    if (!at) {
+      if (this.centreMark) this.centreMark.visible = false;
+      return;
+    }
+    if (!this.centreMark) {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 64;
+      const c = canvas.getContext("2d");
+      if (c) {
+        c.beginPath();
+        c.arc(32, 32, 28, 0, Math.PI * 2);
+        c.fillStyle = "#ffffff";
+        c.fill();
+        c.fillStyle = "#1d232a";
+        for (const a of [0, Math.PI]) {
+          c.beginPath();
+          c.moveTo(32, 32);
+          c.arc(32, 32, 28, a, a + Math.PI / 2);
+          c.closePath();
+          c.fill();
+        }
+        c.beginPath();
+        c.arc(32, 32, 28, 0, Math.PI * 2);
+        c.lineWidth = 4;
+        c.strokeStyle = "#1d232a";
+        c.stroke();
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(3), 3));
+      const mat = new THREE.PointsMaterial({ size: 18, sizeAttenuation: false, map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false, depthWrite: false });
+      this.centreMark = new THREE.Points(geo, mat);
+      this.centreMark.renderOrder = 10;
+      this.centreMark.frustumCulled = false;
+      this.scene.add(this.centreMark);
+    }
+    const pos = this.centreMark.geometry.getAttribute("position") as THREE.BufferAttribute;
+    pos.setXYZ(0, at[0], at[1], at[2]);
+    pos.needsUpdate = true;
+    this.centreMark.visible = true;
+  }
+  private centreMark: THREE.Points | null = null;
+
+
 
   /** Whole parts picked in the Parts list: drawn in the selection colour. */
   setSelectedParts(ids: string[]): void {
@@ -2477,6 +2538,8 @@ export class SceneManager {
         if (this.selection.some((s) => s.partId === id && s.kind === kind && s.index === index)) return 2;
         if (this.hover && this.hover.partId === id && this.hover.kind === kind && this.hover.index === index) return 1;
         if (this.hoverWhole === id) return 1;
+        const listed = this.listHover?.get(id);
+        if (listed === null || (kind === "face" && listed?.includes(index))) return 1;
         return 0;
       };
       p.mesh.geometry.groups.forEach((g, i) => (g.materialIndex = state("face", i)));
@@ -2754,8 +2817,18 @@ export class SceneManager {
       const ptr = this.sketchPointer(e);
       if (ptr && this.sketchControllerRaw.useAt(ptr)) return;
     }
-    this.callbacks.onPick(this.pickAt(x, y), additive(e));
+    const target = this.pickAt(x, y);
+    this.callbacks.onPick(target, additive(e));
+    // A second click soon after, in the same place: a double-click (worked out here, as the browser's own dblclick
+    // doesn't always reach the view).
+    const now = performance.now();
+    const last = this.lastClick;
+    if (last && now - last.t < DOUBLE_CLICK_MS && Math.hypot(x - last.x, y - last.y) <= CLICK_SLOP) {
+      this.lastClick = null;
+      this.callbacks.onDoubleClick?.(target);
+    } else this.lastClick = { t: now, x, y };
   };
+  private lastClick: { t: number; x: number; y: number } | null = null;
 
   // -------------------------------------------------------------------------
   // Fingers and the pen (Onshape's tablet gestures): one finger turns the view, two pan and pinch to

@@ -111,6 +111,9 @@ ctx.onmessage = (event) => {
         case "measureParts":
           body = { type: "measure", result: engine.measureParts(request.partIds) };
           break;
+        case "massProperties":
+          body = { type: "massProperties", result: engine.massProperties(request.partIds) };
+          break;
         case "measure":
           body = { type: "measure", result: engine.measure(request.picks) };
           break;

@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.83 — Mass properties and a friendlier feature list
+
+- New Mass button (bottom right): weight, volume, surface area, centre of mass (marked in the view) and size of the selected parts, or all of them. Weigh them as their own materials, one material or any density; plastic parts also get a rough printed weight. Copy the numbers with one click.
+- Measuring now gives the closest gap along X, Y and Z, and the length round a circular edge. It also has a Copy button.
+- Search the feature list by name or kind (Esc clears).
+- Hover a feature to see the faces it made light up. Double-click a face, or right-click it, to edit the feature that made it.
+- Right-click menus in the feature list no longer go off the bottom of the window.
+
 ## v0.82 — Drag sizes in the 3D view
 
 - Extrude, Revolve, Fillet, Chamfer, Shell and Thicken show an arrow in the 3D view while their dialog is open: drag it to change the size live, as in Onshape.

@@ -54,6 +54,9 @@ import { bendCutLines, bendCutToFlat, bendSolid, cornerReliefSolid, cutFlatCorne
 import { flatProjection, outsideOnly } from "../sheetmetal/flatExport";
 import { fastenerName, fastenerSize, hasLength, shankOf } from "../model/fasteners";
 import { measureContacts } from "./clash";
+import { FaceMakers } from "./faceMakers";
+import { closestPoints, massPropsOf } from "./massProps";
+import type { PartMassProps } from "../model/massProps";
 import { biggestFlatFace, faceFrame, faceWires, flatFaceNormal, planeOutline, type FlatFrame } from "./laserFaces";
 import type { LaserOutline, LaserSource } from "../laser/sources";
 import type { FollowedFrame, PartConnector } from "./protocol";
@@ -85,6 +88,8 @@ import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredIt
 const MAIN_STUDIO_ID = "main";
 
 interface BuiltPart {
+  /** Which feature made each of its faces (by face hash; see faceMakers.ts). */
+  faceMakers?: FaceMakers;
   /** A frame member: what the cut list says about it. */
   frame?: FrameMemberInfo;
   /** A composite part: the parts grouped in it (they stay separate solids in its shape). */
@@ -606,7 +611,9 @@ export function seamEdgeIds(shape: Shape3D): Set<number> {
       const explorer = new oc.TopExp_Explorer(f.wrapped, oc.TopAbs_ShapeEnum.TopAbs_EDGE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
       try {
         for (; explorer.More(); explorer.Next()) {
-          const h = oc.ReplicadShapeHasher.HashCode(explorer.Current(), 2147483647) as number;
+          const current = explorer.Current();
+          const h = oc.ReplicadShapeHasher.HashCode(current, 2147483647) as number;
+          current.delete();
           seen.set(h, (seen.get(h) ?? 0) + 1);
         }
       } finally {
@@ -3383,6 +3390,11 @@ export class GeometryEngine {
     this.frameMembers = new Map();
     const moved = new Map<string, SketchPlane>();
     const listed = features;
+    // Which feature made each face (see faceMakers.ts): looked at after each feature.
+    this.faceMakers = new FaceMakers();
+    let lastBuilt: string | null = null;
+    // A Move / copy that moves parts without copying them: their faces keep their makers.
+    let lastMoved = false;
 
     for (let index = 0; index < listed.length; index++) {
       const feature = this.followedFeature(listed[index], moved);
@@ -3391,6 +3403,9 @@ export class GeometryEngine {
         features[index] = feature;
       }
       if (feature.suppressed) continue;
+      if (lastBuilt) this.faceMakers.after(lastBuilt, this.parts, lastMoved);
+      lastBuilt = feature.id;
+      lastMoved = feature.type === "transform" && !feature.transform?.copy;
       // A safe place to stop: between features.
       yield;
       // Mate connectors whose part was merged into another (a Boolean, an Add joining parts) belong to that one now.
@@ -3808,8 +3823,12 @@ export class GeometryEngine {
       }
     }
 
+    if (lastBuilt) this.faceMakers.after(lastBuilt, this.parts, lastMoved);
+    for (const p of this.parts) p.faceMakers = this.faceMakers;
     return featureErrors;
   }
+  /** Which feature made each face, from the latest `featureSteps` (see faceMakers.ts). */
+  private faceMakers = new FaceMakers();
 
   /**
    * Add, as in Onshape: each separate piece of the new solid joins the parts
@@ -7651,10 +7670,10 @@ export class GeometryEngine {
     }
     const result: Measurement = { items: found.map((f) => f.item) };
     if (found.length === 2) {
-      try {
-        result.distance = measureDistanceBetween(found[0].shape, found[1].shape);
-      } catch {
-        // leave it out
+      const near = closestPoints(found[0].shape, found[1].shape);
+      if (near) {
+        result.distance = near.distance;
+        result.closest = [near.a, near.b];
       }
       const angle = angleBetween(picks[0].ref, picks[1].ref);
       if (angle !== null) result.angle = angle;
@@ -7767,6 +7786,20 @@ export class GeometryEngine {
         return { ok: false, partId: part.id, error: describeError(e, `The outline of ${part.name} couldn't be read. Pick a flat face.`) };
       }
     });
+  }
+
+  /** Mass properties of whole parts (all solid parts when none are named), exactly from the solid model. */
+  massProperties(partIds: string[]): PartMassProps[] {
+    const chosen = partIds.length ? partIds.map((id) => this.parts.find((p) => p.id === id)).filter((p): p is BuiltPart => !!p) : this.parts.filter((p) => !p.configured);
+    const out: PartMassProps[] = [];
+    for (const p of chosen) {
+      try {
+        out.push(massPropsOf(p.id, p.name, p.shape, !!p.surface));
+      } catch {
+        // leave it out
+      }
+    }
+    return out;
   }
 
   /** Measure whole parts: each one's size, and between two of them the gap (0 if touching) and any overlap. */
@@ -7993,7 +8026,9 @@ export class GeometryEngine {
         volume = null;
       }
     }
-    return { ...mesh, ...(flat ? { flat } : {}), ...(p.surface ? { surface: true } : {}), ...(p.members?.length ? { members: membersNow(p) } : {}), ...(p.frame ? { frame: p.frame } : {}), ...(volume !== null && Number.isFinite(volume) && volume > 0 ? { volume } : {}) };
+    const makers = p.faceMakers;
+    const faceMakers = makers ? mesh.faceGroups.map((g) => makers.makerOf(g.faceId) ?? "") : [];
+    return { ...mesh, ...(faceMakers.some((m) => m) ? { faceMakers } : {}), ...(flat ? { flat } : {}), ...(p.surface ? { surface: true } : {}), ...(p.members?.length ? { members: membersNow(p) } : {}), ...(p.frame ? { frame: p.frame } : {}), ...(volume !== null && Number.isFinite(volume) && volume > 0 ? { volume } : {}) };
   }
 
   /** A sheet metal part's flat pattern (null for other parts, or if it can't be unfolded). */

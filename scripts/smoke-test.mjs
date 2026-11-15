@@ -249,6 +249,55 @@ try {
   const measured = (await page.locator(".measure-panel tr").first().innerText()).replace(/\s+/g, " ");
   await shot("drilled-block");
 
+  step = "mass properties of the drilled block";
+  let massReport;
+  {
+    // 40 × 30 × 20 less a Ø10 hole right through: 22,429 mm³, in PLA 27.8 g, its centre of mass in the middle.
+    await page.getByRole("button", { name: "Mass", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector(".mass-panel")?.textContent?.includes("Centre of mass"), null, { timeout: 15_000 }).catch(async () => {
+      const panel = await page.locator(".mass-panel").innerText().catch(() => "(no mass properties panel)");
+      throw new Error(`Mass properties showed nothing: ${panel.replace(/\n/g, " | ")}`);
+    });
+    const text = (await page.locator(".mass-panel").innerText()).replace(/\s+/g, " ");
+    if (!text.includes("27.8 g")) throw new Error(`the drilled block should weigh 27.8 g in PLA: ${text}`);
+    if (!/Centre of mass 20(\.0+)? mm, 15(\.0+)? mm, 10(\.0+)? mm/.test(text)) throw new Error(`the drilled block's centre of mass should be (20, 15, 10): ${text}`);
+    massReport = text.slice(0, 160);
+    await shot("mass");
+    await page.getByRole("button", { name: "Close mass properties" }).click();
+    await page.waitForSelector(".mass-panel", { state: "detached" });
+  }
+
+  step = "searching the feature list";
+  {
+    const search = page.getByLabel("Search features");
+    await search.fill("cylinder");
+    await page.waitForFunction(() => document.querySelectorAll(".feature-row:not(.datum)").length === 1);
+    await search.press("Escape");
+    await page.waitForFunction(() => document.querySelectorAll(".feature-row:not(.datum)").length === 2);
+    if ((await search.inputValue()) !== "") throw new Error("Esc didn't clear the feature search");
+  }
+
+  step = "double-clicking a face opens the feature that made it";
+  {
+    // The block's top face: the hole only trimmed it, so it's still the Box's.
+    const top = await page.evaluate(() => {
+      const part = window.juracadStore.getState().parts[0];
+      const i = part.faceRefs.findIndex((f) => f.kind === "face" && f.surface === "PLANE" && f.normal[2] > 0.99);
+      return { i, at: window.juracadViewport.current.screenPointOnFace(part.id, i) };
+    });
+    if (top.i < 0 || !top.at) throw new Error("couldn't find the block's top face on screen");
+    await page.mouse.dblclick(box.x + top.at.x, box.y + top.at.y);
+    await page.waitForFunction(() => window.juracadStore.getState().editing?.draft.type === "box", null, { timeout: 10_000 }).catch(async () => {
+      const why = await page.evaluate(([x, y]) => {
+        const st = window.juracadStore.getState();
+        return JSON.stringify({ editing: st.editing?.draft.type ?? null, sketch: !!st.sketch, under: window.juracadViewport.current.pickKindAt(x, y), selection: st.selection });
+      }, [top.at.x, top.at.y]);
+      throw new Error(`double-clicking the block's top face didn't open the Box: ${why}`);
+    });
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await page.waitForFunction(() => window.juracadStore.getState().editing === null);
+  }
+
   step = "colouring the part";
   await page.getByRole("button", { name: "Colour of Part 1" }).click();
   await page.getByRole("button", { name: "Blue", exact: true }).click();
@@ -2824,8 +2873,8 @@ try {
     await page.keyboard.press("Escape");
     const vb = await page.locator(".viewport").boundingBox();
     const total = await page.locator(".part-row").count();
-    // Right to left: a crossing box takes every part it touches.
-    await page.mouse.move(vb.x + vb.width - 40, vb.y + vb.height - 40);
+    // Right to left: a crossing box takes every part it touches. (Starting just above the Mass button in the corner.)
+    await page.mouse.move(vb.x + vb.width - 40, vb.y + vb.height - 72);
     await page.mouse.down();
     await page.mouse.move(vb.x + vb.width / 2, vb.y + vb.height / 2, { steps: 4 });
     await page.mouse.move(vb.x + 40, vb.y + 60, { steps: 4 });
@@ -4197,7 +4246,7 @@ try {
   annotate(
     "notice",
     "Smoke test passed",
-    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part), then the STL with Simplify (${simplifySmoke}); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${convertReport}; ${libraryReport}; ${subReport}; ${pictureReport}; ${laserReport}; touch screen: ${touchReport}; ${toolbarReport}; ${tabsReport}. ${liveReport}.`,
+    `Box + drilled hole built; selection: "${selected.trim()}" (measure: ${measured}; mass: ${massReport}); check: "${headline.trim()}"; STL ${bytes} bytes (${download.suggestedFilename()}); STEP ${stepText.length} bytes (${stepDownload.suggestedFilename()}); 3MF ${mfBytes.length} bytes; undo, export name and planes OK; sketch: "${sketchStatusText.replace(/\n/g, " / ")}"; extrude built Part 2; fillet rounded ${pickCount} picked face/edge(s); revolve around "${axisChoice}" built Part 3; pattern repeated "${patternSource.trim()}"; variable gap = 1/4 in worked out as 6.35 mm, and a second configuration with gap = 2; saved ${saved.suggestedFilename()} (${savedText.length} characters), started afresh and opened it again (${featureCount} features); imported the STEP file (${stepParts} part(s)) and the STL (${stlParts} part), then the STL with Simplify (${simplifySmoke}); assembly with ${instanceCount} instances, a parts list and a Fasten mate; dragged a part from X ${xBefore} to ${xAfter}; renamed Part 1 to Bracket everywhere; assembly check: "${asmHeadline}", exported ${asmStep.suggestedFilename()}; made a second Part Studio with its own part; drawing with ${viewCount} views and a ${dimValue} mm dimension (auto dimension added ${autoDims} more, hole callout "${holeCallout}"), saved as DXF and ${pdf.suggestedFilename()} (${pdfText.length} bytes); a GD&T tolerance frame; section view; exploded assembly, a pattern of 4 in the assembly, and an exploded assembly drawing with a parts list; switched to inches (new box ${widthBox} in wide); dark mode; selected 3 parts by dragging down the Parts list, and duplicated a part; sketched on a construction plane; joined two parts with Boolean; grouped the feature list by part; sketched a centre rectangle, a tangent arc and a circular sketch pattern, text (edited by double-clicking) and an inserted DXF; sketched on a part's face (its edges showed, a line snapped to its corner, Use all closed the outline); made a sheet metal part and saved its flat pattern as DXF; ${regionsReport}; ${convertReport}; ${libraryReport}; ${subReport}; ${pictureReport}; ${laserReport}; touch screen: ${touchReport}; ${toolbarReport}; ${tabsReport}. ${liveReport}.`,
   );
 } catch (e) {
   await shot("failure").catch(() => {});

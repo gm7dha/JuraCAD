@@ -50,6 +50,8 @@ import { guardViewportZoom } from "./zoomGuard";
 import { NO_FILTER } from "./selectionFilter";
 import { choiceLabel, orderChoices, type OtherChoice, type OtherHit } from "./selectOther";
 import { setSelectOther } from "./selectOtherState";
+import { editFeatureAt, useHoveredFeature } from "./featureFaces";
+import { facesMadeBy } from "../model/featureSearch";
 import { finishesByKey, type FinishId } from "../model/finishes";
 import { manipCancel, manipDragging, manipEnd, manipMove, manipStart, manipulatorsNow } from "./manipulatorGlue";
 import type { Manipulator } from "../model/manipulators";
@@ -837,14 +839,14 @@ function itemsForPicks(parts: PartMesh[], picks: TopoPick[]): SelectionItem[] {
  * Sketches to show faintly: finished ones that no extrude has used yet, or that are highlighted.
  * While a mirror or pattern is open (`referenceFor`, its id), every sketch before it is shown, so its lines can be clicked.
  */
-function visibleSketches(features: Feature[], editingId: string | null, selectedId: string | null, links: Record<string, SketchLinkInfo>, referenceFor: string | null = null) {
+function visibleSketches(features: Feature[], editingId: string | null, selectedId: string | null, links: Record<string, SketchLinkInfo>, referenceFor: string | null = null, hoverId: string | null = null) {
   // Shown: as its eye says (used sketches hide by themselves), plus the one picked in the list, and — while a mirror or
   // pattern is open — the sketches before it, so their lines can be clicked.
   const used = usedSketches(features);
   const at = referenceFor ? features.findIndex((f) => f.id === referenceFor) : -1;
   const earlier = referenceFor ? new Set((at >= 0 ? features.slice(0, at) : features).map((f) => f.id)) : null;
   return features
-    .filter((f) => f.type === "sketch" && !f.suppressed && f.sketch?.plane && f.id !== editingId && (sketchVisible(f, used) || f.id === selectedId || !!earlier?.has(f.id)))
+    .filter((f) => f.type === "sketch" && !f.suppressed && f.sketch?.plane && f.id !== editingId && (sketchVisible(f, used) || f.id === selectedId || f.id === hoverId || !!earlier?.has(f.id)))
     // A sketch that follows its part is shown where the part is now.
     .map((f) => links[f.id]?.sketch ?? { plane: f.sketch!.plane!, data: f.sketch!.data });
 }
@@ -904,6 +906,7 @@ export function Viewport() {
         onTriadMove: (ray, shift) => (manipDragging() ? manipMove(viewportApi.current, ray, shift) : triadMove(viewportApi.current, ray, shift)),
         onTriadEnd: () => (manipDragging() ? manipEnd(viewportApi.current) : triadEnd(viewportApi.current)),
         onTriadCancel: () => (manipDragging() ? manipCancel(viewportApi.current) : triadCancel(viewportApi.current)),
+        onDoubleClick: editFeatureAt,
       });
     } catch (e) {
       useStore.getState().showToast(
@@ -1148,6 +1151,19 @@ export function Viewport() {
             : [];
     viewportApi.current?.setSelectedParts(lit);
   }, [selectedParts, assembly, pickedFeature, parts, studioFeatures, booleanDef, deleting, affected]);
+  // A feature's row under the pointer in the list: the faces it made light up (else its parts).
+  const hoveredFeature = useHoveredFeature();
+  const editingAny = useStore((s) => s.editing !== null);
+  useEffect(() => {
+    const api = viewportApi.current;
+    if (!api) return;
+    if (!hoveredFeature || assembly || editingAny) return api.setListHover(null);
+    const faces = facesMadeBy(shownParts, hoveredFeature);
+    const lit = new Map<string, number[] | null>();
+    if (faces) for (const [id, list] of faces) lit.set(id, list);
+    else for (const id of partsOfFeature(shownParts, hoveredFeature, studioFeatures)) lit.set(id, null);
+    api.setListHover(lit.size ? lit : null);
+  }, [hoveredFeature, assembly, editingAny, shownParts, studioFeatures]);
   const section = useStore((s) => s.section);
   const appearance = useStore((s) => s.history.present.appearance ?? NO_COLOURS);
   const colours = useMemo(() => {
@@ -1335,9 +1351,15 @@ export function Viewport() {
     return { sets, mode: draftId && areaMode !== "off" ? areaMode : "nearest" };
   }, [followedAreas, draftId, draftSketch, draftAreas, draftMore, areaMode, areaSelection, used]);
   useEffect(() => viewportApi.current?.setPickAreas(pickAreas), [pickAreas]);
+  // A hidden sketch's row under the pointer: shown while hovered (only then does the sketch scene change).
+  const hoveredRow = useHoveredFeature();
+  const hoveredSketch = useMemo(() => {
+    const f = hoveredRow ? features.find((x) => x.id === hoveredRow) : undefined;
+    return f && f.type === "sketch" && !f.suppressed && f.id !== selectedFeatureId && !sketchVisible(f, used) ? f.id : null;
+  }, [hoveredRow, features, selectedFeatureId, used]);
   const others = useMemo(
-    () => (inAssembly ? [] : visibleSketches(features, draft?.id ?? null, selectedFeatureId, sketchLinks, refDraft?.id ?? null)),
-    [features, draft?.id, selectedFeatureId, inAssembly, refDraft?.id, sketchLinks],
+    () => (inAssembly ? [] : visibleSketches(features, draft?.id ?? null, selectedFeatureId, sketchLinks, refDraft?.id ?? null, hoveredSketch)),
+    [features, draft?.id, selectedFeatureId, inAssembly, refDraft?.id, sketchLinks, hoveredSketch],
   );
   const refEdges = draft ? sketchLinks[draft.id]?.edges : undefined;
   useEffect(() => {

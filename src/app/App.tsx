@@ -30,6 +30,7 @@ import { ConfigurationsDialog } from "./ConfigurationsDialog";
 import { CutListDialog } from "./CutListDialog";
 import { ComparePanel, VersionBanner, VersionsDialog } from "./VersionsDialog";
 import { MeasurePanel } from "./MeasurePanel";
+import { MassButton, MassPanel } from "./MassPanel";
 import { SectionPanel } from "./SectionPanel";
 import { PrintBedPanel } from "./PrintBedPanel";
 import { PrintPanel } from "./PrintPanel";
@@ -333,7 +334,11 @@ export function App() {
               <ContextBar />
               <FeatureDialog />
               <SketchPanel />
-              <MeasurePanel />
+              <div className="readout-stack">
+                <MassPanel />
+                <MeasurePanel />
+                <MassButton />
+              </div>
             </>
           )}
           <EngineStatus />

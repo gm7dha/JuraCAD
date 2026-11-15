@@ -2621,6 +2621,106 @@ kbd {
   margin: 6px 0 0;
 }
 
+/* Measure and Mass properties stacked in the bottom right, with the Mass button under them (as in Onshape). */
+.readout-stack {
+  position: absolute;
+  right: 12px;
+  bottom: 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-height: calc(100% - 180px);
+  pointer-events: none;
+}
+
+.readout-stack > * {
+  pointer-events: auto;
+}
+
+.readout-stack .measure-panel {
+  position: static;
+  overflow-y: auto;
+}
+
+.readout-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.readout-actions {
+  display: flex;
+  gap: 2px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+
+.readout-actions .icon-button {
+  width: auto;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+.readout-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--glass);
+  color: var(--ink-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.readout-button:hover,
+.readout-button.active {
+  color: var(--ink);
+  border-color: var(--accent, var(--line));
+}
+
+.mass-density {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 6px;
+  color: var(--ink-2);
+}
+
+.mass-density select {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.mass-density input {
+  width: 64px;
+  font-size: 12px;
+}
+
+.feature-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+}
+
+.feature-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel, transparent);
+  color: var(--ink);
+  font-size: 12.5px;
+}
+
 /* Section view panel (top right, under the view cube) */
 .iso-button {
   position: absolute;
