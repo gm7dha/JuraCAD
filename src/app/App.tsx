@@ -1,3 +1,4 @@
+import { copySketchSelection, duplicateSketchSelection, pasteIntoSketch } from "./sketchClipboardApp";
 import { startLink } from "./juraLinkApp";
 import { startFeatureClipboard } from "./featureClipboardApp";
 import { PasteDialog, SelectOtherMenu } from "./ViewTools";
@@ -72,6 +73,10 @@ function sketchShortcut(e: KeyboardEvent): boolean {
     const key = e.key.toLowerCase();
     if (key === "z" && !e.shiftKey) s.sketchUndo();
     else if (key === "y" || (key === "z" && e.shiftKey)) s.sketchRedo();
+    // Copy / paste / duplicate sketch shapes (text picked on the page is copied as usual).
+    else if (key === "c" && !e.shiftKey && !e.altKey && !window.getSelection?.()?.toString()) return copySketchSelection();
+    else if (key === "v" && !e.shiftKey && !e.altKey) pasteIntoSketch();
+    else if (key === "d" && !e.shiftKey && !e.altKey) duplicateSketchSelection();
     else return false;
     return true;
   }
