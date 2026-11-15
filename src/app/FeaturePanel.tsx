@@ -3,7 +3,7 @@ import { addHeld } from "../viewport/touchKeys";
 
 import { DEFAULT_PART_COLOUR, PART_COLOURS } from "../model/colours";
 import { describeParamErrors, FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, OPERATION_LABELS } from "../model/features";
-import { activeFeatures, activeHiddenDatums, pickedFeatures, studioParts, useStore, type DatumName, type PlaneName } from "../model/store";
+import { activeFeatures, activeHiddenDatums, activeStudioId, pickedFeatures, studioParts, useStore, type DatumName, type PlaneName } from "../model/store";
 import { featureVisible, hasEye } from "../model/visibility";
 import { nextFolderName } from "../model/document";
 import { insertOfFeature } from "../library/insert";
@@ -506,7 +506,8 @@ function RenameBox({ feature }: { feature: Feature }) {
   const finish = (keep: boolean) => {
     if (done.current) return;
     done.current = true;
-    if (keep && text.trim() && text !== feature.name) useStore.getState().renameFeature(feature.id, text);
+    const name = text.trim();
+    if (keep && name && name !== feature.name) useStore.getState().renameFeature(feature.id, name);
     setRenaming(null);
   };
   return (
@@ -949,7 +950,12 @@ export function FeaturePanel() {
     const f = features.find((x) => x.id === id);
     if (!f) return;
     if (matches && !matches.has(id)) setQuery("");
-    if (f.folder) setCollapsed((c) => c.filter((k) => !k.startsWith(`folder:${f.folder}:`)));
+    // Its folder, or (grouped by part) the groups it's listed under, are opened.
+    const groupKeys = new Set([...groups.groups.filter((g) => g.featureIds.includes(id)).map((g) => g.partId), ...(groups.other.includes(id) ? ["other"] : [])]);
+    setCollapsed((c) => {
+      const open = c.filter((k) => !(f.folder && k.startsWith(`folder:${f.folder}:`)) && !groupKeys.has(k));
+      return open.length === c.length ? c : open;
+    });
     if (pick) useStore.getState().selectFeature(id);
     requestAnimationFrame(() => listRef.current?.querySelector(`[data-feature-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" }));
   };
@@ -958,14 +964,24 @@ export function FeaturePanel() {
     if (next) reveal(next, true);
   };
   // A rebuild that makes another feature fail: its row is scrolled into view (not picked), as Onshape does.
-  const failedBefore = useRef<string[]>(failing);
+  // (Not on changing to another Part Studio: its failures aren't new.)
+  const studio = useStore(activeStudioId);
+  const failedBefore = useRef<{ studio: string | null; ids: string[] }>({ studio, ids: failing });
   useEffect(() => {
-    const fresh = firstNew(failedBefore.current, failing);
-    failedBefore.current = failing;
+    const was = failedBefore.current;
+    failedBefore.current = { studio, ids: failing };
+    const fresh = was.studio === studio ? firstNew(was.ids, failing) : null;
     if (fresh && !useStore.getState().editing) reveal(fresh, false);
     // Only when the failures change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [failing]);
+  }, [failing, studio]);
+  // F2 on a feature in a shut folder (or hidden by a search): show its row first, so it can be renamed.
+  const renamingId = useRenaming();
+  useEffect(() => {
+    if (renamingId) reveal(renamingId, false);
+    // Only when renaming starts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renamingId]);
 
   return (
     <aside className="side-panel" aria-label="Feature list">

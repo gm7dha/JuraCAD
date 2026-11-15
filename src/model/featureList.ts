@@ -6,8 +6,17 @@
  */
 import type { Feature } from "./types";
 
+/**
+ * Each id once, where it's first listed. "Group by part" lists a sketch under every part it helped make, so rows can
+ * repeat; walking a list with repeats would go round in circles.
+ */
+export function uniqueIds(order: readonly string[]): string[] {
+  return [...new Set(order)];
+}
+
 /** The row `dir` steps from `current` in `order` (stopping at the ends); nothing picked = the first (or last) row. */
-export function stepRow(order: readonly string[], current: string | null, dir: 1 | -1): string | null {
+export function stepRow(rows: readonly string[], current: string | null, dir: 1 | -1): string | null {
+  const order = uniqueIds(rows);
   if (!order.length) return null;
   const at = current ? order.indexOf(current) : -1;
   if (at < 0) return dir > 0 ? order[0] : order[order.length - 1];
@@ -19,12 +28,13 @@ export function stepRow(order: readonly string[], current: string | null, dir: 1
  * click does). Returns the rows picked, the one the next Shift step works from (`anchor`) and the one moved to.
  */
 export function stepSelection(
-  order: readonly string[],
+  rows: readonly string[],
   anchor: string | null,
   current: string | null,
   dir: 1 | -1,
   extend: boolean,
 ): { selected: string[]; anchor: string | null; current: string | null } {
+  const order = uniqueIds(rows);
   const next = stepRow(order, current, dir);
   if (!next) return { selected: [], anchor: null, current: null };
   if (!extend || !anchor || !order.includes(anchor)) return { selected: [next], anchor: next, current: next };

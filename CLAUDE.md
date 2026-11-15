@@ -972,13 +972,15 @@
   for F2 / the menu's Rename: `RenameBox` in place, Enter keeps, Esc puts back). Several picked: the row menu is `groupMenu`
   (Suppress/Unsuppress these N = `setFeaturesSuppressed`, one undo step; new folder; Copy; Delete these N = deleteFeatures(ids,
   true); with dependents); Delete key and Ctrl+C take them all; a Mirror/pattern starts with every picked solid feature as sources.
-  Esc lets several go. Enter edits the one picked; with a dialog open, Enter anywhere but its own boxes/buttons clicks its ✓
+  Esc lets several go. Enter edits the one picked; with a dialog open, Enter with nothing focused clicks its ✓
   (`acceptsEnter` in App.tsx). The heading's "N failed" / "N notes" chips cycle through `failingFeatures` (`nextOf`; Shift back),
   opening folders/clearing the search; a rebuild that makes a new one fail scrolls it into view (`firstNew`, not picked). The rollback
   bar drags (`ROLLBACK_DRAG`) onto a row = rolled back above it (`rollbackDrop`; not above the first) or the end zone = Roll to end
-  (also in the row menu). Pure `src/model/featureList.ts`. Last-used options for NEW features, session only: pure
+  (also in the row menu). Pure `src/model/featureList.ts` (`uniqueIds`: grouped rows repeat). `pickedFeatures` drops ids gone from the studio
+  (undo, Claude). List keys only with nothing focused (`onPage`: body or `.viewport`); with a dialog open Enter also takes over a
+  `[role=toolbar]` button, never other buttons. Last-used options for NEW features, session only: pure
   `src/model/lastOptions.ts` (`REMEMBERED_TYPES`; plain-number params but thin/position groups, extrude end blind/symmetric/
-  throughAll + `second`, revolve symmetric/second, hole kind/standard/fit/end, chamfer type) — `remembered` in the store closure,
+  throughAll + `second` (through all only into a remove/intersect of the same operation; surfaces/thin never remembered), revolve symmetric/second, hole kind/standard/fit/end, chamfer type) — `remembered` in the store closure,
   `rememberOptions` on commitDraft (create only), `withRemembered` in startCreate. Tests: tests/featureList (pure), featureListStore.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.

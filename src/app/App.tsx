@@ -72,16 +72,24 @@ function isTypingText(target: EventTarget | null): boolean {
   return !(el instanceof HTMLInputElement && ["checkbox", "radio", "button", "submit", "reset", "range", "color"].includes(el.type));
 }
 
-/** Enter meant for the page, not for a control that has its own use for it (a text box, a list, a button, a link). */
+/** The key was pressed with nothing in particular focused: the page itself or the 3D view. */
+function onPage(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || el === document.body || el === document.documentElement) return true;
+  return typeof el.closest === "function" && !!el.closest(".viewport");
+}
+
+/**
+ * Enter meant for the page, not for a control that has its own use for it. Only with nothing focused (the page, the
+ * 3D view) — or, with a feature dialog open, a toolbar button (the one that opened the dialog keeps the focus), which
+ * Enter would otherwise press again. Every other button, box or list keeps its Enter.
+ */
 function acceptsEnter(e: KeyboardEvent): boolean {
   if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing) return false;
-  const el = e.target as HTMLElement | null;
-  if (!el || typeof el.closest !== "function") return true;
-  if (isTypingText(el) || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return false;
-  // A button or link: inside the feature dialog it's pressed as usual; elsewhere (the toolbar button that opened the
-  // dialog still has the focus) Enter is the dialog's.
-  if (el.closest("button, a, [role='button'], [role='menuitem'], [role='radio'], [role='tab']")) return !el.closest(".feature-dialog, [role='menu']") && !!useStore.getState().editing;
-  return true;
+  if (onPage(e.target)) return true;
+  const el = e.target as HTMLElement;
+  if (typeof el.closest !== "function" || !useStore.getState().editing) return false;
+  return el.tagName === "BUTTON" && !!el.closest('[role="toolbar"]') && !el.closest('[role="menu"], .feature-dialog');
 }
 
 /** Keyboard shortcuts while a sketch is open. Returns true if the key was used. */
@@ -295,16 +303,17 @@ function useShortcuts() {
         // The feature list: ↑ / ↓ move the selection (Shift: several), Enter edits it, F2 renames it.
         case "ArrowUp":
         case "ArrowDown":
-          if (s.selectedFeatureId && !s.editing && !s.sketch && stepFeatureSelection(e.key === "ArrowDown" ? 1 : -1, e.shiftKey)) e.preventDefault();
+          // Only with nothing else focused: a toolbar list, a menu or a box keeps its arrows.
+          if (s.selectedFeatureId && !s.editing && !s.sketch && !s.dialog && onPage(e.target) && stepFeatureSelection(e.key === "ArrowDown" ? 1 : -1, e.shiftKey)) e.preventDefault();
           break;
         case "Enter":
-          if (s.selectedFeatureId && !s.editing && !s.sketch && pickedFeatures(s).length === 1 && acceptsEnter(e)) {
+          if (s.selectedFeatureId && !s.editing && !s.sketch && !s.dialog && pickedFeatures(s).length === 1 && acceptsEnter(e)) {
             e.preventDefault();
             s.startEdit(s.selectedFeatureId);
           }
           break;
         case "F2":
-          if (s.selectedFeatureId && !s.editing && !s.sketch) {
+          if (s.selectedFeatureId && !s.editing && !s.sketch && !s.dialog) {
             e.preventDefault();
             setRenaming(s.selectedFeatureId);
           }

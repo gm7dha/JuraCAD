@@ -5,7 +5,7 @@
  */
 import { useSyncExternalStore } from "react";
 
-import { stepSelection } from "../model/featureList";
+import { stepSelection, uniqueIds } from "../model/featureList";
 import { clickRow } from "../model/listSelection";
 import { pickedFeatures, useStore } from "../model/store";
 
@@ -33,7 +33,7 @@ export function useRenaming(): string | null {
 
 /** The feature rows as the list shows them now, top to bottom (set by the list each time it draws). */
 export function setShownOrder(order: string[]): void {
-  shownOrder = order;
+  shownOrder = uniqueIds(order);
 }
 
 export function shownFeatureOrder(): string[] {

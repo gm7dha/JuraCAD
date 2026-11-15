@@ -33,6 +33,20 @@ describe("several features picked in the list", () => {
     expect(pickedFeatures(s())).toEqual([]);
   });
 
+  it("leaves out picked features that are gone (deleted, or taken away by an undo)", () => {
+    s().selectFeatures(["e1", "b1", "b2"], "b1");
+    s().deleteFeature("b2");
+    expect(pickedFeatures(s())).toEqual(["e1", "b1"]);
+    expect(pickedFeatures(s())).toBe(pickedFeatures(s()));
+    s().undo();
+    expect(pickedFeatures(s())).toEqual(["e1", "b1", "b2"]);
+    s().deleteFeature("e1");
+    expect(pickedFeatures(s())).toEqual(["b1", "b2"]);
+    s().deleteFeature("b2");
+    // One left: just the main one.
+    expect(pickedFeatures(s())).toEqual(["b1"]);
+  });
+
   it("suppresses and unsuppresses them all as one undo step", () => {
     const steps = s().history.past.length;
     s().setFeaturesSuppressed(["e1", "b1"], true);

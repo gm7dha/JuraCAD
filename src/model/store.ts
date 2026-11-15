@@ -2353,20 +2353,29 @@ export function activeHiddenDatums(s: Pick<AppState, "activeTab" | "history">): 
   return hiddenDatumsOf(s.history.present, activeStudioId(s) ?? firstStudioId(s.history.present));
 }
 
-/** Features of the Part Studio on show (the first one while an assembly is on show). Same array each time. */
 /**
- * The features picked in the list, in the order picked (selector-safe): several after Shift / Ctrl + click, else just
- * the highlighted one, else none.
+ * The features picked in the list, in list-pick order (selector-safe): several after Shift / Ctrl + click, else just
+ * the highlighted one, else none. Ids no longer in the Part Studio on show (after an undo, or a change from Claude) are
+ * left out.
  */
 let lastSingle: string[] = [];
-export function pickedFeatures(s: Pick<AppState, "selectedFeatureId" | "featureSelection">): string[] {
+let lastPicked: { sel: string[]; features: Feature[]; result: string[] } | null = null;
+export function pickedFeatures(s: Pick<AppState, "selectedFeatureId" | "featureSelection" | "activeTab" | "history">): string[] {
   const id = s.selectedFeatureId;
   if (!id) return NO_DIMS;
-  if (s.featureSelection.length > 1 && s.featureSelection.includes(id)) return s.featureSelection;
+  if (s.featureSelection.length > 1 && s.featureSelection.includes(id)) {
+    const features = activeFeatures(s);
+    if (!lastPicked || lastPicked.sel !== s.featureSelection || lastPicked.features !== features) {
+      const left = s.featureSelection.filter((x) => features.some((f) => f.id === x));
+      lastPicked = { sel: s.featureSelection, features, result: left.length === s.featureSelection.length ? s.featureSelection : left };
+    }
+    if (lastPicked.result.length > 1 && lastPicked.result.includes(id)) return lastPicked.result;
+  }
   if (lastSingle[0] !== id) lastSingle = [id];
   return lastSingle;
 }
 
+/** Features of the Part Studio on show (the first one while an assembly is on show). Same array each time. */
 export function activeFeatures(s: Pick<AppState, "activeTab" | "history">): Feature[] {
   return studioFeatures(s.history.present, activeStudioId(s) ?? firstStudioId(s.history.present));
 }

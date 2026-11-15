@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { failingFeatures, firstNew, nextOf, rollbackDrop, stepRow, stepSelection } from "../src/model/featureList";
+import { failingFeatures, firstNew, nextOf, rollbackDrop, stepRow, stepSelection, uniqueIds } from "../src/model/featureList";
 import { REMEMBERED_TYPES, rememberOptions, withRemembered } from "../src/model/lastOptions";
 import { createFeature, emptyDocument } from "../src/model/document";
 import type { Feature } from "../src/model/types";
@@ -30,6 +30,12 @@ describe("arrow keys in the feature list", () => {
     r = stepSelection(order, r.anchor, r.current, -1, true);
     r = stepSelection(order, r.anchor, r.current, -1, true);
     expect(r).toEqual({ selected: ["a", "b"], anchor: "b", current: "a" });
+    // A sketch listed under two parts ("Group by part"): each row once, so ↓ doesn't go round in circles.
+    const grouped = ["sk1", "ex1", "sk1", "ex2", "fi1"];
+    expect(uniqueIds(grouped)).toEqual(["sk1", "ex1", "ex2", "fi1"]);
+    expect(stepRow(grouped, "ex1", 1)).toBe("ex2");
+    expect(stepRow(grouped, "ex2", -1)).toBe("ex1");
+    expect(stepSelection(grouped, "sk1", "ex1", 1, true).selected).toEqual(["sk1", "ex1", "ex2"]);
     // An anchor no longer listed: a plain step.
     expect(stepSelection(order, "zz", "c", 1, true).selected).toEqual(["d"]);
   });
@@ -85,10 +91,14 @@ describe("dialogs remember their last options", () => {
   });
 
   it("keeps an extrude's end and depth, but not an end that needs a face clicked, a variable or a thin wall", () => {
-    const first = createFeature(doc, "extrude");
+    const first = { ...createFeature(doc, "extrude"), operation: "remove" as const };
     let memory = rememberOptions({}, { ...first, params: { ...first.params, depth: "25", depth2: "width * 2", thickness: "4" }, extrude: { end: "throughAll", flip: true } });
-    let next = withRemembered(createFeature(doc, "extrude"), memory);
+    let next = withRemembered({ ...createFeature(doc, "extrude"), operation: "remove" }, memory);
     expect(next.extrude?.end).toBe("throughAll");
+    // A new or added extrude can't go through all: it starts blind, at the remembered depth.
+    const added = withRemembered({ ...createFeature(doc, "extrude"), operation: "add" }, memory);
+    expect(added.extrude?.end).toBe("blind");
+    expect(added.params.depth).toBe("25");
     // The side it goes is the geometry's, not a habit.
     expect(next.extrude?.flip).toBe(false);
     expect(next.params.depth).toBe("25");
@@ -97,6 +107,13 @@ describe("dialogs remember their last options", () => {
     memory = rememberOptions(memory, { ...first, extrude: { end: "upToFace", flip: false } });
     next = withRemembered(createFeature(doc, "extrude"), memory);
     expect(next.extrude?.end).toBe("blind");
+  });
+
+  it("leaves surfaces and thin walls out of what's remembered", () => {
+    const ex = { ...createFeature(doc, "extrude"), params: { depth: "40" } };
+    expect(rememberOptions({}, { ...ex, surface: true })).toEqual({});
+    expect(rememberOptions({}, { ...ex, thin: {} })).toEqual({});
+    expect(rememberOptions({}, { ...ex, extrude: { end: "symmetric", flip: false } }).extrude?.extrude?.end).toBe("symmetric");
   });
 
   it("keeps a hole's kind and size, and a chamfer's type", () => {

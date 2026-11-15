@@ -26,7 +26,8 @@ export const REMEMBERED_TYPES: readonly FeatureType[] = [
 /** What's kept from one feature. */
 export interface RememberedOptions {
   params: Record<string, string>;
-  extrude?: { end: ExtrudeEnd; second?: boolean };
+  /** `operation`: the extrude this end came from (Through all only carries over to one that does the same). */
+  extrude?: { end: ExtrudeEnd; second?: boolean; operation: Feature["operation"] };
   revolve?: { symmetric?: boolean; second?: boolean };
   hole?: Pick<HoleOptions, "kind" | "standard" | "fit" | "end" | "bothWays">;
   chamferType?: Feature["chamferType"];
@@ -39,7 +40,7 @@ const PLAIN_ENDS: readonly ExtrudeEnd[] = ["blind", "symmetric", "throughAll"];
 
 /** The memory after `feature` was made (unchanged for kinds that aren't remembered, and for surfaces and thin walls). */
 export function rememberOptions(memory: OptionsMemory, feature: Feature): OptionsMemory {
-  if (!REMEMBERED_TYPES.includes(feature.type)) return memory;
+  if (!REMEMBERED_TYPES.includes(feature.type) || feature.surface || feature.thin) return memory;
   // Thin walls' thicknesses go with the thin choice, which isn't carried over; positions belong to where it was.
   const keys = new Set(FEATURE_DEFS[feature.type].params.filter((p) => p.group !== "thin" && p.group !== "position").map((p) => p.key));
   const params: Record<string, string> = {};
@@ -47,7 +48,7 @@ export function rememberOptions(memory: OptionsMemory, feature: Feature): Option
     if (keys.has(key) && typeof value === "string" && value.trim() && isPlainNumber(value)) params[key] = value;
   }
   const kept: RememberedOptions = { params };
-  if (feature.extrude && PLAIN_ENDS.includes(feature.extrude.end)) kept.extrude = { end: feature.extrude.end, ...(feature.extrude.second ? { second: true } : {}) };
+  if (feature.extrude && PLAIN_ENDS.includes(feature.extrude.end)) kept.extrude = { end: feature.extrude.end, ...(feature.extrude.second ? { second: true } : {}), operation: feature.operation };
   if (feature.revolve) kept.revolve = { ...(feature.revolve.symmetric ? { symmetric: true } : {}), ...(feature.revolve.second ? { second: true } : {}) };
   if (feature.hole && feature.hole.end !== "upToNext") {
     const { kind, standard, fit, end, bothWays } = feature.hole;
@@ -62,7 +63,8 @@ export function withRemembered(draft: Feature, memory: OptionsMemory): Feature {
   const kept = memory[draft.type];
   if (!kept) return draft;
   const out: Feature = { ...draft, params: { ...draft.params, ...kept.params } };
-  if (kept.extrude && out.extrude) {
+  // Through all only suits what it was made for (a cut, mostly): a new or added extrude can't go through all.
+  if (kept.extrude && out.extrude && (kept.extrude.end !== "throughAll" || (kept.extrude.operation === draft.operation && (draft.operation === "remove" || draft.operation === "intersect")))) {
     out.extrude = { ...out.extrude, end: kept.extrude.end };
     if (kept.extrude.second) out.extrude.second = true;
   }
