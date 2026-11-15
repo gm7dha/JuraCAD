@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { getKernel } from "../kernel/connect";
-import { densityFor, massIn, massRows, massSummary, rowsText, type DensityChoice, type PartMassProps } from "../model/massProps";
+import { densityFor, massIn, materialKeyFor, massRows, massSummary, rowsText, type DensityChoice, type PartMassProps } from "../model/massProps";
 import { formatMass, MATERIALS } from "../model/materials";
 import { studioParts, useLengthUnit, useStore } from "../model/store";
 import { formatArea, formatLength, formatVolume } from "../model/units";
@@ -87,7 +87,12 @@ export function MassPanel() {
 
   const choice: DensityChoice =
     state.choice === "own" ? { kind: "own", materials } : { kind: "all", density: state.choice === "custom" ? state.density : MATERIALS.find((m) => m.key === state.choice)?.density ?? 1 };
-  const summary = useMemo(() => (measured ? massSummary(measured, (id) => densityFor(choice, id)) : null), [measured, choice.kind, choice.kind === "all" ? choice.density : materials]);
+  const keyOf = (id: string) => (state.choice === "own" ? materialKeyFor(choice, id) : state.choice === "custom" ? undefined : state.choice);
+  const summary = useMemo(
+    () => (measured ? massSummary(measured, (id) => densityFor(choice, id), keyOf) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [measured, state.choice, state.density, materials],
+  );
 
   const shown = state.open && !editing;
   const centre = shown ? summary?.centre ?? null : null;
@@ -161,7 +166,7 @@ export function MassPanel() {
       )}
       <p className="muted small">
         {chosen.all ? "Select parts (or a face of one) to weigh just those. " : ""}
-        Weights are solid; "printed" guesses 2 walls and 15% infill. The dot in the view is the centre of mass.
+        Weights are solid; for plastics, "printed" guesses 2 walls and 15% infill. The dot in the view is the centre of mass.
       </p>
     </div>
   );

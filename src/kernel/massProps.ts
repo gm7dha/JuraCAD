@@ -47,10 +47,12 @@ export function closestPoints(a: AnyShape, b: AnyShape): { distance: number; a: 
     if (!tool.IsDone() || tool.NbSolution() < 1) return null;
     const p = tool.PointOnShape1(1);
     const q = tool.PointOnShape2(1);
-    const out = { distance: tool.Value(), a: [p.X(), p.Y(), p.Z()] as Vec3, b: [q.X(), q.Y(), q.Z()] as Vec3 };
-    p.delete();
-    q.delete();
-    return out;
+    try {
+      return { distance: tool.Value(), a: [p.X(), p.Y(), p.Z()] as Vec3, b: [q.X(), q.Y(), q.Z()] as Vec3 };
+    } finally {
+      p.delete();
+      q.delete();
+    }
   } catch {
     return null;
   } finally {

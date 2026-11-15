@@ -16,7 +16,7 @@ import { featuresOfParts, groupByPart, partsOfFeature } from "../model/partLinks
 import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 import { DEFAULT_FINISH, FINISHES } from "../model/finishes";
 import { copyFromMenu, pasteFromMenu } from "./featureClipboardApp";
-import { matchingFeatures } from "../model/featureSearch";
+import { matchingFeatures, rollbackBarAfter } from "../model/featureSearch";
 import { setHoveredFeature } from "../viewport/featureFaces";
 
 const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
@@ -782,6 +782,8 @@ export function FeaturePanel() {
   const toggleHidden = useStore((s) => s.toggleHidden);
   const draftIsNew = useStore((s) => (s.editing?.mode === "create" ? s.editing.draft : null));
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // No row stays "hovered" once the list goes (a tab change, an assembly).
+  useEffect(() => () => setHoveredFeature(null), []);
 
   const onMenu = (e: ReactMouseEvent, entries: MenuEntry[]) => {
     e.preventDefault();
@@ -816,6 +818,8 @@ export function FeaturePanel() {
   const [query, setQuery] = useState("");
   const matches = useMemo(() => matchingFeatures(features, query, (f) => FEATURE_DEFS[f.type]?.label ?? f.type), [features, query]);
   const shownIf = (id: string) => !matches || matches.has(id);
+  // The rollback bar goes after the last feature shown at or above it (searching may hide the one it's on); "" = at the top.
+  const barAfter = useMemo(() => rollbackBarAfter(features, rollbackTo, matches), [rollbackTo, matches, features]);
   const groups = useMemo(() => (grouped ? groupByPart(parts, features) : { planes: [], groups: [], other: [] }), [grouped, parts, features]);
   const linkedParts = useMemo(() => (selectedFeatureId ? partsOfFeature(parts, selectedFeatureId, features) : []), [parts, selectedFeatureId, features]);
 
@@ -865,13 +869,14 @@ export function FeaturePanel() {
         )}
         <ul className="feature-list" onMouseLeave={() => setHoveredFeature(null)}>
           {!matches && DATUMS.map((d) => <DatumRow key={d} name={d} onMenu={onMenu} />)}
+          {!grouped && barAfter === "" && <RollbackBar key="rollback-top" />}
           {!grouped &&
             folderRuns(features).map((whole) => {
               const run = matches ? { ...whole, features: whole.features.filter((f) => matches.has(f.id)) } : whole;
               if (!run.features.length) return [];
               const rows = run.features.flatMap((f) => [
                 <FeatureRow key={f.id} feature={f} onMenu={onMenu} linked={linkedFeatures.includes(f.id)} draggable />,
-                ...(f.id === rollbackTo ? [<RollbackBar key="rollback" />] : []),
+                ...(f.id === barAfter ? [<RollbackBar key="rollback" />] : []),
               ]);
               if (!run.folder) return rows;
               const key = `folder:${whole.folder}:${whole.features[0].id}`;

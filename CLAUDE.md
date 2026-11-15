@@ -914,17 +914,17 @@
   Mass properties and feature-list feedback (Onshape's): engine `massProperties(partIds)` (worker request; `src/kernel/massProps.ts`
   `massPropsOf` — GProp volume/area/centre of mass exactly, OCCT box; [] ids = every part) → pure `src/model/massProps.ts`
   (`massSummary` mass-weighted centre, union box, one `density` when all alike; `printedGrams` = area × `PRINT_SHELL` 0.84 solid +
-  `PRINT_INFILL` 15% of the rest; `massRows`/`rowsText` (copy); `massIn` lb/oz for inch designs) → `src/app/MassPanel.tsx`
+  `PRINT_INFILL` 15% of the rest — only when every solid is `printable` (≤ 2 g/cm³, not a metal/wood key); `massRows`/`rowsText` (copy); `massIn` lb/oz for inch designs) → `src/app/MassPanel.tsx`
   (`MassButton` "Mass" + panel in `.readout-stack` bottom right with Measure; open/density in `massState.ts`, session only; parts =
   picked parts, else the parts of picked faces/edges, else all shown; "Weigh as" each part's material / one material / a density;
   `SceneManager.setCentreMark` draws the centre). Measure: `Measurement.closest` (BRepExtrema points, `closestPoints`) → closest
   X/Y/Z; round edges' length; Copy. Which feature made each face: `src/kernel/faceMakers.ts` `FaceMakers.after` at every step
-  of `featureSteps` (TopExp_Explorer, no wrappers; parts over `MOST_FACES` 3000 — a mesh import — skipped; only parts whose shape object changed; a kept face hash keeps its maker, a new face on a plane/cylinder the
+  of `featureSteps` (OpenCascade's explorer, each Current() freed — no replicad Face per face; parts over `MOST_FACES` 3000 — a mesh import — skipped; only parts whose shape object changed; after a Move / copy without a copy (`moved`) a part with as many faces keeps its makers in explorer order, `order`; a kept face hash keeps its maker, a new face on a plane/cylinder the
   part had keeps that surface's maker, else the feature) → `PartMesh.faceMakers` (by faceGroups, missing = none). Pure
   `src/model/featureSearch.ts`: `matchingFeatures` (every word in name/kind/folder; FeaturePanel's "Search features" box, Esc
-  clears, folders/groups opened, datums hidden), `featureOfFace` (maker, else the part's latest), `facesMadeBy`.
+  clears, folders/groups opened, datums hidden; `rollbackBarAfter` keeps the rollback bar after the last shown feature at or above it), `featureOfFace` (maker, else the part's latest), `facesMadeBy`.
   `src/viewport/featureFaces.ts`: hovered row (`setHoveredFeature`) → Viewport `setListHover` (its faces, else its parts; a
-  hovered sketch shown); double-click a face (`SceneCallbacks.onDoubleClick` → `editFeatureAt`) or Select other's "Edit <feature>…"
+  hidden sketch shown — only that id is a dep of the sketch scene; cleared when the list unmounts); double-click a face (`SceneCallbacks.onDoubleClick` → `editFeatureAt`) or Select other's "Edit <feature>…"
   opens it. Parts list "Show only this part"/"Show all parts" were already there. Tests: tests/massProps (pure), engineMassProps.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.

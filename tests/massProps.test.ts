@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { densityFor, massIn, massRows, massSummary, printedGrams, rowsText, type PartMassProps } from "../src/model/massProps";
-import { facesMadeBy, featureMatches, featureOfFace, matchingFeatures } from "../src/model/featureSearch";
+import { densityFor, massIn, massRows, massSummary, materialKeyFor, printable, printedGrams, rowsText, type PartMassProps } from "../src/model/massProps";
+import { facesMadeBy, featureMatches, featureOfFace, matchingFeatures, rollbackBarAfter } from "../src/model/featureSearch";
 import type { Feature } from "../src/model/types";
 
 const box: PartMassProps = { partId: "a", name: "Part 1", volume: 6000, area: 2200, centre: [5, 10, 15], box: [[0, 0, 0], [10, 20, 30]] };
@@ -50,6 +50,19 @@ describe("mass summary", () => {
     expect(printedGrams(0, 10, 1)).toBe(0);
   });
 
+  it("only plastics get a printed weight", () => {
+    expect(massSummary([box], () => 1.24, () => "pla").printed).toBeGreaterThan(0);
+    expect(massSummary([box], () => 7.85, () => "steel").printed).toBe(0);
+    expect(massSummary([box], () => 0.75, () => "oak").printed).toBe(0);
+    expect(massSummary([box], () => 2.7).printed).toBe(0);
+    expect(massSummary([box, far], (id) => (id === "a" ? 1.24 : 7.85), (id) => (id === "a" ? "pla" : "steel")).printed).toBe(0);
+    expect(massRows(massSummary([box], () => 7.85, () => "steel"), fmt).map((r) => r[0].trim())).not.toContain("printed (about)");
+    expect(printable(1.15, "resin")).toBe(true);
+    expect(materialKeyFor({ kind: "own", materials: { a: "steel" } }, "a")).toBe("steel");
+    expect(materialKeyFor({ kind: "own", materials: {} }, "a")).toBe("pla");
+    expect(materialKeyFor({ kind: "all", density: 3 }, "a")).toBe(undefined);
+  });
+
   it("pounds and ounces for inch designs", () => {
     expect(massIn(453.59237, true, () => "")).toBe("1 lb");
     expect(massIn(28.349523125, true, () => "")).toBe("1 oz");
@@ -81,5 +94,13 @@ describe("feature search", () => {
     expect(featureOfFace({ featureIds: [] }, 0, list)).toBe(null);
     expect(facesMadeBy([part], "fl")).toEqual(new Map([["p", [1]]]));
     expect(facesMadeBy([part], "s1")).toBe(null);
+  });
+
+  it("keeps the rollback bar on show while searching", () => {
+    expect(rollbackBarAfter(list, null, new Set(["e1"]))).toBe(null);
+    expect(rollbackBarAfter(list, "h1", null)).toBe("h1");
+    expect(rollbackBarAfter(list, "h1", new Set(["h1"]))).toBe("h1");
+    expect(rollbackBarAfter(list, "h1", new Set(["e1", "fl"]))).toBe("e1");
+    expect(rollbackBarAfter(list, "e1", new Set(["fl"]))).toBe("");
   });
 });

@@ -29,7 +29,7 @@ export interface MassSummary {
   /** Mass-weighted centre (volume-weighted when nothing weighs anything; area-weighted for surfaces only). */
   centre: Vec3 | null;
   box: [Vec3, Vec3] | null;
-  /** Grams if 3D printed with the usual settings (walls + 15% infill), solids only. */
+  /** Grams if 3D printed with the usual settings (walls + 15% infill), solids only; 0 unless every solid is a printable plastic. */
   printed: number;
   /** Every part made of the same density: that density (g/cm³), else null. */
   density: number | null;
@@ -42,9 +42,23 @@ export function densityFor(choice: DensityChoice, partId: string): number {
   return choice.kind === "all" ? choice.density : materialOf(choice.materials[partId]).density;
 }
 
+/** The material key a part is weighed as (undefined for a typed density). */
+export function materialKeyFor(choice: DensityChoice | { kind: "material"; key: string }, partId: string): string | undefined {
+  if (choice.kind === "material") return choice.key;
+  return choice.kind === "own" ? materialOf(choice.materials[partId]).key : undefined;
+}
+
 /** Bambu Studio's usual profile: 2 walls of 0.42 mm and 15% sparse infill. Tops/bottoms count as walls. */
 export const PRINT_SHELL = 0.84;
 export const PRINT_INFILL = 0.15;
+/** Only materials at most this dense (g/cm³) count as printed plastic: filaments and resin, not metal or wood. */
+export const PRINTABLE_DENSITY = 2;
+const NOT_PRINTED = new Set(["aluminium", "steel", "stainless", "brass", "copper", "oak"]);
+
+/** Whether a part of this material (key, or just a density) gets a printed-weight guess. */
+export function printable(density: number, key?: string): boolean {
+  return density <= PRINTABLE_DENSITY && !(key && NOT_PRINTED.has(key));
+}
 
 /**
  * About what a solid weighs printed (grams): its skin `shell` mm thick is solid, the rest `infill` full. The skin's
@@ -57,7 +71,7 @@ export function printedGrams(volume: number, area: number, density: number, shel
 }
 
 /** All the chosen parts added up. */
-export function massSummary(parts: PartMassProps[], density: (partId: string) => number): MassSummary {
+export function massSummary(parts: PartMassProps[], density: (partId: string) => number, materialKey: (partId: string) => string | undefined = () => undefined): MassSummary {
   let volume = 0;
   let area = 0;
   let mass = 0;
@@ -74,6 +88,7 @@ export function massSummary(parts: PartMassProps[], density: (partId: string) =>
   let lo: Vec3 | null = null;
   let hi: Vec3 | null = null;
   const densities = new Set<number>();
+  let allPrintable = true;
   for (const p of parts) {
     const d = density(p.partId);
     const v = p.surface ? 0 : p.volume;
@@ -84,6 +99,7 @@ export function massSummary(parts: PartMassProps[], density: (partId: string) =>
     if (!p.surface) {
       densities.add(d);
       printed += printedGrams(v, p.area, d);
+      if (!printable(d, materialKey(p.partId))) allPrintable = false;
     }
     sum(m, p.centre, byMass);
     sum(v, p.centre, byVolume);
@@ -100,7 +116,7 @@ export function massSummary(parts: PartMassProps[], density: (partId: string) =>
     mass,
     centre,
     box: lo && hi ? [lo, hi] : null,
-    printed,
+    printed: allPrintable ? printed : 0,
     density: densities.size === 1 ? [...densities][0] : null,
   };
 }

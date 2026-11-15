@@ -611,7 +611,9 @@ export function seamEdgeIds(shape: Shape3D): Set<number> {
       const explorer = new oc.TopExp_Explorer(f.wrapped, oc.TopAbs_ShapeEnum.TopAbs_EDGE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
       try {
         for (; explorer.More(); explorer.Next()) {
-          const h = oc.ReplicadShapeHasher.HashCode(explorer.Current(), 2147483647) as number;
+          const current = explorer.Current();
+          const h = oc.ReplicadShapeHasher.HashCode(current, 2147483647) as number;
+          current.delete();
           seen.set(h, (seen.get(h) ?? 0) + 1);
         }
       } finally {
@@ -3391,6 +3393,8 @@ export class GeometryEngine {
     // Which feature made each face (see faceMakers.ts): looked at after each feature.
     this.faceMakers = new FaceMakers();
     let lastBuilt: string | null = null;
+    // A Move / copy that moves parts without copying them: their faces keep their makers.
+    let lastMoved = false;
 
     for (let index = 0; index < listed.length; index++) {
       const feature = this.followedFeature(listed[index], moved);
@@ -3399,8 +3403,9 @@ export class GeometryEngine {
         features[index] = feature;
       }
       if (feature.suppressed) continue;
-      if (lastBuilt) this.faceMakers.after(lastBuilt, this.parts);
+      if (lastBuilt) this.faceMakers.after(lastBuilt, this.parts, lastMoved);
       lastBuilt = feature.id;
+      lastMoved = feature.type === "transform" && !feature.transform?.copy;
       // A safe place to stop: between features.
       yield;
       // Mate connectors whose part was merged into another (a Boolean, an Add joining parts) belong to that one now.
@@ -3818,7 +3823,7 @@ export class GeometryEngine {
       }
     }
 
-    if (lastBuilt) this.faceMakers.after(lastBuilt, this.parts);
+    if (lastBuilt) this.faceMakers.after(lastBuilt, this.parts, lastMoved);
     for (const p of this.parts) p.faceMakers = this.faceMakers;
     return featureErrors;
   }

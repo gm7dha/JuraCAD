@@ -1337,7 +1337,12 @@ export function Viewport() {
     return { sets, mode: draftId && areaMode !== "off" ? areaMode : "nearest" };
   }, [followedAreas, draftId, draftSketch, draftAreas, draftMore, areaMode, areaSelection, used]);
   useEffect(() => viewportApi.current?.setPickAreas(pickAreas), [pickAreas]);
-  const hoveredSketch = useHoveredFeature();
+  // A hidden sketch's row under the pointer: shown while hovered (only then does the sketch scene change).
+  const hoveredRow = useHoveredFeature();
+  const hoveredSketch = useMemo(() => {
+    const f = hoveredRow ? features.find((x) => x.id === hoveredRow) : undefined;
+    return f && f.type === "sketch" && !f.suppressed && f.id !== selectedFeatureId && !sketchVisible(f, used) ? f.id : null;
+  }, [hoveredRow, features, selectedFeatureId, used]);
   const others = useMemo(
     () => (inAssembly ? [] : visibleSketches(features, draft?.id ?? null, selectedFeatureId, sketchLinks, refDraft?.id ?? null, hoveredSketch)),
     [features, draft?.id, selectedFeatureId, inAssembly, refDraft?.id, sketchLinks, hoveredSketch],

@@ -97,4 +97,35 @@ describe("which feature made each face", () => {
       expect(makers[i]).toBe(top || bossSide ? boss.id : box.id);
     });
   });
+
+  const moveOf = (partId: string, params: Record<string, number>): Feature => ({
+    ...feature("transform", params, "add"),
+    transform: { partId, axis: "z", about: "centre", copy: false },
+  });
+
+  for (const [what, params] of [["moved 20 along X", { dx: 20 }], ["turned 30° about Z", { rz: 30 }], ["turned and moved", { rx: 15, rz: 30, dy: 5 }]] as const) {
+    it(`a box ${what}: every face is still the box's (a Move only moves them)`, () => {
+      const box = feature("box", { width: 10, depth: 20, height: 30 });
+      const first = build([box]);
+      const move = moveOf(first.parts[0].id, params);
+      const r = build([box, move]);
+      expect(r.featureErrors).toEqual({});
+      expect(r.parts[0].faceMakers).toEqual(Array(6).fill(box.id));
+    });
+  }
+
+  it("a fillet after a move: its round face is the fillet's, the rest the box's", () => {
+    const box = feature("box", { width: 10, depth: 20, height: 30 });
+    const first = build([box]);
+    const move = moveOf(first.parts[0].id, { dx: 20 });
+    const moved = build([box, move]);
+    const part = moved.parts[0];
+    const e = part.edgeRefs.findIndex((x) => x.kind === "edge" && x.curve === "LINE");
+    const fillet: Feature = { ...feature("fillet", { radius: 2 }), picks: [{ partId: part.id, ref: part.edgeRefs[e] }] };
+    const r = build([box, move, fillet]);
+    expect(r.featureErrors).toEqual({});
+    const makers = r.parts[0].faceMakers!;
+    r.parts[0].faceRefs.forEach((f, i) => expect(makers[i]).toBe(f.surface === "CYLINDRE" ? fillet.id : box.id));
+  });
 });
+

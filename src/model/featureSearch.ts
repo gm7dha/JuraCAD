@@ -39,3 +39,14 @@ export function facesMadeBy(parts: { id: string; faceMakers?: string[] }[], feat
   }
   return out.size ? out : null;
 }
+
+/**
+ * While searching, the rollback bar goes after the last feature shown at or above the one it's on (that one may be
+ * hidden): its id, "" = at the top of the list, null = no rollback bar.
+ */
+export function rollbackBarAfter(features: Feature[], rollbackTo: string | null, matches: Set<string> | null): string | null {
+  if (!rollbackTo || !matches) return rollbackTo;
+  const at = features.findIndex((f) => f.id === rollbackTo);
+  for (let i = at; i >= 0; i--) if (matches.has(features[i].id)) return features[i].id;
+  return "";
+}
