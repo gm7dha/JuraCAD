@@ -7,7 +7,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import type { EdgeRef, FaceRef, TopoPick } from "../src/geometry/topoRef";
 import { GeometryEngine } from "../src/kernel/engine";
-import { manipPoint, manipulatorsFor, type Manipulator } from "../src/model/manipulators";
+import { manipPoint, manipulatorsFor } from "../src/model/manipulators";
 import type { Feature } from "../src/model/types";
 import { addPoint } from "../src/sketch/ops";
 import { emptySketch } from "../src/sketch/types";
@@ -37,7 +37,6 @@ function offPlane(faces: FaceRef[], p: V, n?: V): number {
   }
   return best;
 }
-const byId = (ms: Manipulator[], id: string) => ms.find((m) => m.id === id)!;
 
 describe("a Draft's arc leans the way the engine leans the face", () => {
   for (const [label, angle, flip] of [
