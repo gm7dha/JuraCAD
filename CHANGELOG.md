@@ -8,6 +8,15 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.82 — Drag sizes in the 3D view
+
+- Extrude, Revolve, Fillet, Chamfer, Shell and Thicken show an arrow in the 3D view while their dialog is open: drag it to change the size live, as in Onshape.
+- Dragging an Extrude's arrow back past its sketch turns it the other way.
+- Sizes snap to 1 mm (0.05 in) and angles to 1°; hold Shift for no snapping. A label by the arrow shows the value.
+- Letting go is one undo step in the dialog (Ctrl+Z while it's open); Esc while dragging takes back just the drag. Typing, ticks and picks in these dialogs are undo steps too.
+- A size that uses a variable shows its arrow greyed: type in its box to change it.
+- Works with fingers on tablets: a finger on an arrow drags it instead of turning the view.
+
 ## v0.81 — Copy and paste in sketches
 
 - Sketches: Ctrl+C / Ctrl+V (⌘ on a Mac) copy and paste shapes — the copy follows the pointer until you click, and keeps the relations and dimensions between the copied shapes. Ctrl+D duplicates. Works between sketches and designs; Copy and Paste buttons are in the sketch toolbar too.

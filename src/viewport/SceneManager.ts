@@ -22,6 +22,11 @@ import { finishOf, type FinishId } from "../model/finishes";
 import { fitToBuffer, pictureSize, showGround, supersample } from "./pictureSize";
 import { finishMaterial, paintBackground, studioEnvironment, studioRig, type PictureBackground } from "./studio";
 import { handleAt, handleUsable, planeAxes, TRIAD_LAYOUT, TRIAD_PIXELS, type TriadHandle } from "./transformDrag";
+import { arrowEnds, manipArc, manipHandleAt, MANIP_PIXELS, type ManipHandle } from "./manipulatorDrag";
+import { manipArrowDir, manipPoint, type Manipulator } from "../model/manipulators";
+
+/** A handle in the view to drag: Move / copy's triad, or a feature dialog's manipulator. */
+export type ViewHandle = TriadHandle | ManipHandle;
 import type { Triad } from "../model/transformMath";
 
 // JuraCAD is Z-up, like Onshape.
@@ -214,15 +219,17 @@ export interface SceneCallbacks {
    * no snapping). Return false to ignore it. Then each move (with Shift as it is now), and the end or (a second
    * finger landed, the pointer was lost) a take-back.
    */
-  onTriadStart?: (handle: TriadHandle, ray: ScreenRay, shift: boolean, size: number) => boolean;
+  onTriadStart?: (handle: ViewHandle, ray: ScreenRay, shift: boolean, size: number) => boolean;
   onTriadMove?: (ray: ScreenRay, shift: boolean) => void;
   onTriadEnd?: () => void;
   onTriadCancel?: () => void;
 }
 
+/** Manipulators' colours: Onshape's blue arrows; grey when the box holds a variable. */
+const MANIP_COLOURS = { arrow: "#1f7ae0", locked: "#8a9099" };
 /** The triad's colours: X red, Y green, Z blue (as the origin's), the ball dark; under the pointer or dragged, orange. */
 const TRIAD_COLOURS = { x: "#d43c3c", y: "#2f9e44", z: "#2f6fd1", ball: "#3a4048", active: "#ff8a00" };
-const handleKey = (h: TriadHandle) => (h.kind === "ball" ? "ball" : `${h.kind}${h.axis}`);
+const handleKey = (h: ViewHandle) => (h.kind === "manip" ? `manip:${h.id}` : h.kind === "ball" ? "ball" : `${h.kind}${h.axis}`);
 
 interface PlaneObjects {
   group: THREE.Group;
@@ -338,16 +345,22 @@ export class SceneManager {
    * What one finger (or the pen) is doing: drawing in the sketch (`sent`: the sketch tools have had its press),
    * pressing on the view cube, or (`holdDrag`) dragging a part after a long press in an assembly.
    */
-  private touchStroke: { sketch: boolean; cube: boolean; sent: boolean; holdDrag: boolean; triad?: TriadHandle | null; triadOn?: boolean; /** A long press opened Select other. */ menu?: boolean } | null = null;
+  private touchStroke: { sketch: boolean; cube: boolean; sent: boolean; holdDrag: boolean; triad?: ViewHandle | null; triadOn?: boolean; /** A long press opened Select other. */ menu?: boolean } | null = null;
   /** Move / copy's triad (null: none shown), drawn in `triadGroup`, with each handle's materials for highlighting. */
   private triad: Triad | null = null;
   private readonly triadGroup = new THREE.Group();
   private triadMaterials = new Map<string, { mats: THREE.Material[]; colour: string; handle: TriadHandle; opacity: number[] }>();
   /** What the triad's drawing was made for (its handles and directions): a move only shifts it. */
   private triadShape = "";
-  private triadHover: TriadHandle | null = null;
+  private triadHover: ViewHandle | null = null;
+  /** A feature dialog's manipulators (Onshape's: an Extrude's depth arrow…), drawn in `manipGroup`, each a constant size on screen. */
+  private manips: Manipulator[] = [];
+  private readonly manipGroup = new THREE.Group();
+  private manipMaterials = new Map<string, { mats: THREE.Material[]; colour: string }>();
+  /** The little label by a dragged manipulator (its value). */
+  private manipLabel: { el: HTMLDivElement; id: string | null } | null = null;
   /** The mouse (or desktop pen) dragging a triad handle. */
-  private triadDrag: { pointerId: number; handle: TriadHandle } | null = null;
+  private triadDrag: { pointerId: number; handle: ViewHandle } | null = null;
   /** Parts shown moved before they're rebuilt (a triad drag): id → 4×4 matrix, applied on top of any placement. */
   private previewMoves: Record<string, number[]> = {};
 
@@ -403,7 +416,7 @@ export class SceneManager {
     };
     this.renderer.localClippingEnabled = true;
 
-    this.scene.add(this.partsGroup, this.ghostGroup, this.planesGroup, this.customPlanesGroup, this.originGroup, this.markersGroup, this.connectorGroup, this.sketchLayer.group, this.triadGroup);
+    this.scene.add(this.partsGroup, this.ghostGroup, this.planesGroup, this.customPlanesGroup, this.originGroup, this.markersGroup, this.connectorGroup, this.sketchLayer.group, this.triadGroup, this.manipGroup);
     this.buildPlanes();
     this.buildOrigin();
 
@@ -2162,12 +2175,14 @@ export class SceneManager {
   }
 
   /** The triad handle at this screen point (CSS px), or null. */
-  triadHandleAt(x: number, y: number, reach = 1): TriadHandle | null {
-    if (!this.triad || this.sketchController) return null;
+  triadHandleAt(x: number, y: number, reach = 1): ViewHandle | null {
+    if ((!this.triad && !this.manips.length) || this.sketchController) return null;
     const project = (p: [number, number, number]): [number, number] | null => {
       const s = this.worldToScreen(p);
       return s ? [s.x, s.y] : null;
     };
+    const manip = this.manips.length ? manipHandleAt(this.manips, MANIP_PIXELS * this.worldPerPixel(), project, x, y, reach, this.viewDirection()) : null;
+    if (manip || !this.triad) return manip;
     return handleAt(this.triad, this.triadSize(), project, x, y, reach, this.viewDirection());
   }
 
@@ -2217,9 +2232,109 @@ export class SceneManager {
     this.applyPlacements();
   }
 
+  // -------------------------------------------------------------------------
+  // A feature dialog's manipulators (Onshape's): arrows (and a revolve's arc) to drag a size by.
+
+  /** Show these manipulators (none: hide them). Each is kept the same size on screen; dragging goes through the triad's callbacks. */
+  setManipulators(list: readonly Manipulator[]): void {
+    if (list === this.manips) return;
+    this.manips = [...list];
+    const g = this.manipGroup;
+    for (const child of [...g.children]) {
+      g.remove(child);
+      child.traverse((o) => {
+        const m = o as THREE.Mesh;
+        m.geometry?.dispose();
+        (m.material as THREE.Material | undefined)?.dispose();
+      });
+    }
+    this.manipMaterials.clear();
+    const basic = (colour: string, opacity = 1) => new THREE.MeshBasicMaterial({ color: colour, depthTest: false, depthWrite: false, transparent: true, opacity, side: THREE.DoubleSide });
+    for (const m of this.manips) {
+      const colour = m.locked ? MANIP_COLOURS.locked : MANIP_COLOURS.arrow;
+      const mats: THREE.Material[] = [];
+      const handle = new THREE.Group();
+      handle.userData.manip = m.id;
+      // Drawn 1 unit long up local Y; turned to the arrow's direction, placed at its foot and scaled every frame.
+      const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.78, 8), basic(colour, 0.9));
+      stalk.position.y = 0.39;
+      const head = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.22, 16), basic(colour));
+      head.position.y = 0.89;
+      const foot = new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 8), basic(colour, 0.9));
+      for (const o of [stalk, head, foot]) {
+        o.renderOrder = 21;
+        mats.push(o.material as THREE.Material);
+        handle.add(o);
+      }
+      handle.position.set(...manipPoint(m));
+      handle.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(...manipArrowDir(m)));
+      g.add(handle);
+      const arc = manipArc(m);
+      if (arc.length > 1) {
+        const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(arc.map((p) => new THREE.Vector3(...p))), new THREE.LineBasicMaterial({ color: colour, depthTest: false, depthWrite: false, transparent: true, opacity: 0.7 }));
+        line.renderOrder = 21;
+        mats.push(line.material as THREE.Material);
+        g.add(line);
+      }
+      this.manipMaterials.set(handleKey({ kind: "manip", id: m.id }), { mats, colour });
+    }
+    if (this.triadHover?.kind === "manip" && !this.manips.some((m) => m.id === (this.triadHover as ManipHandle).id)) this.triadHover = null;
+    this.colourTriad();
+  }
+
+  /** The manipulators on show (for the browser smoke test). */
+  manipulatorsShown(): Manipulator[] {
+    return this.manips;
+  }
+
+  /** A manipulator's arrow on screen (CSS px): its foot and tip, or null (for the smoke test). */
+  manipulatorOnScreen(id: string): { foot: { x: number; y: number }; tip: { x: number; y: number } } | null {
+    const m = this.manips.find((x) => x.id === id);
+    if (!m) return null;
+    const [a, b] = arrowEnds(m, MANIP_PIXELS * this.worldPerPixel());
+    const foot = this.worldToScreen(a);
+    const tip = this.worldToScreen(b);
+    return foot && tip ? { foot, tip } : null;
+  }
+
+  /** Show `text` by manipulator `id` (null: no label). */
+  setManipLabel(id: string | null, text = ""): void {
+    if (!id) {
+      if (this.manipLabel) {
+        this.manipLabel.el.hidden = true;
+        this.manipLabel.id = null;
+      }
+      return;
+    }
+    if (!this.manipLabel) {
+      const el = document.createElement("div");
+      el.className = "manip-label";
+      el.setAttribute("aria-live", "polite");
+      this.container.appendChild(el);
+      this.manipLabel = { el, id: null };
+    }
+    this.manipLabel.id = id;
+    this.manipLabel.el.textContent = text;
+    this.manipLabel.el.hidden = false;
+    this.placeManipLabel();
+  }
+
+  private placeManipLabel(): void {
+    const label = this.manipLabel;
+    if (!label?.id) return;
+    const at = this.manipulatorOnScreen(label.id);
+    if (!at) {
+      label.el.hidden = true;
+      return;
+    }
+    label.el.hidden = false;
+    label.el.style.left = `${Math.round(at.tip.x + 10)}px`;
+    label.el.style.top = `${Math.round(at.tip.y - 12)}px`;
+  }
+
   private colourTriad(): void {
     const lit = this.triadDrag?.handle ?? (this.touchStroke?.triadOn ? this.touchStroke.triad : null) ?? this.triadHover;
-    for (const [key, { mats, colour }] of this.triadMaterials) {
+    for (const [key, { mats, colour }] of [...this.triadMaterials, ...this.manipMaterials]) {
       const c = lit && handleKey(lit) === key ? TRIAD_COLOURS.active : colour;
       for (const m of mats) (m as THREE.MeshBasicMaterial).color.set(c);
     }
@@ -2384,7 +2499,7 @@ export class SceneManager {
     }
     this.pointerDown = { x, y, button: e.button };
     // Move / copy's triad: a press on one of its handles starts dragging it (nothing else happens with that press).
-    if (this.triad && !this.sketchController && e.button === 0 && !this.viewCube.contains(x, y, this.width)) {
+    if ((this.triad || this.manips.length) && !this.sketchController && e.button === 0 && !this.viewCube.contains(x, y, this.width)) {
       const handle = this.triadHandleAt(x, y);
       if (handle && this.callbacks.onTriadStart?.(handle, this.rayAt(x, y), shiftHeld(e), this.triadSize())) {
         e.preventDefault();
@@ -2575,13 +2690,18 @@ export class SceneManager {
     }
     if (this.triadDrag?.pointerId === e.pointerId) {
       // (Cleared first: letting go of the capture below fires lostpointercapture, which mustn't take the drag back.)
+      const handle = this.triadDrag.handle;
       this.triadDrag = null;
-      this.pointerDown = null;
+      const at = this.localPoint(e);
+      const still = !!this.pointerDown && Math.hypot(at.x - this.pointerDown.x, at.y - this.pointerDown.y) <= CLICK_SLOP;
+      if (!(handle.kind === "manip" && still)) this.pointerDown = null;
       if (this.renderer.domElement.hasPointerCapture(e.pointerId)) this.renderer.domElement.releasePointerCapture(e.pointerId);
       this.renderer.domElement.style.cursor = "";
-      this.callbacks.onTriadEnd?.();
+      // A manipulator pressed and let go without moving is a plain click on what's under it (an area, a face…).
+      if (handle.kind === "manip" && still) this.callbacks.onTriadCancel?.();
+      else this.callbacks.onTriadEnd?.();
       this.colourTriad();
-      return;
+      if (!(handle.kind === "manip" && still)) return;
     }
     this.cancelHold();
     if (this.holdFired) {
@@ -2767,7 +2887,8 @@ export class SceneManager {
       case "tap": {
         this.touchStroke = null;
         // A tap on one of the triad's handles does nothing (it mustn't pick the part, or a face, under it).
-        if (st?.triad) break;
+        // (A feature dialog's arrow is only grabbed by dragging: a tap picks what's under it, an area or an edge.)
+        if (st?.triad && st.triad.kind !== "manip") break;
         if (st?.sketch && ctl) {
           const ptr = this.sketchPointerAt(g.x, g.y, e);
           if (ptr) {
@@ -2909,7 +3030,9 @@ export class SceneManager {
     }
     // While sketching, the sketch tools handle hover themselves.
     const hit = overCube || this.sketchController || handle ? null : this.pickAt(move.x, move.y);
-    this.renderer.domElement.style.cursor = overCube && this.viewCube.pick(move.x, move.y, this.width) ? "pointer" : handle ? "grab" : "";
+    this.renderer.domElement.style.cursor = overCube && this.viewCube.pick(move.x, move.y, this.width) ? "pointer" : handle ? (handle.kind === "manip" && this.manips.find((m) => m.id === handle.id)?.locked ? "not-allowed" : "grab") : "";
+    const tip = handle?.kind === "manip" ? this.manips.find((m) => m.id === handle.id)?.tip ?? "" : "";
+    if (this.renderer.domElement.title !== tip) this.renderer.domElement.title = tip;
     const partHit = hit?.kind === "part" && !hit.whole ? hit.item : null;
     const wholeHit = hit?.kind === "part" && hit.whole ? hit.item.partId : null;
     if (wholeHit !== this.hoverWhole) {
@@ -2964,6 +3087,8 @@ export class SceneManager {
     for (const m of this.connectorGroup.children) m.scale.setScalar((m.userData.lit ? 44 : 34) * wpp);
     this.triadGroup.scale.setScalar(TRIAD_PIXELS * wpp);
     this.fadeTriad();
+    for (const g of this.manipGroup.children) if (g.userData.manip) g.scale.setScalar(MANIP_PIXELS * wpp);
+    this.placeManipLabel();
     this.sketchLayer.frameUpdate(wpp);
 
     this.renderer.setViewport(0, 0, this.width, this.height);
