@@ -35,9 +35,18 @@ export function manipulatorsNow(): Manipulator[] {
 
 let drag: { session: ManipDrag; before: Feature; step: number; manager: SceneManager; last: string } | null = null;
 
-/** Is a manipulator being dragged now? */
+/** A press on an arrow that can't be dragged (a variable's, or one pointing at you): what to say if it's dragged. */
+let refused: { say: string; ray: ScreenRay; within: number } | null = null;
+
+/** Is a manipulator being dragged (or a refused one pressed) now? */
 export function manipDragging(): boolean {
-  return !!drag;
+  return !!drag || !!refused;
+}
+
+/** Say why an arrow can't be dragged — only once the pointer really moves (a plain click passes through to what's under it). */
+function refuse(manager: SceneManager, say: string, ray: ScreenRay): true {
+  refused = { say, ray, within: 3 * manager.mmPerPixel() };
+  return true;
 }
 
 /** A press (or a finger) landed on a manipulator. True: the press is the handle's (nothing else happens with it). */
@@ -46,15 +55,10 @@ export function manipStart(manager: SceneManager | null, handle: ManipHandle, ra
   const draft = s.editing?.draft;
   const m = manipulatorsNow().find((x) => x.id === handle.id);
   if (!manager || !draft || !m) return false;
-  if (m.locked) {
-    s.showToast(m.locked);
-    return true;
-  }
+  refused = null;
+  if (m.locked) return refuse(manager, m.locked, ray);
   const session = startManipDrag(m, ray);
-  if (!session) {
-    s.showToast("This arrow points almost straight at you: turn the view a little to drag it.");
-    return true;
-  }
+  if (!session) return refuse(manager, "This arrow points almost straight at you: turn the view a little to drag it.", ray);
   // A box in the dialog lets go of the keyboard, so Ctrl+Z then undoes the drag (not the box's typing).
   const focused = typeof document !== "undefined" ? document.activeElement : null;
   if (focused instanceof HTMLElement && focused.closest(".feature-dialog")) focused.blur();
@@ -65,6 +69,15 @@ export function manipStart(manager: SceneManager | null, handle: ManipHandle, ra
 
 /** The pointer moved during a manipulator drag: the draft (its box and the preview) follows. */
 export function manipMove(manager: SceneManager | null, ray: ScreenRay, shift: boolean): void {
+  if (refused) {
+    const o = refused.ray.origin;
+    const moved = Math.hypot(ray.origin[0] - o[0], ray.origin[1] - o[1], ray.origin[2] - o[2]);
+    if (moved > refused.within) {
+      useStore.getState().showToast(refused.say);
+      refused = { ...refused, within: Infinity };
+    }
+    return;
+  }
   if (!drag) return;
   const s = useStore.getState();
   // The dialog closed (or another opened) mid-drag: the drag is over, nothing changes.
@@ -86,6 +99,7 @@ export function manipMove(manager: SceneManager | null, ray: ScreenRay, shift: b
 
 /** The drag was let go: one step of the dialog's undo. */
 export function manipEnd(manager: SceneManager | null): void {
+  refused = null;
   const done = drag;
   drag = null;
   manager?.setManipLabel(null);
@@ -94,6 +108,7 @@ export function manipEnd(manager: SceneManager | null): void {
 
 /** The drag was taken back (Esc, a second finger, the pointer lost): the draft goes back to how it was. */
 export function manipCancel(manager: SceneManager | null): void {
+  refused = null;
   const done = drag;
   drag = null;
   manager?.setManipLabel(null);
@@ -102,6 +117,7 @@ export function manipCancel(manager: SceneManager | null): void {
 
 /** Esc while a manipulator is being dragged: only the drag is taken back (the dialog stays open). True if there was one. */
 export function escapeManipDrag(): boolean {
+  refused = null;
   const d = drag;
   if (!d) return false;
   // The view lets go of the pointer and calls the cancel.

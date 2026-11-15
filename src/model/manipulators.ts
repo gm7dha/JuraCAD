@@ -12,6 +12,7 @@ import type { Feature, FeatureType } from "./types";
 import { formatLength, startingLength } from "./units";
 import { chosenRegions } from "../sketch/areas";
 import { axisInSketch } from "../sketch/axis";
+import { curvePoints } from "../sketch/ops";
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
@@ -58,7 +59,17 @@ export interface ManipContext {
   /** The draft's sketch (`sketchRef`) as built now (a face sketch where its face is), if it has one. */
   sketch: { plane: SketchPlane | null; data: SketchData } | null;
   /** The Part Studio's parts as built now (faces, to see which way an edge's corner faces). */
-  parts: readonly { id: string; faceRefs?: readonly FaceRef[] }[];
+  parts: readonly MeshFaces[];
+}
+
+/** A part as the view has it: its faces, and (when shown) its mesh — one corner of a face tells which way it faces there. */
+export interface MeshFaces {
+  id: string;
+  faceRefs?: readonly FaceRef[];
+  vertices?: ArrayLike<number>;
+  normals?: ArrayLike<number>;
+  triangles?: ArrayLike<number>;
+  faceGroups?: readonly { start: number; count: number }[];
 }
 
 /** Is a box's text a plain number (with a unit, perhaps), not a variable or a sum? Empty = the default, plain. */
@@ -90,6 +101,19 @@ export function profileMiddle(data: SketchData, areas: Feature["areas"]): [numbe
     if (Number.isFinite(x0)) out = [(x0 + x1) / 2, (y0 + y1) / 2];
   } catch {
     out = null;
+  }
+  // No closed shapes (an open profile made thin or into a surface): the middle of the drawn curves' points.
+  if (!out) {
+    const used = new Set(data.curves.filter((c) => !c.construction).flatMap((c) => curvePoints(c)));
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of data.points)
+      if (used.has(p.id)) {
+        x0 = Math.min(x0, p.x);
+        y0 = Math.min(y0, p.y);
+        x1 = Math.max(x1, p.x);
+        y1 = Math.max(y1, p.y);
+      }
+    if (Number.isFinite(x0)) out = [(x0 + x1) / 2, (y0 + y1) / 2];
   }
   byAreas.set(key, out);
   return out;
@@ -163,20 +187,24 @@ function facesAlong(edge: EdgeRef, faces: readonly FaceRef[]): FaceRef[] {
  * Worked out once per pick (so a drag that rebuilds the part never moves its handle about).
  */
 const corners = new WeakMap<TopoPick, { into: Vec3; fillet: number; chamfer: number } | null>();
-export function edgeCorner(pick: TopoPick, faces: readonly FaceRef[]): { into: Vec3; fillet: number; chamfer: number } | null {
+export function edgeCorner(pick: TopoPick, faces: readonly FaceRef[], mesh?: MeshFaces): { into: Vec3; fillet: number; chamfer: number } | null {
   if (corners.has(pick)) return corners.get(pick)!;
   const edge = pick.ref as EdgeRef;
   let out: { into: Vec3; fillet: number; chamfer: number } | null = null;
   const two = facesAlong(edge, faces);
   if (two.length === 2) {
-    const into = unit(scale(add(two[0].normal, two[1].normal), -1));
+    // An inside corner (a wall standing on a base): each face reaches out in front of the other, and a fillet or
+    // chamfer fills the corner, so its face's middle is out in the open, along the faces' normals.
+    const inside = dot(sub(two[0].center, edge.mid), two[1].normal) > 1e-9 || dot(sub(two[1].center, edge.mid), two[0].normal) > 1e-9;
+    const into = unit(scale(add(two[0].normal, two[1].normal), inside ? 1 : -1));
     // α: the angle between the faces' normals (90° for a box's edge).
     const cosA = Math.max(-1, Math.min(1, dot(two[0].normal, two[1].normal)));
     const half = Math.acos(cosA) / 2;
     if (into && half > 0.05) out = { into, fillet: Math.max(0.25, 1 / Math.cos(half) - 1), chamfer: Math.max(0.25, Math.sin(half)) };
   }
+  if (!out && edge.curve !== "LINE") out = roundCorner(edge, faces, mesh);
   if (!out && faces.length) {
-    // A round edge or one we can't place exactly: point at the part's middle.
+    // An edge we can't place exactly: point at the part's middle.
     const centre = scale(faces.reduce<Vec3>((s, f) => add(s, f.center), [0, 0, 0]), 1 / faces.length);
     let into = sub(centre, edge.mid);
     const t = unit(sub(edge.b, edge.a));
@@ -184,8 +212,54 @@ export function edgeCorner(pick: TopoPick, faces: readonly FaceRef[]): { into: V
     const u = unit(into);
     if (u) out = { into: u, fillet: 0.5, chamfer: 0.5 };
   }
-  corners.set(pick, out);
+  // (Not kept when the part isn't built yet: it's worked out again once it is.)
+  if (out || faces.length) corners.set(pick, out);
   return out;
+}
+
+/**
+ * A round edge where a flat face meets a round one (a hole's rim, a pin's top): in between the flat face's inside and
+ * the way into the material across the round face — away from its axis for a hole (the part's middle is further out
+ * than the rim), towards it for a pin. A square corner, so the rounded / cut face's middle is as on a box's edge.
+ */
+function roundCorner(edge: EdgeRef, faces: readonly FaceRef[], mesh?: MeshFaces): { into: Vec3; fillet: number; chamfer: number } | null {
+  const flat = faces.find((f) => f.surface === "PLANE" && Math.abs(dot(sub(edge.mid, f.center), f.normal)) < 1e-3);
+  const n = flat ? unit(flat.normal) : null;
+  if (!flat || !n) return null;
+  const across = (p: Vec3, c: Vec3) => {
+    const w = sub(p, c);
+    return sub(w, scale(n, dot(w, n)));
+  };
+  const round = faces
+    .map((f, i) => ({ f, i, d: length(sub(f.center, edge.mid)) }))
+    .filter(({ f }) => f.surface !== "PLANE")
+    .sort((a, b) => a.d - b.d)[0];
+  if (!round) return null;
+  const roundAt = meshCorner(mesh, round.i);
+  const roundFace = round.f;
+  const toAxis = unit(across(roundFace.center, edge.mid));
+  if (!toAxis) return null;
+  let hole: boolean;
+  if (roundAt) {
+    // A hole's wall faces its axis; a pin's faces away from it.
+    hole = dot(roundAt.n, across(roundAt.p, roundFace.center)) < 0;
+  } else {
+    const middle = scale(faces.reduce<Vec3>((sum, f) => add(sum, f.center), [0, 0, 0]), 1 / faces.length);
+    hole = length(across(middle, roundFace.center)) > length(across(edge.mid, roundFace.center));
+  }
+  const into = unit(add(scale(n, -1), scale(toAxis, hole ? -1 : 1)));
+  return into ? { into, fillet: Math.SQRT2 - 1, chamfer: Math.SQRT1_2 } : null;
+}
+
+/** One corner of face `i` in the part's mesh, and which way the face faces there (null: no mesh). */
+function meshCorner(mesh: MeshFaces | undefined, i: number): { p: Vec3; n: Vec3 } | null {
+  const g = mesh?.faceGroups?.[i];
+  if (!mesh || !g || !g.count || !mesh.vertices || !mesh.normals || !mesh.triangles) return null;
+  const v = mesh.triangles[3 * g.start];
+  if (v === undefined) return null;
+  const at = (a: ArrayLike<number>): Vec3 => [a[3 * v], a[3 * v + 1], a[3 * v + 2]];
+  const n = unit(at(mesh.normals));
+  return n ? { p: at(mesh.vertices), n } : null;
 }
 
 /** The handles to show for the open dialog's draft (none for kinds and settings that have none). */
@@ -237,11 +311,13 @@ export function manipulatorsFor(draft: Feature, ctx: ManipContext): Manipulator[
     } else out.push(make(base("angle", "Angle"), { ...arc, id: "angle", axis: { through, dir: d }, scale: 1, max: 360, tip: "Drag round to change the angle" }));
     return out;
   }
-  const facesOf = (partId: string) => ctx.parts.find((p) => p.id === partId)?.faceRefs ?? [];
+  const partOf = (partId: string) => ctx.parts.find((p) => p.id === partId);
+  const facesOf = (partId: string) => partOf(partId)?.faceRefs ?? [];
   if (draft.type === "fillet" || draft.type === "chamfer") {
     const pick = (draft.picks ?? []).find((p) => p.ref.kind === "edge" && !p.placed);
-    if (!pick) return [];
-    const c = edgeCorner(pick, facesOf(pick.partId));
+    // (A chamfer of two distances or a distance and an angle has no one place its first distance shows: no arrow.)
+    if (!pick || (draft.type === "chamfer" && draft.chamferType)) return [];
+    const c = edgeCorner(pick, facesOf(pick.partId), partOf(pick.partId));
     if (!c) return [];
     const edge = pick.ref as EdgeRef;
     const fillet = draft.type === "fillet";
@@ -266,7 +342,7 @@ export function manipulatorsFor(draft: Feature, ctx: ManipContext): Manipulator[
   const n = unit(face.normal);
   if (!n) return [];
   if (draft.type === "shell") {
-    out.push(make(base("thickness", "Wall"), { id: "thickness", kind: "arrow", origin: face.center, dir: scale(n, -1), scale: 1, angle: false, flips: false, max: Infinity, tip: "Drag to change the wall thickness" }));
+    out.push(make(base("thickness", "Wall"), { id: "thickness", kind: "arrow", origin: face.center, dir: scale(n, draft.flipSide ? 1 : -1), scale: 1, angle: false, flips: false, max: Infinity, tip: "Drag to change the wall thickness" }));
   } else if (draft.type === "thicken") {
     const both = !!draft.bothSides;
     const d = scale(n, draft.flipSide && !both ? -1 : 1);

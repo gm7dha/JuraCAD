@@ -62,6 +62,13 @@ function isTyping(target: EventTarget | null): boolean {
   return el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName);
 }
 
+/** Typing in a text box (not a tick box, choice button or slider, which have no text of their own to undo). */
+function isTypingText(target: EventTarget | null): boolean {
+  if (!isTyping(target)) return false;
+  const el = target as HTMLElement;
+  return !(el instanceof HTMLInputElement && ["checkbox", "radio", "button", "submit", "reset", "range", "color"].includes(el.type));
+}
+
 /** Keyboard shortcuts while a sketch is open. Returns true if the key was used. */
 function sketchShortcut(e: KeyboardEvent): boolean {
   const s = useStore.getState();
@@ -139,7 +146,7 @@ function useShortcuts() {
       }
 
       // Move / copy (or a dialog with manipulators) open: Ctrl+Z takes back its last drag (or click), one at a time.
-      if (mod && !isTyping(e.target) && s.editing && keepsSteps(s.editing.draft) && e.key.toLowerCase() === "z" && !e.shiftKey) {
+      if (mod && !isTypingText(e.target) && s.editing && keepsSteps(s.editing.draft) && e.key.toLowerCase() === "z" && !e.shiftKey) {
         if (s.undoDraftStep()) e.preventDefault();
         return;
       }

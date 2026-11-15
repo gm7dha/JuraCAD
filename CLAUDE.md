@@ -652,12 +652,16 @@
   value is 0, `dir`, handle at value × `scale`) or an arc round `axis`; Extrude blind/symmetric (two arrows, scale ½, both edit `depth`)
   and `depth2`, from the profile's middle (`profileMiddle`: chosen regions' box, cached per sketch data); Revolve one way/symmetric/two
   ways (`max` = what the other angle leaves of 360); Fillet/Chamfer on the first EDGE pick (`edgeCorner`, cached per pick: bisector of
-  the two flat faces holding the edge, the rounded/cut face's middle r(1/cos(α/2) − 1) / d·sin(α/2) in; else towards the faces'
-  middle); Shell/Thicken on the first face pick. A box holding a variable/sum (`isPlainNumber`) = `locked`: drawn grey with a
+  the two flat faces holding the edge — an inside corner (each face reaching in front of the other) points out into the open corner —,
+  the rounded/cut face's middle r(1/cos(α/2) − 1) / d·sin(α/2) in; a round edge by a flat face (`roundCorner`: hole vs pin from one mesh
+  corner of the round face, `meshCorner`); else towards the faces' middle; no arrow for two-distance / distance-angle chamfers);
+  Shell (walls outside with `flipSide`)/Thicken on the first face pick; open profiles (thin, surface) from their points' box. A box holding a variable/sum (`isPlainNumber`) = `locked`: drawn grey with a
   tooltip, never dragged. `manipPatch` (an Extrude's blind end with no second side dragged past 0 flips `extrude.flip`). Drag maths
   pure in `src/viewport/manipulatorDrag.ts` (`manipHandleAt`, `startManipDrag`: arrows via transformDrag's `axisParam`, arcs added up
   like the triad's rings, edge-on along the tangent; `manipStep` 1 mm / 0.05 in, finer only right zoomed in, coarser out; 1°; Shift free;
-  least a step, ≤ `max`). Glue `src/viewport/manipulatorGlue.ts`: SceneManager's triad hit test returns `ViewHandle` (= TriadHandle |
+  least min(step, start), ≤ `max`; nothing changes until the pointer has moved half a step, so grabbing never jumps; `axisParam`
+  ignores a line point behind the eye). A mouse press let go without moving, and a finger tap, pass through as plain clicks; a refused
+  arrow (locked, end-on) says why only once the pointer moves. App's dialog-undo Ctrl+Z works after ticking boxes (`isTypingText`). Glue `src/viewport/manipulatorGlue.ts`: SceneManager's triad hit test returns `ViewHandle` (= TriadHandle |
   ManipHandle, manipulators first), so mouse priority, fingers dragging (never orbiting), hover colour, Esc (`escapeTriadDrag` →
   `escapeManipDrag`) all reuse the triad's paths; the Viewport dispatches the onTriad* callbacks. A drag changes the draft live
   (`store.dragDraft`, rebuilt as usual — the box and preview follow), letting go = one dialog undo step (`endDraftDrag(before)`;

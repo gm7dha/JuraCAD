@@ -92,13 +92,17 @@ export interface ManipDrag {
 }
 
 /** The least a size may be: a step when snapping, else a hundredth (sizes must be more than 0). */
-function least(opts: ManipDragOptions, angle: boolean): number {
+function least(opts: ManipDragOptions, angle: boolean, start: number): number {
   if (!opts.snap) return 0.01;
-  return angle ? opts.angleStep ?? MANIP_ANGLE_STEP : opts.step;
+  const step = angle ? opts.angleStep ?? MANIP_ANGLE_STEP : opts.step;
+  // (A size already smaller than a step doesn't jump up to one as the drag starts.)
+  return start > 0 ? Math.min(step, start) : step;
 }
 
 function settle(m: Manipulator, raw: number, opts: ManipDragOptions): { value: number; flipped: boolean } {
   const step = m.angle ? opts.angleStep ?? MANIP_ANGLE_STEP : opts.step;
+  // Until the pointer has moved half a step the size stays as it was (a 15.3 mm depth doesn't jump to 15 when grabbed).
+  if (opts.snap && Math.abs(raw - m.value) < step / 2) return { value: m.value, flipped: false };
   const v = opts.snap ? snapTo(raw, step) : Math.round(raw * 1000) / 1000;
   let flipped = false;
   let out = v;
@@ -106,7 +110,7 @@ function settle(m: Manipulator, raw: number, opts: ManipDragOptions): { value: n
     flipped = true;
     out = -v;
   }
-  out = Math.max(least(opts, m.angle), out);
+  out = Math.max(least(opts, m.angle, m.value), out);
   if (Number.isFinite(m.max)) out = Math.min(m.max, out);
   return { value: out + 0, flipped };
 }

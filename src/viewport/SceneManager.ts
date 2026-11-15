@@ -2887,7 +2887,8 @@ export class SceneManager {
       case "tap": {
         this.touchStroke = null;
         // A tap on one of the triad's handles does nothing (it mustn't pick the part, or a face, under it).
-        if (st?.triad) break;
+        // (A feature dialog's arrow is only grabbed by dragging: a tap picks what's under it, an area or an edge.)
+        if (st?.triad && st.triad.kind !== "manip") break;
         if (st?.sketch && ctl) {
           const ptr = this.sketchPointerAt(g.x, g.y, e);
           if (ptr) {

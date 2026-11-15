@@ -100,11 +100,71 @@ describe("which manipulators a dialog shows, and where", () => {
     expect(manipulatorsFor(draft("fillet", { picks: [{ partId: "p", ref: faces[0] }] }), { sketch: null, parts: [] })).toEqual([]);
   });
 
+  it("an inside corner's arrow sits out in the corner, not in the material (an L: base + upright wall)", () => {
+    // Base 20 × 10 × 5 (x 0…20, z 0…5) and a wall 5 × 10 × 20 at x 0…5: the inside edge along y at x = 5, z = 5.
+    const faces: FaceRef[] = [
+      { kind: "face", surface: "PLANE", center: [12.5, 5, 5], normal: [0, 0, 1] },
+      { kind: "face", surface: "PLANE", center: [5, 5, 12.5], normal: [1, 0, 0] },
+      { kind: "face", surface: "PLANE", center: [10, 5, 0], normal: [0, 0, -1] },
+    ];
+    const pick: TopoPick = { partId: "L", ref: { kind: "edge", curve: "LINE", a: [5, 0, 5], b: [5, 10, 5], mid: [5, 5, 5] } };
+    const c = edgeCorner(pick, faces)!;
+    expect(close(c.into, [Math.SQRT1_2, 0, Math.SQRT1_2])).toBe(true);
+    const [m] = manipulatorsFor(draft("fillet", { picks: [pick] }, { radius: "2" }), { sketch: null, parts: [{ id: "L", faceRefs: faces }] });
+    const p = manipPoint(m);
+    // Out in the open corner: x > 5 and z > 5.
+    expect(p[0] > 5 && p[2] > 5).toBe(true);
+  });
+
+  it("a hole's rim points down into the plate and away from the hole; a pin's top towards its axis", () => {
+    const plate: FaceRef[] = [
+      { kind: "face", surface: "PLANE", center: [20, 20, 10], normal: [0, 0, 1] },
+      { kind: "face", surface: "CYLINDRE", center: [20, 20, 5], normal: [1, 0, 0] },
+      { kind: "face", surface: "PLANE", center: [20, 20, 0], normal: [0, 0, -1] },
+      { kind: "face", surface: "PLANE", center: [40, 20, 5], normal: [1, 0, 0] },
+      { kind: "face", surface: "PLANE", center: [0, 20, 5], normal: [-1, 0, 0] },
+    ];
+    const rim: TopoPick = { partId: "p", ref: { kind: "edge", curve: "CIRCLE", a: [23, 20, 10], b: [23, 20, 10], mid: [17, 20, 10] } };
+    // One corner of the hole's wall (face 1) at (23, 20, 5), facing the axis.
+    const mesh = { id: "p", faceRefs: plate, vertices: [23, 20, 5], normals: [-1, 0, 0], triangles: [0, 0, 0], faceGroups: [{ start: 0, count: 0 }, { start: 0, count: 1 }] };
+    const c = edgeCorner(rim, plate, mesh)!;
+    expect(close(c.into, [-Math.SQRT1_2, 0, -Math.SQRT1_2])).toBe(true);
+    const pin: FaceRef[] = [
+      { kind: "face", surface: "PLANE", center: [0, 0, 10], normal: [0, 0, 1] },
+      { kind: "face", surface: "CYLINDRE", center: [0, 0, 5], normal: [1, 0, 0] },
+      { kind: "face", surface: "PLANE", center: [0, 0, 0], normal: [0, 0, -1] },
+    ];
+    const top: TopoPick = { partId: "q", ref: { kind: "edge", curve: "CIRCLE", a: [3, 0, 10], b: [3, 0, 10], mid: [-3, 0, 10] } };
+    const pinMesh = { id: "q", faceRefs: pin, vertices: [3, 0, 5], normals: [1, 0, 0], triangles: [0, 0, 0], faceGroups: [{ start: 0, count: 0 }, { start: 0, count: 1 }] };
+    expect(close(edgeCorner(top, pin, pinMesh)!.into, [Math.SQRT1_2, 0, -Math.SQRT1_2])).toBe(true);
+  });
+
+  it("a chamfer of two distances or a distance and an angle shows no arrow", () => {
+    const faces: FaceRef[] = [
+      { kind: "face", surface: "PLANE", center: [5, 5, 10], normal: [0, 0, 1] },
+      { kind: "face", surface: "PLANE", center: [10, 5, 5], normal: [1, 0, 0] },
+    ];
+    const pick: TopoPick = { partId: "p", ref: { kind: "edge", curve: "LINE", a: [10, 0, 10], b: [10, 10, 10], mid: [10, 5, 10] } };
+    const ctx = { sketch: null, parts: [{ id: "p", faceRefs: faces }] };
+    expect(manipulatorsFor(draft("chamfer", { picks: [pick], chamferType: "twoDistances" }), ctx)).toEqual([]);
+    expect(manipulatorsFor(draft("chamfer", { picks: [pick] }), ctx)).toHaveLength(1);
+  });
+
+  it("an open profile (thin or a surface) gets its arrow at the middle of its lines", () => {
+    const data = addLine(emptySketch(), { x: 0, y: 0 }, { x: 40, y: 10 }).sketch;
+    const ctx = { sketch: { plane: { kind: "default" as const, name: "Top" as const }, data }, parts: [] };
+    const [m] = manipulatorsFor(draft("extrude", { sketchRef: "s", surface: true, extrude: { end: "blind", flip: false } }, { depth: "8" }), ctx);
+    expect(close(manipPoint(m), [20, 5, 8])).toBe(true);
+  });
+
   it("Shell and Thicken arrows start on the first picked face", () => {
     const face: FaceRef = { kind: "face", surface: "PLANE", center: [0, 0, 10], normal: [0, 0, 1] };
     const ctx = { sketch: null, parts: [] };
     const [sh] = manipulatorsFor(draft("shell", { picks: [{ partId: "p", ref: face }] }, { thickness: "2" }), ctx);
     expect(close(manipPoint(sh), [0, 0, 8])).toBe(true);
+    // Walls outside the part: the arrow goes outwards.
+    const [out] = manipulatorsFor(draft("shell", { picks: [{ partId: "p", ref: face }], flipSide: true }, { thickness: "2" }), ctx);
+    expect(close(manipPoint(out), [0, 0, 12])).toBe(true);
     const [th] = manipulatorsFor(draft("thicken", { picks: [{ partId: "p", ref: face }] }, { thickness: "3" }), ctx);
     expect(close(manipPoint(th), [0, 0, 13])).toBe(true);
     const [fl] = manipulatorsFor(draft("thicken", { picks: [{ partId: "p", ref: face }], flipSide: true }, { thickness: "3" }), ctx);
@@ -142,6 +202,24 @@ describe("dragging a manipulator", () => {
     // Half each way: the handle moved 3 mm = 6 mm more depth.
     expect(ds.move(front(20, 8), { snap: true, step: 1 })).toEqual({ value: 16, flipped: false });
     expect(ds.move(front(20, -20), { snap: true, step: 1 })).toEqual({ value: 1, flipped: false });
+  });
+
+  it("doesn't jump when grabbed, and a size under a step isn't pushed up to one", () => {
+    const m = { ...depthArrow(), value: 15.3 };
+    const d = startManipDrag(m, front(20, 15.3))!;
+    expect(d.move(front(20, 15.5), { snap: true, step: 1 })).toEqual({ value: 15.3, flipped: false });
+    expect(d.move(front(20, 16.2), { snap: true, step: 1 })).toEqual({ value: 16, flipped: false });
+    const small = { ...depthArrow(), value: 0.4, flips: false };
+    const ds = startManipDrag(small, front(20, 0.4))!;
+    expect(ds.move(front(20, -3), { snap: true, step: 1 }).value).toBe(0.4);
+  });
+
+  it("ignores a pointer ray that meets the arrow's line only behind the eye (perspective)", () => {
+    const m = depthArrow();
+    const d = startManipDrag(m, front(20, 15))!;
+    expect(d.move(front(20, 18), { snap: true, step: 1 }).value).toBe(18);
+    // Nearest the line behind where the ray starts: the last value stays.
+    expect(d.move({ origin: [20, -100, 50], dir: [0, -0.2, 1] }, { snap: true, step: 1 }).value).toBe(18);
   });
 
   it("can't be grabbed pointing straight at you", () => {
