@@ -8,6 +8,15 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.85 — Sketch: drag to move, turn and scale
+
+- Pick some shapes and choose Move / copy: green handles appear. Drag the middle square to move them (it snaps onto points),
+  the ring to turn them (15° steps) and the arm's square to scale them (Shift for any amount). A new Scale box is in the panel too.
+- Typed turns now go round the middle of the shapes, and a turned rectangle stays a rectangle.
+- A pasted copy snaps onto points, line middles and the origin as it follows the pointer (Shift to place it exactly).
+- After drawing a rectangle, slot or ellipse, Tab goes from the width box to the height and Shift+Tab back.
+- With Use, clicking a part's face brings in its whole outline and holes at once, ready to extrude.
+
 ## v0.84.1 — The size box by an arrow no longer steals your typing
 
 - Just after a double-click on an arrow opened its size box, clicking straight into a box in the feature's panel could
