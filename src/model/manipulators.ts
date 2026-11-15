@@ -7,6 +7,8 @@
  * draft (`manipPatch`). Dragging maths (pointer ray → value, hit tests) is in viewport/manipulatorDrag.ts.
  */
 import { resolveParams } from "./features";
+import { evaluate } from "./expr";
+import { radiusPointAt, radiusPointPick } from "./variableFillet";
 import { add, cross, dot, length, scale, sub, unit, type Vec3 } from "./transformMath";
 import type { Feature, FeatureType } from "./types";
 import { formatLength, showLength, startingLength, storeLength } from "./units";
@@ -277,6 +279,23 @@ function meshCorner(mesh: MeshFaces | undefined, i: number): { p: Vec3; n: Vec3 
   return n ? { p: at(mesh.vertices), n } : null;
 }
 
+/** Variable fillet: an arrow at each radius point that can be placed (straight edges, and any edge's ends). Keys "vf:<index>". */
+function radiusPointHandles(draft: Feature, facesOf: (partId: string) => readonly FaceRef[], partOf: (partId: string) => MeshFaces | undefined): Manipulator[] {
+  const out: Manipulator[] = [];
+  (draft.variableFillet?.points ?? []).forEach((p, i) => {
+    const pick = radiusPointPick(draft.picks, p);
+    if (!pick || pick.placed || pick.ref.kind !== "edge") return;
+    const at = radiusPointAt(pick.ref, p.at);
+    const c = at && edgeCorner(pick, facesOf(pick.partId), partOf(pick.partId));
+    if (!at || !c) return;
+    const key = `vf:${i}`;
+    const r = evaluate(p.radius);
+    const b: Base = { key, label: "Radius here", values: { [key]: r.ok ? r.value : 0 }, params: { [key]: p.radius } };
+    out.push({ ...make(b, { id: key, kind: "arrow", origin: at, dir: c.into, scale: c.fillet, angle: false, flips: false, max: Infinity, tip: "Drag to change the radius at this point (type it in the dialog's list)" }), noEdit: true });
+  });
+  return out;
+}
+
 /** The handles to show for the open dialog's draft (none for kinds and settings that have none). */
 export function manipulatorsFor(draft: Feature, ctx: ManipContext): Manipulator[] {
   if (!hasManipulators(draft.type)) return [];
@@ -364,6 +383,7 @@ function otherHandles(draft: Feature, ctx: ManipContext, base: (key: string, lab
         tip: fillet ? "Drag to change the radius" : "Drag to change the distance",
       }),
     );
+    if (fillet && draft.variableFillet) out.push(...radiusPointHandles(draft, facesOf, partOf));
     return out;
   }
   if (draft.type === "hole") return holeHandles(draft, ctx, base);
@@ -584,6 +604,12 @@ export function manipBoxText(m: Pick<Manipulator, "angle">, value: number): stri
  */
 export function manipPatch(start: Feature, m: Manipulator, value: number, flipped: boolean): { params: Record<string, string>; fields?: Partial<Feature> } {
   const params = { [m.key]: manipBoxText(m, value) };
+  // A variable fillet's radius point: its own radius, not a box.
+  const point = /^vf:(\d+)$/.exec(m.key);
+  if (point && start.variableFillet) {
+    const k = Number(point[1]);
+    return { params: {}, fields: { variableFillet: { ...start.variableFillet, points: start.variableFillet.points.map((p, i) => (i === k ? { ...p, radius: params[m.key] } : p)) } } };
+  }
   // (Always said, so dragging back over zero turns it round again.)
   if (m.flips && start.type === "extrude" && start.extrude) return { params, fields: { extrude: { ...start.extrude, flip: flipped ? !start.extrude.flip : start.extrude.flip } } };
   return { params };

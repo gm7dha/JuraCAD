@@ -1,4 +1,5 @@
 import { isSimplifyLevel } from "./simplify";
+import { parseVariableFillet } from "./variableFillet";
 import { parseNamedViews } from "./namedViews";
 import { parsePick } from "../geometry/topoRef";
 import { parseMoveFace } from "./moveFace";
@@ -802,6 +803,10 @@ export function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | n
     if (feature.type === "moveFace" && f.moveFace && typeof f.moveFace === "object") {
       const mv = parseMoveFace(f.moveFace);
       if (mv) feature.moveFace = mv;
+    }
+    if (feature.type === "fillet" && f.variableFillet) {
+      const vf = parseVariableFillet(f.variableFillet);
+      if (vf) feature.variableFillet = vf;
     }
     if (feature.type === "replaceFace") {
       const rd = (f.replaceDef ?? {}) as Record<string, unknown>;

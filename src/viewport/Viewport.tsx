@@ -706,7 +706,8 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       return;
     }
     const pick = pickFor(s.parts, target.item);
-    if (pick) s.toggleDraftPick(pick);
+    // A variable fillet's click point says where along an edge to put a radius.
+    if (pick) s.toggleDraftPick(s.editing.draft.variableFillet && target.point ? { ...pick, at: target.point } : pick);
     return;
   }
   const { selection: current, setSelection, selectPlane, selectedPlane } = s;

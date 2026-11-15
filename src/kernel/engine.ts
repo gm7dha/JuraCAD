@@ -14,7 +14,7 @@ import { planeFrame, toSketch, toWorld, type PlaneFrame, type SketchPlane } from
 import { planeAsSketchPlane, planeFeatureFrame, repointFeature } from "../sketch/planeFeature";
 import { asTransformFrame, connectorFrame, connectorPlane, isMorePlaneMode, type FullFrame } from "../sketch/planeTypes";
 import { planeThroughLine, sketchLine3D, type SketchLineRef } from "../model/patternRefs";
-import { getCurrentScope, setCurrentScope } from "../model/expr";
+import { evaluate, getCurrentScope, setCurrentScope } from "../model/expr";
 import { geometrySound } from "../model/checkReport";
 import { MESH_TOLERANCES, type Axis, type Feature, type GeomPick, type ImportedFile, type MateConnectorDef, type MeshQuality, type Operation, type PlaneMoreMode, type PlaneOptions, type TransformFrame } from "../model/types";
 import { deleteFaces, draftFaces, extrudeSketch, segmentsWire } from "./extrude";
@@ -83,6 +83,8 @@ import type { FrameMemberInfo } from "../model/frameTypes";
 import { splitFaces } from "./splitFace";
 import { simplifyReport, type SimplifyLevel, type SimplifySummary } from "../model/simplify";
 import { edgesOf, facesOf, shellsOf, solidsOf } from "./topology";
+import { radiusPointPick, VariableFilletError } from "../model/variableFillet";
+import { variableFillet, type EdgeRadiusPoint } from "./variableFillet";
 import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
 
 /** Id of the first Part Studio (matches MAIN_STUDIO in model/studios.ts). */
@@ -1265,6 +1267,37 @@ function facingWords(n: Vec3, kind: string): string {
  * Find the picked edges (and the edges of picked faces) on a part as it is
  * now. Throws a friendly error if some can't be found.
  */
+/**
+ * A variable fillet's points with their radii worked out, each with its pick (null when it's an ordinary fillet or
+ * has no points on picked edges); a plain message when a radius can't be used.
+ */
+function radiusPointsOf(feature: Feature): { pick: TopoPick; at: number; radius: number }[] | string | null {
+  const vf = feature.variableFillet;
+  if (!vf?.points.length) return null;
+  const out: { pick: TopoPick; at: number; radius: number }[] = [];
+  for (const [i, p] of vf.points.entries()) {
+    const pick = radiusPointPick(feature.picks, p);
+    if (!pick) continue;
+    const r = evaluate(p.radius);
+    if (!r.ok) return `Radius point ${i + 1}: ${r.error}`;
+    if (!(r.value > 0)) return `Radius point ${i + 1}: the radius must be more than 0.`;
+    out.push({ pick, at: p.at, radius: r.value });
+  }
+  return out.length ? out : null;
+}
+
+/** The found edges of one part with their radius points (edge picks are first in `chosen`, in pick order). */
+function variableEdges(points: { pick: TopoPick; at: number; radius: number }[], partPicks: TopoPick[], chosen: Edge[]): { edge: Edge; points: EdgeRadiusPoint[] }[] | null {
+  const edgePicks = partPicks.filter((p) => p.ref.kind === "edge");
+  const mine = points.filter((p) => edgePicks.includes(p.pick));
+  if (!mine.length) return null;
+  return chosen.map((edge, k) => {
+    const pick = k < edgePicks.length ? edgePicks[k] : null;
+    const ref = pick?.ref.kind === "edge" ? pick.ref : null;
+    return { edge, points: ref ? mine.filter((p) => p.pick === pick).map((p) => ({ at: p.at, radius: p.radius, a: ref.a, b: ref.b })) : [] };
+  });
+}
+
 function findPickedEdges(shape: Shape3D, picks: TopoPick[]): Edge[] {
   const edges = edgesOf(shape);
   const faces = facesOf(shape);
@@ -7021,6 +7054,8 @@ export class GeometryEngine {
     const picks = feature.picks ?? [];
     if (picks.length === 0) return "Click the edges (or faces) you want to " + (feature.type === "fillet" ? "round." : "bevel.");
     const size = feature.type === "fillet" ? values.radius : values.distance;
+    const variable = feature.type === "fillet" && !feature.allEdges ? radiusPointsOf(feature) : null;
+    if (typeof variable === "string") return variable;
     const lopsided = feature.type === "chamfer" && feature.chamferType ? feature.chamferType : null;
     if (lopsided === "distanceAngle" && !(values.angle < 90)) return "Angle: use an angle between 0° and 90° (45° makes an even bevel).";
 
@@ -7054,7 +7089,7 @@ export class GeometryEngine {
         // Every edge of the part (Onshape's picking a whole part), or the picked ones.
         const chosen = feature.allEdges ? edgesOf(part.shape) : findPickedEdges(part.shape, picks.filter((p) => p.partId === partId));
         // A variable fillet runs from one radius at the start of each edge to another at its end.
-        const end = feature.type === "fillet" ? (values.endRadius ?? 0) : 0;
+        const end = feature.type === "fillet" && !feature.variableFillet ? (values.endRadius ?? 0) : 0;
         const radius: number | [number, number] = end > 0 && Math.abs(end - size) > 1e-9 ? [size, end] : size;
         const pick = (e: Edge) => (chosen.some((c) => c.isSame(e)) ? radius : null);
         const failed =
@@ -7062,9 +7097,13 @@ export class GeometryEngine {
             ? "Couldn't round these edges. Try a smaller radius — it has to fit on the faces next to each edge."
             : "Couldn't bevel these edges. Try a smaller distance — it has to fit on the faces next to each edge.";
         let shape: Shape3D;
+        // Variable fillet: radii at points on the picked edges (edge picks come first in `chosen`, in order).
+        const varied = variable ? variableEdges(variable, picks.filter((p) => p.partId === partId), chosen) : null;
         try {
-          shape = feature.type === "fillet" ? part.shape.fillet(pick) : part.shape.chamfer((e: Edge) => (chosen.some((c) => c.isSame(e)) ? size : null));
-        } catch {
+          if (varied) shape = variableFillet(part.shape, varied, size, !!feature.variableFillet?.straight);
+          else shape = feature.type === "fillet" ? part.shape.fillet(pick) : part.shape.chamfer((e: Edge) => (chosen.some((c) => c.isSame(e)) ? size : null));
+        } catch (e) {
+          if (e instanceof VariableFilletError) throw e;
           throw new Error(failed);
         } finally {
           chosen.forEach((c) => c.delete());

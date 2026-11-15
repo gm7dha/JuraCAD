@@ -20,6 +20,7 @@
  * deleted *Add* feature changed (the part is older, so it stays). Those show
  * as errors afterwards, as a plain Delete leaves them.
  */
+import { tidyRadiusPoints } from "./variableFillet";
 import { curveUses } from "./curves";
 import { loftUses, loftWithoutGone } from "./loft";
 import { frameUses } from "./frame";
@@ -338,6 +339,7 @@ export function withoutGone(f: Feature, gone: Set<string>): Feature {
     out = { ...out, ...patch };
   };
   if (f.picks?.some((p) => partGone(p.partId))) set({ picks: f.picks.filter((p) => !partGone(p.partId)) });
+  if (out.variableFillet) out = tidyRadiusPoints(out);
   if (f.blend?.side2.some((p) => partGone(p.partId))) set({ blend: { ...f.blend, side2: f.blend.side2.filter((p) => !partGone(p.partId)) } });
   if (f.pattern?.sources.some(featureGone)) set({ pattern: { ...f.pattern, sources: f.pattern.sources.filter((id) => !featureGone(id)) } });
   if (f.mirror?.sources.some(featureGone)) set({ mirror: { ...f.mirror, sources: f.mirror.sources.filter((id) => !featureGone(id)) } });

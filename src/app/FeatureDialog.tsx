@@ -6,6 +6,7 @@ import { formatLength, lengthNumber, showLength, storeLength } from "../model/un
 import { describeRef } from "../geometry/topoRef";
 import { AreaPicker } from "./AreaPicker";
 import { LoftOptions } from "./LoftOptions";
+import { VariableFilletOptions } from "./VariableFilletOptions";
 import { areasTaken, followedSketch, pathChange, sketchesOffered, takesSeveral } from "../sketch/areaClicks";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, revolveWay, visibleParamKeys, type ParamDef } from "../model/features";
 import { describeHole, SCREW_SIZES, standardParams } from "../model/holes";
@@ -2316,6 +2317,7 @@ function PicksField() {
         </div>
       )}
     </fieldset>
+    {draft.type === "fillet" && <VariableFilletOptions />}
     </>
   );
 }

@@ -8,6 +8,23 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.87 — Variable fillet
+
+- Fillet has a new Variable option, as in Onshape: set the radius at the ends of edges and at points along them, and the
+  rounding changes smoothly (or in straight steps) between them.
+- Click a picked edge near an end, or part way along, to add a radius point there; drag its arrow in the 3D view, or type
+  the radius (a number or a variable) in the list.
+- Claude can make variable fillets too.
+
+## v0.86 — A quicker feature list
+
+- Pick several features with Ctrl/⌘- or Shift-click, then suppress, delete, copy or put them in a folder together.
+- F2 renames the picked feature in place; ↑/↓ move through the list (Shift picks more), Enter opens the one picked, Esc lets go.
+- With a dialog open, Enter accepts it.
+- The list's heading shows "N failed" / "N notes": click to go to each one in turn.
+- Drag the rollback bar onto any row, or choose Roll to end from a row's menu.
+- New features start with the options you chose last time (end type, hole kind, chamfer type and so on), for this session.
+
 ## v0.85 — Sketch: drag to move, turn and scale
 
 - Pick some shapes and choose Move / copy: green handles appear. Drag the middle square to move them (it snaps onto points),

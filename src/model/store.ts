@@ -1,4 +1,5 @@
 import { sketchFromDxf, type LinkedSketch } from "../link/receive";
+import { clickRadiusPoint, tidyRadiusPoints } from "./variableFillet";
 import { defaultTemplate } from "../drawing/templateStorage";
 import { applyTemplate } from "../drawing/templates";
 import { deleteItems } from "../sketch/ops";
@@ -79,6 +80,7 @@ import { deleteStudio, studioInUse, studioUsers } from "./studioUse";
 import { deleteFeatures as deleteFeaturesIn, findDependents } from "./dependents";
 import { designOf, withVersionsOf } from "./versions";
 import { newKeepId, readKept } from "./browserKeep";
+import { rememberOptions, withRemembered, type OptionsMemory } from "./lastOptions";
 
 /** Which instances show a symmetric part, or a symmetric sub-assembly (for mirrors that show such things as themselves). */
 const symmetricIn = (parts: readonly PartMesh[], assemblies: readonly Assembly[] = []) => (i: Instance) => {
@@ -319,6 +321,8 @@ export interface AppState {
   sketch: SketchSession | null;
   /** Feature highlighted in the feature list. */
   selectedFeatureId: string | null;
+  /** Several features picked in the list (Shift / Ctrl + click): counts only while it holds `selectedFeatureId`; read with `pickedFeatures`. */
+  featureSelection: string[];
   /** The section view, when one is on. */
   section: SectionView | null;
   /** The print bed preview, when on: which printer (or a custom size). */
@@ -400,7 +404,7 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert" | "connector" | "thin" | "loft" | "modifyFillet" | "allEdges" | "curve" | "pathEdges" | "frame" | "trimFrame" | "gusset" | "boundary" | "blend" | "moveFace">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert" | "connector" | "thin" | "loft" | "modifyFillet" | "allEdges" | "curve" | "pathEdges" | "frame" | "trimFrame" | "gusset" | "boundary" | "blend" | "moveFace" | "variableFillet">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Part pattern / Composite part: add a part to the open feature's parts, or take it out. */
@@ -468,6 +472,8 @@ export interface AppState {
   /** Move a feature to just before another (null = the end), if what it uses stays above it. One undo step. */
   moveFeature: (id: string, beforeId: string | null) => void;
   toggleSuppressed: (id: string) => void;
+  /** Suppress (or unsuppress) several features as one undo step. */
+  setFeaturesSuppressed: (ids: string[], suppressed: boolean) => void;
   renameFeature: (id: string, name: string) => void;
   /** Feature list folders: put features in one (null takes them out), or rename one. */
   setFeatureFolder: (ids: string[], folder: string | null) => void;
@@ -627,6 +633,8 @@ export interface AppState {
   undo: () => void;
   redo: () => void;
   selectFeature: (id: string | null) => void;
+  /** Pick several features in the list; `primary` is the one clicked last (the one Edit, the eye etc. act on). */
+  selectFeatures: (ids: string[], primary: string | null) => void;
   setSelection: (items: SelectionItem[]) => void;
   setAreaSelection: (selection: AreaSelection | null) => void;
   toggleHidden: (partId: string) => void;
@@ -805,6 +813,8 @@ function sameDesign(next: JuraCADDocument, from: JuraCADDocument) {
 }
 
 export const useStore = create<AppState>((set, get) => {
+  /** The last options each kind of new feature was made with, this session (lastOptions.ts). */
+  let remembered: OptionsMemory = {};
   /**
    * Apply a document change and record it for undo. Refused while an old
    * version is open, except changes to what's shown (`display`: the eye, P),
@@ -901,6 +911,7 @@ export const useStore = create<AppState>((set, get) => {
     editing: null,
     sketch: null,
     selectedFeatureId: null,
+    featureSelection: NO_DIMS,
     selection: [],
     areaSelection: null,
     section: null,
@@ -987,7 +998,8 @@ export const useStore = create<AppState>((set, get) => {
         s.startSketch(planeFeature && frame ? planeAsSketchPlane(planeFeature, frame) : s.selectedPlane ? { kind: "default", name: s.selectedPlane } : areaPlane);
         return;
       }
-      const draft = createFeature(view(), type);
+      // The last options used for this kind of feature (Onshape keeps them for the next one).
+      const draft = withRemembered(createFeature(view(), type), remembered);
       const features = activeFeatures(s);
       // Extrude or revolve the sketch that's highlighted in the list, if any.
       if (isSketchSolid(type)) {
@@ -1114,12 +1126,12 @@ export const useStore = create<AppState>((set, get) => {
       // (Onshape does the same), rather than quietly using the origin.
       if (draft.mirror) draft.mirror = { ...draft.mirror, unset: true };
       if (type === "circularPattern" && draft.pattern) draft.pattern = { ...draft.pattern, unset: true };
-      // Mirror and patterns start with the feature highlighted in the list, if it makes a solid.
+      // Mirror and patterns start with the features highlighted in the list (every one picked), if they make solids.
       if (isPatternFeature(type)) {
-        const picked = features.find((f) => f.id === s.selectedFeatureId && isSolidFeature(f.type));
-        if (picked) {
-          if (draft.mirror) draft.mirror = { ...draft.mirror, sources: [picked.id] };
-          if (draft.pattern) draft.pattern = { ...draft.pattern, sources: [picked.id] };
+        const picked = pickedFeatures(s).filter((id) => features.some((f) => f.id === id && isSolidFeature(f.type)));
+        if (picked.length) {
+          if (draft.mirror) draft.mirror = { ...draft.mirror, sources: picked };
+          if (draft.pattern) draft.pattern = { ...draft.pattern, sources: picked };
         }
       }
       // As in Onshape: a pattern started with parts picked (in the Parts list) repeats those parts; with faces picked in
@@ -1142,7 +1154,7 @@ export const useStore = create<AppState>((set, get) => {
           .map((item) => pickFor(s.parts, item))
           .filter((p): p is TopoPick => p !== null);
       }
-      set({ editing: { mode: "create", draft }, sketch: null, selectedFeatureId: null, selection: [], areaSelection: null, selectedPlane: null, showFlat: false });
+      set({ editing: { mode: "create", draft }, sketch: null, selectedFeatureId: null, featureSelection: NO_DIMS, selection: [], areaSelection: null, selectedPlane: null, showFlat: false });
     },
 
     startImport: (file) => {
@@ -1168,6 +1180,7 @@ export const useStore = create<AppState>((set, get) => {
         showFlat: false,
         sketch: f.type === "sketch" ? newSession() : null,
         selectedFeatureId: id,
+        featureSelection: NO_DIMS,
         selectedPlane: null,
         selection: [],
       });
@@ -1307,7 +1320,7 @@ export const useStore = create<AppState>((set, get) => {
       set((s) => {
         if (!s.editing) return {};
         const d = s.editing.draft;
-        const next = { ...d, ...patch };
+        const next = patch.picks && d.variableFillet ? tidyRadiusPoints({ ...d, ...patch }) : { ...d, ...patch };
         // Move / copy: a change is a step of its own undo — except only choosing what a click picks next.
         const { picking: _a, ...was } = d.transform ?? ({} as NonNullable<Feature["transform"]>);
         const { picking: _b, ...now } = next.transform ?? ({} as NonNullable<Feature["transform"]>);
@@ -1320,10 +1333,15 @@ export const useStore = create<AppState>((set, get) => {
       set((s) => {
         if (!s.editing) return {};
         const picks = s.editing.draft.picks ?? [];
-        const i = picks.findIndex((p) => p.partId === pick.partId && sameRef(p.ref, pick.ref));
-        const next = i >= 0 ? picks.filter((_, j) => j !== i) : [...picks, pick];
         const steps = keepsSteps(s.editing.draft) ? { draftSteps: draftStepAfter(s.draftSteps, s.editing.draft) } : {};
-        return { editing: { ...s.editing, draft: { ...s.editing.draft, picks: next } }, ...steps };
+        // Variable fillet: a click on an edge it already rounds puts a radius point there (the list's × still removes it).
+        const pointed = clickRadiusPoint(s.editing.draft, pick);
+        if (pointed) return pointed === s.editing.draft ? {} : { editing: { ...s.editing, draft: pointed }, ...steps };
+        // (A variable fillet's click point on an edge only says where a radius goes; a face keeps its own.)
+        const { at: _at, ...plain } = pick;
+        const i = picks.findIndex((p) => p.partId === pick.partId && sameRef(p.ref, pick.ref));
+        const next = i >= 0 ? picks.filter((_, j) => j !== i) : [...picks, s.editing.draft.variableFillet && pick.ref.kind === "edge" ? plain : pick];
+        return { editing: { ...s.editing, draft: tidyRadiusPoints({ ...s.editing.draft, picks: next }) }, ...steps };
       }),
 
     toggleDraftPart: (partId) => {
@@ -1382,6 +1400,7 @@ export const useStore = create<AppState>((set, get) => {
         const vars = fitted.variables;
         change((doc) => inStudio({ ...doc, variables: vars }, activeStudioId(get()) ?? firstStudioId(get().history.present), place));
       } else changeStudio(place);
+      if (editing.mode === "create") remembered = rememberOptions(remembered, draft);
       set({ editing: null, sketch: null, selectedFeatureId: draft.id, draftSteps: null, transformLive: null, ...(at && editing.mode === "create" ? { rollbackTo: draft.id } : {}) });
       return true;
     },
@@ -1486,6 +1505,11 @@ export const useStore = create<AppState>((set, get) => {
       if (f) changeStudio((doc) => setSuppressed(doc, id, !f.suppressed));
     },
 
+    setFeaturesSuppressed: (ids, suppressed) => {
+      const list = activeFeatures(get());
+      const todo = ids.filter((id) => list.some((f) => f.id === id && f.suppressed !== suppressed));
+      if (todo.length) changeStudio((doc) => todo.reduce((d, id) => setSuppressed(d, id, suppressed), doc));
+    },
     renameFeature: (id, name) => changeStudio((doc) => renameFeature(doc, id, name)),
     setFeatureFolder: (ids, folder) => changeStudio((doc) => setFolder(doc, ids, folder)),
     setFeaturesVisible: (ids, visible) => {
@@ -2178,7 +2202,11 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     // Picking a feature or picking parts: one at a time (the other side is then shown as "linked").
-    selectFeature: (id) => set((s) => ({ selectedFeatureId: id, selectedPlane: id ? null : s.selectedPlane, selectedParts: id ? [] : s.selectedParts })),
+    selectFeature: (id) => set((s) => ({ selectedFeatureId: id, featureSelection: NO_DIMS, selectedPlane: id ? null : s.selectedPlane, selectedParts: id ? [] : s.selectedParts })),
+    selectFeatures: (ids, primary) => {
+      const main = primary && ids.includes(primary) ? primary : (ids[ids.length - 1] ?? null);
+      set((s) => ({ selectedFeatureId: main, featureSelection: ids.length > 1 ? ids : NO_DIMS, selectedPlane: main ? null : s.selectedPlane, selectedParts: main ? [] : s.selectedParts }));
+    },
     setSelection: (items) =>
       set((s) => ({ selection: items, selectedPlane: items.length > 0 ? null : s.selectedPlane, areaSelection: null })),
     // Areas are selected on their own: faces, edges and planes are let go (and the other way round).
@@ -2346,6 +2374,28 @@ export function viewOwner(s: Pick<AppState, "activeTab" | "history">): string {
 /** The Origin and default planes hidden in the Part Studio on show. Same array each time. */
 export function activeHiddenDatums(s: Pick<AppState, "activeTab" | "history">): DatumName[] {
   return hiddenDatumsOf(s.history.present, activeStudioId(s) ?? firstStudioId(s.history.present));
+}
+
+/**
+ * The features picked in the list, in list-pick order (selector-safe): several after Shift / Ctrl + click, else just
+ * the highlighted one, else none. Ids no longer in the Part Studio on show (after an undo, or a change from Claude) are
+ * left out.
+ */
+let lastSingle: string[] = [];
+let lastPicked: { sel: string[]; features: Feature[]; result: string[] } | null = null;
+export function pickedFeatures(s: Pick<AppState, "selectedFeatureId" | "featureSelection" | "activeTab" | "history">): string[] {
+  const id = s.selectedFeatureId;
+  if (!id) return NO_DIMS;
+  if (s.featureSelection.length > 1 && s.featureSelection.includes(id)) {
+    const features = activeFeatures(s);
+    if (!lastPicked || lastPicked.sel !== s.featureSelection || lastPicked.features !== features) {
+      const left = s.featureSelection.filter((x) => features.some((f) => f.id === x));
+      lastPicked = { sel: s.featureSelection, features, result: left.length === s.featureSelection.length ? s.featureSelection : left };
+    }
+    if (lastPicked.result.length > 1 && lastPicked.result.includes(id)) return lastPicked.result;
+  }
+  if (lastSingle[0] !== id) lastSingle = [id];
+  return lastSingle;
 }
 
 /** Features of the Part Studio on show (the first one while an assembly is on show). Same array each time. */

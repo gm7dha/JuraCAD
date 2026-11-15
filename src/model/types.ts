@@ -277,6 +277,24 @@ export type ExtrudeEnd = "blind" | "symmetric" | "throughAll" | "upToFace" | "up
 /** What a feature does with its solid: a new part, added to the latest part, cut from it, or kept only where they overlap. */
 export type Operation = "new" | "add" | "remove" | "intersect";
 
+/** Variable fillet: one radius at one place on a picked edge. */
+export interface FilletRadiusPoint {
+  /** The picked edge it's on: that pick's part and its `ref.mid` (so the point goes when the pick does). */
+  part: string;
+  edge: [number, number, number];
+  /** Where along the edge: a share of its length, from the end the pick calls `a` (0) to its `b` (1). */
+  at: number;
+  /** The radius there: a number or an expression, like the other boxes. */
+  radius: string;
+}
+
+/** Variable fillet's settings. */
+export interface VariableFillet {
+  points: FilletRadiusPoint[];
+  /** Straight between the points (Onshape's "Smooth transition" off). */
+  straight?: true;
+}
+
 export interface Feature {
   /** Permanent ID, never reused. */
   id: string;
@@ -435,6 +453,12 @@ export interface Feature {
   moveFace?: MoveFaceDef;
   /** Fillet and Chamfer: round (bevel) every edge of the parts the picks are on, whatever was picked on them (Onshape's picking a whole part). */
   allEdges?: boolean;
+  /**
+   * Fillet, Onshape's "Variable": radii set at points on the picked edges (`points`; see src/model/variableFillet.ts),
+   * the fillet changing smoothly between them (or in straight steps, `straight`). Edges without points keep the main
+   * radius; so do the ends of a run of edges with no point there. Missing = the ordinary fillet.
+   */
+  variableFillet?: VariableFillet;
   /** Delete face: leave the hole open instead of healing it (a solid part becomes a surface). */
   leaveOpen?: boolean;
   /** Corner break: round the corners off (missing) or cut them off straight. */

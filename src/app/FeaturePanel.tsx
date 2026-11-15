@@ -3,7 +3,7 @@ import { addHeld } from "../viewport/touchKeys";
 
 import { DEFAULT_PART_COLOUR, PART_COLOURS } from "../model/colours";
 import { describeParamErrors, FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, OPERATION_LABELS } from "../model/features";
-import { activeFeatures, activeHiddenDatums, studioParts, useStore, type DatumName, type PlaneName } from "../model/store";
+import { activeFeatures, activeHiddenDatums, activeStudioId, pickedFeatures, studioParts, useStore, type DatumName, type PlaneName } from "../model/store";
 import { featureVisible, hasEye } from "../model/visibility";
 import { nextFolderName } from "../model/document";
 import { insertOfFeature } from "../library/insert";
@@ -18,6 +18,8 @@ import { DEFAULT_FINISH, FINISHES } from "../model/finishes";
 import { copyFromMenu, pasteFromMenu } from "./featureClipboardApp";
 import { matchingFeatures, rollbackBarAfter } from "../model/featureSearch";
 import { setHoveredFeature } from "../viewport/featureFaces";
+import { clickFeatureRow, setRenaming, setShownOrder, useRenaming } from "./featureListState";
+import { failingFeatures, firstNew, nextOf, rollbackDrop } from "../model/featureList";
 
 const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   box: Icons.Box,
@@ -299,13 +301,18 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
   const warning = useStore((s) => s.featureWarnings[feature.id]);
   // Plain information (what Simplify did), shown when hovering.
   const note = useStore((s) => s.featureNotes[feature.id]);
-  const selected = useStore((s) => s.selectedFeatureId === feature.id);
+  const selected = useStore((s) => pickedFeatures(s).includes(feature.id));
+  // Several features picked, this among them: its menu acts on them all.
+  const group = useStore((s) => {
+    const picked = pickedFeatures(s);
+    return picked.length > 1 && picked.includes(feature.id) ? picked : null;
+  });
+  const rolledAt = useStore((s) => s.rollbackTo);
+  const renaming = useRenaming() === feature.id;
   const editing = useStore((s) => s.editing?.draft.id === feature.id);
-  const selectFeature = useStore((s) => s.selectFeature);
   const startEdit = useStore((s) => s.startEdit);
   const toggleSuppressed = useStore((s) => s.toggleSuppressed);
   const deleteFeature = useStore((s) => s.deleteFeature);
-  const renameFeature = useStore((s) => s.renameFeature);
   const Icon = TYPE_ICONS[feature.type];
   const error = kernelError ?? describeParamErrors(feature);
   const isSource = useStore((s) => {
@@ -327,18 +334,13 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
 
   const entries: MenuEntry[] = [
     { label: "Edit…", action: () => startEdit(feature.id) },
-    {
-      label: "Rename…",
-      action: () => {
-        const name = window.prompt("Rename feature", feature.name);
-        if (name !== null) renameFeature(feature.id, name);
-      },
-    },
+    { label: "Rename (F2)", action: () => setRenaming(feature.id) },
     { label: feature.suppressed ? "Unsuppress" : "Suppress", action: () => toggleSuppressed(feature.id) },
     ...(feature.type === "plane" ? [{ label: "View normal to", action: () => viewNormalToPlaneFeature(feature.id) }] : []),
     ...(eye && !editing ? [{ label: shown ? "Hide" : "Show", action: () => setVisible(!shown) }] : []),
     ...(feature.type === "sketch" || feature.type === "plane" ? VISIBILITY_MENU : []),
     { label: "Roll back to here", action: () => useStore.getState().setRollback(feature.id) },
+    ...(rolledAt ? [{ label: "Roll to end", action: () => useStore.getState().setRollback(null) }] : []),
     // On a touch screen rows can't be dragged to reorder them, so the menu does it.
     ...(TOUCH_SCREEN
       ? [
@@ -380,6 +382,7 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
     { label: "Delete", action: () => deleteFeature(feature.id), danger: true },
     { label: "Delete with dependents…", action: () => useStore.getState().askDelete({ ids: [feature.id], from: "menu" }), danger: true },
   ];
+  const menu = group ? groupMenu(group) : entries;
 
   return (
     <li
@@ -397,7 +400,10 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
       ]
         .filter(Boolean)
         .join(" ")}
-      onClick={() => {
+      data-feature-id={feature.id}
+      aria-selected={selected}
+      onClick={(e) => {
+        if (renaming) return;
         // While a mirror or pattern is open, clicking a feature adds it to (or removes it from) what's repeated.
         const st = useStore.getState();
         const d = st.editing?.draft;
@@ -415,10 +421,16 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
           else st.showToast(`${feature.name} doesn't add or cut a solid, so it can't be ${d.type === "mirror" ? "mirrored" : "patterned"}.`);
           return;
         }
-        selectFeature(feature.id);
+        // Ctrl/⌘ + click adds or takes off one, Shift + click picks a run (not while a feature is open).
+        const several = !d && (addHeld(e) || e.shiftKey);
+        clickFeatureRow(feature.id, { add: several && addHeld(e), range: several && e.shiftKey });
       }}
-      onDoubleClick={() => startEdit(feature.id)}
-      onContextMenu={(e) => onMenu(e, entries)}
+      onDoubleClick={() => !renaming && startEdit(feature.id)}
+      onContextMenu={(e) => {
+        // A right-click on a row that isn't picked picks it alone first, as in Onshape.
+        if (!selected && !useStore.getState().editing) clickFeatureRow(feature.id, { add: false, range: false });
+        onMenu(e, selected ? menu : entries);
+      }}
       // Under the pointer: the faces it made light up in the view.
       onMouseEnter={() => setHoveredFeature(feature.id)}
       onMouseLeave={() => setHoveredFeature(null)}
@@ -430,13 +442,15 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
         e.dataTransfer.effectAllowed = "move";
       }}
       onDragOver={(e) => {
-        if (!draggable || !e.dataTransfer.types.includes(FEATURE_DRAG)) return;
+        if (!draggable || !(e.dataTransfer.types.includes(FEATURE_DRAG) || e.dataTransfer.types.includes(ROLLBACK_DRAG))) return;
         e.preventDefault();
         e.currentTarget.classList.add("drop-before");
       }}
       onDragLeave={(e) => e.currentTarget.classList.remove("drop-before")}
       onDrop={(e) => {
         e.currentTarget.classList.remove("drop-before");
+        // The rollback bar dragged here: the model is rolled back to just above this row.
+        if (e.dataTransfer.types.includes(ROLLBACK_DRAG)) return dropRollbackAbove(feature.id);
         const id = e.dataTransfer.getData(FEATURE_DRAG);
         if (id && id !== feature.id) useStore.getState().moveFeature(id, feature.id);
       }}
@@ -455,10 +469,14 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
       <span className="feature-icon">
         <Icon size={18} />
       </span>
-      <span className="feature-name">
-        {feature.name}
-        {op && <span className="feature-op">{op}</span>}
-      </span>
+      {renaming ? (
+        <RenameBox feature={feature} />
+      ) : (
+        <span className="feature-name">
+          {feature.name}
+          {op && <span className="feature-op">{op}</span>}
+        </span>
+      )}
       {error && !feature.suppressed && (
         <span className="feature-error-icon" aria-label="Error">
           <Icons.Warning size={16} />
@@ -479,6 +497,77 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
   );
 }
 
+/** A feature's name being changed in place (F2, or Rename in its menu): Enter keeps it, Esc puts it back. */
+function RenameBox({ feature }: { feature: Feature }) {
+  const [text, setText] = useState(feature.name);
+  const input = useRef<HTMLInputElement>(null);
+  const done = useRef(false);
+  useEffect(() => input.current?.select(), []);
+  const finish = (keep: boolean) => {
+    if (done.current) return;
+    done.current = true;
+    const name = text.trim();
+    if (keep && name && name !== feature.name) useStore.getState().renameFeature(feature.id, name);
+    setRenaming(null);
+  };
+  return (
+    <input
+      ref={input}
+      className="part-rename feature-rename"
+      value={text}
+      aria-label={`New name for ${feature.name}`}
+      onChange={(e) => setText(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onBlur={() => finish(true)}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") finish(true);
+        if (e.key === "Escape") finish(false);
+      }}
+    />
+  );
+}
+
+/** The right-click menu for several picked features: what can be done to them all at once. */
+function groupMenu(ids: string[]): MenuEntry[] {
+  const st = useStore.getState;
+  const n = ids.length;
+  const list = activeFeatures(st());
+  const picked = list.filter((f) => ids.includes(f.id));
+  const folders = new Set(picked.map((f) => f.folder ?? null));
+  const inFolder = folders.size === 1 && !folders.has(null);
+  return [
+    ...(picked.some((f) => !f.suppressed) ? [{ label: `Suppress these ${n}`, action: () => st().setFeaturesSuppressed(ids, true) }] : []),
+    ...(picked.some((f) => f.suppressed) ? [{ label: `Unsuppress these ${n}`, action: () => st().setFeaturesSuppressed(ids, false) }] : []),
+    inFolder
+      ? { label: `Take these ${n} out of "${picked[0].folder}"`, action: () => st().setFeatureFolder(ids, null) }
+      : {
+          label: `Put these ${n} in a new folder…`,
+          action: () => {
+            const name = window.prompt("Folder name (features next to each other with the same folder name are shown together)", nextFolderName(list));
+            if (name !== null && name.trim()) st().setFeatureFolder(ids, name);
+          },
+        },
+    { label: `Copy these ${n} (Ctrl+C)`, action: () => copyFromMenu(ids) },
+    { label: "Clear selection (Esc)", action: () => st().selectFeature(null) },
+    "divider",
+    { label: `Delete these ${n}`, action: () => st().deleteFeatures(ids, true), danger: true },
+    { label: `Delete these ${n} with dependents…`, action: () => st().askDelete({ ids, from: "menu" }), danger: true },
+  ];
+}
+
+/** Drag-and-drop data type for the rollback bar. */
+const ROLLBACK_DRAG = "application/x-juracad-rollback";
+
+/** The rollback bar let go just above a row (null: past the last one, which rolls to the end). */
+function dropRollbackAbove(id: string | null) {
+  const st = useStore.getState();
+  const r = rollbackDrop(activeFeatures(st), id);
+  if ("refused" in r) st.showToast(r.refused, "info");
+  else st.setRollback(r.to);
+}
+
 /** Right-click menu entries that show or hide every sketch, or every plane (P), of the Part Studio on show. */
 const VISIBILITY_MENU: MenuEntry[] = [
   { label: "Show all sketches", action: () => useStore.getState().setAllSketchesVisible(true) },
@@ -493,7 +582,18 @@ const LIST_MENU: MenuEntry[] = [...VISIBILITY_MENU, "divider", { label: "Paste f
 function RollbackBar() {
   const setRollback = useStore((s) => s.setRollback);
   return (
-    <li className="rollback-bar" role="separator" aria-label="Rolled back here">
+    <li
+      className="rollback-bar"
+      role="separator"
+      aria-label="Rolled back here"
+      // Drag the bar up or down the list to roll back to another point (as in Onshape).
+      draggable={!TOUCH_SCREEN}
+      onDragStart={(e) => {
+        e.dataTransfer.setData(ROLLBACK_DRAG, "bar");
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      title="Drag up or down the list to roll back to another point"
+    >
       <span>Rolled back — new features go here</span>
       <button type="button" className="text-button small-text" onClick={() => setRollback(null)} title="Show the whole model again">
         Roll to end
@@ -823,6 +923,66 @@ export function FeaturePanel() {
   const groups = useMemo(() => (grouped ? groupByPart(parts, features) : { planes: [], groups: [], other: [] }), [grouped, parts, features]);
   const linkedParts = useMemo(() => (selectedFeatureId ? partsOfFeature(parts, selectedFeatureId, features) : []), [parts, selectedFeatureId, features]);
 
+  // The rows as listed (shut folders and a search leave some out): what Shift + click and the arrow keys walk.
+  const shownOrder = useMemo(() => {
+    if (grouped) {
+      const inGroups = groups.groups.flatMap((g) => (matches || !collapsed.includes(g.partId) ? g.featureIds : []));
+      const other = matches || !collapsed.includes("other") ? groups.other : [];
+      return [...groups.planes, ...inGroups, ...other].filter(shownIf);
+    }
+    return folderRuns(features).flatMap((run) => {
+      const shut = !matches && !!run.folder && collapsed.includes(`folder:${run.folder}:${run.features[0].id}`);
+      return shut ? [] : run.features.map((f) => f.id).filter(shownIf);
+    });
+    // shownIf reads `matches` only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grouped, groups, features, matches, collapsed]);
+  setShownOrder(shownOrder);
+
+  // Onshape's error count at the top of the list: features that failed (red) or built with a warning (amber).
+  const featureErrors = useStore((s) => s.featureErrors);
+  const featureWarnings = useStore((s) => s.featureWarnings);
+  const failing = useMemo(() => failingFeatures(features, (f) => !!(featureErrors[f.id] ?? describeParamErrors(f))), [features, featureErrors]);
+  const warned = useMemo(() => failingFeatures(features, (f) => !failing.includes(f.id) && !!featureWarnings[f.id]), [features, featureWarnings, failing]);
+  const listRef = useRef<HTMLUListElement>(null);
+  /** Bring a feature's row into view (opening its folder, or clearing a search that hides it). */
+  const reveal = (id: string, pick: boolean) => {
+    const f = features.find((x) => x.id === id);
+    if (!f) return;
+    if (matches && !matches.has(id)) setQuery("");
+    // Its folder, or (grouped by part) the groups it's listed under, are opened.
+    const groupKeys = new Set([...groups.groups.filter((g) => g.featureIds.includes(id)).map((g) => g.partId), ...(groups.other.includes(id) ? ["other"] : [])]);
+    setCollapsed((c) => {
+      const open = c.filter((k) => !(f.folder && k.startsWith(`folder:${f.folder}:`)) && !groupKeys.has(k));
+      return open.length === c.length ? c : open;
+    });
+    if (pick) useStore.getState().selectFeature(id);
+    requestAnimationFrame(() => listRef.current?.querySelector(`[data-feature-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" }));
+  };
+  const cycle = (ids: string[], e: ReactMouseEvent) => {
+    const next = nextOf(features.map((f) => f.id), ids, useStore.getState().selectedFeatureId, e.shiftKey ? -1 : 1);
+    if (next) reveal(next, true);
+  };
+  // A rebuild that makes another feature fail: its row is scrolled into view (not picked), as Onshape does.
+  // (Not on changing to another Part Studio: its failures aren't new.)
+  const studio = useStore(activeStudioId);
+  const failedBefore = useRef<{ studio: string | null; ids: string[] }>({ studio, ids: failing });
+  useEffect(() => {
+    const was = failedBefore.current;
+    failedBefore.current = { studio, ids: failing };
+    const fresh = was.studio === studio ? firstNew(was.ids, failing) : null;
+    if (fresh && !useStore.getState().editing) reveal(fresh, false);
+    // Only when the failures change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [failing, studio]);
+  // F2 on a feature in a shut folder (or hidden by a search): show its row first, so it can be renamed.
+  const renamingId = useRenaming();
+  useEffect(() => {
+    if (renamingId) reveal(renamingId, false);
+    // Only when renaming starts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renamingId]);
+
   return (
     <aside className="side-panel" aria-label="Feature list">
       <ConfigurationPicker />
@@ -837,6 +997,26 @@ export function FeaturePanel() {
           <span>
             Features <span className="count">({features.length})</span>
           </span>
+          {failing.length > 0 && (
+            <button
+              type="button"
+              className="feature-count-chip failed"
+              onClick={(e) => cycle(failing, e)}
+              title="Features that couldn't be built. Click to go to each in turn (Shift + click goes back)."
+            >
+              <Icons.Warning size={13} /> {failing.length === 1 ? "1 failed" : `${failing.length} failed`}
+            </button>
+          )}
+          {warned.length > 0 && (
+            <button
+              type="button"
+              className="feature-count-chip warned"
+              onClick={(e) => cycle(warned, e)}
+              title="Features that were built but have something to tell you. Click to go to each in turn."
+            >
+              <Icons.Warning size={13} /> {warned.length === 1 ? "1 note" : `${warned.length} notes`}
+            </button>
+          )}
           <label className="group-toggle" title="Show the features under each part they made (the build order is unchanged)">
             <input type="checkbox" checked={grouped} onChange={(e) => setGroupedPref(e.target.checked)} />
             Group by part
@@ -867,7 +1047,7 @@ export function FeaturePanel() {
             )}
           </div>
         )}
-        <ul className="feature-list" onMouseLeave={() => setHoveredFeature(null)}>
+        <ul className="feature-list" ref={listRef} aria-multiselectable="true" onMouseLeave={() => setHoveredFeature(null)}>
           {!matches && DATUMS.map((d) => <DatumRow key={d} name={d} onMenu={onMenu} />)}
           {!grouped && barAfter === "" && <RollbackBar key="rollback-top" />}
           {!grouped &&
@@ -933,13 +1113,14 @@ export function FeaturePanel() {
               className="feature-drop-end"
               aria-hidden
               onDragOver={(e) => {
-                if (!e.dataTransfer.types.includes(FEATURE_DRAG)) return;
+                if (!e.dataTransfer.types.includes(FEATURE_DRAG) && !e.dataTransfer.types.includes(ROLLBACK_DRAG)) return;
                 e.preventDefault();
                 e.currentTarget.classList.add("drop-before");
               }}
               onDragLeave={(e) => e.currentTarget.classList.remove("drop-before")}
               onDrop={(e) => {
                 e.currentTarget.classList.remove("drop-before");
+                if (e.dataTransfer.types.includes(ROLLBACK_DRAG)) return dropRollbackAbove(null);
                 const id = e.dataTransfer.getData(FEATURE_DRAG);
                 if (id) useStore.getState().moveFeature(id, null);
               }}
