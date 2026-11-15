@@ -65,6 +65,7 @@ export function SketchPanel() {
   const moveDy = useStore((s) => s.sketch?.moveDy ?? "0");
   const moveAngle = useStore((s) => s.sketch?.moveAngle ?? "0");
   const moveCopy = useStore((s) => s.sketch?.moveCopy ?? false);
+  const moveScale = useStore((s) => s.sketch?.moveScale ?? "1");
   const unit = useLengthUnit();
   const theme = useStore((s) => s.theme);
   const setSketchOptions = useStore((s) => s.setSketchOptions);
@@ -251,11 +252,19 @@ export function SketchPanel() {
               <input value={moveAngle} spellCheck={false} aria-label="Turn by" onChange={(e) => setPatternOption({ moveAngle: e.target.value })} />
               <span className="muted">°</span>
             </label>
+            <label className="tool-option">
+              Scale
+              <input value={moveScale} spellCheck={false} aria-label="Scale by" onChange={(e) => setPatternOption({ moveScale: e.target.value })} />
+              <span className="muted">×</span>
+            </label>
             <label className="check-row">
               <input type="checkbox" checked={moveCopy} onChange={(e) => setPatternOption({ moveCopy: e.target.checked })} />
               Make a copy (leave the original)
             </label>
-            <p className="dialog-hint">Click the shapes to move. Turning goes round their middle (anticlockwise for plus).</p>
+            <p className="dialog-hint">
+              Click the shapes to move, then drag the handles on them: the middle square moves them, the ring turns them (15° steps), the
+              square on the arm scales them. Hold Shift for no snapping. Turning and scaling go round their middle (anticlockwise for plus).
+            </p>
             <button type="button" className="primary-button" onClick={() => makeSketchTransform()} disabled={selectionCount === 0}>
               {moveCopy ? "Copy" : "Move"}
             </button>
@@ -263,7 +272,7 @@ export function SketchPanel() {
         )}
         <SketchExtrasPanel data={data} />
         {DRAWING_TOOLS.has(tool) && <p className="dialog-hint muted">Hold Shift while you click or drag to place it exactly there, without snapping.</p>}
-        {tool === "useEdge" && <p className="dialog-hint">Click edges of a part, or another sketch's lines and curves, to copy them into this sketch. They follow the original if it changes.</p>}
+        {tool === "useEdge" && <p className="dialog-hint">Click edges of a part (or a face, for all its edges at once), or another sketch's lines and curves, to copy them into this sketch. They follow the original if it changes.</p>}
         {!!linkInfo?.edges.length && (
           <div className="tool-option">
             <button type="button" className="text-button" onClick={() => copyFaceEdges()} title="Copy the face's outline and the edges of its holes into the sketch, ready to extrude">

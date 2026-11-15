@@ -3172,6 +3172,81 @@ try {
     await page.keyboard.press("Control+z");
     now = await curves();
     if (now.filter((c) => c === "circle").length !== 3) throw new Error(`undoing the paste left ${now.join(",")}`);
+
+    // A rectangle's sizes typed while drawing (Tab goes from the width to the height), then turned a quarter turn with the
+    // Move / copy tool's ring handle: one undo step.
+    step = "sketch: typing a rectangle's sizes with Tab";
+    await page.keyboard.press("Escape");
+    await tool("Select");
+    await page.keyboard.press("r");
+    // (Right of the middle: the sketch panel covers the left of the view.)
+    await page.mouse.click(mx + 150, my + 70);
+    await page.mouse.click(mx + 200, my + 95);
+    const dimBox = () => page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Dimension value", null, { timeout: 5_000 });
+    await dimBox();
+    // The design is in inches by now: 1.2 in × 0.5 in = 30.48 × 12.7 mm.
+    await page.keyboard.type("1.2");
+    await page.keyboard.press("Tab");
+    await page.waitForFunction(() => window.juracadStore.getState().sketch?.provisional.length === 1, null, { timeout: 5_000 });
+    await dimBox();
+    await page.keyboard.type("0.5");
+    await page.keyboard.press("Enter");
+    const rectBox = () =>
+      page.evaluate(() => {
+        const d = window.juracadStore.getState().editing.draft.sketch.data;
+        const lines = d.curves.filter((c) => c.type === "line").slice(-4);
+        const pts = lines.flatMap((l) => [l.p1, l.p2]).map((id) => d.points.find((q) => q.id === id));
+        const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+        return { ids: lines.map((l) => l.id), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys), cx: (Math.max(...xs) + Math.min(...xs)) / 2, cy: (Math.max(...ys) + Math.min(...ys)) / 2 };
+      });
+    const typed = await rectBox();
+    if (Math.abs(typed.w - 30.48) > 0.01 || Math.abs(typed.h - 12.7) > 0.01) throw new Error(`typing 1.2, Tab, 0.5 made a ${typed.w} × ${typed.h} mm rectangle`);
+    step = "sketch: turning a rectangle with the Move / copy ring";
+    await tool("Move / copy");
+    await page.evaluate((ids) => window.juracadStore.getState().setSketchSelection(ids), typed.ids);
+    await page.mouse.move(mx + 200, my - 150, { steps: 2 });
+    // Where the ring is drawn (the biggest handle circle the tool shows), on screen.
+    const ringAt = await page.evaluate(() => {
+      let shapes = [];
+      const off = window.juracadViewport.sketch.onChange((t) => (shapes = t.preview));
+      off();
+      const ring = shapes.filter((p) => p.kind === "circle" && p.handle).sort((a, b) => b.r - a.r)[0];
+      if (!ring) return null;
+      const c = window.juracadViewport.current.projectSketchPoint(ring.c[0], ring.c[1]);
+      const e = window.juracadViewport.current.projectSketchPoint(ring.c[0] + ring.r, ring.c[1]);
+      return { x: c.x, y: c.y, r: Math.hypot(e.x - c.x, e.y - c.y) };
+    });
+    if (!ringAt) throw new Error("Move / copy showed no handles on the picked rectangle");
+    const mid2 = ringAt;
+    const R = ringAt.r;
+    const undoBefore = await page.evaluate(() => window.juracadStore.getState().sketch.past.length);
+    // Grabbed by its knob (right of the middle, where the height's label sits on a small shape: the handles must win over
+    // the labels) and taken a quarter turn round.
+    const a0 = 0;
+    const grab = { x: box.x + mid2.x + R * Math.cos(a0), y: box.y + mid2.y - R * Math.sin(a0) };
+    const under = await page.evaluate(({ x, y }) => {
+      const el = document.elementFromPoint(x, y);
+      return el instanceof HTMLCanvasElement ? "canvas" : `${el?.tagName.toLowerCase()}.${el?.className} "${el?.textContent?.slice(0, 20)}"`;
+    }, grab);
+    if (under !== "canvas") throw new Error(`the ring's knob is covered by ${under}, so pressing it wouldn't reach the handles`);
+    await page.mouse.move(grab.x, grab.y);
+    await page.mouse.down();
+    for (let k = 1; k <= 8; k++) {
+      const a = a0 + ((k / 8) * Math.PI) / 2;
+      await page.mouse.move(box.x + mid2.x + R * Math.cos(a), box.y + mid2.y - R * Math.sin(a));
+    }
+    await shot("sketchturn");
+    await page.mouse.up();
+    const turned = await rectBox();
+    const turnMsg = await page.evaluate(() => window.juracadStore.getState().sketch?.message?.text ?? "");
+    if (Math.abs(turned.w - 12.7) > 0.01 || Math.abs(turned.h - 30.48) > 0.01) throw new Error(`the ring turned the rectangle to ${turned.w} × ${turned.h} mm ("${turnMsg}"; ring on screen ${JSON.stringify(ringAt)})`);
+    const undoAfter = await page.evaluate(() => window.juracadStore.getState().sketch.past.length);
+    if (undoAfter !== undoBefore + 1) throw new Error(`turning with the ring made ${undoAfter - undoBefore} undo steps`);
+    await page.keyboard.press("Control+z");
+    const back = await rectBox();
+    if (Math.abs(back.w - 30.48) > 0.01) throw new Error(`undoing the turn left ${back.w} × ${back.h} mm`);
+    await page.keyboard.press("Escape");
+    await tool("Select");
     step = "sketch extras: text";
 
     // Text: type the words, click where they go; the letters are closed shapes. A double-click puts the cursor back in the words box.

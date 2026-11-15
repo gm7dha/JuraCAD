@@ -3035,7 +3035,7 @@ export class SceneManager {
         // shape where the finger went down, and lifting the finger finishes it.
         if (!st?.sketch || !ctl) break;
         const ptr = this.sketchPointerAt(g.x, g.y, e);
-        if (ptr && ctl.touchDragStarts()) {
+        if (ptr && ctl.touchDragStarts(ptr)) {
           ctl.beginStroke();
           ctl.pointerDown(ptr);
           st.sent = true;
@@ -3293,6 +3293,7 @@ export class SceneManager {
     this.placeManipLabel();
     this.placeManipEdit();
     this.sketchLayer.frameUpdate(wpp);
+    this.sketchControllerRaw?.zoomed(wpp);
 
     this.renderer.setViewport(0, 0, this.width, this.height);
     this.renderer.render(this.scene, this.camera);
