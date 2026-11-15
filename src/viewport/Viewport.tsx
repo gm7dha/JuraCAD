@@ -30,6 +30,7 @@ import { planeFrame, planeOnFace, type PlaneFrame, type SketchPlane } from "../s
 import { framesOf, planeAsSketchPlane, planeFeatureFrame } from "../sketch/planeFeature";
 import { resolveParams } from "../model/features";
 import { copyEdge } from "../sketch/tools";
+import { takeWholeFace } from "../app/sketchUseFace";
 import { projectEdge, linkEdge, type SketchLinkInfo } from "../sketch/links";
 import { analyzeSketch, solveSketch, type SketchAnalysis } from "../sketch/solver";
 import type { SketchData } from "../sketch/types";
@@ -315,7 +316,9 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   if (s.sketch?.tool === "useEdge" && s.editing?.draft.sketch?.plane) {
     if (target?.kind !== "part") return;
     if (target.item.kind !== "edge") {
-      s.setSketchMessage("Click an edge (not a face) to copy it into the sketch.", "info");
+      // A face: its whole outline (and its holes) at once.
+      const face = withContextParts(s.parts).find((p) => p.id === target.item.partId);
+      if (face) void takeWholeFace(face, target.item.index);
       return;
     }
     const ref = withContextParts(s.parts).find((p) => p.id === target.item.partId)?.edgeRefs?.[target.item.index];

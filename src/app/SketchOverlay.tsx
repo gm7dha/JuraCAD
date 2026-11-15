@@ -198,6 +198,8 @@ function DimensionLabel({
   const values = useMemo(() => resolveVariables(variables).values, [variables]);
   const [caret, setCaret] = useState(0);
   const [pick, setPick] = useState(0);
+  // Tab moved on to the next offered size: this box going away isn't the user leaving it (which drops what's offered).
+  const tabbing = useRef(false);
   // (Nothing offered until something is typed.)
   const [hideHints, setHideHints] = useState(true);
   const input = useRef<HTMLInputElement | null>(null);
@@ -218,6 +220,7 @@ function DimensionLabel({
   };
   useEffect(() => {
     if (editing) {
+      tabbing.current = false;
       setText(shownValue);
       setError(null);
       setHideHints(true);
@@ -286,6 +289,14 @@ function DimensionLabel({
               setHideHints(true);
               return;
             }
+            // Tab / Shift+Tab: on to the other size offered for the shape just drawn (its width, then its height…).
+            if (e.key === "Tab" && offered() && (useStore.getState().sketch?.provisional.length ?? 0) > 1) {
+              e.preventDefault();
+              tabbing.current = true;
+              if (text.trim() !== shownValue.trim()) apply();
+              else useStore.getState().nextOfferedDimension(c.id, e.shiftKey);
+              return;
+            }
             if (e.key === "Enter") apply();
             if (e.key === "Escape") {
               if (offered()) useStore.getState().discardOfferedDimensions();
@@ -293,6 +304,7 @@ function DimensionLabel({
             }
           }}
           onBlur={() => {
+            if (tabbing.current) return;
             // Leaving an offered size without typing anything drops it.
             if (offered() && text.trim() === shownValue.trim()) useStore.getState().discardOfferedDimensions();
             else if (!error) apply();

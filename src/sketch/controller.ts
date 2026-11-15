@@ -52,7 +52,6 @@ import {
   offsetCurves,
   patternTransform,
   readTransformSettings,
-  transformMove,
   readPatternSettings,
   tangentArcCentre,
   tangentAt,
@@ -70,7 +69,23 @@ import type { Snap } from "./ops";
 import { splinePolyline } from "./spline";
 import { ellipseFrom, ellipsePolyline, minorPointFor } from "./ellipse";
 import { rectOf, sketchItemsInBox } from "../viewport/boxSelect";
-import { clipAt, dragSelection, draggableCount, pasteSketchClip, type SketchClip } from "./clipboard";
+import { clipAt, dragSelection, draggableCount, pasteSketchClip, selectionPoints, type SketchClip } from "./clipboard";
+import {
+  gizmoPartAt,
+  gizmoShapes,
+  motionMap,
+  motionWords,
+  NO_MOTION,
+  readScale,
+  selectionCentre,
+  snapScale,
+  snapTurn,
+  transformCopy,
+  transformSelection,
+  turnBetween,
+  type GizmoPart,
+  type SelectionMotion,
+} from "./transformSelection";
 
 export interface SketchPointer {
   /** Sketch coordinates (mm). */
@@ -91,10 +106,11 @@ export interface SketchPointer {
 
 /** Temporary shapes drawn while a tool is in progress. */
 export type PreviewShape =
-  | { kind: "line"; a: [number, number]; b: [number, number] }
+  | { kind: "line"; a: [number, number]; b: [number, number]; handle?: boolean }
   /** A faint guide showing what the pointer has lined up with. */
   | { kind: "guide"; a: [number, number]; b: [number, number] }
-  | { kind: "circle"; c: [number, number]; r: number }
+  /** (`handle`: one of Move / copy's handles, drawn in the handles' colour.) */
+  | { kind: "circle"; c: [number, number]; r: number; handle?: boolean }
   | { kind: "arc"; c: [number, number]; r: number; a0: number; a1: number };
 
 export interface SketchTransient {
@@ -128,6 +144,23 @@ const CURVE_PX = 6;
 const DRAG_PX = 3;
 /** How close (px) a dragged point must come to another to snap onto it. */
 const SNAP_PX = 14;
+
+/** Dragging one of Move / copy's handles (the middle, the ring or the scale square). */
+interface GizmoDrag {
+  part: GizmoPart;
+  start: SketchData;
+  ids: string[];
+  centre: [number, number];
+  from: [number, number];
+  /** The turn so far, added up move by move (so a drag can go past half a turn), before snapping. */
+  turned: number;
+  lastAt: [number, number];
+  motion: SelectionMotion;
+  copy: boolean;
+  moved: boolean;
+  /** The last refusal said (so it's said once, not on every move). */
+  said: string | null;
+}
 
 interface DragState {
   kind: "point" | "curve" | "rim" | "handle" | "image" | "group" | "none";
@@ -166,6 +199,7 @@ export class SketchController {
   /** Where the pointer last was (sketch mm), so a paste shows at once, and how many mm a pixel was then. */
   private lastPointer: [number, number] | null = null;
   private lastMmPerPx = 0.1;
+  private gizmoDrag: GizmoDrag | null = null;
 
   /**
    * Start placing a copy (Ctrl/⌘ + V, or Duplicate): it follows the pointer, a click puts it down, Esc stops.
@@ -206,13 +240,30 @@ export class SketchController {
     return out;
   }
 
+  /**
+   * Where a copy being placed goes: its middle snaps like a drawn point — onto points, middles of lines, the
+   * origin, corners of part edges, or lined up with points passed over (Shift: exactly at the pointer).
+   */
+  private pasteSnap(e: SketchPointer, clip: SketchClip | null = this.pasting): { x: number; y: number; snap: boolean; hints: [number, number][] } {
+    const d = this.data;
+    if (!d || !clip || e.shift) return { x: e.x, y: e.y, snap: false, hints: [] };
+    // Passing over a point picks it up, to line up with.
+    const over = this.hitAt(e);
+    if (over?.kind === "point" && this.acquired[0] !== over.id) this.acquired = [over.id, ...this.acquired.filter((x) => x !== over.id)].slice(0, 4);
+    const found = snapAt(d, e.x, e.y, { pointTol: POINT_PX * pickMm(e), curveTol: 0, acquired: this.acquired, refs: this.refs, skip: this.skipRef });
+    const sn = found.placed.snap;
+    if (!sn || sn.kind === "curve" || (sn.kind === "ref" && (sn.at === "on" || sn.edge.source?.later))) return { x: e.x, y: e.y, snap: false, hints: [] };
+    return { x: found.placed.x, y: found.placed.y, snap: true, hints: found.hints };
+  }
+
   private pasteAt(e: SketchPointer): void {
     const clip = this.pasting;
     const d = this.data;
     this.pasting = null;
     this.emit({ preview: [] });
     if (!clip || !d) return;
-    const r = pasteSketchClip(d, clip, [e.x, e.y]);
+    const at = this.pasteSnap(e, clip);
+    const r = pasteSketchClip(d, clip, [at.x, at.y]);
     if (!this.commit(r, r.ids)) return;
     const names = r.unknownNames ?? [];
     this.state.setSketchMessage(
@@ -512,19 +563,136 @@ export class SketchController {
     const d = this.data;
     const session = this.state.sketch;
     if (!d || !session) return [];
+    if (this.tool === "sketchTransform") return this.transformPreview();
     const sources = session.selection.map((id) => curveById(d, id)).filter((c) => !!c);
     if (!sources.length) return [];
-    let moves: ((p: [number, number]) => [number, number])[];
-    if (this.tool === "sketchTransform") {
-      const t = readTransformSettings(session);
-      if (typeof t === "string") return [];
-      moves = [transformMove(d, sources, t)];
-    } else {
-      const opts = readPatternSettings(d, session);
-      if (typeof opts === "string" || !(opts.count >= 2 && opts.count <= 200)) return [];
-      moves = Array.from({ length: Math.round(opts.count) - 1 }, (_, i) => patternTransform(opts, i + 1));
-    }
+    const opts = readPatternSettings(d, session);
+    if (typeof opts === "string" || !(opts.count >= 2 && opts.count <= 200)) return [];
+    const moves = Array.from({ length: Math.round(opts.count) - 1 }, (_, i) => patternTransform(opts, i + 1));
     return moves.flatMap((move) => curvesPreview(d, sources, move));
+  }
+
+  /**
+   * Move / copy: where the typed amounts would put the picked shapes (faintly), and the handles on them — the
+   * middle square moves them, the ring turns them, the square on the arm scales them (see transformSelection.ts).
+   */
+  private transformPreview(): PreviewShape[] {
+    const d = this.data;
+    const session = this.state.sketch;
+    if (!d || !session) return [];
+    const g = this.gizmoDrag;
+    if (g) {
+      const sources = g.ids.map((id) => curveById(g.start, id)).filter((c) => !!c);
+      const ghost = g.copy && g.moved ? curvesPreview(g.start, sources, motionMap(g.centre, g.motion), g.motion.scale) : [];
+      return [...ghost, ...gizmoShapes({ centre: g.centre, mmPerPx: this.lastMmPerPx }, g.motion)];
+    }
+    const ids = session.selection;
+    const centre = selectionCentre(d, ids);
+    if (!centre) return [];
+    const out: PreviewShape[] = [];
+    const t = readTransformSettings(session);
+    const k = readScale(session.moveScale);
+    if (typeof t !== "string" && typeof k === "number" && (t.dx !== 0 || t.dy !== 0 || t.angle !== 0 || k !== 1)) {
+      const sources = ids.map((id) => curveById(d, id)).filter((c) => !!c);
+      out.push(...curvesPreview(d, sources, motionMap(centre, { dx: t.dx, dy: t.dy, angle: t.angle, scale: k }), k));
+    }
+    out.push(...gizmoShapes({ centre, mmPerPx: this.lastMmPerPx }));
+    return out;
+  }
+
+  /** A press on one of Move / copy's handles starts dragging it (true); elsewhere the click picks shapes as before. */
+  private gizmoDown(e: SketchPointer): boolean {
+    const d = this.data;
+    const ids = this.state.sketch?.selection ?? [];
+    if (!d || this.tool !== "sketchTransform") return false;
+    const centre = selectionCentre(d, ids);
+    if (!centre) return false;
+    const part = gizmoPartAt({ centre, mmPerPx: e.mmPerPx }, e.x, e.y, e.reach ?? 1);
+    if (!part) return false;
+    this.gizmoDrag = { part, start: d, ids: [...ids], centre, from: [e.x, e.y], turned: 0, lastAt: [e.x, e.y], motion: NO_MOTION, copy: !!this.state.sketch?.moveCopy, moved: false, said: null };
+    return true;
+  }
+
+  private gizmoMove(e: SketchPointer): void {
+    const g = this.gizmoDrag!;
+    if (!g.moved && Math.hypot(e.x - g.from[0], e.y - g.from[1]) < DRAG_PX * pickMm(e)) return;
+    g.moved = true;
+    let m: SelectionMotion = NO_MOTION;
+    let snap: [number, number] | null = null;
+    if (g.part === "move") {
+      // The middle snaps onto points, middles of lines and the origin (Shift: no snapping).
+      const tx = g.centre[0] + e.x - g.from[0];
+      const ty = g.centre[1] + e.y - g.from[1];
+      const found = snapAt(g.start, tx, ty, { pointTol: SNAP_PX * pickMm(e), curveTol: 0, refs: this.refs, skip: this.skipRef, ignore: new Set(selectionPoints(g.start, g.ids)), free: e.shift });
+      const sn = found.placed.snap;
+      const snapped = !!sn && sn.kind !== "curve" && !(sn.kind === "ref" && (sn.at === "on" || sn.edge.source?.later));
+      const [x, y] = snapped ? [found.placed.x, found.placed.y] : [tx, ty];
+      if (snapped) snap = [x, y];
+      m = { dx: x - g.centre[0], dy: y - g.centre[1], angle: 0, scale: 1 };
+    } else if (g.part === "turn") {
+      g.turned += turnBetween(g.centre, g.lastAt, [e.x, e.y]);
+      g.lastAt = [e.x, e.y];
+      m = { dx: 0, dy: 0, angle: snapTurn(g.turned, e.shift), scale: 1 };
+    } else {
+      const from = Math.hypot(g.from[0] - g.centre[0], g.from[1] - g.centre[1]) || 1;
+      m = { dx: 0, dy: 0, angle: 0, scale: snapScale(Math.hypot(e.x - g.centre[0], e.y - g.centre[1]) / from, e.shift) };
+    }
+    g.motion = m;
+    if (!g.copy) {
+      const r = transformSelection(g.start, g.ids, m, g.centre);
+      this.state.updateSketch(r.error ? g.start : r.sketch, { record: false });
+      if (r.error) {
+        if (g.said !== r.error) this.state.setSketchMessage(r.error, "info");
+        g.said = r.error;
+      } else {
+        g.said = null;
+        this.state.setSketchMessage(motionWords(g.part, m), "info");
+      }
+    } else this.state.setSketchMessage(motionWords(g.part, m), "info");
+    this.emit({ preview: this.transformPreview(), snap, hover: null, hints: [] });
+  }
+
+  private gizmoUp(): void {
+    const g = this.gizmoDrag!;
+    this.gizmoDrag = null;
+    const m = g.motion;
+    const still = m.dx === 0 && m.dy === 0 && m.angle === 0 && m.scale === 1;
+    if (!g.moved || still) {
+      if (g.moved && !g.copy) this.state.updateSketch(g.start, { record: false });
+      this.emit({ preview: this.transformPreview(), snap: null });
+      return;
+    }
+    const done = g.part === "move" ? "Moved" : g.part === "turn" ? "Turned" : "Scaled";
+    if (g.copy) {
+      const r = transformCopy(g.start, g.ids, m, g.centre);
+      if (r.error) this.state.setSketchMessage(r.error, "error");
+      else {
+        this.state.updateSketch(r.sketch, { record: true, selection: r.ids });
+        this.state.setSketchMessage(`${done} a copy — the copy is picked, to drag again. Esc to finish.`, "info");
+      }
+    } else {
+      const r = transformSelection(g.start, g.ids, m, g.centre);
+      if (r.error) {
+        this.state.updateSketch(g.start, { record: false });
+        this.state.setSketchMessage(r.error, "info");
+      } else {
+        this.state.updateSketch(r.sketch, { record: false });
+        this.state.recordSketchStep(g.start);
+        this.state.setSketchMessage(`${done}. Drag the handles again, or Esc to finish.`, "info");
+      }
+    }
+    this.emit({ preview: this.transformPreview(), snap: null });
+  }
+
+  /** Take back a handle drag in progress (Esc, or a second finger). */
+  private dropGizmoDrag(): boolean {
+    const g = this.gizmoDrag;
+    if (!g) return false;
+    this.gizmoDrag = null;
+    if (g.moved && !g.copy) this.state.updateSketch(g.start, { record: false });
+    this.state.setSketchMessage(null);
+    this.emit({ preview: this.transformPreview(), snap: null });
+    return true;
   }
 
   /** Redraw the pattern preview (after its settings change in the panel). */
@@ -619,6 +787,7 @@ export class SketchController {
     }
     if (tool === "useEdge" || tool === "intersect") return;
     if (tool === "mirror") return this.mirrorClick(e);
+    if (tool === "sketchTransform" && this.gizmoDown(e)) return;
     if (tool === "sketchPattern" || tool === "sketchTransform") return this.patternClick(e);
     if (tool === "sketchFillet") {
       const hit = this.hitAt(e);
@@ -880,7 +1049,12 @@ export class SketchController {
     this.lastPointer = [e.x, e.y];
     this.lastMmPerPx = e.mmPerPx;
     if (this.pasting) {
-      this.emit({ preview: this.pastePreview([e.x, e.y]), hover: null, snap: null, inference: null, hints: [] });
+      const at = this.pasteSnap(e);
+      this.emit({ preview: this.pastePreview([at.x, at.y]), hover: null, snap: at.snap ? [at.x, at.y] : null, inference: null, hints: at.hints });
+      return;
+    }
+    if (this.gizmoDrag) {
+      if (dragging) this.gizmoMove(e);
       return;
     }
     if (tool === "select") {
@@ -1072,6 +1246,7 @@ export class SketchController {
   }
 
   pointerUp(): void {
+    if (this.gizmoDrag) return this.gizmoUp();
     if (this.tool !== "select" || !this.drag) return;
     const drag = this.drag;
     this.drag = null;
@@ -1117,10 +1292,16 @@ export class SketchController {
 
   private stroke: { placed: Placed[]; pending: string[] } | null = null;
 
-  /** A finger started dragging: should the tool get the press (where it went down) now? */
-  touchDragStarts(): boolean {
+  /** A finger started dragging (at `e`, when known): should the tool get the press (where it went down) now? */
+  touchDragStarts(e?: SketchPointer): boolean {
     // Placing a copy: it follows the finger, and lifting puts it down.
     if (this.pasting) return false;
+    // On one of Move / copy's handles: the drag is the handle's.
+    if (this.tool === "sketchTransform" && e) {
+      const d = this.data;
+      const centre = d ? selectionCentre(d, this.state.sketch?.selection ?? []) : null;
+      if (centre && gizmoPartAt({ centre, mmPerPx: e.mmPerPx }, e.x, e.y, e.reach ?? 1)) return true;
+    }
     if (this.tool === "select") return true;
     return DRAG_DRAWN.has(this.tool) && this.placed.length === 0;
   }
@@ -1128,6 +1309,7 @@ export class SketchController {
   /** Is lifting a finger after a drag a click where it came up? (With Select it just ends the drag.) */
   touchLiftClicks(): boolean {
     if (this.pasting) return true;
+    if (this.gizmoDrag) return false;
     return this.tool !== "select";
   }
 
@@ -1147,6 +1329,7 @@ export class SketchController {
   cancelStroke(): void {
     const s = this.stroke;
     this.stroke = null;
+    this.dropGizmoDrag();
     if (this.drag?.moved && this.drag.kind !== "none") this.state.updateSketch(this.drag.start, { record: false });
     this.drag = null;
     if (s) this.placed = s.placed;
@@ -1155,6 +1338,7 @@ export class SketchController {
 
   /** Esc: abandon a half-drawn shape. Returns true if there was one. */
   cancel(): boolean {
+    if (this.dropGizmoDrag()) return true;
     if (this.pasting) {
       this.pasting = null;
       this.emit({ preview: [] });
@@ -1402,12 +1586,12 @@ export class SketchController {
 }
 
 /** Faint copies of curves with every point moved by `move` (a rigid move: splines and ellipses are moved point by point). */
-function curvesPreview(d: SketchData, sources: readonly SketchCurve[], move: (p: [number, number]) => [number, number]): PreviewShape[] {
+function curvesPreview(d: SketchData, sources: readonly SketchCurve[], move: (p: [number, number]) => [number, number], scale = 1): PreviewShape[] {
   const out: PreviewShape[] = [];
   const at = (id: string) => move(pointPos(d, id));
   for (const c of sources) {
     if (c.type === "line") out.push({ kind: "line", a: at(c.p1), b: at(c.p2) });
-    else if (c.type === "circle") out.push({ kind: "circle", c: at(c.center), r: c.radius });
+    else if (c.type === "circle") out.push({ kind: "circle", c: at(c.center), r: c.radius * scale });
     else if (c.type === "spline" || c.type === "ellipse") {
       const pts = (c.type === "spline" ? splinePath(d, c) : ellipsePoints(d, c)).map(move);
       for (let k = 0; k + 1 < pts.length; k++) out.push({ kind: "line", a: pts[k], b: pts[k + 1] });
@@ -1415,7 +1599,7 @@ function curvesPreview(d: SketchData, sources: readonly SketchCurve[], move: (p:
       const cc = at(c.center);
       const s0 = at(c.start);
       const s1 = at(c.end);
-      out.push({ kind: "arc", c: cc, r: radiusOf(d, c), a0: Math.atan2(s0[1] - cc[1], s0[0] - cc[0]), a1: Math.atan2(s1[1] - cc[1], s1[0] - cc[0]) });
+      out.push({ kind: "arc", c: cc, r: radiusOf(d, c) * scale, a0: Math.atan2(s0[1] - cc[1], s0[0] - cc[0]), a1: Math.atan2(s1[1] - cc[1], s1[0] - cc[0]) });
     }
   }
   return out;

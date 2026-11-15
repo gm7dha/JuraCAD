@@ -1,7 +1,8 @@
 /** Actions used by both the sketch toolbar and keyboard shortcuts. */
 import { useStore, type SketchTool } from "../model/store";
 import { applyRelation, relationMayTakeAWhile, RELATION_LABELS, setDimensionDriven, setMeasureTo, toggleConstruction, type MeasureTo, type RelationTool } from "../sketch/ops";
-import { patternCurves, readPatternSettings, readTransformSettings, transformCurves } from "../sketch/tools";
+import { patternCurves, readPatternSettings, readTransformSettings } from "../sketch/tools";
+import { readScale, transformCopy, transformSelection } from "../sketch/transformSelection";
 import { viewportApi } from "../viewport/Viewport";
 import { linkAllEdges, piercePoint, type RefEdge } from "../sketch/links";
 import { addImage, changeText, deleteWithExtras, textById } from "../sketch/sketchText";
@@ -22,7 +23,7 @@ export function setSketchTool(tool: SketchTool) {
     viewportApi.sketch?.refreshPreview();
   }
   if (tool === "sketchTransform") {
-    st.setSketchMessage("Click the lines, arcs and circles to move (or keep what's selected), set how far, then Move.", "info");
+    st.setSketchMessage("Click the shapes to move (or keep what's picked), then drag the handles on them — the middle moves, the ring turns, the corner square scales — or type amounts and press Move.", "info");
     viewportApi.sketch?.refreshPreview();
   }
 }
@@ -51,14 +52,22 @@ export function makeSketchTransform(): boolean {
   const s = useStore.getState();
   const data = sketchData();
   if (!data || !s.sketch) return false;
-  const curves = s.sketch.selection.filter((id) => data.curves.some((c) => c.id === id));
+  const picked = s.sketch.selection;
   const t = readTransformSettings(s.sketch);
-  const r = typeof t === "string" ? { sketch: data, error: t, curveIds: [] } : transformCurves(data, curves, t);
+  const k = readScale(s.sketch.moveScale);
+  const motion = typeof t === "string" ? t : typeof k === "string" ? k : { dx: t.dx, dy: t.dy, angle: t.angle, scale: k };
+  const none = typeof motion !== "string" && motion.dx === 0 && motion.dy === 0 && motion.angle === 0 && motion.scale === 1;
+  const r =
+    typeof motion === "string"
+      ? { sketch: data, error: motion, ids: [] }
+      : none
+        ? { sketch: data, error: "Type how far to move, turn or scale them — or drag the handles on them.", ids: [] }
+        : (s.sketch.moveCopy ? transformCopy : transformSelection)(data, picked, motion);
   if (r.error) {
     s.setSketchMessage(r.error, "error");
     return false;
   }
-  s.updateSketch(r.sketch, { record: true, selection: s.sketch.moveCopy ? r.curveIds : curves });
+  s.updateSketch(r.sketch, { record: true, selection: r.ids });
   s.setSketchMessage(s.sketch.moveCopy ? "Copied — the copies are selected, to move again." : "Moved. Move again, or Esc to finish.", "info");
   viewportApi.sketch?.refreshPreview();
   return true;

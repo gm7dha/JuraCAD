@@ -413,7 +413,7 @@ export class SketchLayer {
     const t = this.transient;
     const shapes = t?.preview ?? [];
     const prev = shapes.flatMap(previewSegments);
-    const colours = shapes.flatMap((sh) => previewSegments(sh).map(() => (sh.kind === "guide" ? SKETCH_COLOURS.inactive : SKETCH_COLOURS.preview)));
+    const colours = shapes.flatMap((sh) => previewSegments(sh).map(() => (sh.kind === "guide" ? SKETCH_COLOURS.inactive : "handle" in sh && sh.handle ? SKETCH_COLOURS.handle : SKETCH_COLOURS.preview)));
     this.preview.set(frame, prev, colours);
     if (t?.snap) {
       const g = new THREE.BufferGeometry();

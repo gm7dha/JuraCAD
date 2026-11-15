@@ -160,6 +160,29 @@
   `src/model/varComplete.ts` `suggestionsAt`/`completeWith`; ↑↓, Tab/Enter take one — Enter on a name typed in full
   sets the size —, a choice or Esc hides the list until more is typed; nothing until typed).
   Tests: tests/sketchClipboard (pure), sketchClipboardStore (controller), varComplete.
+  Move / copy handles (Onshape's sketch Transform): pure `src/sketch/transformSelection.ts` — `transformSelection(s, ids,
+  {dx, dy, angle, scale}, about?)` (about = `selectionCentre`, the picked points' box middle with circles' full size): points
+  moved/turned/scaled, picked circles' radii and text size/angle, spline handles turned; constraints wholly inside the picked set
+  kept — H/V swapped on odd quarter turns, turned other than a quarter: per joined-up shape (`shapeGroups`) the first H/V line's
+  relation dropped and the others made Parallel/Perpendicular to it (point-pair H/V dropped); horizontal/verticalDistance swapped
+  with signs on quarter turns, else refused (`STRAIGHT_DIMENSION_MESSAGE`); plain-number length dimensions scaled (inches kept,
+  `scaledValue`), a variable/sum refused (`VARIABLE_SIZE_MESSAGE`); patternMove extra turned/scaled; then solved with `place`
+  and refused (`HELD_MESSAGE`, the sketch as it was) unless every moving point and radius lands on its target.
+  `transformCopy` = copySketchItems + paste on top + transform. The typed panel (Across/Up/Turn/Scale `moveScale`, Move/Copy)
+  uses them too (`makeSketchTransform`). Handles: `gizmoPartAt`/`gizmoShapes` (screen px: middle square = move, ring
+  `GIZMO_RING_PX` = turn, square on a 45° arm = scale), `snapTurn` 15° / `snapScale` 0.05 (Shift free), drawn as preview shapes
+  with `handle: true` (SketchLayer's handle colour). Controller `GizmoDrag` (sketchTransform tool: a press on a handle before
+  picking; the middle snaps via `snapAt` ignoring the picked points; turns added up past 180°; live `transformSelection` each move,
+  refusals said once; Make a copy ticked = a faint copy, made on release; one sketch undo step via `recordSketchStep`; Esc /
+  `cancelStroke` take it back; `touchDragStarts(ptr)` true on a handle, `touchLiftClicks` false while dragging one). Pasting:
+  `pasteSnap` — the copy's middle snaps like a drawn point (points, line middles, origin, part-edge corners, lining up with points
+  passed over; never onto curves; Shift = none). Offered sizes after drawing: Tab / Shift+Tab in the box → `nextOfferedDimension`
+  (a changed value is kept first; `tabbing` ref stops the box's blur dropping the offer). Use on a face: pure
+  `src/model/faceEdges.ts` `edgesOfFace(mesh, face)` (every polyline point — and a straight edge's middle — on the face's
+  triangles, within 1/2000 of its size, 1 µm…0.05 mm) → `src/app/sketchUseFace.ts` `takeWholeFace` (each edge the way a click
+  does it: flat ones linked together through `linkAllEdges` (ends joined), others `copyEdge`, curved ones `bringInCurvedEdge`).
+  Tests: tests/sketchTransformHandles, faceEdges (pure), sketchTransformStore (controller: ring, middle snap, scale + copy, touch,
+  paste snapping, Tab); the smoke test types a rectangle's sizes with Tab and turns it a quarter turn with the ring.
 - Visibility (the eye in the feature list): `src/model/visibility.ts`. Sketches and Plane features have `Feature.visible`
   (missing = automatic: planes shown; a sketch shown until an unsuppressed feature uses it, `usedSketches` — as Onshape
   hides consumed sketches). The Origin and Top/Front/Right hidden per Part Studio: `doc.hiddenDatums` (first studio) /
