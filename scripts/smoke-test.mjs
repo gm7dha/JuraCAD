@@ -2822,8 +2822,8 @@ try {
     await page.keyboard.press("Escape");
     const vb = await page.locator(".viewport").boundingBox();
     const total = await page.locator(".part-row").count();
-    // Right to left: a crossing box takes every part it touches.
-    await page.mouse.move(vb.x + vb.width - 40, vb.y + vb.height - 40);
+    // Right to left: a crossing box takes every part it touches. (Starting just above the Mass button in the corner.)
+    await page.mouse.move(vb.x + vb.width - 40, vb.y + vb.height - 72);
     await page.mouse.down();
     await page.mouse.move(vb.x + vb.width / 2, vb.y + vb.height / 2, { steps: 4 });
     await page.mouse.move(vb.x + 40, vb.y + 60, { steps: 4 });
