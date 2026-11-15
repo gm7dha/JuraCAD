@@ -8,6 +8,12 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.81 — Copy and paste in sketches
+
+- Sketches: Ctrl+C / Ctrl+V (⌘ on a Mac) copy and paste shapes — the copy follows the pointer until you click, and keeps the relations and dimensions between the copied shapes. Ctrl+D duplicates. Works between sketches and designs; Copy and Paste buttons are in the sketch toolbar too.
+- Sketches: with several things picked, drag any one of them to move them all together (if part of them is held in place, nothing moves and it says why).
+- Typing a sketch dimension now offers matching variable names (with their values) — ↑/↓ and Tab or Enter to pick one.
+
 ## v0.80 — Map puzzles get their own locked tab
 
 - The Mountain, Photo relief and Island puzzles have moved to a new "Map puzzles" tab in the Design library.
