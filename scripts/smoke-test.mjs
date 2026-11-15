@@ -3119,19 +3119,33 @@ try {
     step = "sketch: turning a rectangle with the Move / copy ring";
     await tool("Move / copy");
     await page.evaluate((ids) => window.juracadStore.getState().setSketchSelection(ids), typed.ids);
-    const mid2 = await page.evaluate(({ x, y }) => window.juracadViewport.current.projectSketchPoint(x, y), { x: typed.cx, y: typed.cy });
+    await page.mouse.move(mx + 200, my - 150, { steps: 2 });
+    // Where the ring is drawn (the biggest handle circle the tool shows), on screen.
+    const ringAt = await page.evaluate(() => {
+      let shapes = [];
+      const off = window.juracadViewport.sketch.onChange((t) => (shapes = t.preview));
+      off();
+      const ring = shapes.filter((p) => p.kind === "circle" && p.handle).sort((a, b) => b.r - a.r)[0];
+      if (!ring) return null;
+      const c = window.juracadViewport.current.projectSketchPoint(ring.c[0], ring.c[1]);
+      const e = window.juracadViewport.current.projectSketchPoint(ring.c[0] + ring.r, ring.c[1]);
+      return { x: c.x, y: c.y, r: Math.hypot(e.x - c.x, e.y - c.y) };
+    });
+    if (!ringAt) throw new Error("Move / copy showed no handles on the picked rectangle");
+    const mid2 = ringAt;
+    const R = ringAt.r;
     const undoBefore = await page.evaluate(() => window.juracadStore.getState().sketch.past.length);
-    await page.mouse.move(box.x + mid2.x + 56, box.y + mid2.y);
+    await page.mouse.move(box.x + mid2.x + R, box.y + mid2.y);
     await page.mouse.down();
     for (let k = 1; k <= 8; k++) {
       const a = ((k / 8) * Math.PI) / 2;
-      await page.mouse.move(box.x + mid2.x + 56 * Math.cos(a), box.y + mid2.y - 56 * Math.sin(a));
+      await page.mouse.move(box.x + mid2.x + R * Math.cos(a), box.y + mid2.y - R * Math.sin(a));
     }
     await shot("sketchturn");
     await page.mouse.up();
     const turned = await rectBox();
     const turnMsg = await page.evaluate(() => window.juracadStore.getState().sketch?.message?.text ?? "");
-    if (Math.abs(turned.w - 12.7) > 0.01 || Math.abs(turned.h - 30.48) > 0.01) throw new Error(`the ring turned the rectangle to ${turned.w} × ${turned.h} mm ("${turnMsg}")`);
+    if (Math.abs(turned.w - 12.7) > 0.01 || Math.abs(turned.h - 30.48) > 0.01) throw new Error(`the ring turned the rectangle to ${turned.w} × ${turned.h} mm ("${turnMsg}"; ring on screen ${JSON.stringify(ringAt)})`);
     const undoAfter = await page.evaluate(() => window.juracadStore.getState().sketch.past.length);
     if (undoAfter !== undoBefore + 1) throw new Error(`turning with the ring made ${undoAfter - undoBefore} undo steps`);
     await page.keyboard.press("Control+z");

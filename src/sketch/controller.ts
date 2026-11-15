@@ -436,6 +436,10 @@ export class SketchController {
       this.lastTool = tool;
       this.placed = [];
       this.pasting = null;
+      // (A handle drag in progress is taken back: what it moved live was never kept.)
+      const g = this.gizmoDrag;
+      this.gizmoDrag = null;
+      if (g?.moved && !g.copy) this.state.updateSketch(g.start, { record: false });
       this.acquired = [];
       this.transient = { ...this.transient, preview: [], inference: null, pending: [] };
     }
