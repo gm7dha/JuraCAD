@@ -113,7 +113,9 @@ function settle(m: Manipulator, raw: number, opts: ManipDragOptions): { value: n
   if (m.signed) {
     // Past zero it carries on, minus (never exactly 0, which isn't a size).
     if (Number.isFinite(m.max)) out = Math.max(-m.max, Math.min(m.max, out));
-    if (out === 0) out = (raw < 0 ? -1 : 1) * least(opts, m.angle, Math.abs(m.value));
+    // (Never nearer 0 than the least a size may be, Shift or not.)
+    const low = least(opts, m.angle, Math.abs(m.value));
+    if (Math.abs(out) < low) out = (out < 0 || (out === 0 && raw < 0) ? -1 : 1) * low;
     return { value: out + 0, flipped: false };
   }
   out = Math.max(least(opts, m.angle, m.value), out);

@@ -40,6 +40,27 @@ let drag: { session: ManipDrag; before: Feature; step: number; manager: SceneMan
 /** A press on an arrow that can't be dragged (a variable's, or one pointing at you): what to say if it's dragged. */
 let refused: { say: string; ray: ScreenRay; within: number } | null = null;
 
+/**
+ * The dialog as it was at the last presses of an arrow that lets clicks through (an Extrude's): a double-click on it
+ * passed two clicks to the areas under it, which it puts back as they were — with no undo step — before the box opens.
+ */
+let presses: { id: string; at: number; draft: Feature; steps: ReturnType<typeof useStore.getState>["draftSteps"] }[] = [];
+const DOUBLE_CLICK_WINDOW = 1000;
+export function remember(id: string): void {
+  const s = useStore.getState();
+  if (!s.editing) return;
+  const now = Date.now();
+  presses = [...presses.filter((p) => now - p.at < DOUBLE_CLICK_WINDOW), { id, at: now, draft: s.editing.draft, steps: s.draftSteps }].slice(-2);
+}
+function undoPassedClicks(id: string): void {
+  const now = Date.now();
+  const first = presses.find((p) => p.id === id && now - p.at < DOUBLE_CLICK_WINDOW);
+  presses = [];
+  const s = useStore.getState();
+  if (!first || !s.editing || s.editing.draft.id !== first.draft.id || s.editing.draft === first.draft) return;
+  useStore.setState({ editing: { ...s.editing, draft: first.draft }, draftSteps: first.steps });
+}
+
 /** Is a manipulator being dragged (or a refused one pressed) now? */
 export function manipDragging(): boolean {
   return !!drag || !!refused;
@@ -58,6 +79,7 @@ export function manipStart(manager: SceneManager | null, handle: ManipHandle, ra
   const m = manipulatorsNow().find((x) => x.id === handle.id);
   if (!manager || !draft || !m) return false;
   refused = null;
+  if (m.passesClicks) remember(m.id);
   if (m.locked) return refuse(manager, m.locked, ray);
   const session = startManipDrag(m, ray);
   if (!session) return refuse(manager, "This arrow points almost straight at you: turn the view a little to drag it.", ray);
@@ -134,6 +156,7 @@ export function escapeManipDrag(): boolean {
  * variable or a sum may be typed —; Esc or clicking elsewhere changes nothing.
  */
 export function manipEdit(manager: SceneManager | null, id: string): void {
+  undoPassedClicks(id);
   const s = useStore.getState();
   const draft = s.editing?.draft;
   const m = manipulatorsNow().find((x) => x.id === id);

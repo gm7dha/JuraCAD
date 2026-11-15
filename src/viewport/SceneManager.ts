@@ -230,6 +230,8 @@ export interface SceneCallbacks {
   onDoubleClick?: (target: PickTarget | null) => void;
   /** A double-click (or double-tap) on a feature dialog's manipulator: type its size right there (Onshape's in-view edit). */
   onManipDoubleClick?: (id: string) => void;
+  /** A tap on an arrow that lets clicks through, before it picks what's under it (so a double-tap can put that back). */
+  onManipPress?: (id: string) => void;
 }
 
 /** Manipulators' colours: Onshape's blue arrows; grey when the box holds a variable. */
@@ -2434,7 +2436,17 @@ export class SceneManager {
         this.closeManipEdit();
       }
     });
-    input.addEventListener("blur", () => this.closeManipEdit());
+    // (Just opened by a double-tap, a browser's late made-up mouse press can still take the focus: it's given back.)
+    const opened = performance.now();
+    input.addEventListener("blur", () => {
+      if (performance.now() - opened < 400 && this.manipEdit?.box === box) {
+        setTimeout(() => {
+          if (this.manipEdit?.box === box) input.focus();
+        }, 0);
+        return;
+      }
+      this.closeManipEdit();
+    });
     for (const type of ["pointerdown", "wheel", "dblclick", "contextmenu"]) box.addEventListener(type, (e) => e.stopPropagation());
     this.container.appendChild(box);
     this.manipEdit = { box, id };
@@ -2844,6 +2856,13 @@ export class SceneManager {
       this.colourTriad();
       if (!(handle.kind === "manip" && still)) return;
       manipClick = handle.id;
+      // Only an Extrude's / Revolve's arrows let a click through (to the areas round the profile): the others sit on
+      // the face or edge the dialog has picked, so a click there would only pick it again or let it go.
+      if (!this.manips.find((m) => m.id === handle.id)?.passesClicks) {
+        this.pointerDown = null;
+        this.manipClickOnly(manipClick, at.x, at.y);
+        return;
+      }
     }
     this.cancelHold();
     if (this.holdFired) {
@@ -2911,6 +2930,16 @@ export class SceneManager {
   };
   private lastClick: { t: number; x: number; y: number; manip: string | null } | null = null;
 
+  /** A still click on an arrow that keeps its clicks: nothing is picked; a second one soon after types its size. */
+  private manipClickOnly(id: string, x: number, y: number): void {
+    const now = performance.now();
+    const last = this.lastClick;
+    if (last && last.manip === id && now - last.t < DOUBLE_CLICK_MS && Math.hypot(x - last.x, y - last.y) <= CLICK_SLOP) {
+      this.lastClick = null;
+      this.callbacks.onManipDoubleClick?.(id);
+    } else this.lastClick = { t: now, x, y, manip: id };
+  }
+
   // -------------------------------------------------------------------------
   // Fingers and the pen (Onshape's tablet gestures): one finger turns the view, two pan and pinch to
   // zoom, a tap picks, a double-tap fits the view; in a sketch one finger (or the pen) draws with the
@@ -2941,6 +2970,9 @@ export class SceneManager {
       // A finger (or the pen) on one of the triad's handles drags it instead of turning the view.
       const triad = !sketch && !cube ? this.triadHandleAt(x, y, reachFor(e.pointerType)) : null;
       this.touchStroke = { sketch, cube, sent: false, holdDrag: false, triad, triadOn: false };
+      // On a feature dialog's arrow: no made-up mouse events after it (their mousedown would take the focus from the
+      // box a double-tap opens by the arrow).
+      if (triad?.kind === "manip") e.preventDefault();
       if (sketch) {
         // (As with the mouse: keep the keyboard focus where it is, e.g. in a dimension's value box.)
         e.preventDefault();
@@ -3113,7 +3145,6 @@ export class SceneManager {
       // A double-tap on a feature dialog's arrow types its size (after picking what's under it a second time, as a mouse's double-click does).
       const handle = this.manips.length ? this.triadHandleAt(x, y, reachFor(e.pointerType)) : null;
       if (handle?.kind === "manip" && this.callbacks.onManipDoubleClick) {
-        this.callbacks.onPick(this.pickAt(x, y, reachFor(e.pointerType)), additive(e));
         this.callbacks.onManipDoubleClick(handle.id);
         return;
       }
@@ -3123,6 +3154,13 @@ export class SceneManager {
     if (this.sketchPicksParts && this.sketchControllerRaw) {
       const ptr = this.sketchPointerAt(x, y, e);
       if (ptr && this.sketchControllerRaw.useAt(ptr)) return;
+    }
+    // A tap on an arrow that keeps its clicks (all but an Extrude's / Revolve's) picks nothing under it; on one that
+    // lets them through, the dialog is remembered first (a double-tap puts back what the two taps picked).
+    const onArrow = this.manips.length ? this.triadHandleAt(x, y, reachFor(e.pointerType)) : null;
+    if (onArrow?.kind === "manip") {
+      if (!this.manips.find((m) => m.id === onArrow.id)?.passesClicks) return;
+      this.callbacks.onManipPress?.(onArrow.id);
     }
     this.callbacks.onPick(this.pickAt(x, y, reachFor(e.pointerType)), additive(e));
   }

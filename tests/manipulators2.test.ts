@@ -141,6 +141,37 @@ describe("more of Onshape's in-view handles", () => {
   });
 });
 
+describe("what clicks on an arrow do, and Shift drags", () => {
+  it("only an Extrude's / Revolve's arrows let a still click through to the areas under them", () => {
+    const ctx = { sketch: { plane: { kind: "default" as const, name: "Top" as const }, data: addCircle(emptySketch(), { x: 0, y: 0 }, 5).sketch }, parts: [] };
+    const [ex] = manipulatorsFor(draft("extrude", { sketchRef: "s", extrude: { end: "blind", flip: false } }), ctx);
+    expect(ex.passesClicks).toBe(true);
+    const [mv] = manipulatorsFor(draft("moveFace", { picks: [onPart(boxFaces[0])] }), boxCtx);
+    expect(mv.passesClicks).toBeUndefined();
+    const [dr] = manipulatorsFor(draft("draft", { picks: [onPart(boxFaces[2])] }), boxCtx);
+    expect(dr.passesClicks).toBeUndefined();
+  });
+
+  it("a minus-able size dragged with Shift never comes nearer 0 than a hundredth", () => {
+    const [m] = manipulatorsFor(draft("moveFace", { picks: [onPart(boxFaces[0])] }, { distance: "2" }), boxCtx);
+    const d = startManipDrag(m, front(10, 12))!;
+    for (const z of [10.003, 9.998, 10]) expect(Math.abs(d.move(front(10, z), { snap: false, step: 1 }).value)).toBeGreaterThanOrEqual(0.01);
+    expect(d.move(front(10, 9.5), { snap: false, step: 1 }).value).toBeCloseTo(-0.5, 6);
+  });
+
+  it("a lopsided chamfer with a face picked too measures the first distance along that face (Flip swaps)", () => {
+    const e = edge([20, 0, 10], [20, 10, 10]);
+    const side = boxFaces[2];
+    const ms = manipulatorsFor(draft("chamfer", { picks: [onPart(side), onPart(e)], chamferType: "twoDistances" }, { distance: "1", distance2: "3" }), boxCtx);
+    expect(close(manipPoint(ms[0]), [20, 5, 9])).toBe(true);
+    expect(close(manipPoint(ms[1]), [17, 5, 10])).toBe(true);
+    const flipped = manipulatorsFor(draft("chamfer", { picks: [onPart(side), onPart(e)], chamferType: "twoDistances", flipSide: true }, { distance: "1", distance2: "3" }), boxCtx);
+    expect(close(manipPoint(flipped[0]), [19, 5, 10])).toBe(true);
+    // Both its faces picked: no telling which the engine takes first, so no arrows.
+    expect(manipulatorsFor(draft("chamfer", { picks: [onPart(side), onPart(boxFaces[0]), onPart(e)], chamferType: "twoDistances" }), boxCtx)).toEqual([]);
+  });
+});
+
 describe("typing a size by the arrow", () => {
   it("starts with the box's text and takes numbers, variables and sums as the box does", () => {
     const d = draft("extrude", {}, { depth: "15" });
@@ -202,6 +233,30 @@ describe("the in-view box in the dialog's undo", () => {
     expect(s().draftSteps!.drafts.length).toBe(steps + 1);
     expect(s().undoDraftStep()).toBe(true);
     expect(s().editing!.draft.params.distance).toBe(before);
+  });
+
+  it("a double-click on an Extrude's arrow puts back what its two clicks picked under it, with no undo step", async () => {
+    const { remember } = await import("../src/viewport/manipulatorGlue");
+    const data = addCircle(emptySketch(), { x: 0, y: 0 }, 5).sketch;
+    s().startCreate("sketch");
+    s().setDraftField({ sketch: { plane: { kind: "default", name: "Top" }, data } });
+    expect(s().commitDraft()).toBe(true);
+    const sketchId = s().history.present.features[0].id;
+    s().startCreate("extrude");
+    s().setDraftField({ sketchRef: sketchId, extrude: { end: "blind", flip: false } });
+    const before = s().editing!.draft;
+    const steps = s().draftSteps;
+    // Press 1 (remembered), its click passes through and picks an area; press 2, its click lets it go again.
+    remember("depth");
+    s().setDraftField({ areas: [[1, 1, 3]] as unknown as Feature["areas"] });
+    remember("depth");
+    s().setDraftField({ areas: undefined });
+    expect(s().draftSteps).not.toBe(steps);
+    const { view, box } = fakeView();
+    manipEdit(view, "depth");
+    expect(box.id).toBe("depth");
+    expect(s().editing!.draft).toBe(before);
+    expect(s().draftSteps).toBe(steps);
   });
 
   it("no arrow (nothing picked yet): no box", () => {

@@ -4287,6 +4287,53 @@ try {
       });
       touchReport += "; a tap selected a face";
 
+      step = "touch screen: double-tapping a Move face arrow opens a box to type in";
+      {
+        await tab.waitForTimeout(500); // (not a double-tap)
+        await tab.evaluate(() => {
+          const s = window.juracadStore.getState();
+          const part = s.parts[0];
+          const top = part.faceRefs.find((f) => f.kind === "face" && f.normal[2] > 0.99);
+          s.startCreate("moveFace");
+          window.juracadStore.getState().setDraftField({ picks: [{ partId: part.id, ref: top }] });
+          window.juracadViewport.current.setView("iso", false);
+          window.juracadViewport.current.fit(false);
+        });
+        await tab.waitForFunction(() => window.juracadViewport.current.manipulatorsShown().some((m) => m.id === "distance"), null, { timeout: 30_000 });
+        await tab.waitForTimeout(500);
+        const arrow = await tab.evaluate(() => {
+          const on = window.juracadViewport.current.manipulatorOnScreen("distance");
+          return on && { x: on.foot.x * 0.4 + on.tip.x * 0.6, y: on.foot.y * 0.4 + on.tip.y * 0.6 };
+        });
+        if (!arrow) throw new Error("Move face's arrow isn't on screen");
+        const picksBefore = await tab.evaluate(() => JSON.stringify(window.juracadStore.getState().editing?.draft.picks));
+        await tab.evaluate(() => (window.juracadViewport.current.touchTiming = { longPressMs: 5000, doubleTapMs: 5000 }));
+        const at = [canvas.x + arrow.x, canvas.y + arrow.y];
+        for (let i = 0; i < 2; i++) {
+          await touches("touchStart", [at]);
+          await touches("touchEnd", []);
+        }
+        const box = tab.locator(".manip-edit input");
+        await box.waitFor({ timeout: 5_000 }).catch(async () => {
+          const seen = await tab.evaluate(() => window.juracadViewport.current.touchDebug.join(", "));
+          throw new Error(`double-tapping Move face's arrow didn't open a box by it (gestures seen: ${seen})`);
+        });
+        // Still open (and typed into) a moment later: the browser's made-up mouse press mustn't have closed it.
+        await tab.waitForTimeout(600);
+        if (!(await box.count())) throw new Error("the box a double-tap opened by the arrow closed by itself");
+        if (!(await box.evaluate((el) => el === document.activeElement))) throw new Error("the box a double-tap opened by the arrow hasn't got the keyboard");
+        // The taps on the arrow didn't pick or let go of the face under it.
+        if ((await tab.evaluate(() => JSON.stringify(window.juracadStore.getState().editing?.draft.picks))) !== picksBefore) throw new Error("tapping Move face's arrow changed the faces picked under it");
+        await box.fill("3");
+        await box.press("Enter");
+        await tab.waitForFunction(() => window.juracadStore.getState().editing?.draft.params.distance === "3", null, { timeout: 5_000 });
+        await tab.evaluate(() => {
+          window.juracadViewport.current.touchTiming = { longPressMs: 5000, doubleTapMs: 1 };
+          window.juracadStore.getState().cancelDraft();
+        });
+        touchReport += "; a double-tap on an arrow typed its size";
+      }
+
       step = "touch screen: two fingers in a sketch pan the view and draw nothing";
       await tab.waitForTimeout(500); // (not a double-tap)
       await tab.locator(".touch-bar").getByRole("button", { name: "Clear", exact: true }).click();

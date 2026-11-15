@@ -47,6 +47,11 @@ export interface Manipulator {
   signed?: boolean;
   /** Nothing to type in the view (an Extrude's "Up to…" end: it has no size). */
   noEdit?: boolean;
+  /**
+   * A still click on it goes through to what's under it (an Extrude's / Revolve's: the areas round the profile).
+   * Others keep their clicks: they sit on the face or edge the dialog has picked.
+   */
+  passesClicks?: boolean;
   /** What the label by the handle and its tooltip say. */
   text: string;
   tip: string;
@@ -277,53 +282,63 @@ export function manipulatorsFor(draft: Feature, ctx: ManipContext): Manipulator[
   const { values } = resolveParams(draft);
   const params = draft.params;
   const base = (key: string, label: string): Base => ({ key, label, values, params });
-  const out: Manipulator[] = [];
   const sketch = ctx.sketch;
   if ((draft.type === "extrude" || draft.type === "revolve") && sketch?.plane) {
-    const frame = planeFrame(sketch.plane);
-    const mid = profileMiddle(sketch.data, draft.areas);
-    if (!mid) return [];
-    const p0 = toWorld(frame, mid[0], mid[1]);
-    if (draft.type === "extrude") {
-      const ex = draft.extrude ?? { end: "blind", flip: false };
-      const d = scale(frame.n, ex.flip ? -1 : 1);
-      if (ex.end === "blind") {
-        out.push(make(base("depth", "Depth"), { id: "depth", kind: "arrow", origin: p0, dir: d, scale: 1, angle: false, flips: !ex.second, max: Infinity, tip: "Drag to change the depth (hold Shift to stop it snapping)" }));
-        if (ex.second && !draft.surface)
-          out.push(make(base("depth2", "Other way"), { id: "depth2", kind: "arrow", origin: p0, dir: scale(d, -1), scale: 1, angle: false, flips: false, max: Infinity, tip: "Drag to change the depth the other way" }));
-      } else if (ex.end === "symmetric") {
-        const tip = "Drag to change the depth (it grows the same both ways)";
-        out.push(make(base("depth", "Depth"), { id: "depth", kind: "arrow", origin: p0, dir: d, scale: 0.5, angle: false, flips: false, max: Infinity, tip }));
-        out.push(make(base("depth", "Depth"), { id: "depthBack", kind: "arrow", origin: p0, dir: scale(d, -1), scale: 0.5, angle: false, flips: false, max: Infinity, tip }));
-      } else if (UP_TO_SAYS[ex.end]) {
-        // No size to drag: shown greyed, saying why (as Onshape shows the arrow of an end that goes up to something).
-        const say = UP_TO_SAYS[ex.end]!;
-        out.push({ id: "depth", key: "depth", kind: "arrow", origin: p0, dir: d, value: 0, scale: 1, angle: false, flips: false, max: Infinity, locked: say, tip: say, text: "Up to", noEdit: true });
-      }
-      return out;
+    const made = extrudeRevolveHandles(draft, sketch as { plane: SketchPlane; data: SketchData }, base, values);
+    return made.map((m) => ({ ...m, passesClicks: true }));
+  }
+  return otherHandles(draft, ctx, base);
+}
+
+function extrudeRevolveHandles(draft: Feature, sketch: { plane: SketchPlane; data: SketchData }, base: (key: string, label: string) => Base, values: Record<string, number>): Manipulator[] {
+  const out: Manipulator[] = [];
+  const frame = planeFrame(sketch.plane);
+  const mid = profileMiddle(sketch.data, draft.areas);
+  if (!mid) return [];
+  const p0 = toWorld(frame, mid[0], mid[1]);
+  if (draft.type === "extrude") {
+    const ex = draft.extrude ?? { end: "blind", flip: false };
+    const d = scale(frame.n, ex.flip ? -1 : 1);
+    if (ex.end === "blind") {
+      out.push(make(base("depth", "Depth"), { id: "depth", kind: "arrow", origin: p0, dir: d, scale: 1, angle: false, flips: !ex.second, max: Infinity, tip: "Drag to change the depth (hold Shift to stop it snapping)" }));
+      if (ex.second && !draft.surface)
+        out.push(make(base("depth2", "Other way"), { id: "depth2", kind: "arrow", origin: p0, dir: scale(d, -1), scale: 1, angle: false, flips: false, max: Infinity, tip: "Drag to change the depth the other way" }));
+    } else if (ex.end === "symmetric") {
+      const tip = "Drag to change the depth (it grows the same both ways)";
+      out.push(make(base("depth", "Depth"), { id: "depth", kind: "arrow", origin: p0, dir: d, scale: 0.5, angle: false, flips: false, max: Infinity, tip }));
+      out.push(make(base("depth", "Depth"), { id: "depthBack", kind: "arrow", origin: p0, dir: scale(d, -1), scale: 0.5, angle: false, flips: false, max: Infinity, tip }));
+    } else if (UP_TO_SAYS[ex.end]) {
+      // No size to drag: shown greyed, saying why (as Onshape shows the arrow of an end that goes up to something).
+      const say = UP_TO_SAYS[ex.end]!;
+      out.push({ id: "depth", key: "depth", kind: "arrow", origin: p0, dir: d, value: 0, scale: 1, angle: false, flips: false, max: Infinity, locked: say, tip: say, text: "Up to", noEdit: true });
     }
-    const rv = draft.revolve ?? { axis: "vertical", flip: false };
-    const ax = axisInSketch(sketch.data, rv.axis);
-    if (!ax) return [];
-    const through = toWorld(frame, ax.at[0], ax.at[1]);
-    const dir0 = unit(sub(toWorld(frame, ax.at[0] + ax.dir[0], ax.at[1] + ax.dir[1]), through));
-    if (!dir0) return [];
-    const d = scale(dir0, rv.flip ? -1 : 1);
-    const rel = sub(p0, through);
-    if (length(sub(rel, scale(d, dot(rel, d)))) < 1e-6) return [];
-    const angle = values.angle ?? 360;
-    const angle2 = values.angle2 ?? 0;
-    const arc = { kind: "arc" as const, origin: p0, dir: d, angle: true, flips: false };
-    if (rv.symmetric) {
-      const tip = "Drag round to change the angle (it grows the same both ways)";
-      out.push(make(base("angle", "Angle"), { ...arc, id: "angle", axis: { through, dir: d }, scale: 0.5, max: 360, tip }));
-      out.push(make(base("angle", "Angle"), { ...arc, id: "angleBack", axis: { through, dir: scale(d, -1) }, scale: 0.5, max: 360, tip }));
-    } else if (rv.second) {
-      out.push(make(base("angle", "Angle"), { ...arc, id: "angle", axis: { through, dir: d }, scale: 1, max: Math.max(0, 360 - angle2), tip: "Drag round to change the angle" }));
-      out.push(make(base("angle2", "Other way"), { ...arc, id: "angle2", axis: { through, dir: scale(d, -1) }, scale: 1, max: Math.max(0, 360 - angle), tip: "Drag round to change the angle the other way" }));
-    } else out.push(make(base("angle", "Angle"), { ...arc, id: "angle", axis: { through, dir: d }, scale: 1, max: 360, tip: "Drag round to change the angle" }));
     return out;
   }
+  const rv = draft.revolve ?? { axis: "vertical", flip: false };
+  const ax = axisInSketch(sketch.data, rv.axis);
+  if (!ax) return [];
+  const through = toWorld(frame, ax.at[0], ax.at[1]);
+  const dir0 = unit(sub(toWorld(frame, ax.at[0] + ax.dir[0], ax.at[1] + ax.dir[1]), through));
+  if (!dir0) return [];
+  const d = scale(dir0, rv.flip ? -1 : 1);
+  const rel = sub(p0, through);
+  if (length(sub(rel, scale(d, dot(rel, d)))) < 1e-6) return [];
+  const angle = values.angle ?? 360;
+  const angle2 = values.angle2 ?? 0;
+  const arc = { kind: "arc" as const, origin: p0, dir: d, angle: true, flips: false };
+  if (rv.symmetric) {
+    const tip = "Drag round to change the angle (it grows the same both ways)";
+    out.push(make(base("angle", "Angle"), { ...arc, id: "angle", axis: { through, dir: d }, scale: 0.5, max: 360, tip }));
+    out.push(make(base("angle", "Angle"), { ...arc, id: "angleBack", axis: { through, dir: scale(d, -1) }, scale: 0.5, max: 360, tip }));
+  } else if (rv.second) {
+    out.push(make(base("angle", "Angle"), { ...arc, id: "angle", axis: { through, dir: d }, scale: 1, max: Math.max(0, 360 - angle2), tip: "Drag round to change the angle" }));
+    out.push(make(base("angle2", "Other way"), { ...arc, id: "angle2", axis: { through, dir: scale(d, -1) }, scale: 1, max: Math.max(0, 360 - angle), tip: "Drag round to change the angle the other way" }));
+  } else out.push(make(base("angle", "Angle"), { ...arc, id: "angle", axis: { through, dir: d }, scale: 1, max: 360, tip: "Drag round to change the angle" }));
+  return out;
+}
+
+function otherHandles(draft: Feature, ctx: ManipContext, base: (key: string, label: string) => Base): Manipulator[] {
+  const out: Manipulator[] = [];
   const partOf = (partId: string) => ctx.parts.find((p) => p.id === partId);
   const facesOf = (partId: string) => partOf(partId)?.faceRefs ?? [];
   if (draft.type === "fillet" || draft.type === "chamfer") {
@@ -482,12 +497,16 @@ function intoFace(edge: EdgeRef, face: FaceRef, other: FaceRef, convex: boolean)
  * The faces beside a straight edge in the order the engine's lopsided chamfer takes them: the first distance runs
  * along the face that faces most upwards (then towards +Y, then +X); `flipSide` swaps.
  */
-export function chamferFaces(edge: EdgeRef, faces: readonly FaceRef[], flip: boolean): { first: FaceRef; second: FaceRef; convex: boolean } | null {
+export function chamferFaces(edge: EdgeRef, faces: readonly FaceRef[], flip: boolean, picked: readonly FaceRef[] = []): { first: FaceRef; second: FaceRef; convex: boolean } | null {
   const two = facesAlong(edge, faces);
   if (two.length !== 2) return null;
   const up = (f: FaceRef) => [f.normal[2], f.normal[1], f.normal[0]];
   const [a, b] = two.map(up);
-  const aFirst = a[0] - b[0] > 1e-6 || (Math.abs(a[0] - b[0]) <= 1e-6 && (a[1] - b[1] > 1e-6 || (Math.abs(a[1] - b[1]) <= 1e-6 && a[2] >= b[2])));
+  // A face picked too, holding this edge: the engine bevels its edges first, measuring the first distance along it.
+  const holds = (f: FaceRef) => picked.some((p) => p.surface === f.surface && dot(p.normal, f.normal) > 0.999 && Math.abs(dot(sub(p.center, f.center), f.normal)) < 1e-3);
+  const own = [holds(two[0]), holds(two[1])];
+  const aFirst =
+    own[0] !== own[1] ? own[0] : a[0] - b[0] > 1e-6 || (Math.abs(a[0] - b[0]) <= 1e-6 && (a[1] - b[1] > 1e-6 || (Math.abs(a[1] - b[1]) <= 1e-6 && a[2] >= b[2])));
   const [first, second] = aFirst !== flip ? [two[0], two[1]] : [two[1], two[0]];
   const inside = dot(sub(two[0].center, edge.mid), two[1].normal) > 1e-9 || dot(sub(two[1].center, edge.mid), two[0].normal) > 1e-9;
   return { first, second, convex: !inside };
@@ -500,7 +519,10 @@ export function chamferFaces(edge: EdgeRef, faces: readonly FaceRef[], flip: boo
  */
 function lopsidedHandles(draft: Feature, pick: TopoPick, faces: readonly FaceRef[], base: (key: string, label: string) => Base): Manipulator[] {
   const edge = pick.ref as EdgeRef;
-  const sides = chamferFaces(edge, faces, !!draft.flipSide);
+  const picked = (draft.picks ?? []).filter((p) => p.ref.kind === "face" && p.partId === pick.partId && !p.placed).map((p) => p.ref as FaceRef);
+  // Both faces picked: the engine takes whichever it meets first — there's no telling which, so no arrows.
+  const sides = chamferFaces(edge, faces, !!draft.flipSide, picked);
+  if (sides && picked.length && [sides.first, sides.second].every((f) => picked.some((p) => dot(p.normal, f.normal) > 0.999 && Math.abs(dot(sub(p.center, f.center), f.normal)) < 1e-3))) return [];
   if (!sides) return [];
   const u1 = intoFace(edge, sides.first, sides.second, sides.convex);
   const u2 = intoFace(edge, sides.second, sides.first, sides.convex);
