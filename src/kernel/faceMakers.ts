@@ -5,7 +5,10 @@
  * surface the part already had (a top face trimmed by a fillet, split by a cut) keeps that surface's maker; any other
  * new face was made by this feature. Cheap: parts whose shape didn't change aren't looked at.
  */
-import { getOC, type Face, type Shape3D } from "replicad";
+import { getOC, type Shape3D } from "replicad";
+
+/** Parts with more faces than this (an imported mesh: a face per triangle) aren't tagged; their faces count as the part's latest feature's. */
+export const MOST_FACES = 3000;
 
 interface Tagged {
   id: string;
@@ -22,31 +25,41 @@ export class FaceMakers {
 
   /** After `featureId` built: tag the new faces of the parts it changed. */
   after(featureId: string, parts: Tagged[]): void {
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const oc = getOC() as any;
     for (const p of parts) {
       if (this.seen.get(p.id) === p.shape) continue;
       this.seen.set(p.id, p.shape);
       let surfaces = this.bySurface.get(p.id);
       if (!surfaces) this.bySurface.set(p.id, (surfaces = new Map()));
-      let faces: Face[] = [];
+      // Walked without making a wrapper per face; parts with very many faces (an imported mesh) aren't tagged.
+      const ex = new oc.TopExp_Explorer(p.shape.wrapped, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
       try {
-        faces = p.shape.faces;
-      } catch {
-        continue;
-      }
-      for (const f of faces) {
-        try {
-          const hash = f.hashCode;
-          // A face kept as it was keeps its maker (its surface was noted when it was first seen).
-          if (this.byFace.has(hash)) continue;
-          const key = surfaceKey(f);
-          const maker = (key && surfaces.get(key)) || featureId;
-          this.byFace.set(hash, maker);
-          if (key && !surfaces.has(key)) surfaces.set(key, maker);
-        } catch {
-          // leave it untagged
-        } finally {
-          f.delete();
+        let n = 0;
+        for (; ex.More(); ex.Next()) if (++n > MOST_FACES) break;
+        if (n > MOST_FACES) continue;
+        for (ex.ReInit(); ex.More(); ex.Next()) {
+          try {
+            const current = ex.Current();
+            const hash = oc.ReplicadShapeHasher.HashCode(current, 2147483647) as number;
+            // A face kept as it was keeps its maker (its surface was noted when it was first seen).
+            if (this.byFace.has(hash)) continue;
+            const face = oc.TopoDS.Face(current);
+            let key: string | null = null;
+            try {
+              key = surfaceKey(face);
+            } finally {
+              face.delete?.();
+            }
+            const maker = (key && surfaces.get(key)) || featureId;
+            this.byFace.set(hash, maker);
+            if (key && !surfaces.has(key)) surfaces.set(key, maker);
+          } catch {
+            // leave it untagged
+          }
         }
+      } finally {
+        ex.delete();
       }
     }
   }
@@ -66,13 +79,16 @@ function canonical(d: [number, number, number]): [number, number, number] {
 }
 
 /** Planes and cylinders: a short text that is the same for faces on the same surface (null for other kinds). */
-export function surfaceKey(f: Face): string | null {
-  const type = f.geomType;
-  if (type !== "PLANE" && type !== "CYLINDRE") return null;
-  const oc = getOC();
-  const s = new oc.BRepAdaptor_Surface(f.wrapped, true);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function surfaceKey(face: any): string | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const s = new oc.BRepAdaptor_Surface(face, true);
   try {
-    if (type === "PLANE") {
+    const T = oc.GeomAbs_SurfaceType;
+    const type = s.GetType();
+    if (type !== T.GeomAbs_Plane && type !== T.GeomAbs_Cylinder) return null;
+    if (type === T.GeomAbs_Plane) {
       const pl = s.Plane();
       const ax = pl.Axis();
       const loc = ax.Location();

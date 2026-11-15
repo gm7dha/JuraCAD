@@ -919,7 +919,7 @@
   picked parts, else the parts of picked faces/edges, else all shown; "Weigh as" each part's material / one material / a density;
   `SceneManager.setCentreMark` draws the centre). Measure: `Measurement.closest` (BRepExtrema points, `closestPoints`) → closest
   X/Y/Z; round edges' length; Copy. Which feature made each face: `src/kernel/faceMakers.ts` `FaceMakers.after` at every step
-  of `featureSteps` (only parts whose shape object changed; a kept face hash keeps its maker, a new face on a plane/cylinder the
+  of `featureSteps` (TopExp_Explorer, no wrappers; parts over `MOST_FACES` 3000 — a mesh import — skipped; only parts whose shape object changed; a kept face hash keeps its maker, a new face on a plane/cylinder the
   part had keeps that surface's maker, else the feature) → `PartMesh.faceMakers` (by faceGroups, missing = none). Pure
   `src/model/featureSearch.ts`: `matchingFeatures` (every word in name/kind/folder; FeaturePanel's "Search features" box, Esc
   clears, folders/groups opened, datums hidden), `featureOfFace` (maker, else the part's latest), `facesMadeBy`.
