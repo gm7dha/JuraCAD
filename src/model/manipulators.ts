@@ -255,7 +255,8 @@ function roundCorner(edge: EdgeRef, faces: readonly FaceRef[], mesh?: MeshFaces)
 function meshCorner(mesh: MeshFaces | undefined, i: number): { p: Vec3; n: Vec3 } | null {
   const g = mesh?.faceGroups?.[i];
   if (!mesh || !g || !g.count || !mesh.vertices || !mesh.normals || !mesh.triangles) return null;
-  const v = mesh.triangles[3 * g.start];
+  // (`start` is already an index into `triangles`, as connectors.ts reads it.)
+  const v = mesh.triangles[g.start];
   if (v === undefined) return null;
   const at = (a: ArrayLike<number>): Vec3 => [a[3 * v], a[3 * v + 1], a[3 * v + 2]];
   const n = unit(at(mesh.normals));

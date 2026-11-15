@@ -135,6 +135,17 @@ describe("which manipulators a dialog shows, and where", () => {
       { kind: "face", surface: "PLANE", center: [0, 0, 0], normal: [0, 0, -1] },
     ];
     const top: TopoPick = { partId: "q", ref: { kind: "edge", curve: "CIRCLE", a: [3, 0, 10], b: [3, 0, 10], mid: [-3, 0, 10] } };
+    // As built: the round face's group starts part-way through the triangles (after the top face's), and the corner
+    // before it belongs to another face facing the other way — it must not be read instead.
+    const built = {
+      id: "p",
+      faceRefs: plate,
+      vertices: [20, 20, 10, 23, 20, 5, 40, 20, 5],
+      normals: [0, 0, 1, -1, 0, 0, 1, 0, 0],
+      triangles: [0, 0, 0, 2, 2, 2, 1, 1, 1],
+      faceGroups: [{ start: 0, count: 3 }, { start: 6, count: 3 }],
+    };
+    expect(close(edgeCorner({ ...rim }, plate, built)!.into, [-Math.SQRT1_2, 0, -Math.SQRT1_2])).toBe(true);
     const pinMesh = { id: "q", faceRefs: pin, vertices: [3, 0, 5], normals: [1, 0, 0], triangles: [0, 0, 0], faceGroups: [{ start: 0, count: 0 }, { start: 0, count: 1 }] };
     expect(close(edgeCorner(top, pin, pinMesh)!.into, [Math.SQRT1_2, 0, -Math.SQRT1_2])).toBe(true);
   });
