@@ -3095,8 +3095,9 @@ try {
     await page.keyboard.press("Escape");
     await tool("Select");
     await page.keyboard.press("r");
-    await page.mouse.click(mx - 170, my + 70);
-    await page.mouse.click(mx - 120, my + 95);
+    // (Right of the middle: the sketch panel covers the left of the view.)
+    await page.mouse.click(mx + 150, my + 70);
+    await page.mouse.click(mx + 200, my + 95);
     const dimBox = () => page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Dimension value", null, { timeout: 5_000 });
     await dimBox();
     // The design is in inches by now: 1.2 in × 0.5 in = 30.48 × 12.7 mm.
@@ -3135,10 +3136,12 @@ try {
     const mid2 = ringAt;
     const R = ringAt.r;
     const undoBefore = await page.evaluate(() => window.juracadStore.getState().sketch.past.length);
-    await page.mouse.move(box.x + mid2.x + R, box.y + mid2.y);
+    // Grabbed low on the left (clear of the size labels) and taken a quarter turn round.
+    const a0 = (-3 * Math.PI) / 4;
+    await page.mouse.move(box.x + mid2.x + R * Math.cos(a0), box.y + mid2.y - R * Math.sin(a0));
     await page.mouse.down();
     for (let k = 1; k <= 8; k++) {
-      const a = ((k / 8) * Math.PI) / 2;
+      const a = a0 + ((k / 8) * Math.PI) / 2;
       await page.mouse.move(box.x + mid2.x + R * Math.cos(a), box.y + mid2.y - R * Math.sin(a));
     }
     await shot("sketchturn");
