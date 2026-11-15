@@ -238,10 +238,9 @@ describe("the in-view box in the dialog's undo", () => {
   it("a double-click on an Extrude's arrow puts back what its two clicks picked under it, with no undo step", async () => {
     const { remember } = await import("../src/viewport/manipulatorGlue");
     const data = addCircle(emptySketch(), { x: 0, y: 0 }, 5).sketch;
-    s().startCreate("sketch");
-    s().setDraftField({ sketch: { plane: { kind: "default", name: "Top" }, data } });
-    expect(s().commitDraft()).toBe(true);
-    const sketchId = s().history.present.features[0].id;
+    const sketchId = "sk1";
+    const sk: Feature = { id: sketchId, name: "Sketch 1", type: "sketch", operation: "new", suppressed: false, params: {}, sketch: { plane: { kind: "default", name: "Top" }, data } };
+    useStore.setState({ history: historyOf({ ...emptyDocument(), features: [sk] }) });
     s().startCreate("extrude");
     s().setDraftField({ sketchRef: sketchId, extrude: { end: "blind", flip: false } });
     const before = s().editing!.draft;
