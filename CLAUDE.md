@@ -143,6 +143,17 @@
   (union–find) through the equations that read them (`dependencies`), entries from `jacobianEntries` (the same numbers as the
   dense `jacobian`), the whole matrix's tolerance; unknowns no equation reads are free. Same answers as one dense reduction
   (`analyzeWholeDense`, kept for tests/solverBlocks), but thousands of loose points (a 400-piece jigsaw) take ~0.2 s, not minutes.
+  Copy / paste / duplicate (Onshape's): pure `src/sketch/clipboard.ts` — `copySketchItems` (picked curves/points/text + their
+  points; constraints only when EVERY ref is inside; `fix` and anything on the origin/outside left behind; `link`s and orphan
+  `offsetParams` stripped; `middle` = the points' box centre), `pasteSketchClip` (all ids new, middle at the pointer, settled;
+  returns the ids to select), `readSketchClip` (checked JSON, kind "juracad-sketch" v1). App `src/app/sketchClipboardApp.ts`
+  (Ctrl/⌘+C/V/D in App.tsx's sketchShortcut, toolbar Copy/Paste; kept in memory + localStorage `juracad.copiedSketch`, so it
+  pastes into other sketches/tabs). The controller's `startPaste` switches to Select; the copy follows the pointer
+  (`pastePreview` via the shared `curvesPreview`) until a click (one undo step), Esc/tool change drops it. Pressing (no
+  Shift/Ctrl) on one of ≥ 2 picked things drags them all (`DragState` "group" → `dragSelection`: `moveRigid` of
+  `selectionPoints`, linked points left out). Dimension box: variable names offered while typing (pure
+  `src/model/varComplete.ts` `suggestionsAt`/`completeWith`; ↑↓, Tab/Enter take one, Esc hides; nothing until typed).
+  Tests: tests/sketchClipboard (pure), sketchClipboardStore (controller), varComplete.
 - Visibility (the eye in the feature list): `src/model/visibility.ts`. Sketches and Plane features have `Feature.visible`
   (missing = automatic: planes shown; a sketch shown until an unsuppressed feature uses it, `usedSketches` — as Onshape
   hides consumed sketches). The Origin and Top/Front/Right hidden per Part Studio: `doc.hiddenDatums` (first studio) /

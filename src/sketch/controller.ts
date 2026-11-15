@@ -59,7 +59,7 @@ import {
   extendAt,
   splitAt,
 } from "./tools";
-import { ORIGIN_ID, type SketchData } from "./types";
+import { ORIGIN_ID, type SketchCurve, type SketchData } from "./types";
 import { placedByOffset } from "./solver";
 import { addText, imageAt, imageById, readTextSettings, textAt, textById } from "./sketchText";
 import { isRefId, laterMessage, linkEdge, parseRefId, refSketch, type RefEdge } from "./links";
@@ -69,6 +69,7 @@ import type { Snap } from "./ops";
 import { splinePolyline } from "./spline";
 import { ellipseFrom, ellipsePolyline, minorPointFor } from "./ellipse";
 import { rectOf, sketchItemsInBox } from "../viewport/boxSelect";
+import { clipAt, dragSelection, draggableCount, pasteSketchClip, type SketchClip } from "./clipboard";
 
 export interface SketchPointer {
   /** Sketch coordinates (mm). */
@@ -128,8 +129,10 @@ const DRAG_PX = 3;
 const SNAP_PX = 14;
 
 interface DragState {
-  kind: "point" | "curve" | "rim" | "handle" | "image" | "none";
+  kind: "point" | "curve" | "rim" | "handle" | "image" | "group" | "none";
   id: string;
+  /** Dragging several picked things together ("group"): what moves. */
+  ids?: string[];
   start: SketchData;
   startX: number;
   startY: number;
@@ -156,6 +159,46 @@ export class SketchController {
   /** Which kind of dimension the placing preview last showed. */
   private previewKind: string | null = null;
   private readonly listeners = new Set<(t: SketchTransient) => void>();
+  /** A copy being placed (after Ctrl+V): it follows the pointer until a click puts it down. */
+  private pasting: SketchClip | null = null;
+  /** Where the pointer last was (sketch mm), so a paste shows at once. */
+  private lastPointer: [number, number] | null = null;
+
+  /**
+   * Start placing a copy (Ctrl/⌘ + V, or Duplicate): it follows the pointer, a click puts it down, Esc stops.
+   * Switches to the Select tool.
+   */
+  startPaste(clip: SketchClip): void {
+    if (this.state.sketch?.tool !== "select") this.state.setSketchTool("select");
+    void this.tool; // (catch up with the tool change, which would otherwise drop the paste)
+    this.pasting = clip;
+    this.drag = null;
+    this.state.setSketchMessage("Click where to put the copy (Esc to stop).", "info");
+    this.emit({ preview: this.lastPointer ? this.pastePreview(this.lastPointer) : [], hover: null, snap: null, inference: null, hints: [] });
+  }
+
+  /** Is a copy following the pointer, waiting to be put down? */
+  isPasting(): boolean {
+    return this.pasting !== null;
+  }
+
+  /** The copy drawn where it would go, its middle at the pointer. */
+  private pastePreview(at: [number, number]): PreviewShape[] {
+    const clip = this.pasting;
+    if (!clip) return [];
+    const d = clipAt(clip, at);
+    return curvesPreview(d, d.curves, (p) => p);
+  }
+
+  private pasteAt(e: SketchPointer): void {
+    const clip = this.pasting;
+    const d = this.data;
+    this.pasting = null;
+    this.emit({ preview: [] });
+    if (!clip || !d) return;
+    const r = pasteSketchClip(d, clip, [e.x, e.y]);
+    if (this.commit(r, r.ids)) this.state.setSketchMessage("Pasted — the copy is selected. Drag it to move it, or Ctrl+V again for another.", "info");
+  }
 
   onChange(fn: (t: SketchTransient) => void): () => void {
     this.listeners.add(fn);
@@ -318,6 +361,7 @@ export class SketchController {
       // Switching tools abandons anything half-drawn.
       this.lastTool = tool;
       this.placed = [];
+      this.pasting = null;
       this.acquired = [];
       this.transient = { ...this.transient, preview: [], inference: null, pending: [] };
     }
@@ -457,25 +501,7 @@ export class SketchController {
       if (typeof opts === "string" || !(opts.count >= 2 && opts.count <= 200)) return [];
       moves = Array.from({ length: Math.round(opts.count) - 1 }, (_, i) => patternTransform(opts, i + 1));
     }
-    const out: PreviewShape[] = [];
-    for (const move of moves) {
-      const at = (id: string) => move(pointPos(d, id));
-      for (const c of sources) {
-        if (c.type === "line") out.push({ kind: "line", a: at(c.p1), b: at(c.p2) });
-        else if (c.type === "circle") out.push({ kind: "circle", c: at(c.center), r: c.radius });
-        else if (c.type === "spline" || c.type === "ellipse") {
-          // Moving is rigid, so the curve drawn out moves point by point.
-          const pts = (c.type === "spline" ? splinePath(d, c) : ellipsePoints(d, c)).map(move);
-          for (let k = 0; k + 1 < pts.length; k++) out.push({ kind: "line", a: pts[k], b: pts[k + 1] });
-        } else {
-          const cc = at(c.center);
-          const s0 = at(c.start);
-          const s1 = at(c.end);
-          out.push({ kind: "arc", c: cc, r: radiusOf(d, c), a0: Math.atan2(s0[1] - cc[1], s0[0] - cc[0]), a1: Math.atan2(s1[1] - cc[1], s1[0] - cc[0]) });
-        }
-      }
-    }
-    return out;
+    return moves.flatMap((move) => curvesPreview(d, sources, move));
   }
 
   /** Redraw the pattern preview (after its settings change in the panel). */
@@ -534,6 +560,7 @@ export class SketchController {
     const d = this.data;
     if (!d) return;
     const tool = this.tool;
+    if (this.pasting) return this.pasteAt(e);
     if (tool === "select") return this.selectDown(e);
     if (tool === "dimension") return this.dimensionClick(e);
     if (tool === "extend" || tool === "split") {
@@ -827,6 +854,11 @@ export class SketchController {
     const d = this.data;
     if (!d) return;
     const tool = this.tool;
+    this.lastPointer = [e.x, e.y];
+    if (this.pasting) {
+      this.emit({ preview: this.pastePreview([e.x, e.y]), hover: null, snap: null, inference: null, hints: [] });
+      return;
+    }
     if (tool === "select") {
       if (dragging && this.drag) return this.selectDrag(e);
       const hover = this.selectHit(e);
@@ -1096,6 +1128,12 @@ export class SketchController {
 
   /** Esc: abandon a half-drawn shape. Returns true if there was one. */
   cancel(): boolean {
+    if (this.pasting) {
+      this.pasting = null;
+      this.emit({ preview: [] });
+      this.state.setSketchMessage(null);
+      return true;
+    }
     // Esc finishes a spline that has enough points (rather than throwing it away).
     if (this.tool === "spline" && this.placed.length >= 2 && this.data) {
       const r = addSpline(this.data, this.placed, false, this.state.sketch?.construction ?? false);
@@ -1140,6 +1178,11 @@ export class SketchController {
         return;
       }
       this.lastTextClick = text ? { id: text.id, at: now } : null;
+      const picks = this.state.sketch?.selection ?? [];
+      if (text && !(e.shift || e.ctrl) && picks.includes(text.id) && draggableCount(d, picks) >= 2) {
+        this.drag = { kind: "group", id: text.id, ids: picks, start: d, startX: e.x, startY: e.y, moved: false, additive: false, hit: extra, startScreenX: e.screenX };
+        return;
+      }
       if (text) this.drag = { kind: text.anchor === ORIGIN_ID ? "none" : "point", id: text.anchor, start: d, startX: e.x, startY: e.y, moved: false, additive: e.shift || e.ctrl, hit: extra, startScreenX: e.screenX };
       else this.drag = { kind: "image", id: extra.id, start: d, startX: e.x, startY: e.y, moved: false, additive: e.shift || e.ctrl, hit: extra, startScreenX: e.screenX };
       return;
@@ -1155,6 +1198,12 @@ export class SketchController {
       const c = curveById(d, hit.id)!;
       // Dragging a circle's or an arc's rim resizes it; drag its centre point to move it.
       kind = c.type === "circle" || c.type === "arc" ? "rim" : "curve";
+    }
+    // Pressing on one of several picked things drags them all together (Shift/Ctrl held: it only adds or takes away).
+    const sel = this.state.sketch?.selection ?? [];
+    if (kind !== "none" && hit && !(e.shift || e.ctrl) && sel.includes(hit.id) && draggableCount(d, sel) >= 2) {
+      this.drag = { kind: "group", id: hit.id, ids: sel, start: d, startX: e.x, startY: e.y, moved: false, additive: false, hit, startScreenX: e.screenX };
+      return;
     }
     this.drag = { kind, id: hit?.id ?? "", start: d, startX: e.x, startY: e.y, moved: false, additive: e.shift || e.ctrl, hit, startScreenX: e.screenX };
   }
@@ -1231,6 +1280,7 @@ export class SketchController {
       this.emit({ snap: drag.snapTo ? [x, y] : null, hints: drag.snapTo?.kind === "midpoint" ? [[x, y]] : [] });
     }
     else if (drag.kind === "curve") next = dragCurve(drag.start, drag.id, e.x - drag.startX, e.y - drag.startY);
+    else if (drag.kind === "group") next = dragSelection(drag.start, drag.ids ?? [], e.x - drag.startX, e.y - drag.startY);
     else if (drag.kind === "image") {
       const m = imageById(drag.start, drag.id);
       if (m) next = { ...drag.start, images: (drag.start.images ?? []).map((x) => (x.id === m.id ? { ...m, x: m.x + e.x - drag.startX, y: m.y + e.y - drag.startY } : x)) };
@@ -1315,6 +1365,26 @@ export class SketchController {
     }
     this.state.setEditingDimension(r.dimensionId);
   }
+}
+
+/** Faint copies of curves with every point moved by `move` (a rigid move: splines and ellipses are moved point by point). */
+function curvesPreview(d: SketchData, sources: readonly SketchCurve[], move: (p: [number, number]) => [number, number]): PreviewShape[] {
+  const out: PreviewShape[] = [];
+  const at = (id: string) => move(pointPos(d, id));
+  for (const c of sources) {
+    if (c.type === "line") out.push({ kind: "line", a: at(c.p1), b: at(c.p2) });
+    else if (c.type === "circle") out.push({ kind: "circle", c: at(c.center), r: c.radius });
+    else if (c.type === "spline" || c.type === "ellipse") {
+      const pts = (c.type === "spline" ? splinePath(d, c) : ellipsePoints(d, c)).map(move);
+      for (let k = 0; k + 1 < pts.length; k++) out.push({ kind: "line", a: pts[k], b: pts[k + 1] });
+    } else {
+      const cc = at(c.center);
+      const s0 = at(c.start);
+      const s1 = at(c.end);
+      out.push({ kind: "arc", c: cc, r: radiusOf(d, c), a0: Math.atan2(s0[1] - cc[1], s0[0] - cc[0]), a1: Math.atan2(s1[1] - cc[1], s1[0] - cc[0]) });
+    }
+  }
+  return out;
 }
 
 /** Half the slot's width: how far the third click is from the line through the two centres. */

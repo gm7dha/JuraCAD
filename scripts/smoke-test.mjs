@@ -2966,6 +2966,30 @@ try {
     now = await curves();
     if (now.filter((c) => c === "circle").length !== 3) throw new Error(`pattern made ${now.join(",")}`);
 
+    // Copy and paste (Onshape's): the three circles copied, the copy follows the pointer and a click puts it down; undone after.
+    step = "sketch copy and paste";
+    await page.keyboard.press("Escape");
+    await tool("Select");
+    await page.evaluate(() => {
+      const st = window.juracadStore.getState();
+      st.setSketchSelection(st.editing.draft.sketch.data.curves.filter((c) => c.type === "circle").map((c) => c.id));
+    });
+    await page.mouse.move(mx + 60, my + 100);
+    await page.keyboard.press("Control+c");
+    await page.keyboard.press("Control+v");
+    await page.mouse.move(mx + 80, my + 110, { steps: 4 });
+    const pastePreview = await page.evaluate(() => window.juracadViewport.sketch?.isPasting());
+    if (!pastePreview) throw new Error(`Ctrl+V didn't start placing a copy (${await page.evaluate(() => window.juracadStore.getState().sketch?.message?.text)})`);
+    await page.mouse.click(mx + 80, my + 110);
+    now = await curves();
+    if (now.filter((c) => c === "circle").length !== 6) throw new Error(`pasting the 3 circles left ${now.join(",")}`);
+    const pastedSel = await page.evaluate(() => window.juracadStore.getState().sketch.selection.length);
+    if (pastedSel !== 3) throw new Error(`the pasted copy should be selected, got ${pastedSel} picked`);
+    await page.keyboard.press("Control+z");
+    now = await curves();
+    if (now.filter((c) => c === "circle").length !== 3) throw new Error(`undoing the paste left ${now.join(",")}`);
+    step = "sketch extras: text";
+
     // Text: type the words, click where they go; the letters are closed shapes. A double-click puts the cursor back in the words box.
     await page.keyboard.press("Escape");
     await tool("Text");
