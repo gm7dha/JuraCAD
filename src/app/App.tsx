@@ -1,10 +1,11 @@
+import { copySketchSelection, duplicateSketchSelection, pasteIntoSketch } from "./sketchClipboardApp";
 import { startLink } from "./juraLinkApp";
 import { startFeatureClipboard } from "./featureClipboardApp";
 import { PasteDialog, SelectOtherMenu } from "./ViewTools";
 import { useEffect } from "react";
 
 import { connectKernel } from "../kernel/connect";
-import { activeAssembly, activeDrawing, activeFeatures, studioParts, useStore } from "../model/store";
+import { activeAssembly, activeDrawing, activeFeatures, keepsSteps, studioParts, useStore } from "../model/store";
 import { findDependents } from "../model/dependents";
 import { DrawingPanel, DrawingSheet, DrawingToolbar } from "./DrawingUI";
 import { AssemblyPanel, AssemblyToolbar, ExplodePanel, InsertPanel, InstancePanel, MateDialog, PatternPanel } from "./AssemblyUI";
@@ -63,6 +64,13 @@ function isTyping(target: EventTarget | null): boolean {
   return el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName);
 }
 
+/** Typing in a text box (not a tick box, choice button or slider, which have no text of their own to undo). */
+function isTypingText(target: EventTarget | null): boolean {
+  if (!isTyping(target)) return false;
+  const el = target as HTMLElement;
+  return !(el instanceof HTMLInputElement && ["checkbox", "radio", "button", "submit", "reset", "range", "color"].includes(el.type));
+}
+
 /** Keyboard shortcuts while a sketch is open. Returns true if the key was used. */
 function sketchShortcut(e: KeyboardEvent): boolean {
   const s = useStore.getState();
@@ -73,6 +81,10 @@ function sketchShortcut(e: KeyboardEvent): boolean {
     const key = e.key.toLowerCase();
     if (key === "z" && !e.shiftKey) s.sketchUndo();
     else if (key === "y" || (key === "z" && e.shiftKey)) s.sketchRedo();
+    // Copy / paste / duplicate sketch shapes (text picked on the page is copied as usual).
+    else if (key === "c" && !e.shiftKey && !e.altKey && !window.getSelection?.()?.toString()) return copySketchSelection();
+    else if (key === "v" && !e.shiftKey && !e.altKey) pasteIntoSketch();
+    else if (key === "d" && !e.shiftKey && !e.altKey) duplicateSketchSelection();
     else return false;
     return true;
   }
@@ -139,8 +151,8 @@ function useShortcuts() {
         return;
       }
 
-      // Move / copy open: Ctrl+Z takes back its last drag of the triad (or click), one at a time.
-      if (mod && !isTyping(e.target) && s.editing?.draft.type === "transform" && e.key.toLowerCase() === "z" && !e.shiftKey) {
+      // Move / copy (or a dialog with manipulators) open: Ctrl+Z takes back its last drag (or click), one at a time.
+      if (mod && !isTypingText(e.target) && s.editing && keepsSteps(s.editing.draft) && e.key.toLowerCase() === "z" && !e.shiftKey) {
         if (s.undoDraftStep()) e.preventDefault();
         return;
       }

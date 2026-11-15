@@ -9,6 +9,8 @@ import { measure, moveDimensionLabel, setDimensionValue } from "../sketch/ops";
 import { linkedPoints } from "../sketch/links";
 import { isAngleDimension, isDimension, type SketchConstraint, type SketchData } from "../sketch/types";
 import { sketchStatus, viewportApi } from "../viewport/Viewport";
+import { resolveVariables, type Variable } from "../model/variables";
+import { completeWith, suggestionsAt } from "../model/varComplete";
 
 const RELATION_NAMES: Partial<Record<SketchConstraint["type"], string>> = {
   coincident: "Coincident",
@@ -51,6 +53,7 @@ function dimensionText(c: SketchConstraint, unit: LengthUnit, data?: SketchData)
 
 /** Shared empty list: a selector must not return a new array each time, or React re-renders forever. */
 const NO_SELECTION: string[] = [];
+const NO_VARIABLES: Variable[] = [];
 
 interface Placement {
   id: string;
@@ -190,10 +193,34 @@ function DimensionLabel({
   const [text, setText] = useState(shownValue);
   const [error, setError] = useState<string | null>(null);
   const drag = useRef<{ startData: SketchData; moved: boolean; x: number; y: number } | null>(null);
+  // Variable names offered while typing (Onshape's autocomplete): the design's variables matching the word at the cursor.
+  const variables = useStore((s) => (editing ? s.history.present.variables ?? NO_VARIABLES : NO_VARIABLES));
+  const values = useMemo(() => resolveVariables(variables).values, [variables]);
+  const [caret, setCaret] = useState(0);
+  const [pick, setPick] = useState(0);
+  // (Nothing offered until something is typed.)
+  const [hideHints, setHideHints] = useState(true);
+  const input = useRef<HTMLInputElement | null>(null);
+  const hints = useMemo(() => (editing && !hideHints ? suggestionsAt(text, caret, variables.map((v) => v.name)) : { word: null, names: [] as string[] }), [editing, hideHints, text, caret, variables]);
+  const choose = (name: string) => {
+    if (!hints.word) return;
+    const next = completeWith(text, hints.word, name);
+    setText(next.text);
+    setCaret(next.caret);
+    setPick(0);
+    // Chosen: the list goes until something more is typed, so Enter then sets the size.
+    setHideHints(true);
+    setError(null);
+    requestAnimationFrame(() => {
+      input.current?.focus();
+      input.current?.setSelectionRange(next.caret, next.caret);
+    });
+  };
   useEffect(() => {
     if (editing) {
       setText(shownValue);
       setError(null);
+      setHideHints(true);
     }
   }, [editing, shownValue]);
 
@@ -225,17 +252,40 @@ function DimensionLabel({
     return (
       <div ref={refCb} className="dimension-editor">
         <input
+          ref={input}
           autoFocus
           value={text}
           aria-label="Dimension value"
           aria-invalid={!!error}
+          aria-autocomplete="list"
           onChange={(e) => {
             setText(e.target.value);
+            setCaret(e.target.selectionStart ?? e.target.value.length);
+            setPick(0);
+            setHideHints(false);
             setError(null);
           }}
+          onSelect={(e) => setCaret((e.target as HTMLInputElement).selectionStart ?? 0)}
           onFocus={(e) => e.target.select()}
           onKeyDown={(e) => {
             e.stopPropagation();
+            const listed = hints.names;
+            if (listed.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+              e.preventDefault();
+              setPick((i) => (i + (e.key === "ArrowDown" ? 1 : listed.length - 1)) % listed.length);
+              return;
+            }
+            const highlighted = listed[Math.min(pick, listed.length - 1)];
+            // Enter on a name that's already typed in full (w, with width also offered) sets the size.
+            if (listed.length && (e.key === "Tab" || (e.key === "Enter" && highlighted !== hints.word?.word))) {
+              e.preventDefault();
+              choose(highlighted);
+              return;
+            }
+            if (listed.length && e.key === "Escape") {
+              setHideHints(true);
+              return;
+            }
             if (e.key === "Enter") apply();
             if (e.key === "Escape") {
               if (offered()) useStore.getState().discardOfferedDimensions();
@@ -250,6 +300,26 @@ function DimensionLabel({
         />
         <span className="unit">{isAngleDimension(c) ? "°" : unit}</span>
         {error && <div className="dimension-error">{error}</div>}
+        {!error && hints.names.length > 0 && (
+          <div className="dimension-suggest" role="listbox" aria-label="Variables">
+            {hints.names.map((name, i) => (
+              <button
+                key={name}
+                type="button"
+                role="option"
+                aria-selected={i === Math.min(pick, hints.names.length - 1)}
+                className={i === Math.min(pick, hints.names.length - 1) ? "picked" : ""}
+                // Keep the focus in the box (a blur would apply what's typed so far).
+                onPointerDown={(e) => e.preventDefault()}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => choose(name)}
+              >
+                <span className="name">{name}</span>
+                {name in values && <span className="value">{isAngleDimension(c) ? String(Math.round(values[name] * 1000) / 1000) : `${lengthNumber(values[name], unit)} ${unit}`}</span>}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     );
   }

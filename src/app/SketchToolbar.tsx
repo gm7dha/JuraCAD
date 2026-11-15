@@ -7,6 +7,7 @@ import { Icons } from "./icons";
 import { ToolGroupButton } from "./ToolGroupButton";
 import { MAIN_RELATIONS, MORE_RELATIONS, SKETCH_FAMILIES as FAMILIES, SKETCH_INSERT_TOOLS } from "./toolbarLayout";
 import { detectPlatform, shortcut } from "./platform";
+import { copySketchSelection, pasteIntoSketch } from "./sketchClipboardApp";
 import { applySketchRelation, deleteSketchSelection, insertImageFile, pickFile, setSketchTool, toggleSketchConstruction } from "./sketchActions";
 
 const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hint: string }[] = [
@@ -170,6 +171,14 @@ export function SketchToolbar() {
       </div>
       <div className="toolbar-spacer" />
       <div className="tool-group">
+        <ToolBtn
+          label="Copy"
+          icon={<Icons.Duplicate />}
+          onClick={() => copySketchSelection()}
+          disabled={!hasSelection}
+          title="Copy the selection, with the relations and dimensions between them (Ctrl+C). Ctrl+D makes a copy straight away."
+        />
+        <ToolBtn label="Paste" icon={<Icons.Insert />} onClick={() => pasteIntoSketch()} disabled={!hasPlane} title="Paste what was copied: it follows the pointer until you click (Ctrl+V)" />
         <ToolBtn label="Delete" icon={<Icons.Trash />} onClick={deleteSketchSelection} disabled={!hasSelection} title="Delete the selection (Delete)" />
       </div>
     </div>

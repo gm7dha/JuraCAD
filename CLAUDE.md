@@ -143,6 +143,23 @@
   (union–find) through the equations that read them (`dependencies`), entries from `jacobianEntries` (the same numbers as the
   dense `jacobian`), the whole matrix's tolerance; unknowns no equation reads are free. Same answers as one dense reduction
   (`analyzeWholeDense`, kept for tests/solverBlocks), but thousands of loose points (a 400-piece jigsaw) take ~0.2 s, not minutes.
+  Copy / paste / duplicate (Onshape's): pure `src/sketch/clipboard.ts` — `copySketchItems` (picked curves/points/text + their
+  points; constraints only when EVERY ref is inside; `fix` and anything on the origin/outside left behind; `link`s and orphan
+  `offsetParams` stripped; `middle` = the points' box centre), `pasteSketchClip` (all ids new, middle at the pointer, solved;
+  returns the ids to select; a dimension whose expression can't be worked out here — a variable the design lacks — is
+  pasted as its number from copy time, `SketchClip.sizes`, and `unknownNames` says so; refused if the solve fails),
+  `readSketchClip` (kind "juracad-sketch" v1, through validate.ts `parseSketchData` with nothing dropped, unique ids, every
+  curve point / handle key / constraint ref / text anchor inside the clip — else null). App `src/app/sketchClipboardApp.ts`
+  (Ctrl/⌘+C/V/D in App.tsx's sketchShortcut, toolbar Copy/Paste; kept in memory + localStorage `juracad.copiedSketch`, so it
+  pastes into other sketches/tabs). The controller's `startPaste` switches to Select; the copy follows the pointer
+  (`pastePreview` via the shared `curvesPreview`, lone points as rings, text as a box) until a click (one undo step; on
+  touch it follows the finger and lifting puts it down), Esc/tool change drops it; localStorage's copy wins over memory. Pressing (no
+  Shift/Ctrl) on one of ≥ 2 picked things drags them all (`DragState` "group" → `dragSelection`: `moveRigid` of
+  `selectionPoints`; refused — nothing moves, a message says why — when the solve doesn't move every point by the same
+  amount, so a held point never stretches the shapes; pressing a circle's rim among several picked moves the group). Dimension box: variable names offered while typing (pure
+  `src/model/varComplete.ts` `suggestionsAt`/`completeWith`; ↑↓, Tab/Enter take one — Enter on a name typed in full
+  sets the size —, a choice or Esc hides the list until more is typed; nothing until typed).
+  Tests: tests/sketchClipboard (pure), sketchClipboardStore (controller), varComplete.
 - Visibility (the eye in the feature list): `src/model/visibility.ts`. Sketches and Plane features have `Feature.visible`
   (missing = automatic: planes shown; a sketch shown until an unsuppressed feature uses it, `usedSketches` — as Onshape
   hides consumed sketches). The Origin and Top/Front/Right hidden per Part Studio: `doc.hiddenDatums` (first studio) /
@@ -647,6 +664,28 @@
   drag whose dialog closed is dropped; finger taps on handles do nothing; a live move only shifts the triad's drawing.
   `transform.picking` says what a click chooses (missing = the part). Tests: tests/transformDrag.test.ts (pure), tests/transformStore.test.ts,
   tests/engineTransform.test.ts.
+- Manipulators (Onshape's in-view handles for feature dialogs): pure `src/model/manipulators.ts` (`MANIPULATED` types: extrude,
+  revolve, fillet, chamfer, shell, thicken; `manipulatorsFor(draft, {sketch, parts})` → `Manipulator`s: an arrow (`origin` = where the
+  value is 0, `dir`, handle at value × `scale`) or an arc round `axis`; Extrude blind/symmetric (two arrows, scale ½, both edit `depth`)
+  and `depth2`, from the profile's middle (`profileMiddle`: chosen regions' box, cached per sketch data); Revolve one way/symmetric/two
+  ways (`max` = what the other angle leaves of 360); Fillet/Chamfer on the first EDGE pick (`edgeCorner`, cached per pick: bisector of
+  the two flat faces holding the edge — an inside corner (each face reaching in front of the other) points out into the open corner —,
+  the rounded/cut face's middle r(1/cos(α/2) − 1) / d·sin(α/2) in; a round edge by a flat face (`roundCorner`: hole vs pin from one mesh
+  corner of the round face, `meshCorner`); else towards the faces' middle; no arrow for two-distance / distance-angle chamfers);
+  Shell (walls outside with `flipSide`)/Thicken on the first face pick; open profiles (thin, surface) from their points' box. A box holding a variable/sum (`isPlainNumber`) = `locked`: drawn grey with a
+  tooltip, never dragged. `manipPatch` (an Extrude's blind end with no second side dragged past 0 flips `extrude.flip`). Drag maths
+  pure in `src/viewport/manipulatorDrag.ts` (`manipHandleAt`, `startManipDrag`: arrows via transformDrag's `axisParam`, arcs added up
+  like the triad's rings, edge-on along the tangent; `manipStep` 1 mm / 0.05 in, finer only right zoomed in, coarser out; 1°; Shift free;
+  least min(step, start), ≤ `max`; nothing changes until the pointer has moved half a step, so grabbing never jumps; `axisParam`
+  ignores a line point behind the eye). A mouse press let go without moving, and a finger tap, pass through as plain clicks; a refused
+  arrow (locked, end-on) says why only once the pointer moves. App's dialog-undo Ctrl+Z works after ticking boxes (`isTypingText`). Glue `src/viewport/manipulatorGlue.ts`: SceneManager's triad hit test returns `ViewHandle` (= TriadHandle |
+  ManipHandle, manipulators first), so mouse priority, fingers dragging (never orbiting), hover colour, Esc (`escapeTriadDrag` →
+  `escapeManipDrag`) all reuse the triad's paths; the Viewport dispatches the onTriad* callbacks. A drag changes the draft live
+  (`store.dragDraft`, rebuilt as usual — the box and preview follow), letting go = one dialog undo step (`endDraftDrag(before)`;
+  cancel puts `before` back). These dialogs keep the dialog undo like Move / copy (`keepsSteps`: typing, fields, picks are steps;
+  Ctrl+Z in App). `SceneManager.setManipulators`/`manipulatorsShown`/`manipulatorOnScreen`/`setManipLabel` (`.manip-label`, the value
+  by the tip while dragging). Tests: tests/manipulators (pure), manipulatorStore; the smoke test drags the Extrude's depth arrow
+  60 px and Ctrl+Z puts 15 back. Not done: Draft angle, Hole depth, Offset surface, assembly features, a drag on a variable.
 - Mirror planes and pattern axes: `src/model/patternRefs.ts` (pure). A mirror's plane is a default plane, a Plane
   feature, a clicked flat face (`mirror.planePick`, found again on rebuild; `plane` keeps where it was when clicked) or a
   sketch line (`mirror.line`: the plane through it, square to its sketch). Patterns use X/Y/Z, a clicked edge/face

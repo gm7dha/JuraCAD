@@ -1040,6 +1040,57 @@ try {
   await page.waitForFunction(() => document.querySelector(".area-picker")?.textContent?.includes("1 area picked"));
   await page.getByRole("button", { name: "Use all closed shapes" }).click();
   await page.waitForFunction(() => document.querySelector(".area-picker")?.textContent?.includes("Using every closed shape"));
+
+  step = "dragging the Extrude's depth arrow (a manipulator)";
+  {
+    await page.waitForFunction(() => window.juracadViewport.current.manipulatorsShown().some((m) => m.id === "depth"), null, { timeout: 30_000 });
+    // (Looking straight down at the sketch the arrow points at you and can't be grabbed: turn to the usual 3D view.)
+    await page.evaluate(() => {
+      window.juracadViewport.current.setView("iso", false);
+      window.juracadViewport.current.fit(false);
+    });
+    await page.waitForTimeout(300);
+    const plan = await page.evaluate(() => {
+      const v = window.juracadViewport.current;
+      const m = v.manipulatorsShown().find((x) => x.id === "depth");
+      const on = v.manipulatorOnScreen("depth");
+      const at = (k) => v.worldToScreen(m.origin.map((c, i) => c + m.dir[i] * k));
+      const a = at(m.value);
+      const b = at(m.value + 1);
+      const perMm = Math.hypot(b.x - a.x, b.y - a.y);
+      const grab = { x: on.foot.x * 0.4 + on.tip.x * 0.6, y: on.foot.y * 0.4 + on.tip.y * 0.6 };
+      return { grab, dir: [(b.x - a.x) / perMm, (b.y - a.y) / perMm], perMm, mmPerPixel: v.mmPerPixel(), handle: v.triadHandleAt(grab.x, grab.y), start: m.value };
+    });
+    if (plan.handle?.kind !== "manip" || plan.handle.id !== "depth") throw new Error(`the depth arrow isn't under its own middle on screen (found ${JSON.stringify(plan.handle)})`);
+    if (!(plan.perMm > 0.3)) throw new Error(`the depth arrow is seen almost end-on (${plan.perMm} px per mm)`);
+    const stepsBefore = await page.evaluate(() => window.juracadStore.getState().draftSteps?.drafts.length ?? 0);
+    const vp = await page.locator(".viewport canvas").first().boundingBox();
+    const pixels = 60;
+    await page.mouse.move(vp.x + plan.grab.x, vp.y + plan.grab.y);
+    await page.mouse.down();
+    for (let k = 1; k <= 6; k++) await page.mouse.move(vp.x + plan.grab.x + (plan.dir[0] * pixels * k) / 6, vp.y + plan.grab.y + (plan.dir[1] * pixels * k) / 6);
+    // While dragging, the box follows live.
+    const live = Number.parseFloat(await page.locator("#param-depth").inputValue());
+    await page.mouse.up();
+    // The step a drag snaps to (manipStep in manipulatorDrag.ts): 1 mm at usual zooms.
+    const least = 4 * plan.mmPerPixel;
+    const fine = [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000].find((x) => x >= least) ?? 1000;
+    const step = least * 10 < 1 ? fine : Math.max(fine, 1);
+    const expected = Math.round((plan.start + pixels / plan.perMm) / step) * step;
+    const typed = Number.parseFloat(await page.locator("#param-depth").inputValue());
+    if (!(Math.abs(typed - expected) <= step) || typed !== live || !(typed > plan.start)) {
+      throw new Error(`dragging the depth arrow ${pixels} px (${(pixels / plan.perMm).toFixed(2)} mm) put ${typed} in Depth (live ${live}; expected about ${expected}, steps of ${step})`);
+    }
+    if (Math.abs(typed / step - Math.round(typed / step)) > 1e-6) throw new Error(`the dragged depth ${typed} isn't a whole number of ${step} mm steps`);
+    const stepsAfter = await page.evaluate(() => window.juracadStore.getState().draftSteps?.drafts.length ?? 0);
+    if (stepsAfter !== stepsBefore + 1) throw new Error(`one drag of the depth arrow made ${stepsAfter - stepsBefore} undo steps in the dialog`);
+    await shot("extrude-arrow");
+    // Ctrl+Z (the dialog's own undo) takes the drag back.
+    await page.keyboard.press("Control+z");
+    await page.waitForFunction(() => window.juracadStore.getState().editing?.draft.params.depth === "15", null, { timeout: 5_000 }).catch(async () => {
+      throw new Error(`Ctrl+Z didn't put Depth back to 15 (it says ${await page.locator("#param-depth").inputValue()})`);
+    });
+  }
   step = "extruding the sketch";
   await page.getByRole("button", { name: "Accept" }).click();
   await page.waitForFunction(() => document.querySelector(".part-list")?.textContent?.includes("Part 2"), null, { timeout: 30_000 });
@@ -3014,6 +3065,30 @@ try {
     await page.getByRole("button", { name: "Make pattern" }).click();
     now = await curves();
     if (now.filter((c) => c === "circle").length !== 3) throw new Error(`pattern made ${now.join(",")}`);
+
+    // Copy and paste (Onshape's): the three circles copied, the copy follows the pointer and a click puts it down; undone after.
+    step = "sketch copy and paste";
+    await page.keyboard.press("Escape");
+    await tool("Select");
+    await page.evaluate(() => {
+      const st = window.juracadStore.getState();
+      st.setSketchSelection(st.editing.draft.sketch.data.curves.filter((c) => c.type === "circle").map((c) => c.id));
+    });
+    await page.mouse.move(mx + 60, my + 100);
+    await page.keyboard.press("Control+c");
+    await page.keyboard.press("Control+v");
+    await page.mouse.move(mx + 80, my + 110, { steps: 4 });
+    const pastePreview = await page.evaluate(() => window.juracadViewport.sketch?.isPasting());
+    if (!pastePreview) throw new Error(`Ctrl+V didn't start placing a copy (${await page.evaluate(() => window.juracadStore.getState().sketch?.message?.text)})`);
+    await page.mouse.click(mx + 80, my + 110);
+    now = await curves();
+    if (now.filter((c) => c === "circle").length !== 6) throw new Error(`pasting the 3 circles left ${now.join(",")}`);
+    const pastedSel = await page.evaluate(() => window.juracadStore.getState().sketch.selection.length);
+    if (pastedSel !== 3) throw new Error(`the pasted copy should be selected, got ${pastedSel} picked`);
+    await page.keyboard.press("Control+z");
+    now = await curves();
+    if (now.filter((c) => c === "circle").length !== 3) throw new Error(`undoing the paste left ${now.join(",")}`);
+    step = "sketch extras: text";
 
     // Text: type the words, click where they go; the letters are closed shapes. A double-click puts the cursor back in the words box.
     await page.keyboard.press("Escape");

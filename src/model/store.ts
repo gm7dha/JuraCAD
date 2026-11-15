@@ -42,6 +42,7 @@ import { lengthUnit, setLengthUnit, startingLength, storeLength, type LengthUnit
 import { applyVariables, resolveVariables, type Variable } from "./variables";
 import { editInsert, findDesign, insertDesign } from "../library/insert";
 import type { DesignValues } from "../library/types";
+import { hasManipulators } from "./manipulators";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { setMirrorReference } from "./patternRefs";
 import { defaultAxis } from "../sketch/axis";
@@ -109,6 +110,10 @@ function draftStepAfter(steps: { id: string; drafts: Feature[]; typing?: string 
   const drafts = steps?.id === before.id ? steps.drafts : [];
   if (typing && steps?.id === before.id && steps.typing === typing && drafts.length) return steps;
   return { id: before.id, drafts: [...drafts.slice(-49), before], ...(typing ? { typing } : {}) };
+}
+/** Does the open dialog keep its own undo (Move / copy, and the dialogs with manipulators)? */
+export function keepsSteps(d: Feature): boolean {
+  return d.type === "transform" || hasManipulators(d.type);
 }
 /** No drawing dimensions selected (one shared array, so selectors stay stable). */
 const NO_DIMS: string[] = [];
@@ -664,6 +669,10 @@ export interface AppState {
   changeDraftStep: (patch: { params?: Record<string, string>; transform?: Feature["transform"] }) => void;
   /** Undo the open dialog's last step (see changeDraftStep). False when there's nothing to undo. */
   undoDraftStep: () => boolean;
+  /** A manipulator being dragged: the open draft changed live (rebuilt as usual), not yet a step of its undo. */
+  dragDraft: (patch: { params?: Record<string, string>; fields?: Partial<Feature> }) => void;
+  /** The manipulator drag that began at `before` is over: one step of the dialog's undo, or (`cancel`) taken back. */
+  endDraftDrag: (before: Feature, cancel?: boolean) => void;
 }
 
 // The browser-storage keys are in browserKeep.ts (the design's keeps the app's old name, PartSmith, on purpose).
@@ -909,6 +918,18 @@ export const useStore = create<AppState>((set, get) => {
         const d = s.editing.draft;
         const draft = { ...d, ...(patch.params ? { params: { ...d.params, ...patch.params } } : {}), ...(patch.transform ? { transform: patch.transform } : {}) };
         return { editing: { ...s.editing, draft }, draftSteps: draftStepAfter(s.draftSteps, d), transformLive: null };
+      }),
+    dragDraft: (patch) =>
+      set((s) => {
+        if (!s.editing) return {};
+        const d = s.editing.draft;
+        return { editing: { ...s.editing, draft: { ...d, ...patch.fields, ...(patch.params ? { params: { ...d.params, ...patch.params } } : {}) } } };
+      }),
+    endDraftDrag: (before, cancel) =>
+      set((s) => {
+        if (!s.editing || s.editing.draft.id !== before.id || s.editing.draft === before) return {};
+        if (cancel) return { editing: { ...s.editing, draft: before } };
+        return { draftSteps: draftStepAfter(s.draftSteps, before) };
       }),
     undoDraftStep: () => {
       const s = get();
@@ -1261,7 +1282,7 @@ export const useStore = create<AppState>((set, get) => {
         if (!s.editing) return {};
         const d = s.editing.draft;
         // Move / copy keeps its own undo: typing in a box is a step (typing on in the same box adds to it).
-        const steps = d.type === "transform" ? { draftSteps: draftStepAfter(s.draftSteps, d, `param:${key}`) } : {};
+        const steps = keepsSteps(d) ? { draftSteps: draftStepAfter(s.draftSteps, d, `param:${key}`) } : {};
         return { editing: { ...s.editing, draft: { ...d, params: { ...d.params, [key]: value } } }, ...steps };
       }),
 
@@ -1274,7 +1295,7 @@ export const useStore = create<AppState>((set, get) => {
         const { picking: _a, ...was } = d.transform ?? ({} as NonNullable<Feature["transform"]>);
         const { picking: _b, ...now } = next.transform ?? ({} as NonNullable<Feature["transform"]>);
         const onlyPicking = Object.keys(patch).every((k) => k === "transform") && JSON.stringify(was) === JSON.stringify(now);
-        const steps = d.type === "transform" && !onlyPicking ? { draftSteps: draftStepAfter(s.draftSteps, d, Object.keys(patch).join(",") === "name" ? "name" : undefined) } : {};
+        const steps = keepsSteps(d) && !onlyPicking ? { draftSteps: draftStepAfter(s.draftSteps, d, Object.keys(patch).join(",") === "name" ? "name" : undefined) } : {};
         return { editing: { ...s.editing, draft: next }, ...steps };
       }),
 
@@ -1284,7 +1305,8 @@ export const useStore = create<AppState>((set, get) => {
         const picks = s.editing.draft.picks ?? [];
         const i = picks.findIndex((p) => p.partId === pick.partId && sameRef(p.ref, pick.ref));
         const next = i >= 0 ? picks.filter((_, j) => j !== i) : [...picks, pick];
-        return { editing: { ...s.editing, draft: { ...s.editing.draft, picks: next } } };
+        const steps = keepsSteps(s.editing.draft) ? { draftSteps: draftStepAfter(s.draftSteps, s.editing.draft) } : {};
+        return { editing: { ...s.editing, draft: { ...s.editing.draft, picks: next } }, ...steps };
       }),
 
     toggleDraftPart: (partId) => {

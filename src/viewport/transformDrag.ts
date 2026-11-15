@@ -77,7 +77,10 @@ export function axisParam(ray: Ray, origin: Vec3, dir: Vec3): number | null {
   const denom = 1 - b * b;
   // (Seen almost end-on, a tiny move of the pointer would throw the part far away.)
   if (denom < MIN_ARROW_SIDE) return null;
-  return (b * dot(r, w) - dot(d, w)) / denom;
+  const s = (b * dot(r, w) - dot(d, w)) / denom;
+  // The nearest point must be in front of the eye (a perspective ray past the line's vanishing point would jump and flip).
+  if (!(dot(r, w) + s * b > 0)) return null;
+  return s;
 }
 
 /** Where the ray meets the plane through `origin` square to `normal` (null when it runs along the plane). */
