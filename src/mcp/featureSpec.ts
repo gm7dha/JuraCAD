@@ -7,8 +7,10 @@
  * (changing only what's given).
  */
 import { setMirrorReference, setPatternDirection } from "../model/patternRefs";
-import type { BoundaryCurve, Feature, FeatureType, JuraCADDocument, LoftDef, LoftProfile, Operation } from "../model/types";
+import type { BoundaryCurve, Feature, FilletRadiusPoint, FeatureType, JuraCADDocument, LoftDef, LoftProfile, Operation } from "../model/types";
 import { endChoices, loftProfiles, profilesProblem, tidyEnds, withEndPoint, withLoftDef, withProfiles } from "../model/loft";
+import { tidyRadiusPoints } from "../model/variableFillet";
+import { sameRef } from "../geometry/topoRef";
 import type { PartMesh } from "../kernel/protocol";
 import { SCREW_SIZES, standardParams } from "../model/holes";
 import { planeFrame, planeOnFace, type SketchPlane, type Vec3 } from "../sketch/planes";
@@ -65,7 +67,7 @@ export const KIND_KEYS: Record<FeatureKind, string[]> = {
   sweep: ["sketch", "path", "path_edges", "path_part", "twist", "keep_orientation", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   loft: ["sections", "start_point", "end_point", "start", "end", "start_magnitude", "end_magnitude", "guide", "path", "straight", "match_corners", "turns", "closed_loop"],
   hole: ["sketch", "size", "fit", "style", "end", "depth", "diameter", "counterbore_diameter", "counterbore_depth", "countersink_diameter", "countersink_angle", "flip"],
-  fillet: ["part", "edges", "radius", "end_radius", "all_edges"],
+  fillet: ["part", "edges", "radius", "end_radius", "all_edges", "variable", "variable_straight"],
   chamfer: ["part", "edges", "distance", "second_distance", "angle", "flip_side", "all_edges"],
   shell: ["part", "faces", "thickness", "outside"],
   linear_pattern: ["features", "parts", "faces", "part", "direction", "count", "spacing", "flip", "direction2", "count2", "spacing2", "flip2", "skip"],
@@ -114,6 +116,43 @@ function param(f: Feature, a: Obj, key: string, paramKey: string, ctx: SpecConte
     return;
   }
   f.params = { ...f.params, [paramKey]: amount(a[key], key, ctx.scope, opts).text };
+}
+
+/**
+ * Fillet's `variable`: radius points [{"edge": "E3", "at": "start" | "end" | 0…1, "radius": 2}] on the picked edges
+ * (false or [] turns it off); `variable_straight` = straight between the points (else smooth).
+ */
+function variableFilletSpec(f: Feature, a: Obj, ctx: SpecContext) {
+  if (has(a, "variable")) {
+    if (a.variable === false || a.variable === null || (Array.isArray(a.variable) && a.variable.length === 0)) delete f.variableFillet;
+    else {
+      if (f.allEdges) throw new InputError('"variable" can\'t be used with "all_edges": pick the edges to vary.');
+      const partId = f.picks?.[0]?.partId;
+      const part = ctx.session.part(ctx.parts, has(a, "part") ? a.part : (partId ?? undefined), "part");
+      const points = list(a.variable, "variable").map((q, i): FilletRadiusPoint => {
+        const where = `variable[${i}]`;
+        if (!q || typeof q !== "object") throw new InputError(`${where}: give {"edge": "E3", "at": "start", "radius": 2}.`);
+        const o = q as Obj;
+        const [pick] = pickEdges(part, [o.edge], `${where}.edge`);
+        const own = pick && (f.picks ?? []).find((k) => k.partId === pick.partId && k.ref.kind === "edge" && sameRef(k.ref, pick.ref));
+        if (!own || own.ref.kind !== "edge") throw new InputError(`${where}.edge: give one of the fillet's own edges (listed in "edges").`);
+        let at: number;
+        if (o.at === "start" || o.at === undefined) at = 0;
+        else if (o.at === "end") at = 1;
+        else if (typeof o.at === "number" && o.at >= 0 && o.at <= 1) at = o.at;
+        else throw new InputError(`${where}.at: "start", "end" or a share of the edge's length from 0 to 1 (0.5 = halfway).`);
+        if (!has(o, "radius")) throw new InputError(`${where}.radius is missing: give the radius there in millimetres.`);
+        const radius = amount(o.radius, `${where}.radius`, ctx.scope, { positive: true }).text;
+        return { part: own.partId, edge: [own.ref.mid[0], own.ref.mid[1], own.ref.mid[2]], at, radius };
+      });
+      f.variableFillet = { points, ...(f.variableFillet?.straight ? { straight: true as const } : {}) };
+    }
+  }
+  if (has(a, "variable_straight") && f.variableFillet) {
+    const straight = bool(a.variable_straight, "variable_straight");
+    f.variableFillet = { points: f.variableFillet.points, ...(straight ? { straight: true as const } : {}) };
+  }
+  if (f.variableFillet) f.variableFillet = tidyRadiusPoints(f).variableFillet;
 }
 
 /** The sketch a feature uses: named, or (for a new feature) the latest one. */
@@ -553,6 +592,7 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
       if (kind === "fillet") {
         param(f, a, "radius", "radius", ctx, { positive: true, required: true });
         param(f, a, "end_radius", "endRadius", ctx, { min: 0 });
+        variableFilletSpec(f, a, ctx);
       } else {
         param(f, a, "distance", "distance", ctx, { positive: true, required: true });
         if (has(a, "second_distance") && has(a, "angle")) throw new InputError('Give "second_distance" or "angle", not both (or neither, for an equal bevel).');

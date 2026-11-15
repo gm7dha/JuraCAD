@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.87 — Variable fillet
+
+- Fillet has a new Variable option, as in Onshape: set the radius at the ends of edges and at points along them, and the
+  rounding changes smoothly (or in straight steps) between them.
+- Click a picked edge near an end, or part way along, to add a radius point there; drag its arrow in the 3D view, or type
+  the radius (a number or a variable) in the list.
+- Claude can make variable fillets too.
+
 ## v0.86 — A quicker feature list
 
 - Pick several features with Ctrl/⌘- or Shift-click, then suppress, delete, copy or put them in a folder together.
