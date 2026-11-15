@@ -41,6 +41,23 @@ describe("pasting in the sketch tool", () => {
     expect(s().sketch!.past.length).toBe(past + 1);
   });
 
+  it("on a touch screen the copy follows the finger and lifting puts it down; lone points are drawn", () => {
+    const pt = { id: "p1", x: 0, y: 0, standalone: true };
+    s().updateSketch({ ...draftData(), points: [...draftData().points, pt] });
+    const c = new SketchController();
+    c.startPaste(copySketchItems(draftData(), ["p1"])!);
+    expect(c.touchDragStarts()).toBe(false);
+    expect(c.touchLiftClicks()).toBe(true);
+    let preview: unknown[] = [];
+    c.onChange((t) => (preview = t.preview));
+    c.pointerMove(mouse(5, 5), true);
+    expect(preview).toHaveLength(1);
+    c.pointerDown(mouse(5, 5));
+    c.pointerUp();
+    expect(draftData().points.filter((p) => p.standalone)).toHaveLength(2);
+    expect(c.touchDragStarts()).toBe(true);
+  });
+
   it("Esc stops placing without changing anything", () => {
     const circle = addCircle(draftData(), { x: 0, y: 0 }, 4);
     s().updateSketch(circle.sketch);

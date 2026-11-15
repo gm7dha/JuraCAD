@@ -11,12 +11,13 @@ import { viewportApi } from "../viewport/Viewport";
 const KEPT = "juracad.copiedSketch";
 let copied: SketchClip | null = null;
 
+/** What was last copied: this browser's newest copy (from any tab) first, else this tab's own. */
 function keptClip(): SketchClip | null {
-  if (copied) return copied;
   try {
-    copied = readSketchClip(localStorage.getItem(KEPT));
+    const kept = readSketchClip(localStorage.getItem(KEPT));
+    if (kept) return (copied = kept);
   } catch {
-    copied = null;
+    // (No browser storage: this tab's own copy.)
   }
   return copied;
 }

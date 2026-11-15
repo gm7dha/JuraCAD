@@ -25,6 +25,7 @@ import {
   dragPoint,
   pointPos,
   ellipsePoints,
+  curvePoints,
   splinePath,
   pointsSharingCurve,
   radiusOf,
@@ -131,8 +132,9 @@ const SNAP_PX = 14;
 interface DragState {
   kind: "point" | "curve" | "rim" | "handle" | "image" | "group" | "none";
   id: string;
-  /** Dragging several picked things together ("group"): what moves. */
+  /** Dragging several picked things together ("group"): what moves, and whether it's been said that they can't. */
   ids?: string[];
+  heldSaid?: boolean;
   start: SketchData;
   startX: number;
   startY: number;
@@ -161,8 +163,9 @@ export class SketchController {
   private readonly listeners = new Set<(t: SketchTransient) => void>();
   /** A copy being placed (after Ctrl+V): it follows the pointer until a click puts it down. */
   private pasting: SketchClip | null = null;
-  /** Where the pointer last was (sketch mm), so a paste shows at once. */
+  /** Where the pointer last was (sketch mm), so a paste shows at once, and how many mm a pixel was then. */
   private lastPointer: [number, number] | null = null;
+  private lastMmPerPx = 0.1;
 
   /**
    * Start placing a copy (Ctrl/⌘ + V, or Duplicate): it follows the pointer, a click puts it down, Esc stops.
@@ -187,7 +190,20 @@ export class SketchController {
     const clip = this.pasting;
     if (!clip) return [];
     const d = clipAt(clip, at);
-    return curvesPreview(d, d.curves, (p) => p);
+    const out = curvesPreview(d, d.curves, (p) => p);
+    // Points on their own as small rings, text as a box where its letters go (roughly).
+    const used = new Set(d.curves.flatMap(curvePoints));
+    const anchors = new Set((d.texts ?? []).map((t) => t.anchor));
+    for (const p of d.points) if (!used.has(p.id) && !anchors.has(p.id)) out.push({ kind: "circle", c: [p.x, p.y], r: 4 * this.lastMmPerPx });
+    for (const t of d.texts ?? []) {
+      const [x, y] = pointPos(d, t.anchor);
+      const w = Math.max(t.size, t.value.length * t.size * 0.6);
+      const h = t.size;
+      const [x0, y0] = t.anchorAt === "centre" ? [x - w / 2, y - h / 2] : [x, y];
+      const a: [number, number] = [x0, y0], b: [number, number] = [x0 + w, y0], c: [number, number] = [x0 + w, y0 + h], e: [number, number] = [x0, y0 + h];
+      out.push({ kind: "guide", a, b }, { kind: "guide", a: b, b: c }, { kind: "guide", a: c, b: e }, { kind: "guide", a: e, b: a });
+    }
+    return out;
   }
 
   private pasteAt(e: SketchPointer): void {
@@ -197,7 +213,14 @@ export class SketchController {
     this.emit({ preview: [] });
     if (!clip || !d) return;
     const r = pasteSketchClip(d, clip, [e.x, e.y]);
-    if (this.commit(r, r.ids)) this.state.setSketchMessage("Pasted — the copy is selected. Drag it to move it, or Ctrl+V again for another.", "info");
+    if (!this.commit(r, r.ids)) return;
+    const names = r.unknownNames ?? [];
+    this.state.setSketchMessage(
+      names.length
+        ? `Pasted — this design has no variable${names.length > 1 ? "s" : ""} ${names.join(", ")}, so those sizes were pasted as plain numbers. The copy is selected.`
+        : "Pasted — the copy is selected. Drag it to move it, or Ctrl+V again for another.",
+      "info",
+    );
   }
 
   onChange(fn: (t: SketchTransient) => void): () => void {
@@ -855,6 +878,7 @@ export class SketchController {
     if (!d) return;
     const tool = this.tool;
     this.lastPointer = [e.x, e.y];
+    this.lastMmPerPx = e.mmPerPx;
     if (this.pasting) {
       this.emit({ preview: this.pastePreview([e.x, e.y]), hover: null, snap: null, inference: null, hints: [] });
       return;
@@ -1095,12 +1119,15 @@ export class SketchController {
 
   /** A finger started dragging: should the tool get the press (where it went down) now? */
   touchDragStarts(): boolean {
+    // Placing a copy: it follows the finger, and lifting puts it down.
+    if (this.pasting) return false;
     if (this.tool === "select") return true;
     return DRAG_DRAWN.has(this.tool) && this.placed.length === 0;
   }
 
   /** Is lifting a finger after a drag a click where it came up? (With Select it just ends the drag.) */
   touchLiftClicks(): boolean {
+    if (this.pasting) return true;
     return this.tool !== "select";
   }
 
@@ -1280,7 +1307,14 @@ export class SketchController {
       this.emit({ snap: drag.snapTo ? [x, y] : null, hints: drag.snapTo?.kind === "midpoint" ? [[x, y]] : [] });
     }
     else if (drag.kind === "curve") next = dragCurve(drag.start, drag.id, e.x - drag.startX, e.y - drag.startY);
-    else if (drag.kind === "group") next = dragSelection(drag.start, drag.ids ?? [], e.x - drag.startX, e.y - drag.startY);
+    else if (drag.kind === "group") {
+      next = dragSelection(drag.start, drag.ids ?? [], e.x - drag.startX, e.y - drag.startY);
+      if (next === drag.start && !drag.heldSaid) {
+        // Part of the selection is held: moving the rest would stretch the shapes, so nothing moves.
+        drag.heldSaid = true;
+        this.state.setSketchMessage("These can't move together: part of the selection is held where it is (a Fix, or a dimension or relation to something not picked). Pick only what's free to move.", "info");
+      }
+    }
     else if (drag.kind === "image") {
       const m = imageById(drag.start, drag.id);
       if (m) next = { ...drag.start, images: (drag.start.images ?? []).map((x) => (x.id === m.id ? { ...m, x: m.x + e.x - drag.startX, y: m.y + e.y - drag.startY } : x)) };

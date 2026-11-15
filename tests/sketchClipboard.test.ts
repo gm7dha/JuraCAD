@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { addCircle, addDimension, addLine, addRectangle, applyRelation, curvePoints, pointPos, setDimensionValue, type Placed } from "../src/sketch/ops";
 import { clipAt, copySketchItems, dragSelection, draggableCount, pasteSketchClip, readSketchClip, selectionPoints } from "../src/sketch/clipboard";
-import { analyzeSketch } from "../src/sketch/solver";
+import { analyzeSketch, solveSketch } from "../src/sketch/solver";
+import { setCurrentScope } from "../src/model/expr";
+import { parseSketchData } from "../src/sketch/validate";
 import { emptySketch, isDimension, type SketchData, type SketchLine } from "../src/sketch/types";
 
 const at = (x: number, y: number): Placed => ({ x, y, snap: null });
@@ -129,6 +131,14 @@ describe("dragging several at once", () => {
     expect(r3([b.x0, b.y0, b.x1, b.y1] as unknown as [number, number])).toEqual([7, -2, 17, 3]);
   });
 
+  it("refuses to stretch: a held shape in the selection keeps everything where it is", () => {
+    const rect = addRectangle(emptySketch(), at(0, 0), at(10, 5));
+    const fixed = applyRelation(rect.sketch, "fix", [rect.lineIds[0]]).sketch;
+    const c = addCircle(fixed, at(30, 0), 2);
+    const ids = [...rect.lineIds, c.circleId];
+    expect(dragSelection(c.sketch, ids, 5, 5)).toBe(c.sketch);
+  });
+
   it("is held back by a fixed shape", () => {
     const l = addLine(emptySketch(), at(0, 0), at(10, 0));
     const fixed = applyRelation(l.sketch, "fix", [l.lineId]).sketch;
@@ -138,3 +148,72 @@ describe("dragging several at once", () => {
     expect(r3(pointPos(moved, line.p1))).toEqual([0, 0]);
   });
 });
+
+describe("pasting sizes that use variables", () => {
+  it("keeps an expression that works here, and a number where the variable is missing", () => {
+    setCurrentScope({ box_w: 10 });
+    try {
+      const rect = addRectangle(emptySketch(), at(0, 0), at(20, 5));
+      const dim = addDimension(rect.sketch, [rect.lineIds[0]], { x: 0, y: -3 });
+      const withVar = setDimensionValue(dim.sketch, dim.dimensionId, "box_w * 2");
+      expect(withVar.error).toBe(undefined);
+      const clip = copySketchItems(withVar.sketch, rect.lineIds)!;
+      expect(clip.sizes?.[dim.dimensionId]).toBeCloseTo(20, 9);
+      // Same design: the expression comes along.
+      const here = pasteSketchClip(withVar.sketch, clip, [50, 0]);
+      expect(here.unknownNames).toBe(undefined);
+      expect(here.sketch.constraints.filter((c) => c.value === "box_w * 2")).toHaveLength(2);
+      // A design without box_w: the size is pasted as its number, and the sketch still solves.
+      setCurrentScope({});
+      const there = pasteSketchClip(emptySketch(), readSketchClip(JSON.stringify(clip))!, [0, 0]);
+      expect(there.error).toBe(undefined);
+      expect(there.unknownNames).toEqual(["box_w"]);
+      const pasted = there.sketch.constraints.find((c) => c.type === "length" || c.type === "distance" || c.type === "horizontalDistance")!;
+      expect(pasted.value).toBe("20");
+      expect(solveSketch(there.sketch).ok).toBe(true);
+      expect(box(there.sketch, there.ids).x1 - box(there.sketch, there.ids).x0).toBeCloseTo(20, 6);
+    } finally {
+      setCurrentScope({});
+    }
+  });
+
+  it("refuses a paste whose relations can't be met", () => {
+    const l = addLine(emptySketch(), at(0, 0), at(10, 0));
+    const clip = copySketchItems(l.sketch, [l.lineId])!;
+    // Horizontal and vertical at once can't both hold on a line with length.
+    const bad = { ...clip, constraints: [...clip.constraints, { id: "h", type: "horizontal" as const, refs: [l.lineId] }, { id: "v", type: "vertical" as const, refs: [l.lineId] }, { id: "d", type: "length" as const, refs: [l.lineId], value: "10" }] };
+    const s = addCircle(emptySketch(), at(0, 0), 3).sketch;
+    const r = pasteSketchClip(s, bad, [0, 0]);
+    expect(typeof r.error).toBe("string");
+    expect(r.sketch).toBe(s);
+  });
+});
+
+describe("reading a copy back checks it fully", () => {
+  const good = () => {
+    const { s, rect } = sample();
+    return copySketchItems(s, rect)!;
+  };
+  it("accepts a real copy, and what it pastes reads back as a sketch", () => {
+    const clip = readSketchClip(JSON.stringify(good()))!;
+    expect(clip).not.toBe(null);
+    const r = pasteSketchClip(emptySketch(), clip, [0, 0]);
+    expect(parseSketchData(JSON.parse(JSON.stringify(r.sketch)))).not.toBe(null);
+  });
+  it("refuses clips that would break or reach into the sketch", () => {
+    const bad = (f: (c: Record<string, unknown> & ReturnType<typeof good>) => void) => {
+      const c = JSON.parse(JSON.stringify(good()));
+      f(c);
+      return readSketchClip(JSON.stringify(c));
+    };
+    expect(bad((c) => (c.constraints[0].type = "teleport" as never))).toBe(null);
+    expect(bad((c) => (c.constraints[0].refs = ["someone-elses-point"]))).toBe(null);
+    expect(bad((c) => c.curves.push({ id: "k1", type: "circle", center: c.points[0].id, construction: false } as never))).toBe(null);
+    expect(bad((c) => (c.curves[1].id = c.curves[0].id))).toBe(null);
+    expect(bad((c) => (c.points[1].id = c.curves[0].id))).toBe(null);
+    expect(bad((c) => ((c as { texts: unknown[] }).texts = [{ id: "t", anchor: c.points[0].id, value: "Hi", size: -1 }]))).toBe(null);
+    expect(bad((c) => ((c as { texts: unknown[] }).texts = [{ id: "t", anchor: "nowhere", value: "Hi", size: 3, angle: 0, font: "regular" }]))).toBe(null);
+    expect(bad((c) => ((c.curves[0] as { p1: string }).p1 = "nowhere"))).toBe(null);
+  });
+});
+

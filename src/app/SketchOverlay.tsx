@@ -208,6 +208,8 @@ function DimensionLabel({
     setText(next.text);
     setCaret(next.caret);
     setPick(0);
+    // Chosen: the list goes until something more is typed, so Enter then sets the size.
+    setHideHints(true);
     setError(null);
     requestAnimationFrame(() => {
       input.current?.focus();
@@ -273,9 +275,11 @@ function DimensionLabel({
               setPick((i) => (i + (e.key === "ArrowDown" ? 1 : listed.length - 1)) % listed.length);
               return;
             }
-            if (listed.length && (e.key === "Tab" || e.key === "Enter")) {
+            const highlighted = listed[Math.min(pick, listed.length - 1)];
+            // Enter on a name that's already typed in full (w, with width also offered) sets the size.
+            if (listed.length && (e.key === "Tab" || (e.key === "Enter" && highlighted !== hints.word?.word))) {
               e.preventDefault();
-              choose(listed[Math.min(pick, listed.length - 1)]);
+              choose(highlighted);
               return;
             }
             if (listed.length && e.key === "Escape") {

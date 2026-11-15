@@ -145,14 +145,20 @@
   (`analyzeWholeDense`, kept for tests/solverBlocks), but thousands of loose points (a 400-piece jigsaw) take ~0.2 s, not minutes.
   Copy / paste / duplicate (Onshape's): pure `src/sketch/clipboard.ts` — `copySketchItems` (picked curves/points/text + their
   points; constraints only when EVERY ref is inside; `fix` and anything on the origin/outside left behind; `link`s and orphan
-  `offsetParams` stripped; `middle` = the points' box centre), `pasteSketchClip` (all ids new, middle at the pointer, settled;
-  returns the ids to select), `readSketchClip` (checked JSON, kind "juracad-sketch" v1). App `src/app/sketchClipboardApp.ts`
+  `offsetParams` stripped; `middle` = the points' box centre), `pasteSketchClip` (all ids new, middle at the pointer, solved;
+  returns the ids to select; a dimension whose expression can't be worked out here — a variable the design lacks — is
+  pasted as its number from copy time, `SketchClip.sizes`, and `unknownNames` says so; refused if the solve fails),
+  `readSketchClip` (kind "juracad-sketch" v1, through validate.ts `parseSketchData` with nothing dropped, unique ids, every
+  curve point / handle key / constraint ref / text anchor inside the clip — else null). App `src/app/sketchClipboardApp.ts`
   (Ctrl/⌘+C/V/D in App.tsx's sketchShortcut, toolbar Copy/Paste; kept in memory + localStorage `juracad.copiedSketch`, so it
   pastes into other sketches/tabs). The controller's `startPaste` switches to Select; the copy follows the pointer
-  (`pastePreview` via the shared `curvesPreview`) until a click (one undo step), Esc/tool change drops it. Pressing (no
+  (`pastePreview` via the shared `curvesPreview`, lone points as rings, text as a box) until a click (one undo step; on
+  touch it follows the finger and lifting puts it down), Esc/tool change drops it; localStorage's copy wins over memory. Pressing (no
   Shift/Ctrl) on one of ≥ 2 picked things drags them all (`DragState` "group" → `dragSelection`: `moveRigid` of
-  `selectionPoints`, linked points left out). Dimension box: variable names offered while typing (pure
-  `src/model/varComplete.ts` `suggestionsAt`/`completeWith`; ↑↓, Tab/Enter take one, Esc hides; nothing until typed).
+  `selectionPoints`; refused — nothing moves, a message says why — when the solve doesn't move every point by the same
+  amount, so a held point never stretches the shapes; pressing a circle's rim among several picked moves the group). Dimension box: variable names offered while typing (pure
+  `src/model/varComplete.ts` `suggestionsAt`/`completeWith`; ↑↓, Tab/Enter take one — Enter on a name typed in full
+  sets the size —, a choice or Esc hides the list until more is typed; nothing until typed).
   Tests: tests/sketchClipboard (pure), sketchClipboardStore (controller), varComplete.
 - Visibility (the eye in the feature list): `src/model/visibility.ts`. Sketches and Plane features have `Feature.visible`
   (missing = automatic: planes shown; a sketch shown until an unsuppressed feature uses it, `usedSketches` — as Onshape
