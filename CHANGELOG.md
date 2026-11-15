@@ -12,6 +12,7 @@ The point in the history for each version is the commit shown (see https://githu
 
 - Just after a double-click on an arrow opened its size box, clicking straight into a box in the feature's panel could
   have the arrow's box take the typing back, so what you typed was lost. Moving to another box now closes the arrow's box.
+- On a narrower window the "Saved" note in the top bar could be squeezed out of sight; it now shortens with "…" instead.
 
 ## v0.84 — More drag arrows, and type a size right by the arrow
 
