@@ -8,6 +8,12 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.84.1 — The size box by an arrow no longer steals your typing
+
+- Just after a double-click on an arrow opened its size box, clicking straight into a box in the feature's panel could
+  have the arrow's box take the typing back, so what you typed was lost. Moving to another box now closes the arrow's box.
+- On a narrower window the "Saved" note in the top bar could be squeezed out of sight; it now shortens with "…" instead.
+
 ## v0.84 — More drag arrows, and type a size right by the arrow
 
 - Draft, Hole, Move face, Offset surface and Extend surface now have drag arrows in the 3D view, like Extrude and Fillet.

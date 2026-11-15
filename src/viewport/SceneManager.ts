@@ -2436,10 +2436,13 @@ export class SceneManager {
         this.closeManipEdit();
       }
     });
-    // (Just opened by a double-tap, a browser's late made-up mouse press can still take the focus: it's given back.)
+    // (Just opened by a double-tap, a browser's late made-up mouse press can still take the focus: it's given back —
+    // but never taken from another box the person has moved to, such as the dialog's own.)
     const opened = performance.now();
-    input.addEventListener("blur", () => {
-      if (performance.now() - opened < 400 && this.manipEdit?.box === box) {
+    input.addEventListener("blur", (e) => {
+      const to = e.relatedTarget;
+      const elsewhere = to instanceof HTMLElement && to.matches("input, textarea, select, [contenteditable]");
+      if (!elsewhere && performance.now() - opened < 400 && this.manipEdit?.box === box) {
         setTimeout(() => {
           if (this.manipEdit?.box === box) input.focus();
         }, 0);

@@ -2472,6 +2472,9 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 260px;
+  /* A crowded top bar shortens it (with "…"), never squeezes it away. */
+  min-width: 7em;
+  flex-shrink: 1;
 }
 
 .save-state.unsaved::before {
