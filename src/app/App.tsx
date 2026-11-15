@@ -5,7 +5,8 @@ import { PasteDialog, SelectOtherMenu } from "./ViewTools";
 import { useEffect } from "react";
 
 import { connectKernel } from "../kernel/connect";
-import { activeAssembly, activeDrawing, activeFeatures, keepsSteps, studioParts, useStore } from "../model/store";
+import { activeAssembly, activeDrawing, activeFeatures, keepsSteps, pickedFeatures, studioParts, useStore } from "../model/store";
+import { setRenaming, stepFeatureSelection } from "./featureListState";
 import { findDependents } from "../model/dependents";
 import { DrawingPanel, DrawingSheet, DrawingToolbar } from "./DrawingUI";
 import { AssemblyPanel, AssemblyToolbar, ExplodePanel, InsertPanel, InstancePanel, MateDialog, PatternPanel } from "./AssemblyUI";
@@ -69,6 +70,26 @@ function isTypingText(target: EventTarget | null): boolean {
   if (!isTyping(target)) return false;
   const el = target as HTMLElement;
   return !(el instanceof HTMLInputElement && ["checkbox", "radio", "button", "submit", "reset", "range", "color"].includes(el.type));
+}
+
+/** The key was pressed with nothing in particular focused: the page itself or the 3D view. */
+function onPage(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || el === document.body || el === document.documentElement) return true;
+  return typeof el.closest === "function" && !!el.closest(".viewport");
+}
+
+/**
+ * Enter meant for the page, not for a control that has its own use for it. Only with nothing focused (the page, the
+ * 3D view) — or, with a feature dialog open, a toolbar button (the one that opened the dialog keeps the focus), which
+ * Enter would otherwise press again. Every other button, box or list keeps its Enter.
+ */
+function acceptsEnter(e: KeyboardEvent): boolean {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing) return false;
+  if (onPage(e.target)) return true;
+  const el = e.target as HTMLElement;
+  if (typeof el.closest !== "function" || !useStore.getState().editing) return false;
+  return el.tagName === "BUTTON" && !!el.closest('[role="toolbar"]') && !el.closest('[role="menu"], .feature-dialog');
 }
 
 /** Keyboard shortcuts while a sketch is open. Returns true if the key was used. */
@@ -183,6 +204,16 @@ function useShortcuts() {
           }
         }
       }
+      // Enter accepts the open feature dialog from anywhere (as in Onshape) — but not from a text box, list or button
+      // of the dialog itself, which handle it their own way (a box inside it submits the dialog anyway).
+      if (e.key === "Enter" && acceptsEnter(e) && s.editing && s.editing.draft.type !== "sketch" && !s.dialog) {
+        const ok = document.querySelector<HTMLButtonElement>(".feature-dialog .dialog-ok");
+        if (ok) {
+          e.preventDefault();
+          ok.click();
+          return;
+        }
+      }
       if (mod || e.altKey || isTyping(e.target) || (s.dialog && s.dialog !== "insert")) return;
 
       if (e.shiftKey && SHIFT_VIEWS[e.code]) {
@@ -256,15 +287,37 @@ function useShortcuts() {
           if (!s.editing) {
             s.setSelection([]);
             s.selectPlane(null);
+            // Several features picked in the list: let them go.
+            if (pickedFeatures(s).length > 1) s.selectFeature(null);
           }
           break;
         case "Delete":
         case "Backspace":
           if (s.selectedFeatureId && !s.editing) {
             e.preventDefault();
-            // Other features use it: ask whether to delete them too (as Onshape does); else delete it as before.
-            if (findDependents(activeFeatures(s), [s.selectedFeatureId]).dependents.length) s.askDelete({ ids: [s.selectedFeatureId], from: "key" });
+            const ids = pickedFeatures(s);
+            // Other features use them: ask whether to delete those too (as Onshape does); else delete them as before.
+            if (findDependents(activeFeatures(s), ids).dependents.length) s.askDelete({ ids, from: "key" });
+            else if (ids.length > 1) s.deleteFeatures(ids, true);
             else s.deleteFeature(s.selectedFeatureId);
+          }
+          break;
+        // The feature list: ↑ / ↓ move the selection (Shift: several), Enter edits it, F2 renames it.
+        case "ArrowUp":
+        case "ArrowDown":
+          // Only with nothing else focused: a toolbar list, a menu or a box keeps its arrows.
+          if (s.selectedFeatureId && !s.editing && !s.sketch && !s.dialog && onPage(e.target) && stepFeatureSelection(e.key === "ArrowDown" ? 1 : -1, e.shiftKey)) e.preventDefault();
+          break;
+        case "Enter":
+          if (s.selectedFeatureId && !s.editing && !s.sketch && !s.dialog && pickedFeatures(s).length === 1 && acceptsEnter(e)) {
+            e.preventDefault();
+            s.startEdit(s.selectedFeatureId);
+          }
+          break;
+        case "F2":
+          if (s.selectedFeatureId && !s.editing && !s.sketch && !s.dialog) {
+            e.preventDefault();
+            setRenaming(s.selectedFeatureId);
           }
           break;
       }

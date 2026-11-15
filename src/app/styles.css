@@ -4787,6 +4787,44 @@ kbd {
   color: var(--ink-3);
 }
 
+/* The feature list's error count (Onshape's): click to go to each failed feature in turn. */
+.feature-count-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  padding: 1px 7px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+.feature-count-chip + .feature-count-chip {
+  margin-left: 4px;
+}
+.feature-count-chip.failed {
+  color: var(--error);
+}
+.feature-count-chip.warned {
+  color: var(--warn);
+}
+.feature-count-chip.failed:hover {
+  background: var(--error-soft);
+}
+.feature-count-chip.warned:hover {
+  background: var(--warn-soft);
+}
+.feature-row .feature-rename {
+  font-size: inherit;
+}
+.rollback-bar[draggable="true"] {
+  cursor: grab;
+}
 /* Move / copy's handles in a sketch win over the size labels and relation badges on top of them. */
 .sketch-overlay.handles-on .dimension-label,
 .sketch-overlay.handles-on .constraint-badge {
