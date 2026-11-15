@@ -4,6 +4,8 @@ import type { Measurement } from "../geometry/measureMath";
 import { getKernel } from "../kernel/connect";
 import { pickFor, useLengthUnit, useStore } from "../model/store";
 import { formatArea, formatLength, formatVolume } from "../model/units";
+import { rowsText } from "../model/massProps";
+import { copyText } from "./MassPanel";
 
 const mm = (v: number) => formatLength(v);
 const mm2 = (v: number) => formatArea(v);
@@ -65,6 +67,7 @@ export function MeasurePanel() {
     if (item.radius !== undefined) {
       rows.push([`${prefix}${item.label} — diameter`, mm(item.radius * 2)]);
       rows.push(["Radius", mm(item.radius)]);
+      if (item.length !== undefined) rows.push(["Length round it", mm(item.length)]);
     }
     if (item.length !== undefined && item.radius === undefined) rows.push([`${prefix}${item.label} — length`, mm(item.length)]);
     if (item.area !== undefined) rows.push([`${prefix}${item.label} — area`, mm2(item.area)]);
@@ -76,16 +79,27 @@ export function MeasurePanel() {
     rows.push(["  along X / Y / Z", `${mm(c.dx)} / ${mm(c.dy)} / ${mm(c.dz)}`]);
   }
   if (result.distance !== undefined) rows.push(["Closest distance", wholeParts && result.distance < 1e-6 ? (result.overlap ? "0 (they overlap)" : "0 (touching)") : mm(result.distance)]);
+  if (result.closest && result.distance !== undefined && result.distance > 1e-6) {
+    const [a, b] = result.closest;
+    rows.push(["  along X / Y / Z", `${mm(Math.abs(b[0] - a[0]))} / ${mm(Math.abs(b[1] - a[1]))} / ${mm(Math.abs(b[2] - a[2]))}`]);
+  }
   if (result.overlap) rows.push(["Overlap", formatVolume(result.overlap)]);
   if (result.angle !== undefined) rows.push(["Angle", `${Math.round(result.angle * 100) / 100}°`]);
 
   return (
     <div className="measure-panel" aria-label="Measurements" role="status">
-      <div className="measure-title">Measure</div>
+      <div className="measure-title readout-head">
+        <span>Measure</span>
+        <span className="readout-actions">
+          <button type="button" className="icon-button small" onClick={() => copyText(rowsText("Measure", rows), "Measurements")} title="Copy these numbers">
+            Copy
+          </button>
+        </span>
+      </div>
       <table>
         <tbody>
-          {rows.map(([k, v]) => (
-            <tr key={k}>
+          {rows.map(([k, v], i) => (
+            <tr key={i}>
               <td>{k}</td>
               <td>{v}</td>
             </tr>

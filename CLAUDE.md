@@ -911,6 +911,21 @@
   this browser's copy only when no paste event comes at all — Safari away from a text box; both skip text boxes, popups,
   windows and the paste question, `blocked`), row/folder/list menus Copy/Paste.
   Tests: tests/viewTools, featureClipboard (pure), viewToolsStore.
+  Mass properties and feature-list feedback (Onshape's): engine `massProperties(partIds)` (worker request; `src/kernel/massProps.ts`
+  `massPropsOf` — GProp volume/area/centre of mass exactly, OCCT box; [] ids = every part) → pure `src/model/massProps.ts`
+  (`massSummary` mass-weighted centre, union box, one `density` when all alike; `printedGrams` = area × `PRINT_SHELL` 0.84 solid +
+  `PRINT_INFILL` 15% of the rest; `massRows`/`rowsText` (copy); `massIn` lb/oz for inch designs) → `src/app/MassPanel.tsx`
+  (`MassButton` "Mass" + panel in `.readout-stack` bottom right with Measure; open/density in `massState.ts`, session only; parts =
+  picked parts, else the parts of picked faces/edges, else all shown; "Weigh as" each part's material / one material / a density;
+  `SceneManager.setCentreMark` draws the centre). Measure: `Measurement.closest` (BRepExtrema points, `closestPoints`) → closest
+  X/Y/Z; round edges' length; Copy. Which feature made each face: `src/kernel/faceMakers.ts` `FaceMakers.after` at every step
+  of `featureSteps` (only parts whose shape object changed; a kept face hash keeps its maker, a new face on a plane/cylinder the
+  part had keeps that surface's maker, else the feature) → `PartMesh.faceMakers` (by faceGroups, missing = none). Pure
+  `src/model/featureSearch.ts`: `matchingFeatures` (every word in name/kind/folder; FeaturePanel's "Search features" box, Esc
+  clears, folders/groups opened, datums hidden), `featureOfFace` (maker, else the part's latest), `facesMadeBy`.
+  `src/viewport/featureFaces.ts`: hovered row (`setHoveredFeature`) → Viewport `setListHover` (its faces, else its parts; a
+  hovered sketch shown); double-click a face (`SceneCallbacks.onDoubleClick` → `editFeatureAt`) or Select other's "Edit <feature>…"
+  opens it. Parts list "Show only this part"/"Show all parts" were already there. Tests: tests/massProps (pure), engineMassProps.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.

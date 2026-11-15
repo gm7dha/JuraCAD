@@ -125,6 +125,8 @@ export interface PartMesh {
   configuration?: string;
   /** IDs of the features that built or changed this part. */
   featureIds: string[];
+  /** The feature that made each face (same order as faceGroups; "" = not known). Missing = none known. */
+  faceMakers?: string[];
   /** Parts a feature merged into this one (an Add touching several parts), by the feature's id: their names. */
   joined?: { feature: string; names: string[] }[];
   vertices: Float32Array;
@@ -369,6 +371,7 @@ export type KernelRequest =
   | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sections?: SectionRequest[]; breakouts?: BreakOutRequest[]; tangent?: boolean }
   | { type: "measure"; picks: TopoPick[] }
   | { type: "measureParts"; partIds: string[] }
+  | { type: "massProperties"; partIds: string[] }
   | { type: "unfold"; partId: string }
   | { type: "laserOutlines"; sources: LaserSource[] }
   | { type: "intersect"; partId: string; plane: SketchPlane; face?: FaceRef }
@@ -385,6 +388,7 @@ export type KernelResponseBody =
   | { type: "exportStl"; result: ExportResult }
   | { type: "exportStep"; result: StepResult }
   | { type: "measure"; result: Measurement }
+  | { type: "massProperties"; result: import("../model/massProps").PartMassProps[] }
   | { type: "unfold"; result: PartMesh | null }
   | { type: "laserOutlines"; result: LaserOutline[] }
   | { type: "intersect"; result: { edges: EdgeRef[] } | { error: string } }

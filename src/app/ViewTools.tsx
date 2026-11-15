@@ -8,6 +8,8 @@ import { viewNameProblem, type NamedView } from "../model/namedViews";
 import { useStore, viewOwner } from "../model/store";
 import { FILTER_OPTIONS, filtering, filterSummary, NO_FILTER, toggleFilter } from "../viewport/selectionFilter";
 import { setSelectOther, useSelectOther } from "../viewport/selectOtherState";
+import type { OtherChoice } from "../viewport/selectOther";
+import { featureForFace } from "../viewport/featureFaces";
 import { pickChoice, previewChoice, viewportApi } from "../viewport/Viewport";
 import { additive } from "../viewport/touchKeys";
 import { finishPaste } from "./featureClipboardApp";
@@ -213,6 +215,9 @@ export function SelectOtherMenu() {
     previewChoice(null);
     setSelectOther(null);
   };
+  // Onshape's right-click on a face: "Edit" the feature that made it.
+  const face = open.choices.find((c): c is Extract<OtherChoice, { kind: "face" }> => c.kind === "face");
+  const maker = face ? featureForFace(face.partId, face.index) : null;
   return (
     <PlacedPopup
       className="context-menu select-other"
@@ -222,6 +227,22 @@ export function SelectOtherMenu() {
       onClose={close}
       focusFirst
     >
+      {maker && (
+        <>
+          <button
+            className="menu-item"
+            role="menuitem"
+            onClick={() => {
+              close();
+              useStore.getState().startEdit(maker.id);
+            }}
+            title="Open the feature that made the face under the pointer (double-clicking the face does this too)"
+          >
+            Edit {maker.name}…
+          </button>
+          <div className="menu-divider" role="separator" />
+        </>
+      )}
       <div className="select-other-title">Select other</div>
       {open.choices.map((c, i) => (
         <button

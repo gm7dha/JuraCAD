@@ -16,6 +16,8 @@ import { featuresOfParts, groupByPart, partsOfFeature } from "../model/partLinks
 import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 import { DEFAULT_FINISH, FINISHES } from "../model/finishes";
 import { copyFromMenu, pasteFromMenu } from "./featureClipboardApp";
+import { matchingFeatures } from "../model/featureSearch";
+import { setHoveredFeature } from "../viewport/featureFaces";
 
 const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   box: Icons.Box,
@@ -407,6 +409,9 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
       }}
       onDoubleClick={() => startEdit(feature.id)}
       onContextMenu={(e) => onMenu(e, entries)}
+      // Under the pointer: the faces it made light up in the view.
+      onMouseEnter={() => setHoveredFeature(feature.id)}
+      onMouseLeave={() => setHoveredFeature(null)}
       // Drag a feature up or down the list to move it (it's dropped above the row it's let go on).
       // (Not on a touch screen: there a long press is the right-click menu, and Move up / Move down are in it.)
       draggable={draggable && !TOUCH_SCREEN && !useStore.getState().editing}
@@ -797,6 +802,10 @@ export function FeaturePanel() {
     }
   };
   const [collapsed, setCollapsed] = useState<string[]>([]);
+  // The search box: only matching features are listed (folders opened as needed).
+  const [query, setQuery] = useState("");
+  const matches = useMemo(() => matchingFeatures(features, query, (f) => FEATURE_DEFS[f.type]?.label ?? f.type), [features, query]);
+  const shownIf = (id: string) => !matches || matches.has(id);
   const groups = useMemo(() => (grouped ? groupByPart(parts, features) : { planes: [], groups: [], other: [] }), [grouped, parts, features]);
   const linkedParts = useMemo(() => (selectedFeatureId ? partsOfFeature(parts, selectedFeatureId, features) : []), [parts, selectedFeatureId, features]);
 
@@ -819,21 +828,47 @@ export function FeaturePanel() {
             Group by part
           </label>
         </h3>
-        <ul className="feature-list">
-          {DATUMS.map((d) => (
-            <DatumRow key={d} name={d} onMenu={onMenu} />
-          ))}
+        {features.length > 0 && (
+          <div className="feature-search">
+            <input
+              type="search"
+              value={query}
+              placeholder="Search features"
+              aria-label="Search features"
+              title="Type part of a feature's name or kind (e.g. fillet) to list only those. Esc clears it."
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setQuery("");
+                  e.currentTarget.blur();
+                }
+              }}
+            />
+            {matches && (
+              <span className="count" aria-live="polite">
+                {matches.size} of {features.length}
+              </span>
+            )}
+          </div>
+        )}
+        <ul className="feature-list" onMouseLeave={() => setHoveredFeature(null)}>
+          {!matches && DATUMS.map((d) => <DatumRow key={d} name={d} onMenu={onMenu} />)}
           {!grouped &&
-            folderRuns(features).map((run) => {
+            folderRuns(features).map((whole) => {
+              const run = matches ? { ...whole, features: whole.features.filter((f) => matches.has(f.id)) } : whole;
+              if (!run.features.length) return [];
               const rows = run.features.flatMap((f) => [
                 <FeatureRow key={f.id} feature={f} onMenu={onMenu} linked={linkedFeatures.includes(f.id)} draggable />,
                 ...(f.id === rollbackTo ? [<RollbackBar key="rollback" />] : []),
               ]);
               if (!run.folder) return rows;
-              const key = `folder:${run.folder}:${run.features[0].id}`;
-              const shut = collapsed.includes(key);
+              const key = `folder:${whole.folder}:${whole.features[0].id}`;
+              // While searching, folders holding a match are opened.
+              const shut = !matches && collapsed.includes(key);
               const folder = run.folder;
-              const ids = run.features.map((f) => f.id);
+              const ids = whole.features.map((f) => f.id);
               const placed = insertOfFeature(useStore.getState().history.present, ids[0]);
               const menu: MenuEntry[] = [
                 ...(placed ? [{ label: "Edit design sizes…", action: () => useStore.getState().openLibrary({ mode: "edit", insertId: placed.id }) }, "divider" as const] : []),
@@ -878,7 +913,7 @@ export function FeaturePanel() {
                 </li>,
               ];
             })}
-          {!grouped && features.length > 1 && (
+          {!grouped && !matches && features.length > 1 && (
             <li
               className="feature-drop-end"
               aria-hidden
@@ -896,12 +931,12 @@ export function FeaturePanel() {
             />
           )}
           {grouped &&
-            groups.planes.map((id) => {
+            groups.planes.filter(shownIf).map((id) => {
               const f = features.find((x) => x.id === id);
               return f ? <FeatureRow key={id} feature={f} onMenu={onMenu} linked={linkedFeatures.includes(id)} /> : null;
             })}
           {grouped &&
-            groups.groups.map((g) => (
+            groups.groups.filter((g) => g.featureIds.some(shownIf)).map((g) => (
               <li key={g.partId} className="feature-group" role="treeitem" aria-expanded={!collapsed.includes(g.partId)}>
                 <button
                   type="button"
@@ -914,9 +949,9 @@ export function FeaturePanel() {
                   <span className="feature-name">{g.name}</span>
                   <span className="count">({g.featureIds.length})</span>
                 </button>
-                {!collapsed.includes(g.partId) && (
+                {(matches || !collapsed.includes(g.partId)) && (
                   <ul className="feature-list nested" role="group">
-                    {g.featureIds.map((id) => {
+                    {g.featureIds.filter(shownIf).map((id) => {
                       const f = features.find((x) => x.id === id);
                       return f ? <FeatureRow key={id} feature={f} onMenu={onMenu} linked={linkedFeatures.includes(id)} /> : null;
                     })}
@@ -924,7 +959,7 @@ export function FeaturePanel() {
                 )}
               </li>
             ))}
-          {grouped && groups.other.length > 0 && (
+          {grouped && groups.other.some(shownIf) && (
             <li className="feature-group" role="treeitem" aria-expanded={!collapsed.includes("other")}>
               <button
                 type="button"
@@ -935,9 +970,9 @@ export function FeaturePanel() {
                 <span className="feature-name muted">Not part of a part yet</span>
                 <span className="count">({groups.other.length})</span>
               </button>
-              {!collapsed.includes("other") && (
+              {(matches || !collapsed.includes("other")) && (
                 <ul className="feature-list nested" role="group">
-                  {groups.other.map((id) => {
+                  {groups.other.filter(shownIf).map((id) => {
                     const f = features.find((x) => x.id === id);
                     return f ? <FeatureRow key={id} feature={f} onMenu={onMenu} linked={linkedFeatures.includes(id)} /> : null;
                   })}
@@ -952,6 +987,7 @@ export function FeaturePanel() {
             </li>
           )}
         </ul>
+        {matches && matches.size === 0 && <p className="panel-hint">No features match "{query.trim()}". Press Esc to show them all.</p>}
         {features.length === 0 && !draftIsNew && (
           <p className="panel-hint">Start with a Sketch (then Extrude it), or add a Box, Cylinder, Sphere or Coil from the toolbar.</p>
         )}

@@ -74,6 +74,8 @@ export interface Measurement {
   /** For two round edges (e.g. hole rims): distance between their centres, and its X/Y/Z parts. */
   centreDistance?: { total: number; dx: number; dy: number; dz: number };
   angle?: number;
+  /** Where the shortest distance runs from and to (on the first thing, on the second). */
+  closest?: [Vec3, Vec3];
   /** Two whole parts: how much of them overlaps (mm³; 0 when they only touch or are apart). */
   overlap?: number;
 }

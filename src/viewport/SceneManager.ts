@@ -218,6 +218,8 @@ export interface SceneCallbacks {
   onTriadMove?: (ray: ScreenRay, shift: boolean) => void;
   onTriadEnd?: () => void;
   onTriadCancel?: () => void;
+  /** A double-click in the view (mouse): what's under the pointer (Onshape: a face's feature opens for editing). */
+  onDoubleClick?: (target: PickTarget | null) => void;
 }
 
 /** The triad's colours: X red, Y green, Z blue (as the origin's), the ball dark; under the pointer or dragged, orange. */
@@ -417,6 +419,7 @@ export class SceneManager {
     // (A finger whose capture is lost without an up or cancel mustn't stay "down" for ever.)
     el.addEventListener("lostpointercapture", this.onPointerCancel);
     el.addEventListener("contextmenu", (e) => e.preventDefault());
+    el.addEventListener("dblclick", this.onDoubleClickEvent);
 
     // Onshape mouse: right-drag orbits, middle-drag pans, wheel zooms towards the cursor.
     this.controls = new OrbitControls(this.camera, el);
@@ -1140,6 +1143,67 @@ export class SceneManager {
     this.selection = items;
     this.applyHighlights();
   }
+
+  /**
+   * Things lit up while a feature's row in the list is under the pointer: per part, the faces it made (null = the
+   * whole part). Drawn in the hover colour.
+   */
+  setListHover(hover: Map<string, number[] | null> | null): void {
+    this.listHover = hover;
+    this.applyHighlights();
+  }
+  private listHover: Map<string, number[] | null> | null = null;
+
+  /** Mass properties' centre of mass: a small black-and-white quartered disc, always on top (null hides it). */
+  setCentreMark(at: [number, number, number] | null): void {
+    if (!at) {
+      if (this.centreMark) this.centreMark.visible = false;
+      return;
+    }
+    if (!this.centreMark) {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 64;
+      const c = canvas.getContext("2d");
+      if (c) {
+        c.beginPath();
+        c.arc(32, 32, 28, 0, Math.PI * 2);
+        c.fillStyle = "#ffffff";
+        c.fill();
+        c.fillStyle = "#1d232a";
+        for (const a of [0, Math.PI]) {
+          c.beginPath();
+          c.moveTo(32, 32);
+          c.arc(32, 32, 28, a, a + Math.PI / 2);
+          c.closePath();
+          c.fill();
+        }
+        c.beginPath();
+        c.arc(32, 32, 28, 0, Math.PI * 2);
+        c.lineWidth = 4;
+        c.strokeStyle = "#1d232a";
+        c.stroke();
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(3), 3));
+      const mat = new THREE.PointsMaterial({ size: 18, sizeAttenuation: false, map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false, depthWrite: false });
+      this.centreMark = new THREE.Points(geo, mat);
+      this.centreMark.renderOrder = 10;
+      this.centreMark.frustumCulled = false;
+      this.scene.add(this.centreMark);
+    }
+    const pos = this.centreMark.geometry.getAttribute("position") as THREE.BufferAttribute;
+    pos.setXYZ(0, at[0], at[1], at[2]);
+    pos.needsUpdate = true;
+    this.centreMark.visible = true;
+  }
+  private centreMark: THREE.Points | null = null;
+
+  private onDoubleClickEvent = (e: MouseEvent) => {
+    if (!this.callbacks.onDoubleClick || this.sketchController || e.button !== 0) return;
+    const { x, y } = this.localPoint(e as PointerEvent);
+    if (this.viewCube.contains(x, y, this.width)) return;
+    this.callbacks.onDoubleClick(this.pickAt(x, y));
+  };
 
   /** Whole parts picked in the Parts list: drawn in the selection colour. */
   setSelectedParts(ids: string[]): void {
@@ -2362,6 +2426,8 @@ export class SceneManager {
         if (this.selection.some((s) => s.partId === id && s.kind === kind && s.index === index)) return 2;
         if (this.hover && this.hover.partId === id && this.hover.kind === kind && this.hover.index === index) return 1;
         if (this.hoverWhole === id) return 1;
+        const listed = this.listHover?.get(id);
+        if (listed === null || (kind === "face" && listed?.includes(index))) return 1;
         return 0;
       };
       p.mesh.geometry.groups.forEach((g, i) => (g.materialIndex = state("face", i)));

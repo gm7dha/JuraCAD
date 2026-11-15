@@ -128,6 +128,11 @@ export class KernelClient {
     return this.send({ type: "measureParts", partIds }).then((body) => body.result as Measurement);
   }
 
+  /** Mass properties of whole parts (exact: volume, surface area, centre of mass, box). */
+  massProperties(partIds: string[]): Promise<import("../model/massProps").PartMassProps[]> {
+    return this.send({ type: "massProperties", partIds }).then((body) => (body.type === "massProperties" ? body.result : []));
+  }
+
   /** A sheet metal part laid out flat, as a mesh to show in place of the folded one (null if it can't be). */
   unfold(partId: string): Promise<PartMesh | null> {
     return this.send({ type: "unfold", partId }).then((body) => (body.type === "unfold" ? body.result : null));
