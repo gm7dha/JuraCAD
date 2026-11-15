@@ -279,13 +279,20 @@ try {
 
   step = "double-clicking a face opens the feature that made it";
   {
-    await page.mouse.dblclick(box.x + box.width * 0.5, box.y + box.height * 0.55);
-    await page.waitForFunction(() => ["box", "cylinder"].includes(window.juracadStore.getState().editing?.draft.type), null, { timeout: 10_000 }).catch(async () => {
+    // The block's top face: the hole only trimmed it, so it's still the Box's.
+    const top = await page.evaluate(() => {
+      const part = window.juracadStore.getState().parts[0];
+      const i = part.faceRefs.findIndex((f) => f.kind === "face" && f.surface === "PLANE" && f.normal[2] > 0.99);
+      return { i, at: window.juracadViewport.current.screenPointOnFace(part.id, i) };
+    });
+    if (top.i < 0 || !top.at) throw new Error("couldn't find the block's top face on screen");
+    await page.mouse.dblclick(box.x + top.at.x, box.y + top.at.y);
+    await page.waitForFunction(() => window.juracadStore.getState().editing?.draft.type === "box", null, { timeout: 10_000 }).catch(async () => {
       const why = await page.evaluate(([x, y]) => {
         const st = window.juracadStore.getState();
         return JSON.stringify({ editing: st.editing?.draft.type ?? null, sketch: !!st.sketch, under: window.juracadViewport.current.pickKindAt(x, y), selection: st.selection });
-      }, [box.width * 0.5, box.height * 0.55]);
-      throw new Error(`double-clicking a face didn't open its feature: ${why}`);
+      }, [top.at.x, top.at.y]);
+      throw new Error(`double-clicking the block's top face didn't open the Box: ${why}`);
     });
     await page.getByRole("button", { name: "Cancel" }).click();
     await page.waitForFunction(() => window.juracadStore.getState().editing === null);
