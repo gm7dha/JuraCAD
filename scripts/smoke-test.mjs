@@ -3136,9 +3136,16 @@ try {
     const mid2 = ringAt;
     const R = ringAt.r;
     const undoBefore = await page.evaluate(() => window.juracadStore.getState().sketch.past.length);
-    // Grabbed low on the left (clear of the size labels) and taken a quarter turn round.
-    const a0 = (-3 * Math.PI) / 4;
-    await page.mouse.move(box.x + mid2.x + R * Math.cos(a0), box.y + mid2.y - R * Math.sin(a0));
+    // Grabbed by its knob (right of the middle, where the height's label sits on a small shape: the handles must win over
+    // the labels) and taken a quarter turn round.
+    const a0 = 0;
+    const grab = { x: box.x + mid2.x + R * Math.cos(a0), y: box.y + mid2.y - R * Math.sin(a0) };
+    const under = await page.evaluate(({ x, y }) => {
+      const el = document.elementFromPoint(x, y);
+      return el instanceof HTMLCanvasElement ? "canvas" : `${el?.tagName.toLowerCase()}.${el?.className} "${el?.textContent?.slice(0, 20)}"`;
+    }, grab);
+    if (under !== "canvas") throw new Error(`the ring's knob is covered by ${under}, so pressing it wouldn't reach the handles`);
+    await page.mouse.move(grab.x, grab.y);
     await page.mouse.down();
     for (let k = 1; k <= 8; k++) {
       const a = a0 + ((k / 8) * Math.PI) / 2;

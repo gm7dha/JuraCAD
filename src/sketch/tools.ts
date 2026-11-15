@@ -5,7 +5,7 @@
  */
 import { evaluate } from "../model/expr";
 import { solveSketch } from "./solver";
-import { addArc, addCircle, addRectangle, circleThrough, curveById, curvePoints, deleteItems, ellipsePoints, isPointId, mirrorPoint, onCurveType, placePoint, pointPos, radiusOf, settle, sketchId, splinePath, type EditResult, type Placed } from "./ops";
+import { addArc, addCircle, addRectangle, circleThrough, curveById, deleteItems, ellipsePoints, isPointId, mirrorPoint, onCurveType, placePoint, pointPos, radiusOf, settle, sketchId, splinePath, type EditResult, type Placed } from "./ops";
 import { minorPointFor } from "./ellipse";
 import { ORIGIN_ID, type SketchEllipse, type SketchSpline, type SketchArc, type SketchCircle, type SketchConstraint, type SketchCurve, type SketchData, type SketchLine, type SketchPoint } from "./types";
 import { toSketch, type PlaneFrame, type Vec3 } from "./planes";
@@ -1188,56 +1188,6 @@ export interface SketchTransformOptions {
   dy: number;
   angle: number;
   copy: boolean;
-}
-
-/** Where a point goes: turned by `angle` about the shapes' middle, then moved by (dx, dy). */
-export function transformMove(s: SketchData, sources: SketchCurve[], t: Pick<SketchTransformOptions, "dx" | "dy" | "angle">): (p: P2) => P2 {
-  const ids = [...new Set(sources.flatMap(curvePoints))];
-  const pts = ids.map((id) => pointPos(s, id));
-  const c: P2 = pts.length ? [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length] : [0, 0];
-  const r = (t.angle * Math.PI) / 180;
-  const cos = Math.cos(r);
-  const sin = Math.sin(r);
-  return (p) => {
-    const [x, y] = sub(p, c);
-    return [c[0] + x * cos - y * sin + t.dx, c[1] + x * sin + y * cos + t.dy];
-  };
-}
-
-/** Move (or copy) lines, arcs and circles by a distance and/or a turn. */
-export function transformCurves(s: SketchData, curveIds: string[], t: SketchTransformOptions): EditResult & { curveIds: string[] } {
-  const sources = curveIds.map((id) => curveById(s, id)).filter((c): c is SketchCurve => !!c);
-  if (!sources.length) return { sketch: s, error: "Click the lines, arcs and circles to move first.", curveIds: [] };
-  if (Math.abs(t.dx) < 1e-9 && Math.abs(t.dy) < 1e-9 && Math.abs(t.angle) < 1e-9) return { sketch: s, error: "Type how far to move or turn them.", curveIds: [] };
-  const move = transformMove(s, sources, t);
-  if (t.copy) {
-    const points: SketchPoint[] = [];
-    const curves: SketchCurve[] = [];
-    copyCurvesWith(s, sources, move, points, curves);
-    return { ...settle({ points: [...s.points, ...points], curves: [...s.curves, ...curves], constraints: s.constraints }), curveIds: curves.map((c) => c.id) };
-  }
-  const moving = new Set(sources.flatMap(curvePoints).filter((id) => id !== ORIGIN_ID));
-  const points = s.points.map((p) => {
-    if (!moving.has(p.id)) return p;
-    const [x, y] = move([p.x, p.y]);
-    return { ...p, x, y };
-  });
-  // Splines' handles turn with them.
-  const curves = s.curves.map((c) => {
-    if (c.type !== "spline" || !(c.tangents || c.tangentsIn) || !sources.includes(c)) return c;
-    const tangents = movedHandles(s, c, c.points, move);
-    const tangentsIn = movedHandles(s, c, c.points, move, "tangentsIn");
-    return { ...c, ...(tangents ? { tangents } : {}), ...(tangentsIn ? { tangentsIn } : {}) };
-  });
-  const r = settle({ ...s, points, curves });
-  // Constraints (a fix, a dimension to something that stays) may hold them where they were.
-  const before = pointPos(s, [...moving][0]);
-  const after = pointPos(r.sketch, [...moving][0]);
-  const wanted = move(before);
-  if (len(sub(after, wanted)) > 1e-3 && len(sub(after, before)) < 1e-3) {
-    return { sketch: s, error: "They're held where they are by their constraints (a fix or a dimension) — remove those to move them.", curveIds: [] };
-  }
-  return { ...r, curveIds: sources.map((c) => c.id) };
 }
 
 /** The pattern tool's settings as typed (from the sketch panel). */

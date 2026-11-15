@@ -10,7 +10,7 @@
  */
 import { evaluate, namesIn } from "../model/expr";
 import { copySketchItems, pasteSketchClip, selectionPoints } from "./clipboard";
-import { curveById, curvePoints, pointPos, sketchId } from "./ops";
+import { curveById, curvePoints, ellipsePoints, pointPos, radiusOf, sketchId, splinePath } from "./ops";
 import { solveSketch } from "./solver";
 import { isDimension, type SketchConstraint, type SketchCurve, type SketchData } from "./types";
 
@@ -35,7 +35,7 @@ export interface TransformResult {
 
 /** Plain messages for what can stop a transform. */
 export const HELD_MESSAGE =
-  "These can't move that way: part of the selection is held where it is (a Fix, or a dimension or relation to something not picked). Pick only what's free to move.";
+  "These can't move that way: part of the selection is held where it is (a Fix, a dimension or relation to something not picked, or it follows a part's edge brought in with Use). Pick only what's free to move.";
 export const STRAIGHT_DIMENSION_MESSAGE =
   "Something picked is measured straight across or straight up (a horizontal or vertical dimension), so it can only be turned by a quarter turn. Change that dimension to a plain length first.";
 export const VARIABLE_SIZE_MESSAGE = "A size in the selection is set by a variable or a sum, so it can't be scaled here: change the variable instead.";
@@ -43,29 +43,51 @@ export const VARIABLE_SIZE_MESSAGE = "A size in the selection is set by a variab
 /** Dimensions that are lengths (scaled with the shapes); angles stay as they are. */
 const LENGTHS = new Set<SketchConstraint["type"]>(["distance", "length", "horizontalDistance", "verticalDistance", "radius", "diameter", "pointLineDistance", "offset", "arcLength", "rimDistance"]);
 
-/** The middle of the picked shapes' box (their points, and circles' full size), or null when nothing that moves is picked. */
+/**
+ * The middle of the picked shapes' box — the shapes as drawn (an arc's curve, a circle's full size, a spline's path),
+ * not their construction points: a centre or an ellipse's axis end counts only when it is picked itself. Null when
+ * nothing that moves is picked.
+ */
 export function selectionCentre(s: SketchData, ids: readonly string[]): P2 | null {
-  const pts = selectionPoints(s, ids);
-  if (!pts.length) return null;
+  if (!selectionPoints(s, ids).length) return null;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  const take = (x: number, y: number) => {
+  const take = ([x, y]: P2) => {
     x0 = Math.min(x0, x);
     y0 = Math.min(y0, y);
     x1 = Math.max(x1, x);
     y1 = Math.max(y1, y);
   };
-  for (const id of pts) {
-    const [x, y] = pointPos(s, id);
-    take(x, y);
-  }
+  const pointIds = new Set(s.points.map((p) => p.id));
   for (const id of ids) {
     const c = curveById(s, id);
-    if (c?.type !== "circle") continue;
-    const [x, y] = pointPos(s, c.center);
-    take(x - c.radius, y - c.radius);
-    take(x + c.radius, y + c.radius);
+    if (c) {
+      for (const p of curveOutline(s, c)) take(p);
+      continue;
+    }
+    if (pointIds.has(id)) take(pointPos(s, id));
+    const t = s.texts?.find((x) => x.id === id);
+    if (t) take(pointPos(s, t.anchor));
   }
-  return [(x0 + x1) / 2, (y0 + y1) / 2];
+  return Number.isFinite(x0) ? [(x0 + x1) / 2, (y0 + y1) / 2] : null;
+}
+
+/** Points along a curve as drawn (enough to give its box). */
+function curveOutline(s: SketchData, c: SketchCurve): P2[] {
+  if (c.type === "line") return [pointPos(s, c.p1), pointPos(s, c.p2)];
+  if (c.type === "spline") return splinePath(s, c);
+  if (c.type === "ellipse") return ellipsePoints(s, c);
+  const [cx, cy] = pointPos(s, c.center);
+  if (c.type === "circle") return [[cx - c.radius, cy - c.radius], [cx + c.radius, cy + c.radius]];
+  // An arc runs anticlockwise from its start to its end: its ends, and the quarter points it passes.
+  const r = radiusOf(s, c);
+  const [sx, sy] = pointPos(s, c.start);
+  const [ex, ey] = pointPos(s, c.end);
+  const a0 = Math.atan2(sy - cy, sx - cx);
+  let a1 = Math.atan2(ey - cy, ex - cx);
+  while (a1 <= a0) a1 += 2 * Math.PI;
+  const out: P2[] = [[sx, sy], [ex, ey]];
+  for (let k = Math.ceil(a0 / (Math.PI / 2)); k * (Math.PI / 2) < a1; k++) out.push([cx + r * Math.cos((k * Math.PI) / 2), cy + r * Math.sin((k * Math.PI) / 2)]);
+  return out;
 }
 
 /** Where a point goes: scaled and turned about `about`, then moved. */
@@ -94,7 +116,7 @@ function scaledValue(value: string, k: number): string | null {
   const r = evaluate(value);
   if (!r.ok) return null;
   const round = (v: number) => String(Math.round(v * 1e6) / 1e6);
-  return /\bin\s*\)?\s*$/.test(value) ? `${round((r.value * k) / 25.4)} in` : round(r.value * k);
+  return /(?<=[\d\s)])in\s*\)?\s*$/.test(value) ? `${round((r.value * k) / 25.4)} in` : round(r.value * k);
 }
 
 /**
@@ -181,21 +203,11 @@ export function transformSelection(s: SketchData, ids: readonly string[], m: Sel
     }
     constraints.push(next);
   }
-  // Lines that were level or upright: per joined-up shape, the first stays as it is (it may now turn freely) and
-  // the others are held parallel or square to it, so a turned rectangle stays a rectangle.
-  if (straight.length) {
-    const group = shapeGroups(s, straight.map((c) => c.refs[0]));
-    const first = new Map<number, SketchConstraint>();
-    for (const con of straight) {
-      const g = group.get(con.refs[0])!;
-      const ref = first.get(g);
-      if (!ref) {
-        first.set(g, con);
-        continue;
-      }
-      constraints.push({ id: sketchId("k"), type: ref.type === con.type ? "parallel" : "perpendicular", refs: [ref.refs[0], con.refs[0]] });
-    }
-  }
+  // Lines that were level or upright: the first stays as it is (the whole picked set may now turn freely) and every
+  // other is held parallel or square to it — one line for the whole selection, so no picked shape (a slot inside a
+  // plate) is left to spin on its own; a turned rectangle stays a rectangle.
+  const ref = straight[0];
+  for (const con of straight.slice(1)) constraints.push({ id: sketchId("k"), type: ref.type === con.type ? "parallel" : "perpendicular", refs: [ref.refs[0], con.refs[0]] });
 
   const next: SketchData = { ...s, points, curves, constraints, ...(texts ? { texts } : {}) };
   const solved = solveSketch(next, { place: [...targets].map(([pointId, [x, y]]) => ({ pointId, x, y })) });
@@ -225,36 +237,6 @@ export function transformCopy(s: SketchData, ids: readonly string[], m: Selectio
   if (pasted.error) return { sketch: s, ids: [], error: pasted.error };
   const r = transformSelection(pasted.sketch, pasted.ids, m, centre);
   return r.error ? { sketch: s, ids: [], error: r.error } : r;
-}
-
-/** Each line's joined-up shape (lines sharing points with one another, through any picked curve), numbered. */
-function shapeGroups(s: SketchData, lineIds: string[]): Map<string, number> {
-  const parent = new Map<string, string>();
-  const find = (a: string): string => {
-    let x = a;
-    while (parent.has(x) && parent.get(x) !== x) x = parent.get(x)!;
-    return x;
-  };
-  const join = (a: string, b: string) => {
-    const ra = find(a), rb = find(b);
-    if (ra !== rb) parent.set(ra, rb);
-  };
-  for (const c of s.curves) {
-    const pts = curvePoints(c);
-    for (const p of pts) {
-      if (!parent.has(p)) parent.set(p, p);
-      join(p, pts[0]);
-    }
-  }
-  const out = new Map<string, number>();
-  const roots = new Map<string, number>();
-  for (const id of lineIds) {
-    const c = curveById(s, id);
-    const root = c ? find(curvePoints(c)[0]) : id;
-    if (!roots.has(root)) roots.set(root, roots.size);
-    out.set(id, roots.get(root)!);
-  }
-  return out;
 }
 
 // ---------------------------------------------------------------------------

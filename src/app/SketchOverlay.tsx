@@ -3,7 +3,7 @@ import { additive } from "../viewport/touchKeys";
 
 import { evaluate } from "../model/expr";
 import { lengthNumber, showLength, storeLength, type LengthUnit } from "../model/units";
-import { useLengthUnit, useStore } from "../model/store";
+import { nextOffered, useLengthUnit, useStore } from "../model/store";
 import { badgeAnchors, dimensionLayout, RELATION_SYMBOLS } from "../sketch/layout";
 import { measure, moveDimensionLabel, setDimensionValue } from "../sketch/ops";
 import { linkedPoints } from "../sketch/links";
@@ -72,6 +72,9 @@ export function SketchOverlay() {
   const data = useStore((s) => (s.editing?.draft.type === "sketch" && s.editing.draft.sketch?.plane ? s.editing.draft.sketch.data : null));
   const selection = useStore((s) => s.sketch?.selection ?? NO_SELECTION);
   const editingDimension = useStore((s) => s.sketch?.editingDimension ?? null);
+  // Move / copy's handles are drawn on the picked shapes: the labels let presses through to them (the ring runs
+  // right past a small shape's size labels).
+  const handlesOn = useStore((s) => s.sketch?.tool === "sketchTransform" && (s.sketch?.selection.length ?? 0) > 0);
   const elements = useRef(new Map<string, HTMLElement>());
   const placements = useRef<Placement[]>([]);
 
@@ -113,7 +116,7 @@ export function SketchOverlay() {
   };
 
   return (
-    <div className="sketch-overlay" aria-label="Sketch dimensions and constraints">
+    <div className={`sketch-overlay${handlesOn ? " handles-on" : ""}`} aria-label="Sketch dimensions and constraints">
       {layout.dims.map(({ constraint: c, placement }) => (
         <DimensionLabel
           key={c.id}
@@ -234,21 +237,23 @@ function DimensionLabel({
     if (offered()) s.keepOfferedDimension(c.id);
     else s.setEditingDimension(null);
   };
-  const apply = () => {
+  /** Set the typed size (true when it was taken, or nothing changed). */
+  const apply = (): boolean => {
     const s = useStore.getState();
     const current = s.editing?.draft.sketch?.data;
-    if (!current) return;
+    if (!current) return false;
     if (text.trim() === shownValue.trim()) {
       done();
-      return;
+      return true;
     }
     const r = setDimensionValue(current, c.id, isAngleDimension(c) ? text.trim() : storeLength(text.trim(), unit));
     if (r.error) {
       setError(r.error);
-      return;
+      return false;
     }
     s.updateSketch(r.sketch, { record: true });
     done();
+    return true;
   };
 
   if (editing && !c.driven) {
@@ -269,7 +274,10 @@ function DimensionLabel({
             setError(null);
           }}
           onSelect={(e) => setCaret((e.target as HTMLInputElement).selectionStart ?? 0)}
-          onFocus={(e) => e.target.select()}
+          onFocus={(e) => {
+            tabbing.current = false;
+            e.target.select();
+          }}
           onKeyDown={(e) => {
             e.stopPropagation();
             const listed = hints.names;
@@ -289,12 +297,26 @@ function DimensionLabel({
               setHideHints(true);
               return;
             }
-            // Tab / Shift+Tab: on to the other size offered for the shape just drawn (its width, then its height…).
-            if (e.key === "Tab" && offered() && (useStore.getState().sketch?.provisional.length ?? 0) > 1) {
+            // Tab / Shift+Tab: on to the other size offered for the shape just drawn (its width, then its height…),
+            // keeping a size typed here. The last one left stays open (Tab never drops it, as leaving the box would).
+            if (e.key === "Tab" && offered()) {
               e.preventDefault();
+              const target = nextOffered(useStore.getState().sketch?.provisional ?? [], c.id, e.shiftKey);
+              if (!target) {
+                if (text.trim() !== shownValue.trim()) apply();
+                return;
+              }
               tabbing.current = true;
-              if (text.trim() !== shownValue.trim()) apply();
-              else useStore.getState().nextOfferedDimension(c.id, e.shiftKey);
+              if (text.trim() === shownValue.trim()) {
+                useStore.getState().nextOfferedDimension(c.id, e.shiftKey);
+                return;
+              }
+              if (!apply()) {
+                tabbing.current = false;
+                return;
+              }
+              // Kept: go on to the one chosen (Shift+Tab: the one before), if it's still offered.
+              if (useStore.getState().sketch?.provisional.includes(target)) useStore.getState().setEditingDimension(target);
               return;
             }
             if (e.key === "Enter") apply();

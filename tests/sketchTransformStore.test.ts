@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { emptyDocument, historyOf } from "../src/model/document";
-import { useStore } from "../src/model/store";
+import { nextOffered, useStore } from "../src/model/store";
 import { SketchController, type PreviewShape, type SketchPointer } from "../src/sketch/controller";
 import { addPoint, addRectangle, curvePoints, pointPos } from "../src/sketch/ops";
 import { copySketchItems } from "../src/sketch/clipboard";
@@ -98,6 +98,40 @@ describe("Move / copy's handles in the sketch", () => {
   });
 });
 
+describe("handle drags after the review", () => {
+  it("changing tool in the middle of a drag puts things back, and undo waits while a handle is held", () => {
+    rectangle();
+    const c = new SketchController();
+    const before = draftData();
+    const past = s().sketch!.past.length;
+    c.pointerDown(mouse(5 + ring, 2));
+    const a = (40 * Math.PI) / 180;
+    c.pointerMove(mouse(5 + ring * Math.cos(a), 2 + ring * Math.sin(a)), true);
+    expect(draftData()).not.toBe(before);
+    expect(c.draggingHandle()).toBe(true);
+    s().setSketchTool("select");
+    c.pointerMove(mouse(5, 5), false);
+    expect(c.draggingHandle()).toBe(false);
+    expect(JSON.stringify(draftData())).toBe(JSON.stringify(before));
+    c.pointerUp();
+    expect(s().sketch!.past.length).toBe(past);
+  });
+
+  it("the handles are drawn again at their screen size after a zoom with no mouse move", () => {
+    rectangle();
+    const c = new SketchController();
+    let ringR = 0;
+    c.onChange((t) => {
+      const r = t.preview.filter((p) => p.kind === "circle" && p.handle).map((p) => (p.kind === "circle" ? p.r : 0));
+      if (r.length) ringR = Math.max(...r);
+    });
+    c.pointerMove(mouse(30, 30), false);
+    expect(ringR).toBeCloseTo(GIZMO_RING_PX * MM, 9);
+    c.zoomed(MM * 2);
+    expect(ringR).toBeCloseTo(GIZMO_RING_PX * MM * 2, 9);
+  });
+});
+
 describe("a pasted copy snaps", () => {
   it("its middle snaps onto a point, and Shift turns snapping off", () => {
     const r = addRectangle(draftData(), { x: 0, y: 0 }, { x: 10, y: 10 });
@@ -137,6 +171,9 @@ describe("sizes offered while drawing", () => {
     expect(s().sketch!.editingDimension).toBe(offered[0]);
     s().nextOfferedDimension(offered[0], true);
     expect(s().sketch!.editingDimension).toBe(offered[1]);
+    // The last one left has nowhere to go (Tab then keeps it open, never drops it).
+    expect(nextOffered(["a"], "a")).toBe(null);
+    expect(nextOffered(["a", "b", "c"], "a", true)).toBe("c");
     // Both are still offered (Esc or carrying on drawing drops them, as before).
     expect(s().sketch!.provisional).toEqual(offered);
   });

@@ -3163,6 +3163,7 @@ export class SceneManager {
     for (const g of this.manipGroup.children) if (g.userData.manip) g.scale.setScalar(MANIP_PIXELS * wpp);
     this.placeManipLabel();
     this.sketchLayer.frameUpdate(wpp);
+    this.sketchControllerRaw?.zoomed(wpp);
 
     this.renderer.setViewport(0, 0, this.width, this.height);
     this.renderer.render(this.scene, this.camera);

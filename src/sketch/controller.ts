@@ -699,6 +699,21 @@ export class SketchController {
     return true;
   }
 
+  /**
+   * The view's zoom (mm per screen pixel), every frame: Move / copy's handles are a set size on screen, so they're
+   * drawn again when it changes (a wheel zoom with no mouse move).
+   */
+  zoomed(mmPerPx: number): void {
+    if (!(mmPerPx > 0) || Math.abs(mmPerPx - this.lastMmPerPx) <= 1e-9 * mmPerPx) return;
+    this.lastMmPerPx = mmPerPx;
+    if (this.state.sketch?.tool === "sketchTransform") this.emit({ preview: this.transformPreview() });
+  }
+
+  /** Is one of Move / copy's handles being dragged (undo waits until it's let go)? */
+  draggingHandle(): boolean {
+    return this.gizmoDrag !== null;
+  }
+
   /** Redraw the pattern preview (after its settings change in the panel). */
   refreshPreview(): void {
     if (this.tool === "sketchPattern" || this.tool === "sketchTransform") this.emit({ preview: this.patternPreview() });

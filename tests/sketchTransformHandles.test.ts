@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addCircle, addDimension, addRectangle, applyRelation, curvePoints, pointPos, type Placed } from "../src/sketch/ops";
+import { addArc, addCircle, addDimension, addLine, addRectangle, applyRelation, curvePoints, pointPos, type Placed } from "../src/sketch/ops";
 import {
   GIZMO_RING_PX,
   gizmoPartAt,
@@ -103,6 +103,38 @@ describe("moving, turning and scaling picked shapes", () => {
     expect(t.sketch.curves).toHaveLength(8);
     expect(has(corners(t.sketch, r.lineIds), [0, 0])).toBe(true);
     expect(has(corners(t.sketch, t.ids), [20, 0])).toBe(true);
+  });
+});
+
+describe("after the review", () => {
+  it("the handles sit in the middle of the shapes as drawn, not of their centre points", () => {
+    // A shallow arc: its centre is ~100 mm below it, but the handles go on the arc.
+    const a = addArc(emptySketch(), at(0, 0), at(20, 0), { x: 10, y: 0.5 });
+    const c = selectionCentre(a.sketch, [a.arcId])!;
+    expect(c[0]).toBeCloseTo(10, 6);
+    expect(c[1]).toBeCloseTo(0.25, 3);
+  });
+
+  it("two picked shapes turned by 30° are held square to ONE line, so neither can spin on its own", () => {
+    const plate = addRectangle(emptySketch(), at(0, 0), at(40, 20));
+    const slot = addRectangle(plate.sketch, at(10, 8), at(30, 12));
+    const ids = [...plate.lineIds, ...slot.lineIds];
+    const t = transformSelection(slot.sketch, ids, { dx: 0, dy: 0, angle: 30, scale: 1 });
+    expect(t.error).toBe(undefined);
+    const held = t.sketch.constraints.filter((k) => k.type === "parallel" || k.type === "perpendicular");
+    expect(held).toHaveLength(7);
+    expect(new Set(held.map((k) => k.refs[0])).size).toBe(1);
+  });
+
+  it("keeps inches when scaling a size typed as 0.5in", () => {
+    const ln = addLine(emptySketch(), at(0, 0), at(12.7, 0));
+    const d = addDimension(ln.sketch, [ln.lineId]);
+    for (const [typed, want] of [["0.5in", "1.5 in"], ["0.5 in", "1.5 in"], ["(0.5 in)", "1.5 in"], ["12.7", "38.1"]] as const) {
+      const s = { ...d.sketch, constraints: d.sketch.constraints.map((k) => (k.id === d.dimensionId ? { ...k, value: typed } : k)) };
+      const t = transformSelection(s, [ln.lineId], { dx: 0, dy: 0, angle: 0, scale: 3 });
+      expect(t.sketch.constraints.find((k) => k.id === d.dimensionId)?.value).toBe(want);
+    }
+    expect(HELD_MESSAGE).toMatch(/Use/);
   });
 });
 

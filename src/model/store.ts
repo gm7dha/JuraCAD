@@ -111,6 +111,14 @@ function draftStepAfter(steps: { id: string; drafts: Feature[]; typing?: string 
   if (typing && steps?.id === before.id && steps.typing === typing && drafts.length) return steps;
   return { id: before.id, drafts: [...drafts.slice(-49), before], ...(typing ? { typing } : {}) };
 }
+
+/** Tab in an offered size's box: the next size offered after `id` (`back`: the one before), round and round; null when it's the only one. */
+export function nextOffered(list: readonly string[], id: string, back = false): string | null {
+  const i = list.indexOf(id);
+  if (i < 0 || list.length < 2) return null;
+  return list[(i + (back ? list.length - 1 : 1)) % list.length];
+}
+
 /** Does the open dialog keep its own undo (Move / copy, and the dialogs with manipulators)? */
 export function keepsSteps(d: Feature): boolean {
   return d.type === "transform" || hasManipulators(d.type);
@@ -1268,10 +1276,8 @@ export const useStore = create<AppState>((set, get) => {
     offerDimensions: (ids) => set((s) => (s.sketch ? { sketch: { ...s.sketch, provisional: ids, editingDimension: ids[0] ?? null } } : {})),
     nextOfferedDimension: (id, back = false) =>
       set((s) => {
-        const list = s.sketch?.provisional ?? [];
-        const i = list.indexOf(id);
-        if (!s.sketch || i < 0 || list.length < 2) return {};
-        return { sketch: { ...s.sketch, editingDimension: list[(i + (back ? list.length - 1 : 1)) % list.length] } };
+        const next = nextOffered(s.sketch?.provisional ?? [], id, back);
+        return s.sketch && next ? { sketch: { ...s.sketch, editingDimension: next } } : {};
       }),
     keepOfferedDimension: (id) =>
       set((s) => {

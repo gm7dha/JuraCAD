@@ -4755,3 +4755,9 @@ kbd {
 .dimension-suggest .value {
   color: var(--ink-3);
 }
+
+/* Move / copy's handles in a sketch win over the size labels and relation badges on top of them. */
+.sketch-overlay.handles-on .dimension-label,
+.sketch-overlay.handles-on .constraint-badge {
+  pointer-events: none;
+}

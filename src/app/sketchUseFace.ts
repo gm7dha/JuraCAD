@@ -1,51 +1,72 @@
 /** The sketch's Use tool on a face: every edge round it comes in at once (its outline and any holes), as in Onshape. */
 import type { PartMesh } from "../kernel/protocol";
+import type { EdgeRef } from "../geometry/topoRef";
 import { edgesOfFace } from "../model/faceEdges";
 import { useStore } from "../model/store";
 import { linkAllEdges, projectEdge, type RefEdge } from "../sketch/links";
 import { planeFrame } from "../sketch/planes";
 import { copyEdge } from "../sketch/tools";
-import type { EdgeRef } from "../geometry/topoRef";
-import { bringInCurvedEdge } from "./sketchUseCurve";
+import { readCurvedEdge } from "./sketchUseCurve";
 
+/**
+ * Each edge is brought in the way clicking it would (straight and round edges linked to the part, curved ones read
+ * exactly by the engine and linked too, anything else copied as plain geometry), all in one undo step, and
+ * everything brought in is selected.
+ */
 export async function takeWholeFace(part: PartMesh, face: number): Promise<void> {
   const s = useStore.getState();
   const plane = s.editing?.draft.sketch?.plane;
-  let data = s.editing?.draft.sketch?.data;
-  if (!plane || !data || !s.sketch) return;
+  if (!plane || !s.editing?.draft.sketch?.data || !s.sketch) return;
   const frame = planeFrame(plane);
-  const flat: RefEdge[] = [];
+  const linked: RefEdge[] = [];
   const curved: EdgeRef[] = [];
-  const copied: string[] = [];
+  const plain: EdgeRef[] = [];
   for (const index of edgesOfFace(part, face)) {
     const ref = part.edgeRefs[index];
     if (!ref) continue;
-    // The same three ways as clicking each edge: straight and round edges linked, curved ones read exactly by the engine.
     const seen = ref.curve === "UNKNOWN" ? null : projectEdge(frame, { partId: part.id, ref });
     if (ref.curve !== "UNKNOWN" && ref.curve !== "LINE" && (!seen || seen.kind === "curve")) curved.push(ref);
-    else if (seen && seen.kind !== "curve") flat.push(seen);
-    else {
-      const r = copyEdge(data, frame, ref);
-      if (!r.error) {
-        data = r.sketch;
-        copied.push(...r.curveIds);
-      }
-    }
+    else if (seen && seen.kind !== "curve") linked.push(seen);
+    else plain.push(ref);
   }
-  if (!flat.length && !curved.length && !copied.length) {
-    s.setSketchMessage("None of this face's edges can be used here. Click its edges one at a time instead.", "info");
-    return;
+  // The engine reads curved edges first; nothing is changed until every answer is in.
+  for (const ref of curved) {
+    const r = await readCurvedEdge(part.id, ref, plane);
+    if (r === null) return;
+    if (typeof r !== "string") linked.push(r);
   }
-  let ids = copied;
-  if (flat.length) {
-    const r = linkAllEdges(data, flat);
+  const now = useStore.getState();
+  let data = now.editing?.draft.sketch?.data;
+  if (!data || !now.sketch) return;
+  const ids: string[] = [];
+  let following = 0;
+  if (linked.length) {
+    const r = linkAllEdges(data, linked);
     if (!r.error) {
       data = r.sketch;
-      ids = [...ids, ...r.curveIds];
+      ids.push(...r.curveIds);
+      following = r.curveIds.length;
     }
   }
-  if (ids.length) s.updateSketch(data, { record: true, selection: ids });
-  for (const ref of curved) await bringInCurvedEdge(part.id, ref);
-  const n = ids.length + curved.length;
-  useStore.getState().setSketchMessage(`Used ${n} edge${n === 1 ? "" : "s"} of the face. They follow the part if it changes.`, "info");
+  for (const ref of plain) {
+    const r = copyEdge(data, frame, ref);
+    if (r.error) continue;
+    data = r.sketch;
+    ids.push(...r.curveIds);
+  }
+  if (!ids.length) {
+    now.setSketchMessage("None of this face's edges could be used here. Try clicking its edges one at a time.", "info");
+    return;
+  }
+  now.updateSketch(data, { record: true, selection: ids });
+  const copied = ids.length - following;
+  const words = (n: number) => `${n} edge${n === 1 ? "" : "s"}`;
+  now.setSketchMessage(
+    copied === 0
+      ? `Used ${words(following)} of the face. They follow the part if it changes.`
+      : following === 0
+        ? `Copied ${words(copied)} of the face into the sketch (as plain shapes: they won't follow the part).`
+        : `Used ${words(ids.length)} of the face: ${following} follow the part if it changes, ${copied} copied as plain shapes that won't.`,
+    "info",
+  );
 }

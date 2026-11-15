@@ -2,12 +2,29 @@
 import type { EdgeRef } from "../geometry/topoRef";
 import { getKernel } from "../kernel/connect";
 import { useStore } from "../model/store";
-import { linkEdge } from "../sketch/links";
+import { linkEdge, type RefEdge } from "../sketch/links";
+import type { SketchPlane } from "../sketch/planes";
 
 /**
  * "Use" on a curved part edge (a spline, an ellipse, or a circle seen at a
  * slant): it comes in as a spline or an ellipse that follows the edge.
  */
+/**
+ * A curved part edge's exact shape seen on the open sketch's plane, from the geometry engine — or what went wrong
+ * (null when the sketch was closed or moved to another plane while the engine worked).
+ */
+export async function readCurvedEdge(partId: string, ref: EdgeRef, plane: SketchPlane): Promise<RefEdge | string | null> {
+  let result;
+  try {
+    result = await getKernel().useEdge(partId, ref, plane);
+  } catch (e) {
+    return e instanceof Error ? e.message : "Something went wrong reading that edge.";
+  }
+  const now = useStore.getState();
+  if (!now.editing?.draft.sketch?.data || !now.sketch || JSON.stringify(now.editing?.draft.sketch?.plane) !== JSON.stringify(plane)) return null;
+  return "error" in result ? result.error : result.edge;
+}
+
 export async function bringInCurvedEdge(partId: string, ref: EdgeRef): Promise<void> {
   const s = useStore.getState();
   const plane = s.editing?.draft.sketch?.plane;
