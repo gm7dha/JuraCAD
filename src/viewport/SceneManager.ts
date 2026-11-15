@@ -228,6 +228,8 @@ export interface SceneCallbacks {
   onTriadCancel?: () => void;
   /** A double-click in the view (mouse): what's under the pointer (Onshape: a face's feature opens for editing). */
   onDoubleClick?: (target: PickTarget | null) => void;
+  /** A double-click (or double-tap) on a feature dialog's manipulator: type its size right there (Onshape's in-view edit). */
+  onManipDoubleClick?: (id: string) => void;
 }
 
 /** Manipulators' colours: Onshape's blue arrows; grey when the box holds a variable. */
@@ -2393,6 +2395,80 @@ export class SceneManager {
     label.el.style.top = `${Math.round(at.tip.y - 12)}px`;
   }
 
+  /** The in-view size box (Onshape's: double-click an arrow, type, Enter). */
+  private manipEdit: { box: HTMLDivElement; id: string } | null = null;
+
+  /**
+   * Open a small box by manipulator `id`'s tip holding `text`. Enter hands what's typed to `apply`: a message back
+   * (it can't be used) is shown under the box and it stays open; null closes it. Esc, or clicking elsewhere, closes it
+   * and changes nothing.
+   */
+  editManipValue(id: string, text: string, apply: (typed: string) => string | null): void {
+    this.closeManipEdit();
+    if (!this.manipulatorOnScreen(id)) return;
+    const box = document.createElement("div");
+    box.className = "manip-edit";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = text;
+    input.spellcheck = false;
+    input.setAttribute("aria-label", "Type the size, then press Enter");
+    const note = document.createElement("div");
+    note.className = "manip-edit-note";
+    note.setAttribute("role", "alert");
+    note.hidden = true;
+    box.append(input, note);
+    // Keys typed here are the box's own (Esc mustn't close the dialog, Delete mustn't delete a feature…).
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const problem = apply(input.value);
+        if (problem) {
+          note.textContent = problem;
+          note.hidden = false;
+          input.select();
+        } else this.closeManipEdit();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        this.closeManipEdit();
+      }
+    });
+    input.addEventListener("blur", () => this.closeManipEdit());
+    for (const type of ["pointerdown", "wheel", "dblclick", "contextmenu"]) box.addEventListener(type, (e) => e.stopPropagation());
+    this.container.appendChild(box);
+    this.manipEdit = { box, id };
+    this.placeManipEdit();
+    input.focus();
+    input.select();
+  }
+
+  /** Is the in-view size box open (on manipulator `id`, if given)? */
+  manipEditOpen(id?: string): boolean {
+    return !!this.manipEdit && (id === undefined || this.manipEdit.id === id);
+  }
+
+  closeManipEdit(): void {
+    const edit = this.manipEdit;
+    if (!edit) return;
+    this.manipEdit = null;
+    edit.box.remove();
+  }
+
+  private placeManipEdit(): void {
+    const edit = this.manipEdit;
+    if (!edit) return;
+    if (!this.manips.some((m) => m.id === edit.id)) {
+      // The dialog closed (or the arrow went): so does the box.
+      this.closeManipEdit();
+      return;
+    }
+    const at = this.manipulatorOnScreen(edit.id);
+    if (!at) return;
+    edit.box.style.left = `${Math.round(at.tip.x + 8)}px`;
+    edit.box.style.top = `${Math.round(at.tip.y - 14)}px`;
+  }
+
   private colourTriad(): void {
     const lit = this.triadDrag?.handle ?? (this.touchStroke?.triadOn ? this.touchStroke.triad : null) ?? this.triadHover;
     for (const [key, { mats, colour }] of [...this.triadMaterials, ...this.manipMaterials]) {
@@ -2751,6 +2827,8 @@ export class SceneManager {
       if (down?.button === 2 && Math.hypot(x - down.x, y - down.y) <= CLICK_SLOP && !this.sketchController && !this.dragEnabled && !this.viewCube.contains(x, y, this.width)) this.openSelectOther(x, y);
       return;
     }
+    // A manipulator pressed and let go without moving (its id): a second such click soon after types its size.
+    let manipClick: string | null = null;
     if (this.triadDrag?.pointerId === e.pointerId) {
       // (Cleared first: letting go of the capture below fires lostpointercapture, which mustn't take the drag back.)
       const handle = this.triadDrag.handle;
@@ -2765,6 +2843,7 @@ export class SceneManager {
       else this.callbacks.onTriadEnd?.();
       this.colourTriad();
       if (!(handle.kind === "manip" && still)) return;
+      manipClick = handle.id;
     }
     this.cancelHold();
     if (this.holdFired) {
@@ -2825,10 +2904,12 @@ export class SceneManager {
     const last = this.lastClick;
     if (last && now - last.t < DOUBLE_CLICK_MS && Math.hypot(x - last.x, y - last.y) <= CLICK_SLOP) {
       this.lastClick = null;
-      this.callbacks.onDoubleClick?.(target);
-    } else this.lastClick = { t: now, x, y };
+      // (Both clicks passed through to what's under the arrow, so a picked face or area is picked and let go again.)
+      if (manipClick && last.manip === manipClick && this.callbacks.onManipDoubleClick) this.callbacks.onManipDoubleClick(manipClick);
+      else this.callbacks.onDoubleClick?.(target);
+    } else this.lastClick = { t: now, x, y, manip: manipClick };
   };
-  private lastClick: { t: number; x: number; y: number } | null = null;
+  private lastClick: { t: number; x: number; y: number; manip: string | null } | null = null;
 
   // -------------------------------------------------------------------------
   // Fingers and the pen (Onshape's tablet gestures): one finger turns the view, two pan and pinch to
@@ -3029,6 +3110,13 @@ export class SceneManager {
       return;
     }
     if (count >= 2 && !this.sketchControllerRaw) {
+      // A double-tap on a feature dialog's arrow types its size (after picking what's under it a second time, as a mouse's double-click does).
+      const handle = this.manips.length ? this.triadHandleAt(x, y, reachFor(e.pointerType)) : null;
+      if (handle?.kind === "manip" && this.callbacks.onManipDoubleClick) {
+        this.callbacks.onPick(this.pickAt(x, y, reachFor(e.pointerType)), additive(e));
+        this.callbacks.onManipDoubleClick(handle.id);
+        return;
+      }
       this.fit();
       return;
     }
@@ -3162,6 +3250,7 @@ export class SceneManager {
     this.fadeTriad();
     for (const g of this.manipGroup.children) if (g.userData.manip) g.scale.setScalar(MANIP_PIXELS * wpp);
     this.placeManipLabel();
+    this.placeManipEdit();
     this.sketchLayer.frameUpdate(wpp);
 
     this.renderer.setViewport(0, 0, this.width, this.height);

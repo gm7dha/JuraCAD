@@ -685,7 +685,19 @@
   cancel puts `before` back). These dialogs keep the dialog undo like Move / copy (`keepsSteps`: typing, fields, picks are steps;
   Ctrl+Z in App). `SceneManager.setManipulators`/`manipulatorsShown`/`manipulatorOnScreen`/`setManipLabel` (`.manip-label`, the value
   by the tip while dragging). Tests: tests/manipulators (pure), manipulatorStore; the smoke test drags the Extrude's depth arrow
-  60 px and Ctrl+Z puts 15 back. Not done: Draft angle, Hole depth, Offset surface, assembly features, a drag on a variable.
+  60 px and Ctrl+Z puts 15 back. More (same paths): Draft (an arc round where the first face meets the neutral plane, + = leans
+  in along the pull as BRepOffsetAPI_DraftAngle; `signed`: may go minus, never lands on 0, |v| ≤ `max` 44), Hole (blind only: from its
+  first `holePositionsIn` point along ∓n as `holeAxes`; the glue reads `hole.sketchRef`), Move face / Offset surface (signed, along the
+  face's normal), Extend surface (from a straight edge along its flat face, away from it; worked out once per pick, `extendDir`; none
+  with `extendTo`), lopsided chamfers (`chamferFaces` = the engine's lopsidedChamfer order, `intoFace` along each face, outside or
+  inside corner; distance-angle: + an arc round the cut's line on the first face), Shell/Thicken on the face as built (`faceNow`:
+  strictMatch, else as picked), an Extrude's Up to end = a greyed `noEdit` arrow saying why. Double-click (or double-tap) an arrow:
+  `SceneCallbacks.onManipDoubleClick` (both clicks still pass through, so a pick toggles back) → `manipEdit` → `SceneManager.editManipValue`
+  (`.manip-edit` box by the tip; Enter → `typedManipValue` — the box's own text via storeLength, checked by resolveParams, a problem
+  stays shown — then `setDraftParam`, so it's the same dialog undo step as typing in the panel; variables/sums allowed, locked arrows
+  too; Esc/blur closes). Tests: manipulators2 (pure + the box's undo), engineManipulators (real OCCT: draft sign both pulls and minus,
+  hole direction, chamfer handles on the cut at outside/inside corners, offset/extend/move face ends, shell following); the smoke test
+  drags a Hole's depth arrow and types "12 + 3" by it. Not done: assembly features, Offset face (JuraCAD has none), arcs for curved draft faces.
 - Mirror planes and pattern axes: `src/model/patternRefs.ts` (pure). A mirror's plane is a default plane, a Plane
   feature, a clicked flat face (`mirror.planePick`, found again on rebuild; `plane` keeps where it was when clicked) or a
   sketch line (`mirror.line`: the plane through it, square to its sketch). Patterns use X/Y/Z, a clicked edge/face

@@ -110,6 +110,12 @@ function settle(m: Manipulator, raw: number, opts: ManipDragOptions): { value: n
     flipped = true;
     out = -v;
   }
+  if (m.signed) {
+    // Past zero it carries on, minus (never exactly 0, which isn't a size).
+    if (Number.isFinite(m.max)) out = Math.max(-m.max, Math.min(m.max, out));
+    if (out === 0) out = (raw < 0 ? -1 : 1) * least(opts, m.angle, Math.abs(m.value));
+    return { value: out + 0, flipped: false };
+  }
   out = Math.max(least(opts, m.angle, m.value), out);
   if (Number.isFinite(m.max)) out = Math.min(m.max, out);
   return { value: out + 0, flipped };

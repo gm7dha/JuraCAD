@@ -1383,6 +1383,90 @@ try {
     await page.getByRole("button", { name: "Cancel" }).click();
   }
 
+  step = "dragging a Hole's depth arrow, then typing its depth by the arrow";
+  {
+    await tool("Hole");
+    await page.waitForSelector(".feature-dialog >> text=Where and what");
+    // A sketch with somewhere to drill (a point or a circle's centre).
+    const sketchSelect = page.getByLabel("Sketch with the hole positions");
+    const choices = await sketchSelect.locator("option").evaluateAll((os) => os.map((o) => o.value).filter(Boolean));
+    let found = false;
+    for (const value of choices) {
+      await sketchSelect.selectOption(value);
+      if (await page.locator(".feature-dialog >> text=one at each point and circle centre").count()) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) throw new Error("no sketch with points or circles to drill at");
+    await page.getByRole("radio", { name: "To a depth" }).click();
+    await page.locator("#param-depth").fill("10");
+    await page.waitForFunction(() => window.juracadViewport.current.manipulatorsShown().some((m) => m.id === "depth" && !m.locked && m.value === 10), null, { timeout: 30_000 });
+    await page.evaluate(() => {
+      window.juracadViewport.current.setView("iso", false);
+      window.juracadViewport.current.fit(false);
+    });
+    await page.waitForTimeout(300);
+    const plan = await page.evaluate(() => {
+      const v = window.juracadViewport.current;
+      const m = v.manipulatorsShown().find((x) => x.id === "depth");
+      const on = v.manipulatorOnScreen("depth");
+      const at = (k) => v.worldToScreen(m.origin.map((c, i) => c + m.dir[i] * k));
+      const a = at(m.value);
+      const b = at(m.value + 1);
+      const perMm = Math.hypot(b.x - a.x, b.y - a.y);
+      const grab = { x: on.foot.x * 0.4 + on.tip.x * 0.6, y: on.foot.y * 0.4 + on.tip.y * 0.6 };
+      return { grab, dir: [(b.x - a.x) / perMm, (b.y - a.y) / perMm], perMm, handle: v.triadHandleAt(grab.x, grab.y), down: m.dir[2] };
+    });
+    if (plan.handle?.kind !== "manip" || plan.handle.id !== "depth") throw new Error(`the hole's depth arrow isn't under its own middle on screen (found ${JSON.stringify(plan.handle)})`);
+    if (!(plan.down < -0.99)) throw new Error(`the hole's depth arrow should point down into the part (its direction's z is ${plan.down})`);
+    const stepsBefore = await page.evaluate(() => window.juracadStore.getState().draftSteps?.drafts.length ?? 0);
+    const vp = await page.locator(".viewport canvas").first().boundingBox();
+    const pixels = 50;
+    await page.mouse.move(vp.x + plan.grab.x, vp.y + plan.grab.y);
+    await page.mouse.down();
+    for (let k = 1; k <= 5; k++) await page.mouse.move(vp.x + plan.grab.x + (plan.dir[0] * pixels * k) / 5, vp.y + plan.grab.y + (plan.dir[1] * pixels * k) / 5);
+    await page.mouse.up();
+    const dragged = Number.parseFloat(await page.locator("#param-depth").inputValue());
+    if (!(dragged > 10)) throw new Error(`dragging the hole's depth arrow ${pixels} px deeper left Depth at ${dragged}`);
+    const stepsAfter = await page.evaluate(() => window.juracadStore.getState().draftSteps?.drafts.length ?? 0);
+    if (stepsAfter !== stepsBefore + 1) throw new Error(`one drag of the hole's depth arrow made ${stepsAfter - stepsBefore} undo steps in the dialog`);
+    await shot("hole-arrow");
+    // Double-click the arrow: a box by its tip to type the depth in (a sum is fine), Enter sets it.
+    await page.waitForTimeout(500);
+    const on2 = await page.evaluate(() => window.juracadViewport.current.manipulatorOnScreen("depth"));
+    const mid = { x: on2.foot.x * 0.4 + on2.tip.x * 0.6, y: on2.foot.y * 0.4 + on2.tip.y * 0.6 };
+    await page.mouse.dblclick(vp.x + mid.x, vp.y + mid.y);
+    const box = page.locator(".manip-edit input");
+    await box.waitFor({ timeout: 5_000 }).catch(() => {
+      throw new Error("double-clicking the hole's depth arrow didn't open a box to type the depth in");
+    });
+    if (Number.parseFloat(await box.inputValue()) !== dragged) throw new Error(`the box by the arrow starts with "${await box.inputValue()}", not the depth ${dragged}`);
+    await box.fill("12 + 3");
+    await box.press("Enter");
+    await page.waitForFunction(() => window.juracadStore.getState().editing?.draft.params.depth === "12 + 3", null, { timeout: 5_000 }).catch(async () => {
+      throw new Error(`typing "12 + 3" by the arrow didn't set Depth (it says ${await page.locator("#param-depth").inputValue()})`);
+    });
+    if (await page.locator(".manip-edit").count()) throw new Error("the box by the arrow stayed open after Enter");
+    if ((await page.evaluate(() => window.juracadStore.getState().draftSteps?.drafts.length ?? 0)) !== stepsAfter + 1) throw new Error("typing by the arrow wasn't one step of the dialog's undo");
+    // A sum can't be dragged: the arrow is greyed (and the arrow's foot moved to 15 mm down).
+    await page.waitForFunction(() => window.juracadViewport.current.manipulatorsShown().some((m) => m.id === "depth" && m.locked && m.value === 15), null, { timeout: 30_000 });
+    // Esc in the box closes it and changes nothing.
+    const on3 = await page.evaluate(() => window.juracadViewport.current.manipulatorOnScreen("depth"));
+    await page.mouse.dblclick(vp.x + on3.foot.x * 0.4 + on3.tip.x * 0.6, vp.y + on3.foot.y * 0.4 + on3.tip.y * 0.6);
+    await box.waitFor({ timeout: 5_000 });
+    if ((await box.inputValue()) !== "12 + 3") throw new Error(`the box by a greyed arrow starts with "${await box.inputValue()}", not its sum`);
+    await box.fill("99");
+    await box.press("Escape");
+    if (await page.locator(".manip-edit").count()) throw new Error("Esc didn't close the box by the arrow");
+    if (!(await page.locator(".feature-dialog").count())) throw new Error("Esc in the box by the arrow closed the Hole dialog");
+    if ((await page.evaluate(() => window.juracadStore.getState().editing?.draft.params.depth)) !== "12 + 3") throw new Error("Esc in the box by the arrow changed the depth");
+    // Ctrl+Z (the dialog's undo) takes the typing back, then the drag.
+    await page.keyboard.press("Control+z");
+    await page.waitForFunction((d) => Number.parseFloat(window.juracadStore.getState().editing?.draft.params.depth ?? "") === d, dragged, { timeout: 5_000 });
+    await page.getByRole("button", { name: "Cancel" }).click();
+  }
+
   step = "moving a copy of a part";
   // Parts of features really in the design: a cancelled dialog's preview (the circular pattern above makes parts of
   // its own) may still be in the list until the next rebuild lands, so it isn't counted.

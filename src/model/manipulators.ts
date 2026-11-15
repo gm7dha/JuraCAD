@@ -1,5 +1,5 @@
 /**
- * Onshape's in-view manipulators for feature dialogs (pure: no three.js, no DOM): while an Extrude, Revolve,
+ * Onshape's in-view manipulators for feature dialogs (pure: no three.js, no DOM): while an Extrude, Revolve, Draft, Hole, Move face, Offset or Extend surface,
  * Fillet, Chamfer, Shell or Thicken dialog is open, an arrow (or, for a revolve, an arrow round an arc) sits in the
  * 3D view where the size it changes shows, and dragging it changes that size live, exactly like typing in its box.
  *
@@ -9,13 +9,14 @@
 import { resolveParams } from "./features";
 import { add, cross, dot, length, scale, sub, unit, type Vec3 } from "./transformMath";
 import type { Feature, FeatureType } from "./types";
-import { formatLength, startingLength } from "./units";
+import { formatLength, showLength, startingLength, storeLength } from "./units";
 import { chosenRegions } from "../sketch/areas";
 import { axisInSketch } from "../sketch/axis";
 import { curvePoints } from "../sketch/ops";
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
-import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
+import { holePositionsIn } from "../sketch/holePositions";
+import { strictMatch, type EdgeRef, type FaceRef, type TopoPick } from "../geometry/topoRef";
 
 export interface Manipulator {
   /** Which handle (unique within the draft): "depth", "depthBack", "depth2", "angle", "radius"… */
@@ -42,13 +43,17 @@ export interface Manipulator {
   max: number;
   /** Shown but not draggable: why (the box holds a variable or a sum). */
   locked?: string;
+  /** The value may go below zero (a Draft's angle, Move face's distance): dragged past zero it carries on, minus. */
+  signed?: boolean;
+  /** Nothing to type in the view (an Extrude's "Up to…" end: it has no size). */
+  noEdit?: boolean;
   /** What the label by the handle and its tooltip say. */
   text: string;
   tip: string;
 }
 
 /** The feature types that show manipulators. */
-export const MANIPULATED: ReadonlySet<FeatureType> = new Set<FeatureType>(["extrude", "revolve", "fillet", "chamfer", "shell", "thicken"]);
+export const MANIPULATED: ReadonlySet<FeatureType> = new Set<FeatureType>(["extrude", "revolve", "fillet", "chamfer", "shell", "thicken", "draft", "hole", "moveFace", "offsetSurface", "extendSurface"]);
 
 export function hasManipulators(type: FeatureType): boolean {
   return MANIPULATED.has(type);
@@ -56,7 +61,7 @@ export function hasManipulators(type: FeatureType): boolean {
 
 /** What manipulatorsFor needs besides the draft. */
 export interface ManipContext {
-  /** The draft's sketch (`sketchRef`) as built now (a face sketch where its face is), if it has one. */
+  /** The draft's sketch (`sketchRef`, or a Hole's `hole.sketchRef`) as built now (a face sketch where its face is), if it has one. */
   sketch: { plane: SketchPlane | null; data: SketchData } | null;
   /** The Part Studio's parts as built now (faces, to see which way an edge's corner faces). */
   parts: readonly MeshFaces[];
@@ -78,7 +83,7 @@ export function isPlainNumber(text: string | undefined): boolean {
   return /^\s*[+]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?\s*(mm|cm|m|in|inch|inches|"|deg|°)?\s*$/i.test(text);
 }
 
-const LOCKED = "This size uses a variable or a sum: type in its box to change it.";
+const LOCKED = "This size uses a variable or a sum: double-click the arrow, or type in its box, to change it.";
 
 /** Where a sketch's shapes are, in the middle (sketch coordinates): the middle of the picked areas' (or all closed shapes') box. */
 const middles = new WeakMap<SketchData, Map<string, [number, number] | null>>();
@@ -165,7 +170,10 @@ interface Base {
 
 function make(b: Base, m: Omit<Manipulator, "key" | "value" | "text" | "tip" | "locked"> & { tip: string }): Manipulator {
   const value = b.values[b.key] ?? 0;
-  const locked = isPlainNumber(b.params[b.key]) ? undefined : LOCKED;
+  const typed = b.params[b.key];
+  // (A size that may be minus is plain with a minus sign too.)
+  const plain = isPlainNumber(typed) || (!!m.signed && isPlainNumber(typed?.replace(/^\s*-/, "")));
+  const locked = plain ? undefined : LOCKED;
   return { ...m, key: b.key, value, text: valueText(b.label, value, m.angle), tip: locked ?? m.tip, ...(locked ? { locked } : {}) };
 }
 
@@ -287,6 +295,10 @@ export function manipulatorsFor(draft: Feature, ctx: ManipContext): Manipulator[
         const tip = "Drag to change the depth (it grows the same both ways)";
         out.push(make(base("depth", "Depth"), { id: "depth", kind: "arrow", origin: p0, dir: d, scale: 0.5, angle: false, flips: false, max: Infinity, tip }));
         out.push(make(base("depth", "Depth"), { id: "depthBack", kind: "arrow", origin: p0, dir: scale(d, -1), scale: 0.5, angle: false, flips: false, max: Infinity, tip }));
+      } else if (UP_TO_SAYS[ex.end]) {
+        // No size to drag: shown greyed, saying why (as Onshape shows the arrow of an end that goes up to something).
+        const say = UP_TO_SAYS[ex.end]!;
+        out.push({ id: "depth", key: "depth", kind: "arrow", origin: p0, dir: d, value: 0, scale: 1, angle: false, flips: false, max: Infinity, locked: say, tip: say, text: "Up to", noEdit: true });
       }
       return out;
     }
@@ -316,8 +328,9 @@ export function manipulatorsFor(draft: Feature, ctx: ManipContext): Manipulator[
   const facesOf = (partId: string) => partOf(partId)?.faceRefs ?? [];
   if (draft.type === "fillet" || draft.type === "chamfer") {
     const pick = (draft.picks ?? []).find((p) => p.ref.kind === "edge" && !p.placed);
-    // (A chamfer of two distances or a distance and an angle has no one place its first distance shows: no arrow.)
-    if (!pick || (draft.type === "chamfer" && draft.chamferType)) return [];
+    if (!pick) return [];
+    // Two distances, or a distance and an angle: an arrow along each face (the first distance on the face the engine takes first).
+    if (draft.type === "chamfer" && draft.chamferType) return lopsidedHandles(draft, pick, facesOf(pick.partId), base);
     const c = edgeCorner(pick, facesOf(pick.partId), partOf(pick.partId));
     if (!c) return [];
     const edge = pick.ref as EdgeRef;
@@ -337,9 +350,19 @@ export function manipulatorsFor(draft: Feature, ctx: ManipContext): Manipulator[
     );
     return out;
   }
+  if (draft.type === "hole") return holeHandles(draft, ctx, base);
+  if (draft.type === "extendSurface") {
+    const pick = (draft.picks ?? []).find((p) => p.ref.kind === "edge" && !p.placed);
+    if (!pick || draft.extendTo) return [];
+    const dir = extendDir(pick, facesOf(pick.partId));
+    if (!dir) return [];
+    return [make(base("distance", "Distance"), { id: "distance", kind: "arrow", origin: (pick.ref as EdgeRef).mid, dir, scale: 1, angle: false, flips: false, max: Infinity, tip: "Drag to change how far the surface grows" })];
+  }
   const facePick = (draft.picks ?? []).find((p) => p.ref.kind === "face" && !p.placed);
   if (!facePick) return [];
-  const face = facePick.ref as FaceRef;
+  if (draft.type === "draft") return draftHandles(draft, facePick.ref as FaceRef, base);
+  // Shell and Thicken: on the face as it's built now (a part an earlier feature moved carries its face along).
+  const face = draft.type === "shell" || draft.type === "thicken" ? faceNow(facePick, partOf(facePick.partId)) : (facePick.ref as FaceRef);
   const n = unit(face.normal);
   if (!n) return [];
   if (draft.type === "shell") {
@@ -348,7 +371,171 @@ export function manipulatorsFor(draft: Feature, ctx: ManipContext): Manipulator[
     const both = !!draft.bothSides;
     const d = scale(n, draft.flipSide && !both ? -1 : 1);
     out.push(make(base("thickness", "Thickness"), { id: "thickness", kind: "arrow", origin: face.center, dir: d, scale: both ? 0.5 : 1, angle: false, flips: false, max: Infinity, tip: "Drag to change the thickness" }));
+  } else if (draft.type === "moveFace" || draft.type === "offsetSurface") {
+    const tip = draft.type === "moveFace" ? "Drag to move the face (back past it moves it in)" : "Drag to change how far the copy is (back past the surface puts it on the other side)";
+    out.push(make(base("distance", "Distance"), { id: "distance", kind: "arrow", origin: face.center, dir: n, scale: 1, angle: false, flips: false, signed: true, max: Infinity, tip }));
   }
+  return out;
+}
+
+/** What a greyed "Up to…" arrow says. */
+const UP_TO_SAYS: Partial<Record<string, string>> = {
+  upToFace: "This end goes up to a face: change the end type to drag it.",
+  upToNext: "This end goes up to the next face it meets: change the end type to drag it.",
+  upToVertex: "This end goes up to a point: change the end type to drag it.",
+  upToPart: "This end goes up to a part: change the end type to drag it.",
+};
+
+/**
+ * A picked face as the part has it now: the face the engine would find for it (`strictMatch`, near and
+ * unambiguous), else as it was picked.
+ */
+export function faceNow(pick: TopoPick, part: MeshFaces | undefined): FaceRef {
+  const want = pick.ref as FaceRef;
+  const faces = part?.faceRefs;
+  if (!faces?.length) return want;
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (const f of faces) {
+    x0 = Math.min(x0, f.center[0]);
+    x1 = Math.max(x1, f.center[0]);
+    y0 = Math.min(y0, f.center[1]);
+    y1 = Math.max(y1, f.center[1]);
+    z0 = Math.min(z0, f.center[2]);
+    z1 = Math.max(z1, f.center[2]);
+  }
+  const size = Math.hypot(x1 - x0, y1 - y0, z1 - z0);
+  const i = strictMatch(want, faces as FaceRef[], size);
+  const got = i === null ? null : faces[i];
+  return got && got.surface === want.surface && dot(got.normal, want.normal) > 0.999 ? got : want;
+}
+
+/**
+ * A Hole's depth arrow: from its first hole (a sketch point or circle centre) down the drill, as the engine drills
+ * (into the face, or out of it with Flip). Through all and up to next have no size to drag: no arrow.
+ */
+function holeHandles(draft: Feature, ctx: ManipContext, base: (key: string, label: string) => Base): Manipulator[] {
+  const h = draft.hole;
+  const sketch = ctx.sketch;
+  if (!h || h.end !== "blind" || !sketch?.plane) return [];
+  const at = holePositionsIn(sketch.data)[0];
+  if (!at) return [];
+  const frame = planeFrame(sketch.plane);
+  const dir = scale(frame.n, h.flip ? 1 : -1);
+  return [make(base("depth", "Depth"), { id: "depth", kind: "arrow", origin: toWorld(frame, at[0], at[1]), dir, scale: 1, angle: false, flips: false, max: Infinity, tip: "Drag to change the hole's depth" })];
+}
+
+/**
+ * A Draft's angle: an arc round the line where the face meets the neutral plane (it pivots there). The handle is
+ * the face's middle as the face leans: a plus angle leans the face in going along the pull (narrower at the top
+ * with Top as the neutral plane), as the engine's BRepOffsetAPI_DraftAngle does.
+ */
+function draftHandles(draft: Feature, face: FaceRef, base: (key: string, label: string) => Base): Manipulator[] {
+  const frame = planeFrame(draft.neutral ?? { kind: "default", name: "Top" });
+  const pull = scale(frame.n, draft.flipSide ? -1 : 1);
+  const n = unit(face.normal);
+  if (!n || face.surface !== "PLANE") return [];
+  // A face square to the pull has nothing to lean (the engine refuses it).
+  if (Math.abs(dot(n, pull)) > 0.9) return [];
+  const across = unit(sub(n, scale(pull, dot(n, pull))));
+  if (!across) return [];
+  // Turning the face's middle round this line by +θ moves it in (−across) when it's above the neutral plane.
+  const axisDir = unit(cross(across, pull));
+  if (!axisDir) return [];
+  // How far the face's middle is from the neutral plane, along the pull; on it, a little way up (so the arc shows).
+  let h = dot(sub(face.center, frame.origin), pull);
+  const foot = sub(face.center, scale(pull, h));
+  if (Math.abs(h) < 1e-6) h = 10;
+  const origin = add(foot, scale(pull, h));
+  return [
+    make(base("angle", "Angle"), {
+      id: "angle",
+      kind: "arc",
+      origin,
+      dir: pull,
+      axis: { through: foot, dir: axisDir },
+      scale: 1,
+      angle: true,
+      flips: false,
+      signed: true,
+      max: 44,
+      tip: "Drag round to change the draft angle",
+    }),
+  ];
+}
+
+/**
+ * The way across a face from a straight edge into it (in the face's plane, square to the edge), or null. On an
+ * outside corner each face runs away from the other face's outside; on an inside corner, towards it.
+ */
+function intoFace(edge: EdgeRef, face: FaceRef, other: FaceRef, convex: boolean): Vec3 | null {
+  const t = unit(sub(edge.b, edge.a));
+  const n = unit(face.normal);
+  if (!t || !n) return null;
+  const u = unit(cross(t, n));
+  if (!u) return null;
+  const s = dot(u, other.normal);
+  if (Math.abs(s) < 1e-9) return null;
+  return scale(u, s < 0 === convex ? 1 : -1);
+}
+
+/**
+ * The faces beside a straight edge in the order the engine's lopsided chamfer takes them: the first distance runs
+ * along the face that faces most upwards (then towards +Y, then +X); `flipSide` swaps.
+ */
+export function chamferFaces(edge: EdgeRef, faces: readonly FaceRef[], flip: boolean): { first: FaceRef; second: FaceRef; convex: boolean } | null {
+  const two = facesAlong(edge, faces);
+  if (two.length !== 2) return null;
+  const up = (f: FaceRef) => [f.normal[2], f.normal[1], f.normal[0]];
+  const [a, b] = two.map(up);
+  const aFirst = a[0] - b[0] > 1e-6 || (Math.abs(a[0] - b[0]) <= 1e-6 && (a[1] - b[1] > 1e-6 || (Math.abs(a[1] - b[1]) <= 1e-6 && a[2] >= b[2])));
+  const [first, second] = aFirst !== flip ? [two[0], two[1]] : [two[1], two[0]];
+  const inside = dot(sub(two[0].center, edge.mid), two[1].normal) > 1e-9 || dot(sub(two[1].center, edge.mid), two[0].normal) > 1e-9;
+  return { first, second, convex: !inside };
+}
+
+/**
+ * Chamfer of two distances: an arrow along each face from the edge. A distance and an angle: the distance's arrow,
+ * and an arc for the angle — round the line where the cut meets the first face, from back along that face (0°)
+ * towards the other face; the handle sits on the cut.
+ */
+function lopsidedHandles(draft: Feature, pick: TopoPick, faces: readonly FaceRef[], base: (key: string, label: string) => Base): Manipulator[] {
+  const edge = pick.ref as EdgeRef;
+  const sides = chamferFaces(edge, faces, !!draft.flipSide);
+  if (!sides) return [];
+  const u1 = intoFace(edge, sides.first, sides.second, sides.convex);
+  const u2 = intoFace(edge, sides.second, sides.first, sides.convex);
+  if (!u1 || !u2) return [];
+  const out: Manipulator[] = [];
+  const first = make(base("distance", "Distance"), { id: "distance", kind: "arrow", origin: edge.mid, dir: u1, scale: 1, angle: false, flips: false, max: Infinity, tip: "Drag to change the distance along this face" });
+  out.push(first);
+  if (draft.chamferType === "twoDistances") {
+    out.push(make(base("distance2", "Second distance"), { id: "distance2", kind: "arrow", origin: edge.mid, dir: u2, scale: 1, angle: false, flips: false, max: Infinity, tip: "Drag to change the distance along the other face" }));
+    return out;
+  }
+  const d = first.value;
+  if (!(d > 0)) return out;
+  const pivot = add(edge.mid, scale(u1, d));
+  const towards = sub(u2, scale(u1, dot(u2, u1)));
+  const axisDir = unit(cross(scale(u1, -1), towards));
+  if (!axisDir) return out;
+  out.push(make(base("angle", "Angle"), { id: "angle", kind: "arc", origin: edge.mid, dir: u1, axis: { through: pivot, dir: axisDir }, scale: 1, angle: true, flips: false, max: 89, tip: "Drag round to change the angle" }));
+  return out;
+}
+
+/** Extend surface: the way the surface grows from a straight edge (along its flat face, away from it). */
+const extendDirs = new WeakMap<TopoPick, Vec3 | null>();
+export function extendDir(pick: TopoPick, faces: readonly FaceRef[]): Vec3 | null {
+  if (extendDirs.has(pick)) return extendDirs.get(pick)!;
+  const edge = pick.ref as EdgeRef;
+  const face = facesAlong(edge, faces)[0];
+  let out: Vec3 | null = null;
+  const t = unit(sub(edge.b, edge.a));
+  if (face && t) {
+    const u = unit(cross(t, face.normal));
+    if (u) out = dot(u, sub(face.center, edge.mid)) > 0 ? scale(u, -1) : u;
+  }
+  // (Worked out once per pick, from the surface before it grew — the grown face's middle moves towards the edge.)
+  if (out || faces.length) extendDirs.set(pick, out);
   return out;
 }
 
@@ -366,4 +553,24 @@ export function manipPatch(start: Feature, m: Manipulator, value: number, flippe
   // (Always said, so dragging back over zero turns it round again.)
   if (m.flips && start.type === "extrude" && start.extrude) return { params, fields: { extrude: { ...start.extrude, flip: flipped ? !start.extrude.flip : start.extrude.flip } } };
   return { params };
+}
+
+/** What the in-view size box starts with: the box's own text, as the dialog shows it (lengths in the design's units). */
+export function manipEditText(draft: Feature, m: Pick<Manipulator, "key" | "angle" | "value">): string {
+  const typed = draft.params[m.key];
+  if (typed === undefined || typed.trim() === "") return manipBoxText(m, m.value).replace(/ in$/, "");
+  return m.angle ? typed : showLength(typed);
+}
+
+/**
+ * What typing `typed` in the in-view size box does: the same text the dialog's box would save (a length typed in an
+ * inch design gets " in"; a variable or a sum is kept as typed), or why it can't be used.
+ */
+export function typedManipValue(draft: Feature, m: Pick<Manipulator, "key" | "angle">, typed: string): { params: Record<string, string> } | { problem: string } {
+  const text = typed.trim();
+  if (!text) return { problem: "Type a size (a number, a variable or a sum), then press Enter." };
+  const stored = m.angle ? text : storeLength(text);
+  const { errors } = resolveParams({ ...draft, params: { ...draft.params, [m.key]: stored } });
+  if (errors[m.key]) return { problem: errors[m.key] };
+  return { params: { [m.key]: stored } };
 }

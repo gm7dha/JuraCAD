@@ -150,14 +150,14 @@ describe("which manipulators a dialog shows, and where", () => {
     expect(close(edgeCorner(top, pin, pinMesh)!.into, [Math.SQRT1_2, 0, -Math.SQRT1_2])).toBe(true);
   });
 
-  it("a chamfer of two distances or a distance and an angle shows no arrow", () => {
+  it("a chamfer of two distances shows an arrow per face; an equal one, one arrow", () => {
     const faces: FaceRef[] = [
       { kind: "face", surface: "PLANE", center: [5, 5, 10], normal: [0, 0, 1] },
       { kind: "face", surface: "PLANE", center: [10, 5, 5], normal: [1, 0, 0] },
     ];
     const pick: TopoPick = { partId: "p", ref: { kind: "edge", curve: "LINE", a: [10, 0, 10], b: [10, 10, 10], mid: [10, 5, 10] } };
     const ctx = { sketch: null, parts: [{ id: "p", faceRefs: faces }] };
-    expect(manipulatorsFor(draft("chamfer", { picks: [pick], chamferType: "twoDistances" }), ctx)).toEqual([]);
+    expect(manipulatorsFor(draft("chamfer", { picks: [pick], chamferType: "twoDistances" }), ctx).map((m) => m.key)).toEqual(["distance", "distance2"]);
     expect(manipulatorsFor(draft("chamfer", { picks: [pick] }), ctx)).toHaveLength(1);
   });
 

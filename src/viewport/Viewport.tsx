@@ -53,7 +53,7 @@ import { setSelectOther } from "./selectOtherState";
 import { editFeatureAt, useHoveredFeature } from "./featureFaces";
 import { facesMadeBy } from "../model/featureSearch";
 import { finishesByKey, type FinishId } from "../model/finishes";
-import { manipCancel, manipDragging, manipEnd, manipMove, manipStart, manipulatorsNow } from "./manipulatorGlue";
+import { manipCancel, manipDragging, manipEdit, manipEnd, manipMove, manipStart, manipulatorsNow } from "./manipulatorGlue";
 import type { Manipulator } from "../model/manipulators";
 import { partsArrived, transformDraft, transformPick, triadCancel, triadEnd, triadFor, triadMove, triadStart } from "./transformTriad";
 
@@ -907,6 +907,7 @@ export function Viewport() {
         onTriadEnd: () => (manipDragging() ? manipEnd(viewportApi.current) : triadEnd(viewportApi.current)),
         onTriadCancel: () => (manipDragging() ? manipCancel(viewportApi.current) : triadCancel(viewportApi.current)),
         onDoubleClick: editFeatureAt,
+        onManipDoubleClick: (id) => manipEdit(viewportApi.current, id),
       });
     } catch (e) {
       useStore.getState().showToast(
