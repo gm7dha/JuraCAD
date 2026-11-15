@@ -8,6 +8,29 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.85 — Sketch: drag to move, turn and scale
+
+- Pick some shapes and choose Move / copy: green handles appear. Drag the middle square to move them (it snaps onto points),
+  the ring to turn them (15° steps) and the arm's square to scale them (Shift for any amount). A new Scale box is in the panel too.
+- Typed turns now go round the middle of the shapes, and a turned rectangle stays a rectangle.
+- A pasted copy snaps onto points, line middles and the origin as it follows the pointer (Shift to place it exactly).
+- After drawing a rectangle, slot or ellipse, Tab goes from the width box to the height and Shift+Tab back.
+- With Use, clicking a part's face brings in its whole outline and holes at once, ready to extrude.
+
+## v0.84.1 — The size box by an arrow no longer steals your typing
+
+- Just after a double-click on an arrow opened its size box, clicking straight into a box in the feature's panel could
+  have the arrow's box take the typing back, so what you typed was lost. Moving to another box now closes the arrow's box.
+- On a narrower window the "Saved" note in the top bar could be squeezed out of sight; it now shortens with "…" instead.
+
+## v0.84 — More drag arrows, and type a size right by the arrow
+
+- Draft, Hole, Move face, Offset surface and Extend surface now have drag arrows in the 3D view, like Extrude and Fillet.
+- Chamfers with two distances, or a distance and an angle, now get an arrow along each face (and a curved one for the angle).
+- Shell and Thicken arrows stay on their face when an earlier change moves it.
+- An Extrude that goes "Up to…" shows a grey arrow that tells you why it can't be dragged.
+- Double-click (or double-tap) an arrow to type its size right there. Variables and sums work, Enter sets it, Esc cancels.
+
 ## v0.83 — Mass properties and a friendlier feature list
 
 - New Mass button (bottom right): weight, volume, surface area, centre of mass (marked in the view) and size of the selected parts, or all of them. Weigh them as their own materials, one material or any density; plastic parts also get a rough printed weight. Copy the numbers with one click.

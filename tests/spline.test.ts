@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { addLine, deleteItems, dimensionFor, pointPos, setSplineHandle, splineHandleEnds, splinePath, type Placed } from "../src/sketch/ops";
 import { findRegions } from "../src/sketch/regions";
 import { bezierAt, splineBeziers, splinePolyline, splineTangents } from "../src/sketch/spline";
-import { addSpline, mirrorCurves, patternCurves, transformCurves } from "../src/sketch/tools";
+import { addSpline, mirrorCurves, patternCurves } from "../src/sketch/tools";
+import { transformSelection } from "../src/sketch/transformSelection";
 import { distToCurve } from "../src/sketch/hit";
 import { emptySketch, type SketchSpline } from "../src/sketch/types";
 import { parseSketchData } from "../src/sketch/validate";
@@ -119,7 +120,7 @@ describe("spline handles", () => {
     const { s, sp } = three();
     const shaped = setSplineHandle(s, sp.id, sp.points[1], [0, 12]);
     // Moved and turned 90°: the handle turns too.
-    const turned = transformCurves(shaped, [sp.id], { dx: 0, dy: 0, angle: 90, copy: false });
+    const turned = transformSelection(shaped, [sp.id], { dx: 0, dy: 0, angle: 90, scale: 1 });
     expect(turned.error).toBe(undefined);
     const t = (turned.sketch.curves.find((c) => c.type === "spline") as SketchSpline).tangents![sp.points[1]];
     expect(t[0]).toBeCloseTo(-12, 6);

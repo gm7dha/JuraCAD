@@ -1410,6 +1410,90 @@ try {
     await page.getByRole("button", { name: "Cancel" }).click();
   }
 
+  step = "dragging a Hole's depth arrow, then typing its depth by the arrow";
+  {
+    await tool("Hole");
+    await page.waitForSelector(".feature-dialog >> text=Where and what");
+    // A sketch with somewhere to drill (a point or a circle's centre).
+    const sketchSelect = page.getByLabel("Sketch with the hole positions");
+    const choices = await sketchSelect.locator("option").evaluateAll((os) => os.map((o) => o.value).filter(Boolean));
+    let found = false;
+    for (const value of choices) {
+      await sketchSelect.selectOption(value);
+      if (await page.locator(".feature-dialog >> text=one at each point and circle centre").count()) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) throw new Error("no sketch with points or circles to drill at");
+    await page.getByRole("radio", { name: "To a depth" }).click();
+    await page.locator("#param-depth").fill("10");
+    await page.waitForFunction(() => window.juracadViewport.current.manipulatorsShown().some((m) => m.id === "depth" && !m.locked && m.value === 10), null, { timeout: 30_000 });
+    await page.evaluate(() => {
+      window.juracadViewport.current.setView("iso", false);
+      window.juracadViewport.current.fit(false);
+    });
+    await page.waitForTimeout(300);
+    const plan = await page.evaluate(() => {
+      const v = window.juracadViewport.current;
+      const m = v.manipulatorsShown().find((x) => x.id === "depth");
+      const on = v.manipulatorOnScreen("depth");
+      const at = (k) => v.worldToScreen(m.origin.map((c, i) => c + m.dir[i] * k));
+      const a = at(m.value);
+      const b = at(m.value + 1);
+      const perMm = Math.hypot(b.x - a.x, b.y - a.y);
+      const grab = { x: on.foot.x * 0.4 + on.tip.x * 0.6, y: on.foot.y * 0.4 + on.tip.y * 0.6 };
+      return { grab, dir: [(b.x - a.x) / perMm, (b.y - a.y) / perMm], perMm, handle: v.triadHandleAt(grab.x, grab.y), down: m.dir[2] };
+    });
+    if (plan.handle?.kind !== "manip" || plan.handle.id !== "depth") throw new Error(`the hole's depth arrow isn't under its own middle on screen (found ${JSON.stringify(plan.handle)})`);
+    if (!(plan.down < -0.99)) throw new Error(`the hole's depth arrow should point down into the part (its direction's z is ${plan.down})`);
+    const stepsBefore = await page.evaluate(() => window.juracadStore.getState().draftSteps?.drafts.length ?? 0);
+    const vp = await page.locator(".viewport canvas").first().boundingBox();
+    const pixels = 50;
+    await page.mouse.move(vp.x + plan.grab.x, vp.y + plan.grab.y);
+    await page.mouse.down();
+    for (let k = 1; k <= 5; k++) await page.mouse.move(vp.x + plan.grab.x + (plan.dir[0] * pixels * k) / 5, vp.y + plan.grab.y + (plan.dir[1] * pixels * k) / 5);
+    await page.mouse.up();
+    const dragged = Number.parseFloat(await page.locator("#param-depth").inputValue());
+    if (!(dragged > 10)) throw new Error(`dragging the hole's depth arrow ${pixels} px deeper left Depth at ${dragged}`);
+    const stepsAfter = await page.evaluate(() => window.juracadStore.getState().draftSteps?.drafts.length ?? 0);
+    if (stepsAfter !== stepsBefore + 1) throw new Error(`one drag of the hole's depth arrow made ${stepsAfter - stepsBefore} undo steps in the dialog`);
+    await shot("hole-arrow");
+    // Double-click the arrow: a box by its tip to type the depth in (a sum is fine), Enter sets it.
+    await page.waitForTimeout(500);
+    const on2 = await page.evaluate(() => window.juracadViewport.current.manipulatorOnScreen("depth"));
+    const mid = { x: on2.foot.x * 0.4 + on2.tip.x * 0.6, y: on2.foot.y * 0.4 + on2.tip.y * 0.6 };
+    await page.mouse.dblclick(vp.x + mid.x, vp.y + mid.y);
+    const box = page.locator(".manip-edit input");
+    await box.waitFor({ timeout: 5_000 }).catch(() => {
+      throw new Error("double-clicking the hole's depth arrow didn't open a box to type the depth in");
+    });
+    if (Number.parseFloat(await box.inputValue()) !== dragged) throw new Error(`the box by the arrow starts with "${await box.inputValue()}", not the depth ${dragged}`);
+    await box.fill("12 + 3");
+    await box.press("Enter");
+    await page.waitForFunction(() => window.juracadStore.getState().editing?.draft.params.depth === "12 + 3", null, { timeout: 5_000 }).catch(async () => {
+      throw new Error(`typing "12 + 3" by the arrow didn't set Depth (it says ${await page.locator("#param-depth").inputValue()})`);
+    });
+    if (await page.locator(".manip-edit").count()) throw new Error("the box by the arrow stayed open after Enter");
+    if ((await page.evaluate(() => window.juracadStore.getState().draftSteps?.drafts.length ?? 0)) !== stepsAfter + 1) throw new Error("typing by the arrow wasn't one step of the dialog's undo");
+    // A sum can't be dragged: the arrow is greyed (and the arrow's foot moved to 15 mm down).
+    await page.waitForFunction(() => window.juracadViewport.current.manipulatorsShown().some((m) => m.id === "depth" && m.locked && m.value === 15), null, { timeout: 30_000 });
+    // Esc in the box closes it and changes nothing.
+    const on3 = await page.evaluate(() => window.juracadViewport.current.manipulatorOnScreen("depth"));
+    await page.mouse.dblclick(vp.x + on3.foot.x * 0.4 + on3.tip.x * 0.6, vp.y + on3.foot.y * 0.4 + on3.tip.y * 0.6);
+    await box.waitFor({ timeout: 5_000 });
+    if ((await box.inputValue()) !== "12 + 3") throw new Error(`the box by a greyed arrow starts with "${await box.inputValue()}", not its sum`);
+    await box.fill("99");
+    await box.press("Escape");
+    if (await page.locator(".manip-edit").count()) throw new Error("Esc didn't close the box by the arrow");
+    if (!(await page.locator(".feature-dialog").count())) throw new Error("Esc in the box by the arrow closed the Hole dialog");
+    if ((await page.evaluate(() => window.juracadStore.getState().editing?.draft.params.depth)) !== "12 + 3") throw new Error("Esc in the box by the arrow changed the depth");
+    // Ctrl+Z (the dialog's undo) takes the typing back, then the drag.
+    await page.keyboard.press("Control+z");
+    await page.waitForFunction((d) => Number.parseFloat(window.juracadStore.getState().editing?.draft.params.depth ?? "") === d, dragged, { timeout: 5_000 });
+    await page.getByRole("button", { name: "Cancel" }).click();
+  }
+
   step = "moving a copy of a part";
   // Parts of features really in the design: a cancelled dialog's preview (the circular pattern above makes parts of
   // its own) may still be in the list until the next rebuild lands, so it isn't counted.
@@ -3115,6 +3199,81 @@ try {
     await page.keyboard.press("Control+z");
     now = await curves();
     if (now.filter((c) => c === "circle").length !== 3) throw new Error(`undoing the paste left ${now.join(",")}`);
+
+    // A rectangle's sizes typed while drawing (Tab goes from the width to the height), then turned a quarter turn with the
+    // Move / copy tool's ring handle: one undo step.
+    step = "sketch: typing a rectangle's sizes with Tab";
+    await page.keyboard.press("Escape");
+    await tool("Select");
+    await page.keyboard.press("r");
+    // (Right of the middle: the sketch panel covers the left of the view.)
+    await page.mouse.click(mx + 150, my + 70);
+    await page.mouse.click(mx + 200, my + 95);
+    const dimBox = () => page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Dimension value", null, { timeout: 5_000 });
+    await dimBox();
+    // The design is in inches by now: 1.2 in × 0.5 in = 30.48 × 12.7 mm.
+    await page.keyboard.type("1.2");
+    await page.keyboard.press("Tab");
+    await page.waitForFunction(() => window.juracadStore.getState().sketch?.provisional.length === 1, null, { timeout: 5_000 });
+    await dimBox();
+    await page.keyboard.type("0.5");
+    await page.keyboard.press("Enter");
+    const rectBox = () =>
+      page.evaluate(() => {
+        const d = window.juracadStore.getState().editing.draft.sketch.data;
+        const lines = d.curves.filter((c) => c.type === "line").slice(-4);
+        const pts = lines.flatMap((l) => [l.p1, l.p2]).map((id) => d.points.find((q) => q.id === id));
+        const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+        return { ids: lines.map((l) => l.id), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys), cx: (Math.max(...xs) + Math.min(...xs)) / 2, cy: (Math.max(...ys) + Math.min(...ys)) / 2 };
+      });
+    const typed = await rectBox();
+    if (Math.abs(typed.w - 30.48) > 0.01 || Math.abs(typed.h - 12.7) > 0.01) throw new Error(`typing 1.2, Tab, 0.5 made a ${typed.w} × ${typed.h} mm rectangle`);
+    step = "sketch: turning a rectangle with the Move / copy ring";
+    await tool("Move / copy");
+    await page.evaluate((ids) => window.juracadStore.getState().setSketchSelection(ids), typed.ids);
+    await page.mouse.move(mx + 200, my - 150, { steps: 2 });
+    // Where the ring is drawn (the biggest handle circle the tool shows), on screen.
+    const ringAt = await page.evaluate(() => {
+      let shapes = [];
+      const off = window.juracadViewport.sketch.onChange((t) => (shapes = t.preview));
+      off();
+      const ring = shapes.filter((p) => p.kind === "circle" && p.handle).sort((a, b) => b.r - a.r)[0];
+      if (!ring) return null;
+      const c = window.juracadViewport.current.projectSketchPoint(ring.c[0], ring.c[1]);
+      const e = window.juracadViewport.current.projectSketchPoint(ring.c[0] + ring.r, ring.c[1]);
+      return { x: c.x, y: c.y, r: Math.hypot(e.x - c.x, e.y - c.y) };
+    });
+    if (!ringAt) throw new Error("Move / copy showed no handles on the picked rectangle");
+    const mid2 = ringAt;
+    const R = ringAt.r;
+    const undoBefore = await page.evaluate(() => window.juracadStore.getState().sketch.past.length);
+    // Grabbed by its knob (right of the middle, where the height's label sits on a small shape: the handles must win over
+    // the labels) and taken a quarter turn round.
+    const a0 = 0;
+    const grab = { x: box.x + mid2.x + R * Math.cos(a0), y: box.y + mid2.y - R * Math.sin(a0) };
+    const under = await page.evaluate(({ x, y }) => {
+      const el = document.elementFromPoint(x, y);
+      return el instanceof HTMLCanvasElement ? "canvas" : `${el?.tagName.toLowerCase()}.${el?.className} "${el?.textContent?.slice(0, 20)}"`;
+    }, grab);
+    if (under !== "canvas") throw new Error(`the ring's knob is covered by ${under}, so pressing it wouldn't reach the handles`);
+    await page.mouse.move(grab.x, grab.y);
+    await page.mouse.down();
+    for (let k = 1; k <= 8; k++) {
+      const a = a0 + ((k / 8) * Math.PI) / 2;
+      await page.mouse.move(box.x + mid2.x + R * Math.cos(a), box.y + mid2.y - R * Math.sin(a));
+    }
+    await shot("sketchturn");
+    await page.mouse.up();
+    const turned = await rectBox();
+    const turnMsg = await page.evaluate(() => window.juracadStore.getState().sketch?.message?.text ?? "");
+    if (Math.abs(turned.w - 12.7) > 0.01 || Math.abs(turned.h - 30.48) > 0.01) throw new Error(`the ring turned the rectangle to ${turned.w} × ${turned.h} mm ("${turnMsg}"; ring on screen ${JSON.stringify(ringAt)})`);
+    const undoAfter = await page.evaluate(() => window.juracadStore.getState().sketch.past.length);
+    if (undoAfter !== undoBefore + 1) throw new Error(`turning with the ring made ${undoAfter - undoBefore} undo steps`);
+    await page.keyboard.press("Control+z");
+    const back = await rectBox();
+    if (Math.abs(back.w - 30.48) > 0.01) throw new Error(`undoing the turn left ${back.w} × ${back.h} mm`);
+    await page.keyboard.press("Escape");
+    await tool("Select");
     step = "sketch extras: text";
 
     // Text: type the words, click where they go; the letters are closed shapes. A double-click puts the cursor back in the words box.
@@ -3488,6 +3647,8 @@ try {
     // Clicking the big circle leaves it out; clicking it again picks it.
     await clickSpot(biggest(await spots()));
     await page.waitForFunction(() => !window.juracadStore.getState().editing.draft.areas).catch(() => why('() => !window.juracadStore.getState().editing.draft.areas);'));
+    // (Two quick clicks in one place over the depth arrow are a double-click, which opens the arrow's size box: wait.)
+    await page.waitForTimeout(600);
     await clickSpot(biggest(await spots()));
     await page.waitForFunction(() => window.juracadStore.getState().editing.draft.areas?.length === 1).catch(() => why('() => window.juracadStore.getState().editing.draft.areas?.le'));
     await page.locator("#param-depth").fill("10");
@@ -4229,6 +4390,53 @@ try {
         throw new Error("tapping a face didn't select it");
       });
       touchReport += "; a tap selected a face";
+
+      step = "touch screen: double-tapping a Move face arrow opens a box to type in";
+      {
+        await tab.waitForTimeout(500); // (not a double-tap)
+        await tab.evaluate(() => {
+          const s = window.juracadStore.getState();
+          const part = s.parts[0];
+          const top = part.faceRefs.find((f) => f.kind === "face" && f.normal[2] > 0.99);
+          s.startCreate("moveFace");
+          window.juracadStore.getState().setDraftField({ picks: [{ partId: part.id, ref: top }] });
+          window.juracadViewport.current.setView("iso", false);
+          window.juracadViewport.current.fit(false);
+        });
+        await tab.waitForFunction(() => window.juracadViewport.current.manipulatorsShown().some((m) => m.id === "distance"), null, { timeout: 30_000 });
+        await tab.waitForTimeout(500);
+        const arrow = await tab.evaluate(() => {
+          const on = window.juracadViewport.current.manipulatorOnScreen("distance");
+          return on && { x: on.foot.x * 0.4 + on.tip.x * 0.6, y: on.foot.y * 0.4 + on.tip.y * 0.6 };
+        });
+        if (!arrow) throw new Error("Move face's arrow isn't on screen");
+        const picksBefore = await tab.evaluate(() => JSON.stringify(window.juracadStore.getState().editing?.draft.picks));
+        await tab.evaluate(() => (window.juracadViewport.current.touchTiming = { longPressMs: 5000, doubleTapMs: 5000 }));
+        const at = [canvas.x + arrow.x, canvas.y + arrow.y];
+        for (let i = 0; i < 2; i++) {
+          await touches("touchStart", [at]);
+          await touches("touchEnd", []);
+        }
+        const box = tab.locator(".manip-edit input");
+        await box.waitFor({ timeout: 5_000 }).catch(async () => {
+          const seen = await tab.evaluate(() => window.juracadViewport.current.touchDebug.join(", "));
+          throw new Error(`double-tapping Move face's arrow didn't open a box by it (gestures seen: ${seen})`);
+        });
+        // Still open (and typed into) a moment later: the browser's made-up mouse press mustn't have closed it.
+        await tab.waitForTimeout(600);
+        if (!(await box.count())) throw new Error("the box a double-tap opened by the arrow closed by itself");
+        if (!(await box.evaluate((el) => el === document.activeElement))) throw new Error("the box a double-tap opened by the arrow hasn't got the keyboard");
+        // The taps on the arrow didn't pick or let go of the face under it.
+        if ((await tab.evaluate(() => JSON.stringify(window.juracadStore.getState().editing?.draft.picks))) !== picksBefore) throw new Error("tapping Move face's arrow changed the faces picked under it");
+        await box.fill("3");
+        await box.press("Enter");
+        await tab.waitForFunction(() => window.juracadStore.getState().editing?.draft.params.distance === "3", null, { timeout: 5_000 });
+        await tab.evaluate(() => {
+          window.juracadViewport.current.touchTiming = { longPressMs: 5000, doubleTapMs: 1 };
+          window.juracadStore.getState().cancelDraft();
+        });
+        touchReport += "; a double-tap on an arrow typed its size";
+      }
 
       step = "touch screen: two fingers in a sketch pan the view and draw nothing";
       await tab.waitForTimeout(500); // (not a double-tap)

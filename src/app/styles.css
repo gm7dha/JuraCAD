@@ -1645,7 +1645,7 @@ kbd {
 }
 
 .print-bed-bad {
-  color: var(--danger, #c0392b);
+  color: var(--error-ink);
   font-weight: 600;
 }
 
@@ -2472,6 +2472,9 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 260px;
+  /* A crowded top bar shortens it (with "…"), never squeezes it away. */
+  min-width: 7em;
+  flex-shrink: 1;
 }
 
 .save-state.unsaved::before {
@@ -3122,6 +3125,34 @@ kbd {
   z-index: 4;
 }
 
+/* The in-view size box: double-click a manipulator's arrow, type, Enter. */
+.manip-edit {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.manip-edit input {
+  width: 9em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--accent);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+.manip-edit-note {
+  max-width: 18em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--error-ink);
+  border: 1px solid currentColor;
+  font-size: 12px;
+}
+
 /* The Help screen's surprise: a photo in a dialog-sized frame in the middle; any click closes it. */
 .easter-egg {
   position: fixed;
@@ -3220,7 +3251,7 @@ kbd {
 }
 
 .relation-row.failed {
-  border-color: var(--danger, #c0392b);
+  border-color: var(--error-ink);
 }
 
 .relation-row label {
@@ -4793,4 +4824,9 @@ kbd {
 }
 .rollback-bar[draggable="true"] {
   cursor: grab;
+}
+/* Move / copy's handles in a sketch win over the size labels and relation badges on top of them. */
+.sketch-overlay.handles-on .dimension-label,
+.sketch-overlay.handles-on .constraint-badge {
+  pointer-events: none;
 }

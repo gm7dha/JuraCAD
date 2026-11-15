@@ -160,6 +160,39 @@
   `src/model/varComplete.ts` `suggestionsAt`/`completeWith`; ↑↓, Tab/Enter take one — Enter on a name typed in full
   sets the size —, a choice or Esc hides the list until more is typed; nothing until typed).
   Tests: tests/sketchClipboard (pure), sketchClipboardStore (controller), varComplete.
+  Move / copy handles (Onshape's sketch Transform): pure `src/sketch/transformSelection.ts` — `transformSelection(s, ids,
+  {dx, dy, angle, scale}, about?)` (about = `selectionCentre`: the box middle of the picked shapes as drawn — `curveOutline`: arcs
+  by their curve, circles' full size, splines' paths; a centre or axis point counts only when picked itself): points
+  moved/turned/scaled, picked circles' radii and text size/angle, spline handles turned; constraints wholly inside the picked set
+  kept — H/V swapped on odd quarter turns, turned other than a quarter: the first H/V line's relation dropped and every other
+  H/V line of the whole selection made Parallel/Perpendicular to that ONE line (so no picked shape spins on its own; point-pair H/V dropped); horizontal/verticalDistance swapped
+  with signs on quarter turns, else refused (`STRAIGHT_DIMENSION_MESSAGE`); plain-number length dimensions scaled (inches kept, "0.5in" too,
+  `scaledValue`), a variable/sum refused (`VARIABLE_SIZE_MESSAGE`); patternMove extra turned/scaled; then solved with `place`
+  and refused (`HELD_MESSAGE`, the sketch as it was) unless every moving point and radius lands on its target.
+  `transformCopy` = copySketchItems + paste on top + transform. The typed panel (Across/Up/Turn/Scale `moveScale`, Move/Copy)
+  uses them too (`makeSketchTransform`; tools.ts' old transformCurves/transformMove are gone, tests/sketchTransform tests this path). Handles: `gizmoPartAt`/`gizmoShapes` (screen px: middle square = move, ring
+  `GIZMO_RING_PX` = turn, square on a 45° arm = scale), `snapTurn` 15° / `snapScale` 0.05 (Shift free), drawn as preview shapes
+  with `handle: true` (SketchLayer's handle colour). Controller `GizmoDrag` (sketchTransform tool: a press on a handle before
+  picking; the middle snaps via `snapAt` ignoring the picked points; turns added up past 180°; live `transformSelection` each move,
+  refusals said once; Make a copy ticked = a faint copy, made on release; one sketch undo step via `recordSketchStep`; Esc /
+  `cancelStroke` / a tool change take it back; Ctrl+Z/Y wait while a handle is held, `draggingHandle()` in App's sketchShortcut;
+  `touchDragStarts(ptr)` true on a handle, `touchLiftClicks` false while dragging one; `zoomed(mmPerPx)`, called by SceneManager
+  each frame, redraws the handles after a zoom). While the handles show (Move / copy with something picked) SketchOverlay's root
+  has `handles-on`, so dimension labels and relation badges let presses through to the handles (the ring's knob sits on a
+  small shape's height label). Pasting:
+  `pasteSnap` — the copy's middle snaps like a drawn point (points, line middles, origin, part-edge corners, lining up with points
+  passed over; never onto curves; Shift = none). Offered sizes after drawing: Tab / Shift+Tab in the box → pure `nextOffered` /
+  `nextOfferedDimension` (a changed value is kept first, then the next or previous one opens; the last one left stays open;
+  `tabbing` ref stops the box's blur dropping the offer, reset on focus or a refused value). Use on a face: pure
+  `src/model/faceEdges.ts` `edgesOfFace(mesh, face)` (every polyline point — and a straight edge's middle — on the face's
+  triangles, within 1/2000 of its size, 1 µm…0.05 mm) → `src/app/sketchUseFace.ts` `takeWholeFace` (each edge the way a click
+  does it — curved ones read first through `readCurvedEdge` (sketchUseCurve.ts), flat and curved linked together through
+  `linkAllEdges` (ends joined), the rest `copyEdge` as plain shapes — then ONE updateSketch (one undo step), all of them picked,
+  the message counting only what came in and saying which follow the part).
+  Tests: tests/sketchTransformHandles, faceEdges (pure), engineFaceEdges (real meshes: discs, a plate with holes, a filleted
+  top), sketchTransformStore (controller: ring, middle snap, scale + copy, touch, tool change and undo mid-drag, zoom, paste
+  snapping, Tab); the smoke test types a rectangle's sizes with Tab and turns it a quarter turn by the ring's knob (checking
+  the canvas, not a label, is under it).
 - Visibility (the eye in the feature list): `src/model/visibility.ts`. Sketches and Plane features have `Feature.visible`
   (missing = automatic: planes shown; a sketch shown until an unsuppressed feature uses it, `usedSketches` — as Onshape
   hides consumed sketches). The Origin and Top/Front/Right hidden per Part Studio: `doc.hiddenDatums` (first studio) /
@@ -685,7 +718,23 @@
   cancel puts `before` back). These dialogs keep the dialog undo like Move / copy (`keepsSteps`: typing, fields, picks are steps;
   Ctrl+Z in App). `SceneManager.setManipulators`/`manipulatorsShown`/`manipulatorOnScreen`/`setManipLabel` (`.manip-label`, the value
   by the tip while dragging). Tests: tests/manipulators (pure), manipulatorStore; the smoke test drags the Extrude's depth arrow
-  60 px and Ctrl+Z puts 15 back. Not done: Draft angle, Hole depth, Offset surface, assembly features, a drag on a variable.
+  60 px and Ctrl+Z puts 15 back. More (same paths): Draft (an arc round where the first face meets the neutral plane, + = leans
+  in along the pull as BRepOffsetAPI_DraftAngle; `signed`: may go minus, never lands on 0, |v| ≤ `max` 44), Hole (blind only: from its
+  first `holePositionsIn` point along ∓n as `holeAxes`; the glue reads `hole.sketchRef`), Move face / Offset surface (signed, along the
+  face's normal), Extend surface (from a straight edge along its flat face, away from it; worked out once per pick, `extendDir`; none
+  with `extendTo`), lopsided chamfers (`chamferFaces` = the engine's lopsidedChamfer order — a picked face holding the edge first, both picked = no arrows — `intoFace` along each face, outside or
+  inside corner; distance-angle: + an arc round the cut's line on the first face), Shell/Thicken on the face as built (`faceNow`:
+  strictMatch, else as picked), an Extrude's Up to end = a greyed `noEdit` arrow saying why. Still clicks/taps on an arrow pass through only for
+  Extrude/Revolve (`Manipulator.passesClicks`, the areas round the profile); the others sit on the dialog's own pick and keep their
+  clicks (`manipClickOnly`). Double-click (or double-tap) an arrow: `SceneCallbacks.onManipDoubleClick` → `manipEdit` (first puts back
+  what a passing arrow's two clicks picked, with no undo step: presses remembered by manipStart / `onManipPress`) → `SceneManager.editManipValue`
+  (`.manip-edit` box by the tip; Enter → `typedManipValue` — the box's own text via storeLength, checked by resolveParams, a problem
+  stays shown — then `setDraftParam`, so it's the same dialog undo step as typing in the panel; variables/sums allowed, locked arrows
+  too; Esc/blur closes; a touch on an arrow preventDefaults its pointerdown so no made-up mousedown takes the box's focus, and a blur
+  in its first 400 ms refocuses). Face features refuse clicks on their own result (`madeByDraft`: an offset copy). Tests: manipulators2 (pure + the box's undo), engineManipulators (real OCCT: draft sign both pulls and minus,
+  hole direction, chamfer handles on the cut at outside/inside corners, offset/extend/move face ends, shell following), engineManipulators2
+  (the reviewer's: pocket faces, other neutral planes ±7°/±44°, upright edges, face + edge picks); the smoke test drags a Hole's depth
+  arrow and types "12 + 3" by it, and on the touch page double-taps Move face's arrow and types 3. Not done: assembly features, Offset face (JuraCAD has none), arcs for curved draft faces.
 - Mirror planes and pattern axes: `src/model/patternRefs.ts` (pure). A mirror's plane is a default plane, a Plane
   feature, a clicked flat face (`mirror.planePick`, found again on rebuild; `plane` keeps where it was when clicked) or a
   sketch line (`mirror.line`: the plane through it, square to its sketch). Patterns use X/Y/Z, a clicked edge/face

@@ -100,6 +100,8 @@ function sketchShortcut(e: KeyboardEvent): boolean {
   if (isTyping(e.target)) return false;
   if (mod) {
     const key = e.key.toLowerCase();
+    // (While one of Move / copy's handles is held, undo waits: the drag is still changing the sketch.)
+    if ((key === "z" || key === "y") && viewportApi.sketch?.draggingHandle()) return true;
     if (key === "z" && !e.shiftKey) s.sketchUndo();
     else if (key === "y" || (key === "z" && e.shiftKey)) s.sketchRedo();
     // Copy / paste / duplicate sketch shapes (text picked on the page is copied as usual).

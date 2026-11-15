@@ -34,9 +34,9 @@ const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hi
   { tool: "trim", label: "Trim", key: "T", icon: <Icons.Trim />, hint: "Click a piece of a line, arc, circle, spline or ellipse to cut it away up to where other curves cross it" },
   { tool: "offset", label: "Offset", key: "O", icon: <Icons.Offset />, hint: "Click a shape's edge on the side to offset towards — a copy that far away that follows the original (set the distance in the sketch panel). Splines and ellipses too" },
   { tool: "mirror", label: "Mirror", key: "M", icon: <Icons.Mirror />, hint: "Click the line to mirror about, then the shapes to copy across (or select the shapes first). The copies follow the originals" },
-  { tool: "sketchTransform", label: "Move / copy", key: "", icon: <Icons.Move />, hint: "Click shapes, then move, turn or copy them by the amounts in the sketch panel" },
+  { tool: "sketchTransform", label: "Move / copy", key: "", icon: <Icons.Move />, hint: "Click shapes, then drag the handles on them to move, turn or scale them (or type amounts in the sketch panel). Tick Make a copy to leave the originals" },
   { tool: "sketchPattern", label: "Pattern", key: "", icon: <Icons.SketchPattern />, hint: "Click shapes to repeat them in a row or round a centre (set how many and how far apart in the sketch panel). The copies follow the originals" },
-  { tool: "useEdge", label: "Use", key: "U", icon: <Icons.UseEdge />, hint: "Click edges of a part, or another sketch's lines and curves, to copy them into the sketch (they follow the original if it changes)" },
+  { tool: "useEdge", label: "Use", key: "U", icon: <Icons.UseEdge />, hint: "Click edges of a part (or a face, for its whole outline), or another sketch's lines and curves, to copy them into the sketch (they follow the original if it changes)" },
   { tool: "intersect", label: "Intersect", key: "", icon: <Icons.Intersect />, hint: "Click a face of a part the sketch passes through: where the sketch cuts it comes in as dashed lines that follow the part" },
   { tool: "text", label: "Text", key: "", icon: <Icons.Text />, hint: "Type the words in the sketch panel, then click where they go. Their letters are shapes you can extrude" },
 ];

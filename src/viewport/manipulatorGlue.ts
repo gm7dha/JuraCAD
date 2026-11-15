@@ -4,7 +4,7 @@
  * one step of the dialog's own undo (Ctrl+Z while it's open); Esc mid-drag takes back just the drag.
  * The pointer side (press on a handle wins, fingers drag it, never orbit) is the same as Move / copy's triad.
  */
-import { manipulatorsFor, manipPatch, type Manipulator } from "../model/manipulators";
+import { manipEditText, manipulatorsFor, manipPatch, typedManipValue, type Manipulator } from "../model/manipulators";
 import { activeFeatures, useStore } from "../model/store";
 import type { Feature } from "../model/types";
 import { lengthUnit } from "../model/units";
@@ -20,7 +20,9 @@ export function manipulatorsNow(): Manipulator[] {
   const s = useStore.getState();
   const draft = s.editing?.draft;
   if (!draft) return NONE;
-  const ref = draft.sketchRef ? activeFeatures(s).find((f) => f.id === draft.sketchRef) : undefined;
+  // (A Hole's sketch is its own `hole.sketchRef`.)
+  const sketchId = draft.sketchRef ?? (draft.type === "hole" ? draft.hole?.sketchRef : undefined);
+  const ref = sketchId ? activeFeatures(s).find((f) => f.id === sketchId) : undefined;
   const sketch = ref ? followedSketch(ref, s.sketchLinks) : null;
   const sketchKey = sketch ? sketch.data : null;
   const unit = lengthUnit();
@@ -37,6 +39,27 @@ let drag: { session: ManipDrag; before: Feature; step: number; manager: SceneMan
 
 /** A press on an arrow that can't be dragged (a variable's, or one pointing at you): what to say if it's dragged. */
 let refused: { say: string; ray: ScreenRay; within: number } | null = null;
+
+/**
+ * The dialog as it was at the last presses of an arrow that lets clicks through (an Extrude's): a double-click on it
+ * passed two clicks to the areas under it, which it puts back as they were — with no undo step — before the box opens.
+ */
+let presses: { id: string; at: number; draft: Feature; steps: ReturnType<typeof useStore.getState>["draftSteps"] }[] = [];
+const DOUBLE_CLICK_WINDOW = 1000;
+export function remember(id: string): void {
+  const s = useStore.getState();
+  if (!s.editing) return;
+  const now = Date.now();
+  presses = [...presses.filter((p) => now - p.at < DOUBLE_CLICK_WINDOW), { id, at: now, draft: s.editing.draft, steps: s.draftSteps }].slice(-2);
+}
+function undoPassedClicks(id: string): void {
+  const now = Date.now();
+  const first = presses.find((p) => p.id === id && now - p.at < DOUBLE_CLICK_WINDOW);
+  presses = [];
+  const s = useStore.getState();
+  if (!first || !s.editing || s.editing.draft.id !== first.draft.id || s.editing.draft === first.draft) return;
+  useStore.setState({ editing: { ...s.editing, draft: first.draft }, draftSteps: first.steps });
+}
 
 /** Is a manipulator being dragged (or a refused one pressed) now? */
 export function manipDragging(): boolean {
@@ -56,6 +79,7 @@ export function manipStart(manager: SceneManager | null, handle: ManipHandle, ra
   const m = manipulatorsNow().find((x) => x.id === handle.id);
   if (!manager || !draft || !m) return false;
   refused = null;
+  if (m.passesClicks) remember(m.id);
   if (m.locked) return refuse(manager, m.locked, ray);
   const session = startManipDrag(m, ray);
   if (!session) return refuse(manager, "This arrow points almost straight at you: turn the view a little to drag it.", ray);
@@ -124,4 +148,30 @@ export function escapeManipDrag(): boolean {
   d.manager.cancelTriadDrag();
   if (drag) manipCancel(d.manager);
   return true;
+}
+
+/**
+ * A double-click (or double-tap) on a manipulator: a small box by its tip to type the size in (Onshape's in-view
+ * edit). Enter sets the box exactly as typing in the dialog's box does — the same step of the dialog's undo, and a
+ * variable or a sum may be typed —; Esc or clicking elsewhere changes nothing.
+ */
+export function manipEdit(manager: SceneManager | null, id: string): void {
+  undoPassedClicks(id);
+  const s = useStore.getState();
+  const draft = s.editing?.draft;
+  const m = manipulatorsNow().find((x) => x.id === id);
+  if (!manager || !draft || !m) return;
+  if (m.noEdit) {
+    s.showToast(m.tip);
+    return;
+  }
+  manager.editManipValue(id, manipEditText(draft, m), (typed) => {
+    const now = useStore.getState();
+    const d = now.editing?.draft;
+    if (!d || d.id !== draft.id) return null;
+    const r = typedManipValue(d, m, typed);
+    if ("problem" in r) return r.problem;
+    for (const [key, value] of Object.entries(r.params)) now.setDraftParam(key, value);
+    return null;
+  });
 }

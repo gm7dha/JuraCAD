@@ -112,6 +112,14 @@ function draftStepAfter(steps: { id: string; drafts: Feature[]; typing?: string 
   if (typing && steps?.id === before.id && steps.typing === typing && drafts.length) return steps;
   return { id: before.id, drafts: [...drafts.slice(-49), before], ...(typing ? { typing } : {}) };
 }
+
+/** Tab in an offered size's box: the next size offered after `id` (`back`: the one before), round and round; null when it's the only one. */
+export function nextOffered(list: readonly string[], id: string, back = false): string | null {
+  const i = list.indexOf(id);
+  if (i < 0 || list.length < 2) return null;
+  return list[(i + (back ? list.length - 1 : 1)) % list.length];
+}
+
 /** Does the open dialog keep its own undo (Move / copy, and the dialogs with manipulators)? */
 export function keepsSteps(d: Feature): boolean {
   return d.type === "transform" || hasManipulators(d.type);
@@ -218,6 +226,8 @@ export interface SketchSession {
   moveDy: string;
   moveAngle: string;
   moveCopy: boolean;
+  /** Move / copy's Scale box (1 = the same size); missing in older sessions = 1. */
+  moveScale?: string;
   /** Text tool: the settings for new text (a selected text shows its own instead). */
   textValue?: string;
   textSize?: string;
@@ -422,9 +432,11 @@ export interface AppState {
   offerDimensions: (ids: string[]) => void;
   /** Keep the offered dimension being edited, and move on to the next one offered (if any). */
   keepOfferedDimension: (id: string) => void;
+  /** Tab in an offered size's box: open the next one offered (Shift+Tab: the one before), as Onshape does while drawing. */
+  nextOfferedDimension: (id: string, back?: boolean) => void;
   /** Drop any offered dimensions not kept yet. */
   discardOfferedDimensions: () => void;
-  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "polygonAcross" | "conicRho" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre" | "patternDirectionPick" | "patternLine" | "moveDx" | "moveDy" | "moveAngle" | "moveCopy" | "textValue" | "textSize" | "textAngle" | "textFont" | "textAnchorAt" | "textFocus" | "intersectWhole" | "dxfOpen" | "dxfScale">>) => void;
+  setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "polygonAcross" | "conicRho" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre" | "patternDirectionPick" | "patternLine" | "moveDx" | "moveDy" | "moveAngle" | "moveCopy" | "moveScale" | "textValue" | "textSize" | "textAngle" | "textFont" | "textAnchorAt" | "textFocus" | "intersectWhole" | "dxfOpen" | "dxfScale">>) => void;
   commitDraft: () => boolean;
   cancelDraft: () => void;
   /**
@@ -1274,6 +1286,11 @@ export const useStore = create<AppState>((set, get) => {
     setSketchOptions: (patch) => set((s) => (s.sketch ? { sketch: { ...s.sketch, ...patch } } : {})),
     setEditingDimension: (editingDimension) => set((s) => (s.sketch ? { sketch: { ...s.sketch, editingDimension } } : {})),
     offerDimensions: (ids) => set((s) => (s.sketch ? { sketch: { ...s.sketch, provisional: ids, editingDimension: ids[0] ?? null } } : {})),
+    nextOfferedDimension: (id, back = false) =>
+      set((s) => {
+        const next = nextOffered(s.sketch?.provisional ?? [], id, back);
+        return s.sketch && next ? { sketch: { ...s.sketch, editingDimension: next } } : {};
+      }),
     keepOfferedDimension: (id) =>
       set((s) => {
         if (!s.sketch) return {};
