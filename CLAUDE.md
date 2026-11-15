@@ -980,7 +980,7 @@
   `moveFaceAxisNow` for the view, `rotationPivot`: the turned plane as pivot line + lean + tilt). Kernel `src/kernel/moveFace.ts`:
   `moveFacesBy` — flat faces swept (`basicFaceExtrusion`) along the normal (Offset) or the vector (Translate; curved refused),
   curved faces' room = `MakeThickSolidBySimple` (oriented with `OrientClosedSolid`; a hole/boss closing up — cylinder/sphere radius
-  from BRepAdaptor — refused first); added rooms fall back to box − ((box − part) − room) as the plain fuse returns nothing for a room
+  from BRepAdaptor — refused first; a whole closed sphere face, which OCCT can't thicken, = the shell between two balls); added rooms fall back to box − ((box − part) − room) as the plain fuse returns nothing for a room
   sharing a curved face; with a curved face picked the volume must be V ± rooms exactly (flat-only moves add/cut as the original did — a top pushed into a pocket opens it), else refused ("out through the other side" / "into another part"),
   unless a neighbour isn't square to the move or two moved faces meet — then built with a `featureWarnings` note. `rotateFaces` =
   BRepOffsetAPI_DraftAngle per face (pull = lean, angle = tilt < 80°, neutral plane through the pivot square to the lean), so

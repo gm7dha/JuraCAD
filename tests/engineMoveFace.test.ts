@@ -89,6 +89,21 @@ describe("Move face: Offset", () => {
     expect(build([base, boss, { ...off, params: { distance: "-5" } }]).featureErrors[off.id]).toMatch(/shrink the round face to nothing/);
   });
 
+  it("grows a whole ball and a round cavity (a closed sphere face)", () => {
+    const ball = feature("sphere", { diameter: 20 });
+    const skin = faces(build([ball]), (f) => f.surface === "SPHERE");
+    expect(skin).toHaveLength(1);
+    const grow = move({ mode: "offset" }, { distance: 1 }, skin);
+    expect(build([ball, grow]).featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo((4 / 3) * Math.PI * 11 ** 3, 5);
+    const box = feature("box", { width: 40, depth: 40, height: 40, x: -20, y: -20, z: -20 });
+    const cavity = feature("sphere", { diameter: 20 }, "remove");
+    const inside = faces(build([box, cavity]), (f) => f.surface === "SPHERE");
+    expect(inside).toHaveLength(1);
+    expect(build([box, cavity, move({ mode: "offset" }, { distance: -1 }, inside)]).featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(64000 - (4 / 3) * Math.PI * 11 ** 3, 4);
+  });
+
   it("flat faces moved in past other faces cut as the original Move face did", () => {
     // A pocket's floor pushed down past the part's bottom opens a window, as before (only round faces are refused).
     const box = feature("box", { width: 20, depth: 20, height: 10 });

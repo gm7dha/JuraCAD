@@ -11,7 +11,7 @@
  * round each one properly: the turned plane is reached by leaning the face about the line where it meets its turned
  * self (`rotationPivot`).
  */
-import { asDir, basicFaceExtrusion, cast, getOC, makeBox, makePln, measureVolume, Vector, type Face, type Shape3D } from "replicad";
+import { asDir, basicFaceExtrusion, cast, getOC, makeBox, makePln, makeSphere, measureArea, measureVolume, Vector, type Face, type Shape3D } from "replicad";
 import { rotationPivot } from "../model/moveFace";
 import { facesOf, edgesOf, solidsOf } from "./topology";
 
@@ -38,7 +38,7 @@ function faceSpot(face: Face): { p: Vec3; n: Vec3 } {
  * How far a round face can move before it closes up: a hole's wall (or a ball's inside) by just under its
  * radius out of the material, a boss (or a ball) by just under its radius in. Null for faces with no such limit.
  */
-function roundLimit(face: Face): { radius: number; hollow: boolean } | null {
+function roundLimit(face: Face): { radius: number; hollow: boolean; centre?: Vec3 } | null {
   const kind = face.geomType;
   if (kind !== "CYLINDRE" && kind !== "SPHERE") return null;
   /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -65,7 +65,7 @@ function roundLimit(face: Face): { radius: number; hollow: boolean } | null {
     const loc = sph.Location();
     made.push(sph, loc);
     const rel: Vec3 = [p[0] - loc.X(), p[1] - loc.Y(), p[2] - loc.Z()];
-    return { radius: sph.Radius(), hollow: dot(rel, n) < 0 };
+    return { radius: sph.Radius(), hollow: dot(rel, n) < 0, centre: [loc.X(), loc.Y(), loc.Z()] };
   } catch {
     return null;
   } finally {
@@ -96,6 +96,17 @@ function offsetRoom(face: Face, d: number): Shape3D {
   }
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const oc = getOC() as any;
+  // A whole ball (a sphere or a round cavity): OpenCascade can't thicken a closed sphere face, so its room is the
+  // shell between the two balls.
+  if (limit?.centre && Math.abs(measureArea(face) - 4 * Math.PI * limit.radius ** 2) < 1e-6 * limit.radius ** 2) {
+    const r2 = limit.hollow ? limit.radius - d : limit.radius + d;
+    const outer = makeSphere(Math.max(limit.radius, r2)).translate(limit.centre);
+    const inner = makeSphere(Math.min(limit.radius, r2)).translate(limit.centre);
+    const shell = outer.cut(inner) as Shape3D;
+    outer.delete();
+    inner.delete();
+    return shell;
+  }
   const mk = new oc.BRepOffsetAPI_MakeThickSolid();
   try {
     mk.MakeThickSolidBySimple(face.wrapped, d);
