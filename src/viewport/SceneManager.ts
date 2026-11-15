@@ -2690,13 +2690,18 @@ export class SceneManager {
     }
     if (this.triadDrag?.pointerId === e.pointerId) {
       // (Cleared first: letting go of the capture below fires lostpointercapture, which mustn't take the drag back.)
+      const handle = this.triadDrag.handle;
       this.triadDrag = null;
-      this.pointerDown = null;
+      const at = this.localPoint(e);
+      const still = !!this.pointerDown && Math.hypot(at.x - this.pointerDown.x, at.y - this.pointerDown.y) <= CLICK_SLOP;
+      if (!(handle.kind === "manip" && still)) this.pointerDown = null;
       if (this.renderer.domElement.hasPointerCapture(e.pointerId)) this.renderer.domElement.releasePointerCapture(e.pointerId);
       this.renderer.domElement.style.cursor = "";
-      this.callbacks.onTriadEnd?.();
+      // A manipulator pressed and let go without moving is a plain click on what's under it (an area, a face…).
+      if (handle.kind === "manip" && still) this.callbacks.onTriadCancel?.();
+      else this.callbacks.onTriadEnd?.();
       this.colourTriad();
-      return;
+      if (!(handle.kind === "manip" && still)) return;
     }
     this.cancelHold();
     if (this.holdFired) {
