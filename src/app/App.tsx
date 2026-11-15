@@ -5,7 +5,8 @@ import { PasteDialog, SelectOtherMenu } from "./ViewTools";
 import { useEffect } from "react";
 
 import { connectKernel } from "../kernel/connect";
-import { activeAssembly, activeDrawing, activeFeatures, keepsSteps, studioParts, useStore } from "../model/store";
+import { activeAssembly, activeDrawing, activeFeatures, keepsSteps, pickedFeatures, studioParts, useStore } from "../model/store";
+import { setRenaming, stepFeatureSelection } from "./featureListState";
 import { findDependents } from "../model/dependents";
 import { DrawingPanel, DrawingSheet, DrawingToolbar } from "./DrawingUI";
 import { AssemblyPanel, AssemblyToolbar, ExplodePanel, InsertPanel, InstancePanel, MateDialog, PatternPanel } from "./AssemblyUI";
@@ -69,6 +70,18 @@ function isTypingText(target: EventTarget | null): boolean {
   if (!isTyping(target)) return false;
   const el = target as HTMLElement;
   return !(el instanceof HTMLInputElement && ["checkbox", "radio", "button", "submit", "reset", "range", "color"].includes(el.type));
+}
+
+/** Enter meant for the page, not for a control that has its own use for it (a text box, a list, a button, a link). */
+function acceptsEnter(e: KeyboardEvent): boolean {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing) return false;
+  const el = e.target as HTMLElement | null;
+  if (!el || typeof el.closest !== "function") return true;
+  if (isTypingText(el) || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return false;
+  // A button or link: inside the feature dialog it's pressed as usual; elsewhere (the toolbar button that opened the
+  // dialog still has the focus) Enter is the dialog's.
+  if (el.closest("button, a, [role='button'], [role='menuitem'], [role='radio'], [role='tab']")) return !el.closest(".feature-dialog, [role='menu']") && !!useStore.getState().editing;
+  return true;
 }
 
 /** Keyboard shortcuts while a sketch is open. Returns true if the key was used. */
@@ -181,6 +194,16 @@ function useShortcuts() {
           }
         }
       }
+      // Enter accepts the open feature dialog from anywhere (as in Onshape) — but not from a text box, list or button
+      // of the dialog itself, which handle it their own way (a box inside it submits the dialog anyway).
+      if (e.key === "Enter" && acceptsEnter(e) && s.editing && s.editing.draft.type !== "sketch" && !s.dialog) {
+        const ok = document.querySelector<HTMLButtonElement>(".feature-dialog .dialog-ok");
+        if (ok) {
+          e.preventDefault();
+          ok.click();
+          return;
+        }
+      }
       if (mod || e.altKey || isTyping(e.target) || (s.dialog && s.dialog !== "insert")) return;
 
       if (e.shiftKey && SHIFT_VIEWS[e.code]) {
@@ -254,15 +277,36 @@ function useShortcuts() {
           if (!s.editing) {
             s.setSelection([]);
             s.selectPlane(null);
+            // Several features picked in the list: let them go.
+            if (pickedFeatures(s).length > 1) s.selectFeature(null);
           }
           break;
         case "Delete":
         case "Backspace":
           if (s.selectedFeatureId && !s.editing) {
             e.preventDefault();
-            // Other features use it: ask whether to delete them too (as Onshape does); else delete it as before.
-            if (findDependents(activeFeatures(s), [s.selectedFeatureId]).dependents.length) s.askDelete({ ids: [s.selectedFeatureId], from: "key" });
+            const ids = pickedFeatures(s);
+            // Other features use them: ask whether to delete those too (as Onshape does); else delete them as before.
+            if (findDependents(activeFeatures(s), ids).dependents.length) s.askDelete({ ids, from: "key" });
+            else if (ids.length > 1) s.deleteFeatures(ids, true);
             else s.deleteFeature(s.selectedFeatureId);
+          }
+          break;
+        // The feature list: ↑ / ↓ move the selection (Shift: several), Enter edits it, F2 renames it.
+        case "ArrowUp":
+        case "ArrowDown":
+          if (s.selectedFeatureId && !s.editing && !s.sketch && stepFeatureSelection(e.key === "ArrowDown" ? 1 : -1, e.shiftKey)) e.preventDefault();
+          break;
+        case "Enter":
+          if (s.selectedFeatureId && !s.editing && !s.sketch && pickedFeatures(s).length === 1 && acceptsEnter(e)) {
+            e.preventDefault();
+            s.startEdit(s.selectedFeatureId);
+          }
+          break;
+        case "F2":
+          if (s.selectedFeatureId && !s.editing && !s.sketch) {
+            e.preventDefault();
+            setRenaming(s.selectedFeatureId);
           }
           break;
       }
