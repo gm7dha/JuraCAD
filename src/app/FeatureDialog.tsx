@@ -1,4 +1,5 @@
 import { BoundaryOptions, FaceBlendOptions } from "./BoundaryBlendOptions";
+import { FinalToggle } from "./FinalToggle";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { evaluate } from "../model/expr";
@@ -2536,6 +2537,7 @@ export function FeatureDialog() {
       <header className="feature-dialog-header">
         <span className="feature-dialog-title">{draft.type === "curve" ? curveKindInfo(draft.curve?.kind).label : def.label}</span>
         <span className="feature-dialog-actions">
+          <FinalToggle />
           <button
             type="submit"
             className="dialog-ok"

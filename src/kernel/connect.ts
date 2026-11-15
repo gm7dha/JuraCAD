@@ -6,6 +6,7 @@ import { keepInBrowser, keepProblem, OTHER_TAB, STORAGE_KEY, VERSIONS_KEY, type 
 import { activeStudioId, keepIdOf, type VersionCompare } from "../model/store";
 import { setCurrentScope } from "../model/expr";
 import { studiosOf } from "../model/studios";
+import { editRollback } from "../model/finalPreview";
 import type { StudioInput } from "./protocol";
 import type { JuraCADDocument } from "../model/types";
 import { configurationsInUse } from "../assembly/configured";
@@ -25,18 +26,24 @@ function currentStudios(): StudioInput[] {
   const s = useStore.getState();
   const here = activeStudioId(s);
   const editingIn = s.editing ? here : null;
-  return [...studiosOf(s.history.present).map((st) => ({ ...st, features: featuresForEngine(st.features) })).map((st) => withContexts(s.history.present, {
+  return [...studiosOf(s.history.present).map((st) => ({ ...st, features: featuresForEngine(st.features) })).map((st) => {
+    // Editing a feature with "Final" off: the studio rolled back to just after it (see finalPreview.ts).
+    const bar = st.id === here ? editRollback(st.features, s.editing, s.rollbackTo, s.showFinal) : null;
+    const preview = st.id === here && bar !== s.rollbackTo;
+    return withContexts(s.history.present, {
     id: st.id,
+    ...(preview ? { preview: true } : {}),
     features: convertPreview(
       // Picking parts or faces for the open feature: shown as they were before it (see pickingPreview).
-      pickingPreview(st.id === here && s.rollbackTo
-        ? featuresToBuild(st.id === editingIn ? previewFeatures(st.features) : st.features, st.id === editingIn ? featureForEngine(previewOf(s.editing?.draft ?? null)) : null, s.rollbackTo)
+      pickingPreview(st.id === here && bar
+        ? featuresToBuild(st.id === editingIn ? previewFeatures(st.features) : st.features, st.id === editingIn ? featureForEngine(previewOf(s.editing?.draft ?? null)) : null, bar)
         : st.id === editingIn
           ? featuresWithDraft(previewFeatures(st.features), featureForEngine(previewOf(s.editing?.draft ?? null)))
           : st.features, st.id === editingIn ? s.editing?.draft ?? null : null),
       st.id === editingIn ? s.editing?.draft ?? null : null,
     ),
-  })), ...configuredStudios(s.history.present), ...versionStudios(s.versionCompare)];
+  });
+  }), ...configuredStudios(s.history.present), ...versionStudios(s.versionCompare)];
 }
 
 /** Old versions being compared: their Part Studios, built alongside (see compareStudioInputs). */
@@ -154,6 +161,7 @@ export function connectKernel(): () => void {
   };
   globalThis.addEventListener?.("storage", onStorage);
   let lastRollback = useStore.getState().rollbackTo;
+  let lastFinal = useStore.getState().showFinal;
   let lastConfigured = configuredKey(useStore.getState().history.present);
   let lastCompared = useStore.getState().versionCompare?.docs;
 
@@ -163,6 +171,8 @@ export function connectKernel(): () => void {
       s.history.present.features !== lastFeatures ||
       draft !== lastDraft ||
       s.rollbackTo !== lastRollback ||
+      // ("Final" ticked or not only matters while a feature is being edited.)
+      (s.showFinal !== lastFinal && s.editing?.mode === "edit") ||
       s.history.present.variables !== lastVariables ||
       s.history.present.partNames !== lastPartNames ||
       s.history.present.partStudios !== lastStudios ||
@@ -182,6 +192,7 @@ export function connectKernel(): () => void {
       lastVariables = s.history.present.variables;
       lastDraft = draft;
       lastRollback = s.rollbackTo;
+      lastFinal = s.showFinal;
       if (s.kernelStatus === "ready") rebuild();
     }
     // An old version open to look at is never kept as the design: the current one (waiting in the stash) is.

@@ -672,6 +672,22 @@ button:disabled {
   gap: 4px;
 }
 
+/* Onshape's "Final" tick (FinalToggle.tsx). */
+.final-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: 4px;
+  font-size: 12px;
+  color: var(--ink-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+.final-toggle input {
+  margin: 0;
+}
+
 .dialog-ok,
 .dialog-cancel {
   display: inline-flex;
