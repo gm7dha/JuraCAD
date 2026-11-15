@@ -377,13 +377,13 @@ try {
     await page.waitForFunction((n) => document.querySelectorAll(".feature-row:not(.datum)").length === n, before);
     if ((await st(() => window.juracadStore.getState().history.present.namedViews ?? [])).length) throw new Error("undo didn't take the named view back");
     // Several features picked (click, then Shift + click) and suppressed together from the menu: one undo step.
-    const rows = page.locator(".feature-row:not(.datum)");
-    if ((await rows.count()) >= 2) {
-      await rows.nth(0).click();
-      await rows.nth(1).click({ modifiers: ["Shift"] });
+    const featRows = page.locator(".feature-row:not(.datum)");
+    if ((await featRows.count()) >= 2) {
+      await featRows.nth(0).click();
+      await featRows.nth(1).click({ modifiers: ["Shift"] });
       await page.waitForFunction(() => document.querySelectorAll(".feature-row.selected:not(.datum)").length === 2);
       const stepsWas = await st(() => window.juracadStore.getState().history.past.length);
-      await rows.nth(1).click({ button: "right" });
+      await featRows.nth(1).click({ button: "right" });
       await page.getByRole("menuitem", { name: "Suppress these 2" }).click();
       await page.waitForFunction(() => document.querySelectorAll(".feature-row.suppressed:not(.datum)").length === 2);
       if ((await st(() => window.juracadStore.getState().history.past.length)) !== stepsWas + 1) throw new Error("suppressing two features took more than one undo step");
@@ -393,10 +393,10 @@ try {
       await page.waitForFunction(() => document.querySelectorAll(".feature-row.selected:not(.datum)").length === 0);
     }
     // F2 renames the highlighted feature in place; Enter keeps the new name.
-    await rows.nth(0).click();
-    const oldName = (await rows.nth(0).locator(".feature-name").innerText()).trim();
+    await featRows.nth(0).click();
+    const oldName = (await featRows.nth(0).locator(".feature-name").innerText()).trim();
     await page.keyboard.press("F2");
-    const renameBox = rows.nth(0).locator("input.feature-rename");
+    const renameBox = featRows.nth(0).locator("input.feature-rename");
     await renameBox.waitFor({ timeout: 5_000 });
     await renameBox.fill("Smoke renamed");
     await renameBox.press("Enter");
