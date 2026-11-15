@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { addHeld } from "../viewport/touchKeys";
 
 import { DEFAULT_PART_COLOUR, PART_COLOURS } from "../model/colours";
@@ -109,8 +109,18 @@ function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => void }
     };
   }, []);
 
+  // Kept inside the window: a menu opened low down (or far right) is moved up (or left) until it fits.
+  const [at, setAt] = useState({ left: menu.x, top: menu.y });
+  useLayoutEffect(() => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    const left = Math.max(4, Math.min(menu.x, window.innerWidth - r.width - 4));
+    const top = Math.max(4, Math.min(menu.y, window.innerHeight - r.height - 4));
+    setAt((was) => (was.left === left && was.top === top ? was : { left, top }));
+  }, [menu.x, menu.y, menu.entries.length]);
+
   return (
-    <div className="context-menu" ref={ref} style={{ left: menu.x, top: menu.y }} role="menu">
+    <div className="context-menu" ref={ref} style={{ left: at.left, top: at.top, maxHeight: "calc(100vh - 8px)", overflowY: "auto" }} role="menu">
       {menu.entries.map((entry, i) =>
         entry === "divider" ? (
           <div className="menu-divider" key={i} />
