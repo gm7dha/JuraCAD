@@ -3545,6 +3545,8 @@ try {
     // Clicking the big circle leaves it out; clicking it again picks it.
     await clickSpot(biggest(await spots()));
     await page.waitForFunction(() => !window.juracadStore.getState().editing.draft.areas).catch(() => why('() => !window.juracadStore.getState().editing.draft.areas);'));
+    // (Two quick clicks in one place over the depth arrow are a double-click, which opens the arrow's size box: wait.)
+    await page.waitForTimeout(600);
     await clickSpot(biggest(await spots()));
     await page.waitForFunction(() => window.juracadStore.getState().editing.draft.areas?.length === 1).catch(() => why('() => window.juracadStore.getState().editing.draft.areas?.le'));
     await page.locator("#param-depth").fill("10");
