@@ -139,6 +139,22 @@ describe("variable fillet", () => {
     expect(Math.max(nearA, nearB)).toBeCloseTo(1.5, 1);
   });
 
+  it("varies round a whole circle, its seam taking one radius", () => {
+    const c = feature("cylinder", { diameter: 20, height: 10 });
+    const r0 = build([c]);
+    const rim = [...r0.parts[0].edgeRefs!].find((e) => e.kind === "edge" && e.curve === "CIRCLE" && e.a[2] > 5)!;
+    const pick: TopoPick = { partId: r0.parts[0].id, ref: rim };
+    const r = build([c, fillet([pick], 1, [point(pick, 0, 1), point(pick, 0.5, 3)])]);
+    expect(r.featureErrors).toEqual({});
+    expect(engine.check("normal").parts[0].geometryValid).toBe(true);
+    const v = measureVolume(shapeOf(r.parts[0].id));
+    const plain = build([c, fillet([pick], 1)]);
+    expect(v).toBeLessThan(measureVolume(shapeOf(plain.parts[0].id)));
+    // Different radii at the seam are refused in plain words.
+    const clash = build([c, fillet([pick], 1, [point(pick, 0, 1), point(pick, 1, 2)])]);
+    expect(Object.values(clash.featureErrors)[0]).toMatch(/same place/);
+  });
+
   it("builds an ordinary fillet exactly as before", () => {
     const b = box();
     const pick = edgeNear(build([b]), [5, 0, 10]);
