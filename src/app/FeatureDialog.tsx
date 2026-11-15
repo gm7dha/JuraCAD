@@ -29,6 +29,7 @@ import { draftEffect } from "../model/partLinks";
 import { studiosOf } from "../model/studios";
 import type { Operation } from "../model/types";
 import { DeleteFaceHelp } from "./DeleteFaceHelp";
+import { MoveFaceOptions } from "./MoveFaceOptions";
 import { Icons } from "./icons";
 import { FASTENER_KINDS, FASTENER_LABELS, FASTENER_SIZES, type FastenerKind } from "../model/fasteners";
 import { ISO_COARSE } from "../kernel/thread";
@@ -2276,7 +2277,13 @@ function PicksField() {
             : draft.type === "draft"
             ? "Click the side faces to taper."
             : draft.type === "moveFace"
-            ? "Click the flat faces to push out (or in, with a minus distance)."
+            ? draft.moveFace?.mode === "offset"
+              ? "Click the faces to move out (or in, with a minus distance) — flat or round: a hole's wall moved in by 0.2 makes the hole 0.4 mm bigger across."
+              : draft.moveFace?.mode === "translate"
+              ? "Click the flat faces to move along the direction."
+              : draft.moveFace?.mode === "rotate"
+              ? "Click the flat faces to turn about the axis."
+              : "Click the flat faces to push out (or in, with a minus distance)."
             : draft.type === "replaceFace"
             ? "Click the flat faces to move."
             : draft.type === "deleteFace"
@@ -2610,6 +2617,7 @@ export function FeatureDialog() {
         <RibThickenOptions />
         <DraftOptions />
         <ReplaceFaceOptions />
+        <MoveFaceOptions />
         <SketchSolidOptions />
         <SweepLoftOptions />
         <TextFeatureOptions />

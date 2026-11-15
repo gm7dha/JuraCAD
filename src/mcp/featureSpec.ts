@@ -7,7 +7,9 @@
  * (changing only what's given).
  */
 import { setMirrorReference, setPatternDirection } from "../model/patternRefs";
-import type { BoundaryCurve, Feature, FeatureType, JuraCADDocument, LoftDef, LoftProfile, Operation } from "../model/types";
+import { moveFaceAxisProblem, withMoveFaceAxis, withMoveFaceMode } from "../model/moveFace";
+import type { TopoPick } from "../geometry/topoRef";
+import type { BoundaryCurve, MoveFaceDef, Feature, FeatureType, JuraCADDocument, LoftDef, LoftProfile, Operation } from "../model/types";
 import { endChoices, loftProfiles, profilesProblem, tidyEnds, withEndPoint, withLoftDef, withProfiles } from "../model/loft";
 import type { PartMesh } from "../kernel/protocol";
 import { SCREW_SIZES, standardParams } from "../model/holes";
@@ -52,6 +54,7 @@ export const FEATURE_KINDS = {
   split_face: "split",
   boundary_surface: "boundary",
   face_blend: "faceBlend",
+  move_face: "moveFace",
 } as const satisfies Record<string, FeatureType>;
 export type FeatureKind = keyof typeof FEATURE_KINDS;
 export const KIND_OF: Partial<Record<FeatureType, FeatureKind>> = Object.fromEntries(Object.entries(FEATURE_KINDS).map(([k, v]) => [v, k as FeatureKind]));
@@ -86,6 +89,7 @@ export const KIND_KEYS: Record<FeatureKind, string[]> = {
   split_face: ["part", "faces", "plane", "offset", "sketch"],
   boundary_surface: ["u", "v"],
   face_blend: ["part", "faces", "part2", "faces2", "radius", "flip1", "flip2", "trim"],
+  move_face: ["part", "faces", "move", "distance", "angle", "direction", "axis", "flip"],
 };
 
 /** Most copies in one direction of a pattern, and in all (bigger takes minutes to build). */
@@ -632,6 +636,50 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
       f.blend = Object.fromEntries(Object.entries(blend).filter(([, v]) => v !== undefined)) as typeof blend;
       param(f, a, "radius", "radius", ctx, { positive: true, required: !ctx.editing });
       f.operation = "new";
+      break;
+    }
+
+    case "move_face": {
+      // Onshape's Move face: Offset (each face along its own normal, round ones too), Translate (flat faces along a
+      // direction) or Rotate (flat faces about an axis). Older Move faces (no type) become Offset when edited here.
+      if (has(a, "faces") || !ctx.editing) {
+        const part = ctx.session.part(ctx.parts, has(a, "part") ? a.part : (f.picks?.[0]?.partId ?? undefined), "part");
+        f.picks = pickFaces(part, list(a.faces, "faces"), "faces");
+      }
+      let mv: MoveFaceDef = { ...(f.moveFace ?? { mode: "offset" }) };
+      if (has(a, "move")) mv = withMoveFaceMode(mv, oneOf(a.move, ["offset", "translate", "rotate"] as const, "move"));
+      const key = mv.mode === "rotate" ? "axis" : "direction";
+      const other = mv.mode === "rotate" ? "direction" : "axis";
+      if (has(a, other)) throw new InputError(mv.mode === "offset" ? `"${other}" isn't used by an Offset (each face moves along its own normal). Give "move": "translate" or "rotate" to use one.` : `A ${mv.mode} takes "${key}", not "${other}".`);
+      if (mv.mode === "offset" && has(a, "axis")) throw new InputError('"axis" is for "move": "rotate".');
+      if (has(a, key)) {
+        const v = a[key];
+        if (v === "x" || v === "y" || v === "z") mv = withMoveFaceAxis(mv, v);
+        else if (v && typeof v === "object") {
+          const o = v as Obj;
+          const part = ctx.session.part(ctx.parts, has(o, "part") ? o.part : (f.picks?.[0]?.partId ?? undefined), `${key}.part`);
+          let pick: TopoPick | undefined;
+          if (has(o, "edge")) {
+            const [e] = pickEdges(part, [o.edge], `${key}.edge`);
+            if (!e || e.ref.kind !== "edge") throw new InputError(`${key}.edge: give one edge (an E-number from list_edges).`);
+            pick = e;
+          } else if (has(o, "face")) pick = { partId: part.id, ref: pickFace(part, o.face, `${key}.face`).ref };
+          if (!pick) throw new InputError(`${key}: give "x", "y", "z", {"edge": "E3"} or {"face": "F2"} (with "part").`);
+          const problem = moveFaceAxisProblem(mv.mode, pick);
+          if (problem) throw new InputError(`${key}: ${problem}`);
+          mv = withMoveFaceAxis(mv, pick);
+        } else throw new InputError(`${key}: give "x", "y", "z", {"edge": "E3"} or {"face": "F2"} (with "part").`);
+      }
+      if (has(a, "flip")) mv.flip = bool(a.flip, "flip") || undefined;
+      if (!mv.flip) delete mv.flip;
+      f.moveFace = mv;
+      if (mv.mode === "rotate") {
+        if (has(a, "distance")) throw new InputError('A rotate turns the faces by an "angle" (°), not a "distance".');
+        param(f, a, "angle", "angle", ctx, { unit: "°", required: !ctx.editing || !f.params.angle });
+      } else {
+        if (has(a, "angle")) throw new InputError(`"angle" is for "move": "rotate"; an ${mv.mode} moves the faces by a "distance".`);
+        param(f, a, "distance", "distance", ctx, { required: !ctx.editing });
+      }
       break;
     }
 

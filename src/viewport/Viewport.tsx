@@ -46,6 +46,7 @@ import { planDrag, type DragPlan } from "../assembly/drag";
 import { connectorFrameFor, frameLookup, solveWithParts } from "../assembly/mates";
 import { sectionPlane } from "./section";
 import { builtEdgeKey, laterPathMessage, togglePathEdge, togglePathLine } from "../model/frame";
+import { moveFaceAxisProblem, withMoveFaceAxis } from "../model/moveFace";
 import { linePlane, pickableSketchLines, referenceShape, setMirrorReference, setPatternDirection, sketchLine3D, type DirectionChoice, type PickableLine } from "../model/patternRefs";
 import { guardViewportZoom } from "./zoomGuard";
 import { NO_FILTER } from "./selectionFilter";
@@ -520,6 +521,17 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       return;
     }
     if (pick) s.toggleDraftPick(pick);
+    return;
+  }
+  // Move face (Translate / Rotate), after "Direction" / "Axis" was clicked: an edge or face is the direction or axis.
+  if (s.editing?.draft.type === "moveFace" && s.editing.draft.moveFace?.picking === "along") {
+    const mv = s.editing.draft.moveFace;
+    if (target?.kind === "part") {
+      const pick = pickFor(s.parts, target.item);
+      const problem = pick ? moveFaceAxisProblem(mv.mode, pick) : null;
+      if (problem) return s.showToast(problem);
+      if (pick) s.setDraftField({ moveFace: withMoveFaceAxis(mv, pick) });
+    }
     return;
   }
   // Thicken, Draft, Move face, Replace face, Delete face: faces.
@@ -1019,6 +1031,8 @@ export function Viewport() {
   const facesOnly = useStore((s) => {
     const d = s.editing?.draft;
     // A face pattern or face mirror picking its faces takes only faces too.
+    // (Move face picking its direction / axis takes edges too.)
+    if (d?.type === "moveFace" && d.moveFace?.picking === "along") return false;
     return FACE_TOOLS.has(d?.type ?? "") || (d?.splitDef?.mode === "face" && d.splitDef.picking !== "edges") || (d?.pattern?.of === "face" && d.pattern.picking === "items") || (d?.mirror?.of === "face" && d.mirror.picking === "faces");
   });
   useEffect(() => viewportApi.current?.setFacesOnly(facesOnly), [facesOnly]);

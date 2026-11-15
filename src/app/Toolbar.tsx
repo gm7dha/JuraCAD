@@ -227,7 +227,7 @@ export function Toolbar() {
     },
     rib: feature("rib", "Rib", <Icons.Rib />, hasPart && hasSketch, "Rib — a thin strengthening wall along a sketch's lines, filling the space up to the part", "Make a part, then sketch the rib's line(s)"),
     draft: feature("draft", "Draft", <Icons.Draft />, hasPart, "Draft — taper faces so the part pulls out of a mould", madePart),
-    moveFace: feature("moveFace", "Move face", <Icons.MoveFace />, hasPart, "Move face — push flat faces out or in by a distance", madePart),
+    moveFace: feature("moveFace", "Move face", <Icons.MoveFace />, hasPart, "Move face — push faces out or in (round ones too), slide them along, or turn them", madePart),
     replaceFace: feature("replaceFace", "Replace face", <Icons.ReplaceFace />, hasPart, "Replace face — move flat faces onto another face or plane parallel to them (to line parts up)", madePart),
     deleteFace: feature("deleteFace", "Delete face", <Icons.DeleteFace />, hasPart, "Delete face — remove fillets, chamfers, holes or bosses and close the gap", madePart),
     modifyFillet: feature("modifyFillet", "Modify fillet", <Icons.ModifyFillet />, hasPart, "Modify fillet — give rounded edges a new radius, or take them off (on imported parts too)", madePart),

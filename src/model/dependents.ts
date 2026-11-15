@@ -171,6 +171,8 @@ function usesOf(f: Feature): Uses {
     }
     if (!f.mirror.of && f.mirror.part === undefined && f.mirror.sources.length) lists.push({ what: "feature it mirrors", many: "features it mirrors", features: f.mirror.sources });
   }
+  // Move face's direction (Translate) or axis (Rotate), clicked on a part.
+  if (f.moveFace && f.moveFace.mode !== "offset") needPart(f.moveFace.along?.partId);
   if (f.pattern) {
     if (!f.pattern.unset) {
       needPart(f.pattern.along?.partId);
