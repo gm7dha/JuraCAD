@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.84 — More drag arrows, and type a size right by the arrow
+
+- Draft, Hole, Move face, Offset surface and Extend surface now have drag arrows in the 3D view, like Extrude and Fillet.
+- Chamfers with two distances, or a distance and an angle, now get an arrow along each face (and a curved one for the angle).
+- Shell and Thicken arrows stay on their face when an earlier change moves it.
+- An Extrude that goes "Up to…" shows a grey arrow that tells you why it can't be dragged.
+- Double-click (or double-tap) an arrow to type its size right there. Variables and sums work, Enter sets it, Esc cancels.
+
 ## v0.83 — Mass properties and a friendlier feature list
 
 - New Mass button (bottom right): weight, volume, surface area, centre of mass (marked in the view) and size of the selected parts, or all of them. Weigh them as their own materials, one material or any density; plastic parts also get a rough printed weight. Copy the numbers with one click.

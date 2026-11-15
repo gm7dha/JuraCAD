@@ -53,7 +53,7 @@ import { setSelectOther } from "./selectOtherState";
 import { editFeatureAt, useHoveredFeature } from "./featureFaces";
 import { facesMadeBy } from "../model/featureSearch";
 import { finishesByKey, type FinishId } from "../model/finishes";
-import { manipCancel, manipDragging, manipEnd, manipMove, manipStart, manipulatorsNow } from "./manipulatorGlue";
+import { manipCancel, manipDragging, manipEdit, manipEnd, manipMove, manipStart, manipulatorsNow, remember as rememberManipPress } from "./manipulatorGlue";
 import type { Manipulator } from "../model/manipulators";
 import { partsArrived, transformDraft, transformPick, triadCancel, triadEnd, triadFor, triadMove, triadStart } from "./transformTriad";
 
@@ -527,6 +527,8 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       s.showToast("Click a face rather than an edge.");
       return;
     }
+    // (Its own result — an offset copy, a thickened solid — isn't what it starts from: picking it would point the feature at itself.)
+    if (madeByDraft(target.item.partId, s.editing!.draft.id)) return s.showToast("That's what this feature makes. Click a face of the part or surface it starts from.");
     const pick = pickFor(s.parts, target.item);
     // Wrap goes round one face, Offset surface works on one surface: a new click replaces the last.
     if (pick && (faceFeature === "wrap" || faceFeature === "offsetSurface")) s.setDraftField({ picks: [pick] });
@@ -907,6 +909,8 @@ export function Viewport() {
         onTriadEnd: () => (manipDragging() ? manipEnd(viewportApi.current) : triadEnd(viewportApi.current)),
         onTriadCancel: () => (manipDragging() ? manipCancel(viewportApi.current) : triadCancel(viewportApi.current)),
         onDoubleClick: editFeatureAt,
+        onManipDoubleClick: (id) => manipEdit(viewportApi.current, id),
+        onManipPress: rememberManipPress,
       });
     } catch (e) {
       useStore.getState().showToast(
