@@ -647,6 +647,24 @@
   drag whose dialog closed is dropped; finger taps on handles do nothing; a live move only shifts the triad's drawing.
   `transform.picking` says what a click chooses (missing = the part). Tests: tests/transformDrag.test.ts (pure), tests/transformStore.test.ts,
   tests/engineTransform.test.ts.
+- Manipulators (Onshape's in-view handles for feature dialogs): pure `src/model/manipulators.ts` (`MANIPULATED` types: extrude,
+  revolve, fillet, chamfer, shell, thicken; `manipulatorsFor(draft, {sketch, parts})` → `Manipulator`s: an arrow (`origin` = where the
+  value is 0, `dir`, handle at value × `scale`) or an arc round `axis`; Extrude blind/symmetric (two arrows, scale ½, both edit `depth`)
+  and `depth2`, from the profile's middle (`profileMiddle`: chosen regions' box, cached per sketch data); Revolve one way/symmetric/two
+  ways (`max` = what the other angle leaves of 360); Fillet/Chamfer on the first EDGE pick (`edgeCorner`, cached per pick: bisector of
+  the two flat faces holding the edge, the rounded/cut face's middle r(1/cos(α/2) − 1) / d·sin(α/2) in; else towards the faces'
+  middle); Shell/Thicken on the first face pick. A box holding a variable/sum (`isPlainNumber`) = `locked`: drawn grey with a
+  tooltip, never dragged. `manipPatch` (an Extrude's blind end with no second side dragged past 0 flips `extrude.flip`). Drag maths
+  pure in `src/viewport/manipulatorDrag.ts` (`manipHandleAt`, `startManipDrag`: arrows via transformDrag's `axisParam`, arcs added up
+  like the triad's rings, edge-on along the tangent; `manipStep` 1 mm / 0.05 in, finer only right zoomed in, coarser out; 1°; Shift free;
+  least a step, ≤ `max`). Glue `src/viewport/manipulatorGlue.ts`: SceneManager's triad hit test returns `ViewHandle` (= TriadHandle |
+  ManipHandle, manipulators first), so mouse priority, fingers dragging (never orbiting), hover colour, Esc (`escapeTriadDrag` →
+  `escapeManipDrag`) all reuse the triad's paths; the Viewport dispatches the onTriad* callbacks. A drag changes the draft live
+  (`store.dragDraft`, rebuilt as usual — the box and preview follow), letting go = one dialog undo step (`endDraftDrag(before)`;
+  cancel puts `before` back). These dialogs keep the dialog undo like Move / copy (`keepsSteps`: typing, fields, picks are steps;
+  Ctrl+Z in App). `SceneManager.setManipulators`/`manipulatorsShown`/`manipulatorOnScreen`/`setManipLabel` (`.manip-label`, the value
+  by the tip while dragging). Tests: tests/manipulators (pure), manipulatorStore; the smoke test drags the Extrude's depth arrow
+  60 px and Ctrl+Z puts 15 back. Not done: Draft angle, Hole depth, Offset surface, assembly features, a drag on a variable.
 - Mirror planes and pattern axes: `src/model/patternRefs.ts` (pure). A mirror's plane is a default plane, a Plane
   feature, a clicked flat face (`mirror.planePick`, found again on rebuild; `plane` keeps where it was when clicked) or a
   sketch line (`mirror.line`: the plane through it, square to its sketch). Patterns use X/Y/Z, a clicked edge/face

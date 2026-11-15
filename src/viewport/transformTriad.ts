@@ -14,6 +14,7 @@ import type { Feature } from "../model/types";
 import { planeFrame, type SketchPlane } from "../sketch/planes";
 import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 import type { PickTarget, SceneManager, ScreenRay } from "./SceneManager";
+import { escapeManipDrag } from "./manipulatorGlue";
 import { handleName, lengthStep, startTriadDrag, type TriadDrag, type TriadHandle } from "./transformDrag";
 
 type TransformDraft = Feature & { transform: NonNullable<Feature["transform"]> };
@@ -120,6 +121,8 @@ export function triadCancel(manager: SceneManager | null): void {
 
 /** Esc while the triad is being dragged: only the drag is taken back (the dialog stays open). True if there was one. */
 export function escapeTriadDrag(): boolean {
+  // (A dialog's manipulator being dragged: the same Esc takes back that drag.)
+  if (escapeManipDrag()) return true;
   const d = drag;
   if (!d) return false;
   // The view lets go of the pointer and calls triadCancel.

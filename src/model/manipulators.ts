@@ -1,0 +1,291 @@
+/**
+ * Onshape's in-view manipulators for feature dialogs (pure: no three.js, no DOM): while an Extrude, Revolve,
+ * Fillet, Chamfer, Shell or Thicken dialog is open, an arrow (or, for a revolve, an arrow round an arc) sits in the
+ * 3D view where the size it changes shows, and dragging it changes that size live, exactly like typing in its box.
+ *
+ * This file says which handles a draft shows and where (`manipulatorsFor`), and what a dragged value does to the
+ * draft (`manipPatch`). Dragging maths (pointer ray → value, hit tests) is in viewport/manipulatorDrag.ts.
+ */
+import { resolveParams } from "./features";
+import { add, cross, dot, length, scale, sub, unit, type Vec3 } from "./transformMath";
+import type { Feature, FeatureType } from "./types";
+import { formatLength, startingLength } from "./units";
+import { chosenRegions } from "../sketch/areas";
+import { axisInSketch } from "../sketch/axis";
+import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
+import type { SketchData } from "../sketch/types";
+import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
+
+export interface Manipulator {
+  /** Which handle (unique within the draft): "depth", "depthBack", "depth2", "angle", "radius"… */
+  id: string;
+  /** The box it changes. */
+  key: string;
+  /** "arrow": slides along `dir`; "arc": turns round `axis`. */
+  kind: "arrow" | "arc";
+  /** Arrow: where the value is 0. Arc: the profile's point at 0°. */
+  origin: Vec3;
+  /** Arrow: the way a bigger value moves the handle (unit). */
+  dir: Vec3;
+  /** Arc: the line it turns round (unit direction, the way bigger angles turn, right-handed). */
+  axis?: { through: Vec3; dir: Vec3 };
+  /** The value now (mm or degrees). */
+  value: number;
+  /** The handle sits at value × scale along `dir` (or degrees round the axis). */
+  scale: number;
+  /** Degrees (snaps to 1°), not a length. */
+  angle: boolean;
+  /** Dragged past zero, the size stays positive and the feature turns the other way (an Extrude's blind end). */
+  flips: boolean;
+  /** The most it may be (a revolve's 360°). */
+  max: number;
+  /** Shown but not draggable: why (the box holds a variable or a sum). */
+  locked?: string;
+  /** What the label by the handle and its tooltip say. */
+  text: string;
+  tip: string;
+}
+
+/** The feature types that show manipulators. */
+export const MANIPULATED: ReadonlySet<FeatureType> = new Set<FeatureType>(["extrude", "revolve", "fillet", "chamfer", "shell", "thicken"]);
+
+export function hasManipulators(type: FeatureType): boolean {
+  return MANIPULATED.has(type);
+}
+
+/** What manipulatorsFor needs besides the draft. */
+export interface ManipContext {
+  /** The draft's sketch (`sketchRef`) as built now (a face sketch where its face is), if it has one. */
+  sketch: { plane: SketchPlane | null; data: SketchData } | null;
+  /** The Part Studio's parts as built now (faces, to see which way an edge's corner faces). */
+  parts: readonly { id: string; faceRefs?: readonly FaceRef[] }[];
+}
+
+/** Is a box's text a plain number (with a unit, perhaps), not a variable or a sum? Empty = the default, plain. */
+export function isPlainNumber(text: string | undefined): boolean {
+  if (text === undefined || text.trim() === "") return true;
+  return /^\s*[+]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?\s*(mm|cm|m|in|inch|inches|"|deg|°)?\s*$/i.test(text);
+}
+
+const LOCKED = "This size uses a variable or a sum: type in its box to change it.";
+
+/** Where a sketch's shapes are, in the middle (sketch coordinates): the middle of the picked areas' (or all closed shapes') box. */
+const middles = new WeakMap<SketchData, Map<string, [number, number] | null>>();
+export function profileMiddle(data: SketchData, areas: Feature["areas"]): [number, number] | null {
+  let byAreas = middles.get(data);
+  if (!byAreas) middles.set(data, (byAreas = new Map()));
+  const key = JSON.stringify(areas ?? null);
+  if (byAreas.has(key)) return byAreas.get(key)!;
+  let out: [number, number] | null = null;
+  try {
+    const { regions } = chosenRegions(data, areas, "extrude");
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const r of regions)
+      for (const [x, y] of r.outer.polygon) {
+        x0 = Math.min(x0, x);
+        y0 = Math.min(y0, y);
+        x1 = Math.max(x1, x);
+        y1 = Math.max(y1, y);
+      }
+    if (Number.isFinite(x0)) out = [(x0 + x1) / 2, (y0 + y1) / 2];
+  } catch {
+    out = null;
+  }
+  byAreas.set(key, out);
+  return out;
+}
+
+/** `p` turned by `degrees` round the line through `o` along unit `d` (right-handed). */
+export function turnAbout(p: Vec3, o: Vec3, d: Vec3, degrees: number): Vec3 {
+  const a = (degrees * Math.PI) / 180;
+  const v = sub(p, o);
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const along = scale(d, dot(d, v) * (1 - c));
+  return add(o, add(add(scale(v, c), scale(cross(d, v), s)), along));
+}
+
+/** Where the handle is drawn (the arrow's foot). */
+export function manipPoint(m: Manipulator): Vec3 {
+  if (m.kind === "arc" && m.axis) return turnAbout(m.origin, m.axis.through, m.axis.dir, m.value * m.scale);
+  return add(m.origin, scale(m.dir, m.value * m.scale));
+}
+
+/** Which way the arrow points at its foot (unit): along `dir`, or round the arc. */
+export function manipArrowDir(m: Manipulator): Vec3 {
+  if (m.kind !== "arc" || !m.axis) return m.dir;
+  const p = manipPoint(m);
+  const rel = sub(p, m.axis.through);
+  const radial = sub(rel, scale(m.axis.dir, dot(rel, m.axis.dir)));
+  return unit(cross(m.axis.dir, radial)) ?? m.dir;
+}
+
+/** The arc's points from 0° to the handle (world), for drawing its guide; [] for an arrow. */
+export function arcPoints(m: Manipulator, count = 48): Vec3[] {
+  if (m.kind !== "arc" || !m.axis) return [];
+  const end = m.value * m.scale;
+  const n = Math.max(2, Math.ceil((count * Math.abs(end)) / 360) + 1);
+  return Array.from({ length: n }, (_, i) => turnAbout(m.origin, m.axis!.through, m.axis!.dir, (end * i) / (n - 1)));
+}
+
+function valueText(label: string, value: number, angle: boolean): string {
+  return `${label} ${angle ? `${Math.round(value * 100) / 100}°` : formatLength(value)}`;
+}
+
+interface Base {
+  key: string;
+  label: string;
+  values: Record<string, number>;
+  params: Record<string, string>;
+}
+
+function make(b: Base, m: Omit<Manipulator, "key" | "value" | "text" | "tip" | "locked"> & { tip: string }): Manipulator {
+  const value = b.values[b.key] ?? 0;
+  const locked = isPlainNumber(b.params[b.key]) ? undefined : LOCKED;
+  return { ...m, key: b.key, value, text: valueText(b.label, value, m.angle), tip: locked ?? m.tip, ...(locked ? { locked } : {}) };
+}
+
+/** Faces of a part lying along a straight edge (their plane holds it), nearest first: up to two. */
+function facesAlong(edge: EdgeRef, faces: readonly FaceRef[]): FaceRef[] {
+  const t = unit(sub(edge.b, edge.a));
+  if (!t || edge.curve !== "LINE") return [];
+  const size = length(sub(edge.b, edge.a));
+  const tol = Math.max(1e-3, size * 1e-4);
+  return faces
+    .filter((f) => f.surface === "PLANE" && Math.abs(dot(f.normal, t)) < 1e-3 && Math.abs(dot(sub(edge.mid, f.center), f.normal)) < tol)
+    .sort((a, b) => length(sub(a.center, edge.mid)) - length(sub(b.center, edge.mid)))
+    .slice(0, 2);
+}
+
+/**
+ * Where an edge's corner is and how a fillet / chamfer sits there: `into` = from the corner into the material
+ * (between its two faces), `fillet`/`chamfer` = how far along it the rounded / cut face's middle is per mm of size.
+ * Worked out once per pick (so a drag that rebuilds the part never moves its handle about).
+ */
+const corners = new WeakMap<TopoPick, { into: Vec3; fillet: number; chamfer: number } | null>();
+export function edgeCorner(pick: TopoPick, faces: readonly FaceRef[]): { into: Vec3; fillet: number; chamfer: number } | null {
+  if (corners.has(pick)) return corners.get(pick)!;
+  const edge = pick.ref as EdgeRef;
+  let out: { into: Vec3; fillet: number; chamfer: number } | null = null;
+  const two = facesAlong(edge, faces);
+  if (two.length === 2) {
+    const into = unit(scale(add(two[0].normal, two[1].normal), -1));
+    // α: the angle between the faces' normals (90° for a box's edge).
+    const cosA = Math.max(-1, Math.min(1, dot(two[0].normal, two[1].normal)));
+    const half = Math.acos(cosA) / 2;
+    if (into && half > 0.05) out = { into, fillet: Math.max(0.25, 1 / Math.cos(half) - 1), chamfer: Math.max(0.25, Math.sin(half)) };
+  }
+  if (!out && faces.length) {
+    // A round edge or one we can't place exactly: point at the part's middle.
+    const centre = scale(faces.reduce<Vec3>((s, f) => add(s, f.center), [0, 0, 0]), 1 / faces.length);
+    let into = sub(centre, edge.mid);
+    const t = unit(sub(edge.b, edge.a));
+    if (t && edge.curve === "LINE") into = sub(into, scale(t, dot(into, t)));
+    const u = unit(into);
+    if (u) out = { into: u, fillet: 0.5, chamfer: 0.5 };
+  }
+  corners.set(pick, out);
+  return out;
+}
+
+/** The handles to show for the open dialog's draft (none for kinds and settings that have none). */
+export function manipulatorsFor(draft: Feature, ctx: ManipContext): Manipulator[] {
+  if (!hasManipulators(draft.type)) return [];
+  const { values } = resolveParams(draft);
+  const params = draft.params;
+  const base = (key: string, label: string): Base => ({ key, label, values, params });
+  const out: Manipulator[] = [];
+  const sketch = ctx.sketch;
+  if ((draft.type === "extrude" || draft.type === "revolve") && sketch?.plane) {
+    const frame = planeFrame(sketch.plane);
+    const mid = profileMiddle(sketch.data, draft.areas);
+    if (!mid) return [];
+    const p0 = toWorld(frame, mid[0], mid[1]);
+    if (draft.type === "extrude") {
+      const ex = draft.extrude ?? { end: "blind", flip: false };
+      const d = scale(frame.n, ex.flip ? -1 : 1);
+      if (ex.end === "blind") {
+        out.push(make(base("depth", "Depth"), { id: "depth", kind: "arrow", origin: p0, dir: d, scale: 1, angle: false, flips: !ex.second, max: Infinity, tip: "Drag to change the depth (hold Shift to stop it snapping)" }));
+        if (ex.second && !draft.surface)
+          out.push(make(base("depth2", "Other way"), { id: "depth2", kind: "arrow", origin: p0, dir: scale(d, -1), scale: 1, angle: false, flips: false, max: Infinity, tip: "Drag to change the depth the other way" }));
+      } else if (ex.end === "symmetric") {
+        const tip = "Drag to change the depth (it grows the same both ways)";
+        out.push(make(base("depth", "Depth"), { id: "depth", kind: "arrow", origin: p0, dir: d, scale: 0.5, angle: false, flips: false, max: Infinity, tip }));
+        out.push(make(base("depth", "Depth"), { id: "depthBack", kind: "arrow", origin: p0, dir: scale(d, -1), scale: 0.5, angle: false, flips: false, max: Infinity, tip }));
+      }
+      return out;
+    }
+    const rv = draft.revolve ?? { axis: "vertical", flip: false };
+    const ax = axisInSketch(sketch.data, rv.axis);
+    if (!ax) return [];
+    const through = toWorld(frame, ax.at[0], ax.at[1]);
+    const dir0 = unit(sub(toWorld(frame, ax.at[0] + ax.dir[0], ax.at[1] + ax.dir[1]), through));
+    if (!dir0) return [];
+    const d = scale(dir0, rv.flip ? -1 : 1);
+    const rel = sub(p0, through);
+    if (length(sub(rel, scale(d, dot(rel, d)))) < 1e-6) return [];
+    const angle = values.angle ?? 360;
+    const angle2 = values.angle2 ?? 0;
+    const arc = { kind: "arc" as const, origin: p0, dir: d, angle: true, flips: false };
+    if (rv.symmetric) {
+      const tip = "Drag round to change the angle (it grows the same both ways)";
+      out.push(make(base("angle", "Angle"), { ...arc, id: "angle", axis: { through, dir: d }, scale: 0.5, max: 360, tip }));
+      out.push(make(base("angle", "Angle"), { ...arc, id: "angleBack", axis: { through, dir: scale(d, -1) }, scale: 0.5, max: 360, tip }));
+    } else if (rv.second) {
+      out.push(make(base("angle", "Angle"), { ...arc, id: "angle", axis: { through, dir: d }, scale: 1, max: Math.max(0, 360 - angle2), tip: "Drag round to change the angle" }));
+      out.push(make(base("angle2", "Other way"), { ...arc, id: "angle2", axis: { through, dir: scale(d, -1) }, scale: 1, max: Math.max(0, 360 - angle), tip: "Drag round to change the angle the other way" }));
+    } else out.push(make(base("angle", "Angle"), { ...arc, id: "angle", axis: { through, dir: d }, scale: 1, max: 360, tip: "Drag round to change the angle" }));
+    return out;
+  }
+  const facesOf = (partId: string) => ctx.parts.find((p) => p.id === partId)?.faceRefs ?? [];
+  if (draft.type === "fillet" || draft.type === "chamfer") {
+    const pick = (draft.picks ?? []).find((p) => p.ref.kind === "edge" && !p.placed);
+    if (!pick) return [];
+    const c = edgeCorner(pick, facesOf(pick.partId));
+    if (!c) return [];
+    const edge = pick.ref as EdgeRef;
+    const fillet = draft.type === "fillet";
+    out.push(
+      make(base(fillet ? "radius" : "distance", fillet ? "Radius" : "Distance"), {
+        id: fillet ? "radius" : "distance",
+        kind: "arrow",
+        origin: edge.mid,
+        dir: c.into,
+        scale: fillet ? c.fillet : c.chamfer,
+        angle: false,
+        flips: false,
+        max: Infinity,
+        tip: fillet ? "Drag to change the radius" : "Drag to change the distance",
+      }),
+    );
+    return out;
+  }
+  const facePick = (draft.picks ?? []).find((p) => p.ref.kind === "face" && !p.placed);
+  if (!facePick) return [];
+  const face = facePick.ref as FaceRef;
+  const n = unit(face.normal);
+  if (!n) return [];
+  if (draft.type === "shell") {
+    out.push(make(base("thickness", "Wall"), { id: "thickness", kind: "arrow", origin: face.center, dir: scale(n, -1), scale: 1, angle: false, flips: false, max: Infinity, tip: "Drag to change the wall thickness" }));
+  } else if (draft.type === "thicken") {
+    const both = !!draft.bothSides;
+    const d = scale(n, draft.flipSide && !both ? -1 : 1);
+    out.push(make(base("thickness", "Thickness"), { id: "thickness", kind: "arrow", origin: face.center, dir: d, scale: both ? 0.5 : 1, angle: false, flips: false, max: Infinity, tip: "Drag to change the thickness" }));
+  }
+  return out;
+}
+
+/** A dragged value as its box shows it: lengths in the design's units, angles in degrees. */
+export function manipBoxText(m: Pick<Manipulator, "angle">, value: number): string {
+  return m.angle ? String(Math.round(value * 1000) / 1000) : startingLength(value);
+}
+
+/**
+ * What dragging `m` to `value` (and, for an Extrude's blind end, past zero: `flipped`) does to the draft as it was
+ * when the drag began.
+ */
+export function manipPatch(start: Feature, m: Manipulator, value: number, flipped: boolean): { params: Record<string, string>; fields?: Partial<Feature> } {
+  const params = { [m.key]: manipBoxText(m, value) };
+  if (flipped && m.flips && start.type === "extrude" && start.extrude) return { params, fields: { extrude: { ...start.extrude, flip: !start.extrude.flip } } };
+  return { params };
+}

@@ -7,7 +7,7 @@ import { indexOfRef, sameRef, type TopoPick } from "../geometry/topoRef";
 import { isPatternFeature, isPickFeature } from "../model/features";
 import { madeByDraft } from "../model/document";
 import { planeVisible, sketchVisible, usedSketches } from "../model/visibility";
-import { activeAssembly, activeDrawing, activeFeatures, activeHiddenDatums, activeStudioId, pickFor, studioParts, useStore, type PlaneName, type SelectionItem } from "../model/store";
+import { activeAssembly, activeDrawing, activeFeatures, activeHiddenDatums, activeStudioId, pickFor, studioParts, useLengthUnit, useStore, type PlaneName, type SelectionItem } from "../model/store";
 import { ghostParts } from "../app/versionActions";
 import { compose, IDENTITY, placementMatrix, rotate, type Placement } from "../assembly/math";
 import { isOrigin } from "../assembly/origin";
@@ -51,6 +51,8 @@ import { NO_FILTER } from "./selectionFilter";
 import { choiceLabel, orderChoices, type OtherChoice, type OtherHit } from "./selectOther";
 import { setSelectOther } from "./selectOtherState";
 import { finishesByKey, type FinishId } from "../model/finishes";
+import { manipCancel, manipDragging, manipEnd, manipMove, manipStart, manipulatorsNow } from "./manipulatorGlue";
+import type { Manipulator } from "../model/manipulators";
 import { partsArrived, transformDraft, transformPick, triadCancel, triadEnd, triadFor, triadMove, triadStart } from "./transformTriad";
 
 /** Shared empty colour list (a selector must not make a new object each time). */
@@ -58,6 +60,7 @@ const NO_COLOURS: Record<string, string> = {};
 const NO_FINISHES: Record<string, FinishId> = {};
 const NO_PLACEMENTS: Record<string, number[]> = {};
 const NO_SHIFT: Record<string, [number, number, number]> = {};
+const NO_MANIPS: Manipulator[] = [];
 
 /**
  * Each instance shown as a copy of its part's mesh (moved into place with setPlacements); suppressed ones aren't shown.
@@ -897,10 +900,10 @@ export function Viewport() {
           viewportApi.current?.previewPick(null);
           setSelectOther(null);
         },
-        onTriadStart: (handle, ray, shift, size) => triadStart(viewportApi.current, handle, ray, shift, size),
-        onTriadMove: (ray, shift) => triadMove(viewportApi.current, ray, shift),
-        onTriadEnd: () => triadEnd(viewportApi.current),
-        onTriadCancel: () => triadCancel(viewportApi.current),
+        onTriadStart: (handle, ray, shift, size) => (handle.kind === "manip" ? manipStart(viewportApi.current, handle, ray) : triadStart(viewportApi.current, handle, ray, shift, size)),
+        onTriadMove: (ray, shift) => (manipDragging() ? manipMove(viewportApi.current, ray, shift) : triadMove(viewportApi.current, ray, shift)),
+        onTriadEnd: () => (manipDragging() ? manipEnd(viewportApi.current) : triadEnd(viewportApi.current)),
+        onTriadCancel: () => (manipDragging() ? manipCancel(viewportApi.current) : triadCancel(viewportApi.current)),
       });
     } catch (e) {
       useStore.getState().showToast(
@@ -1237,6 +1240,17 @@ export function Viewport() {
     [moveDraft, moveCentre, moveLive, inAssembly],
   );
   useEffect(() => viewportApi.current?.setTriad(triad), [triad]);
+  // A feature dialog's manipulators (an Extrude's depth arrow, a Fillet's radius…), following the draft live.
+  const manipDraft = useStore((s) => s.editing?.draft ?? null);
+  const manipLinks = useStore((s) => s.sketchLinks);
+  const manipParts = useStore((s) => s.parts);
+  const manipUnit = useLengthUnit();
+  const manips = useMemo(
+    () => (inAssembly || !manipDraft ? NO_MANIPS : manipulatorsNow()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [manipDraft, manipLinks, manipParts, manipUnit, inAssembly],
+  );
+  useEffect(() => viewportApi.current?.setManipulators(manips), [manips]);
   // Closing the dialog: nothing stays shown moved.
   useEffect(() => {
     if (!moveDraft) viewportApi.current?.clearPreviewMoves();
