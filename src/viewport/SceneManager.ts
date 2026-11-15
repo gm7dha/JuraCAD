@@ -67,6 +67,9 @@ export interface PictureOptions {
 /** Which way to look at each default plane for "View normal to". */
 const PLANE_VIEWS: Record<PlaneName, StandardView> = { Top: "top", Front: "front", Right: "right" };
 
+/** Two clicks within this many ms (and CLICK_SLOP px) are a double-click. */
+const DOUBLE_CLICK_MS = 450;
+
 /** The page was opened for the browser smoke test (?smoke). */
 const SMOKE = typeof location !== "undefined" && /[?&]smoke\b/.test(location.search);
 
@@ -419,7 +422,6 @@ export class SceneManager {
     // (A finger whose capture is lost without an up or cancel mustn't stay "down" for ever.)
     el.addEventListener("lostpointercapture", this.onPointerCancel);
     el.addEventListener("contextmenu", (e) => e.preventDefault());
-    el.addEventListener("dblclick", this.onDoubleClickEvent);
 
     // Onshape mouse: right-drag orbits, middle-drag pans, wheel zooms towards the cursor.
     this.controls = new OrbitControls(this.camera, el);
@@ -1198,12 +1200,7 @@ export class SceneManager {
   }
   private centreMark: THREE.Points | null = null;
 
-  private onDoubleClickEvent = (e: MouseEvent) => {
-    if (!this.callbacks.onDoubleClick || this.sketchController || e.button !== 0) return;
-    const { x, y } = this.localPoint(e as PointerEvent);
-    if (this.viewCube.contains(x, y, this.width)) return;
-    this.callbacks.onDoubleClick(this.pickAt(x, y));
-  };
+
 
   /** Whole parts picked in the Parts list: drawn in the selection colour. */
   setSelectedParts(ids: string[]): void {
@@ -2700,8 +2697,18 @@ export class SceneManager {
       const ptr = this.sketchPointer(e);
       if (ptr && this.sketchControllerRaw.useAt(ptr)) return;
     }
-    this.callbacks.onPick(this.pickAt(x, y), additive(e));
+    const target = this.pickAt(x, y);
+    this.callbacks.onPick(target, additive(e));
+    // A second click soon after, in the same place: a double-click (worked out here, as the browser's own dblclick
+    // doesn't always reach the view).
+    const now = performance.now();
+    const last = this.lastClick;
+    if (last && now - last.t < DOUBLE_CLICK_MS && Math.hypot(x - last.x, y - last.y) <= CLICK_SLOP) {
+      this.lastClick = null;
+      this.callbacks.onDoubleClick?.(target);
+    } else this.lastClick = { t: now, x, y };
   };
+  private lastClick: { t: number; x: number; y: number } | null = null;
 
   // -------------------------------------------------------------------------
   // Fingers and the pen (Onshape's tablet gestures): one finger turns the view, two pan and pinch to

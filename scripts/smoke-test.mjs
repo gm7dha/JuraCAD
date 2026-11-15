@@ -280,7 +280,13 @@ try {
   step = "double-clicking a face opens the feature that made it";
   {
     await page.mouse.dblclick(box.x + box.width * 0.5, box.y + box.height * 0.55);
-    await page.waitForFunction(() => ["box", "cylinder"].includes(window.juracadStore.getState().editing?.draft.type), null, { timeout: 10_000 });
+    await page.waitForFunction(() => ["box", "cylinder"].includes(window.juracadStore.getState().editing?.draft.type), null, { timeout: 10_000 }).catch(async () => {
+      const why = await page.evaluate(([x, y]) => {
+        const st = window.juracadStore.getState();
+        return JSON.stringify({ editing: st.editing?.draft.type ?? null, sketch: !!st.sketch, under: window.juracadViewport.current.pickKindAt(x, y), selection: st.selection });
+      }, [box.width * 0.5, box.height * 0.55]);
+      throw new Error(`double-clicking a face didn't open its feature: ${why}`);
+    });
     await page.getByRole("button", { name: "Cancel" }).click();
     await page.waitForFunction(() => window.juracadStore.getState().editing === null);
   }
