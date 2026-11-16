@@ -6,6 +6,7 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { GeometryEngine } from "../src/kernel/engine";
 import { cornersOf, type VertexPick } from "../src/geometry/vertexRef";
+import { shapeCorners } from "../src/kernel/corners";
 import type { PartMesh } from "../src/kernel/protocol";
 import type { Feature, GeomPick } from "../src/model/types";
 import { loadOpenCascade, feature, sketchFeature, extrudeFeature, rectSketch } from "./support/engineHelpers";
@@ -39,6 +40,16 @@ describe("corners", () => {
     const corners = cornersOf(boxPart(box, {}));
     expect(corners.length).toBe(8);
     for (const c of corners) expect(c.dirs?.length).toBe(3);
+  });
+
+  it("the engine finds the same corners the view offers: a hole's seam has none", () => {
+    engine = new GeometryEngine();
+    const r = engine.rebuild([feature("box", { width: 40, depth: 30, height: 10 }), feature("cylinder", { diameter: 10, height: 20, x: 20, y: 15, z: -5 }, "remove")]);
+    const shown = cornersOf(r.parts[0]).map((c) => c.p.join(",")).sort();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const found = shapeCorners((engine as any).parts[0].shape).map((c) => c.p.join(",")).sort();
+    expect(shown.length).toBe(8);
+    expect(found).toEqual(shown);
   });
 
   it("a three-point plane on corners follows the box when it gets wider", () => {

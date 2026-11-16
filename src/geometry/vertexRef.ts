@@ -44,6 +44,9 @@ export function unitDir(v: Vec3): Vec3 | null {
   return v.map((x) => Math.round((x / l) * 1e4) / 1e4) as Vec3;
 }
 
+/** Parts with more edges than this (a mesh brought in) have no corners offered or found (the engine and the view agree). */
+export const MOST_CORNER_EDGES = 20000;
+
 /** Ends nearer than this (mm) are one corner. */
 export const SAME_CORNER = 1e-3;
 
@@ -157,6 +160,7 @@ export interface MeshEdges {
  * way it leaves each end taken from its drawn line. Corners on unknown edges are left out.
  */
 export function meshCorners(m: MeshEdges): VertexRef[] {
+  if (m.edgeRefs.length > MOST_CORNER_EDGES) return [];
   const ends: EdgeEnd[] = [];
   const at = (k: number): Vec3 => [m.lines[3 * k], m.lines[3 * k + 1], m.lines[3 * k + 2]];
   m.edgeRefs.forEach((ref, i) => {

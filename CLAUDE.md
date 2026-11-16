@@ -1072,7 +1072,8 @@
   edges have none), `meshCorners`/`cornersOf` (cached per PartMesh: ends from `edgeRefs`, directions from the drawn lines — no
   PartMesh change), `matchVertex` = strictMatch's rules (min of distance and rel × size; every wanted dir must be one of the
   candidate's, dot ≥ 0.9; within max(0.5, 0.1 × size), unambiguous, else lost), `parseVertexPick`. Engine `src/kernel/corners.ts`
-  (`shapeCorners` from OCCT edges' ends + tangents, `findCorner(parts, pick)` → point or a plain message). SelectionItem kind
+  (`shapeCorners` from OCCT edges' ends + tangents, seams skipped as the view skips them — `seamEdgeIds`, now in topology.ts; both
+  sides offer/find none past `MOST_CORNER_EDGES` 20,000 edges; `findCorner(parts, pick)` → point or a plain message). SelectionItem kind
   "vertex" (index into `cornersOf`; `pickFor` returns null for it, `cornerPickFor` gives the VertexPick), so plain selection,
   Measure (engine `measure` takes VertexPicks: a point, "Corner — X / Y / Z", closest distance via a made vertex; no angle) and
   the status line include corners. SceneManager: `setCornerPicking` (Viewport from pure `cornerWanted` in geomClicks.ts: nothing

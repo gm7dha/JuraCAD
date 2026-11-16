@@ -3,9 +3,9 @@
  * ends, with the way the edge leaves each, grouped into corners.
  */
 import type { Shape3D } from "replicad";
-import { cornersFromEnds, matchVertex, type EdgeEnd, type VertexPick, type VertexRef } from "../geometry/vertexRef";
+import { cornersFromEnds, matchVertex, MOST_CORNER_EDGES, type EdgeEnd, type VertexPick, type VertexRef } from "../geometry/vertexRef";
 import type { Vec3 } from "../geometry/topoRef";
-import { edgesOf } from "./topology";
+import { edgesOf, seamEdgeIds } from "./topology";
 
 type Vecish = { x: number; y: number; z: number; delete(): void };
 const take = (v: Vecish): Vec3 => {
@@ -14,8 +14,7 @@ const take = (v: Vecish): Vec3 => {
   return out;
 };
 
-/** Parts with more edges than this (a mesh brought in) aren't searched for corners. */
-export const MOST_CORNER_EDGES = 20000;
+export { MOST_CORNER_EDGES };
 
 /** A shape's corners (with its bounding box for their places as shares of it). */
 export function shapeCorners(shape: Shape3D): VertexRef[] {
@@ -26,7 +25,10 @@ export function shapeCorners(shape: Shape3D): VertexRef[] {
   const ends: EdgeEnd[] = [];
   try {
     if (edges.length > MOST_CORNER_EDGES) return [];
+    // Seams (down the side of a cylinder) aren't drawn or offered in the 3D view, so their ends aren't corners here either.
+    const seams = seamEdgeIds(shape);
     for (const e of edges) {
+      if (seams.has(e.hashCode)) continue;
       try {
         const a = take(e.startPoint);
         const b = take(e.endPoint);

@@ -82,7 +82,8 @@ import { builtInProfile, placedProfile, type ProfileShape } from "../model/frame
 import type { FrameMemberInfo } from "../model/frameTypes";
 import { splitFaces } from "./splitFace";
 import { simplifyReport, type SimplifyLevel, type SimplifySummary } from "../model/simplify";
-import { edgesOf, facesOf, shellsOf, solidsOf } from "./topology";
+import { edgesOf, facesOf, seamEdgeIds, shellsOf, solidsOf } from "./topology";
+export { seamEdgeIds };
 import { findCorner } from "./corners";
 import type { VertexPick } from "../geometry/vertexRef";
 import { radiusPointPick, VariableFilletError } from "../model/variableFillet";
@@ -596,41 +597,6 @@ function cutThread(start: Shape3D, cyl: Cylinder, from: number, to: number, lo: 
     throw e;
   }
   return shape;
-}
-
-/**
- * Seams: the line down the side of a cylinder, cone or sphere where the
- * surface meets itself (a face's outline runs along it twice). Onshape doesn't
- * show those (they aren't real edges of the shape), and clicking one would get
- * in the way of picking the round face. The free edges of a surface (a skin)
- * are real edges, and are kept.
- */
-export function seamEdgeIds(shape: Shape3D): Set<number> {
-  /* eslint-disable @typescript-eslint/no-explicit-any */
-  const oc = getOC() as any;
-  const seams = new Set<number>();
-  for (const f of facesOf(shape)) {
-    try {
-      // A seam runs round the face twice (once each way), so it turns up twice when the face's edges are walked.
-      const seen = new Map<number, number>();
-      const explorer = new oc.TopExp_Explorer(f.wrapped, oc.TopAbs_ShapeEnum.TopAbs_EDGE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
-      try {
-        for (; explorer.More(); explorer.Next()) {
-          const current = explorer.Current();
-          const h = oc.ReplicadShapeHasher.HashCode(current, 2147483647) as number;
-          current.delete();
-          seen.set(h, (seen.get(h) ?? 0) + 1);
-        }
-      } finally {
-        explorer.delete();
-      }
-      for (const [h, n] of seen) if (n > 1) seams.add(h);
-    } finally {
-      f.delete();
-    }
-  }
-  return seams;
-  /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
 /** A part's edge lines without its seams (see seamEdgeIds). */

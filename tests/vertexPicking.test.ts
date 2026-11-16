@@ -4,7 +4,7 @@
  * list, Delete with dependents, copying features, and files that keep reading the same.
  */
 import { describe, expect, it } from "vitest";
-import { cornersFromEnds, matchVertex, meshCorners, nearestOnScreen, parseVertexPick, vertexDistance, type VertexRef } from "../src/geometry/vertexRef";
+import { cornersFromEnds, matchVertex, meshCorners, MOST_CORNER_EDGES, nearestOnScreen, parseVertexPick, vertexDistance, type VertexRef } from "../src/geometry/vertexRef";
 import { connectorFromClick, cornerWanted, lineFromClick, planeClick, pointFromClick } from "../src/model/geomClicks";
 import { orderChoices, choiceLabel, type OtherHit } from "../src/viewport/selectOther";
 import { allows, partHitAs } from "../src/viewport/selectionFilter";
@@ -57,6 +57,15 @@ describe("corners from a mesh", () => {
     expect(cs[0].dirs?.length).toBe(2);
     const circle = meshCorners({ edgeRefs: [{ curve: "CIRCLE", a: [5, 0, 0], b: [5, 0, 0] }], edgeGroups: [{ start: 0, count: 2 }], lines: [5, 0, 0, 0, 5, 0], vertices: [] });
     expect(circle).toEqual([]);
+  });
+
+  it("a part with more edges than the engine searches (a mesh brought in) offers no corners", () => {
+    const n = MOST_CORNER_EDGES + 1;
+    const edgeRefs = Array.from({ length: n }, (_, i) => ({ curve: "LINE", a: [i, 0, 0] as Vec3, b: [i + 1, 0, 0] as Vec3 }));
+    const lines = edgeRefs.flatMap((e) => [...e.a, ...e.b]);
+    const edgeGroups = edgeRefs.map((_, i) => ({ start: 2 * i, count: 2 }));
+    expect(meshCorners({ edgeRefs, edgeGroups, lines, vertices: [] })).toEqual([]);
+    expect(meshCorners({ edgeRefs: edgeRefs.slice(0, 3), edgeGroups: edgeGroups.slice(0, 3), lines, vertices: [] }).length).toBe(4);
   });
 });
 
