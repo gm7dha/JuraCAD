@@ -316,8 +316,11 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     type: "moveFace",
     label: "Move face",
     namePrefix: "Move face",
-    description: "Moves flat faces straight out (or in, with a minus distance), growing or shrinking the part.",
-    params: [{ key: "distance", label: "Distance", defaultValue: "2", group: "size" }],
+    description: "Moves faces: Offset pushes each face straight out (or in, with a minus distance) — round ones too, so a hole can be made a little bigger; Translate slides flat faces along a direction; Rotate turns flat faces about an axis.",
+    params: [
+      { key: "distance", label: "Distance", defaultValue: "2", group: "size" },
+      { key: "angle", label: "Angle", defaultValue: "5", group: "size", unit: "°", lazy: true },
+    ],
   },
   replaceFace: {
     type: "replaceFace",
@@ -636,7 +639,7 @@ export function isSolidFeature(type: FeatureType): boolean {
 }
 
 /** The size boxes worth showing for a feature as it's set up now (e.g. no depth for "through all"). */
-export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo" | "sweepControl" | "sheetConvert" | "transform" | "thin" | "revolve" | "modifyFillet" | "curve" | "frame" | "gusset" | "variableFillet">>): Set<string> {
+export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | "planeDef" | "fastener" | "surface"> & Partial<Pick<Feature, "pattern" | "chamferType" | "mitreCorners" | "extendTo" | "sweepControl" | "sheetConvert" | "transform" | "thin" | "revolve" | "modifyFillet" | "curve" | "frame" | "gusset" | "moveFace" | "variableFillet">>): Set<string> {
   const keys = new Set(FEATURE_DEFS[f.type].params.map((p) => p.key));
   // Curves: only the boxes their kind uses.
   if (f.type === "curve") return new Set(curveParamKeys(f.curve));
@@ -653,6 +656,8 @@ export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | 
   if ((f.type === "flange" || f.type === "hem") && !f.mitreCorners) keys.delete("cornerGap");
   if (f.type === "extendSurface" && f.extendTo) keys.delete("distance");
   if (f.type === "modifyFillet" && f.modifyFillet?.remove) keys.delete("radius");
+  // Move face: a distance to move, or (Rotate) an angle to turn.
+  if (f.type === "moveFace") keys.delete(f.moveFace?.mode === "rotate" ? "distance" : "angle");
   // A variable fillet's radii are its points (the main radius is for edges and ends without one).
   if (f.type === "fillet" && f.variableFillet) keys.delete("endRadius");
   // Frames: width / height / wall only for a custom size (a tube has no height, a flat bar or timber no wall).

@@ -18,6 +18,7 @@ import { evaluate, getCurrentScope, setCurrentScope } from "../model/expr";
 import { geometrySound } from "../model/checkReport";
 import { MESH_TOLERANCES, type Axis, type Feature, type GeomPick, type ImportedFile, type MateConnectorDef, type MeshQuality, type Operation, type PlaneMoreMode, type PlaneOptions, type TransformFrame } from "../model/types";
 import { deleteFaces, draftFaces, extrudeSketch, segmentsWire } from "./extrude";
+import { moveFacesBy, MoveFaceError, rotateFaces } from "./moveFace";
 import { axisInPlane, centreRevolve, revolveAxis, revolveSketch, twoWayAngle, twoWayRevolve } from "./revolve";
 import { thinSketches } from "../sketch/thin";
 import { axisInSketch } from "../sketch/axis";
@@ -5288,6 +5289,11 @@ export class GeometryEngine {
         result = draftFaces(part.shape, faces, planeFrame(feature.neutral ?? { kind: "default", name: "Top" }), !!feature.flipSide, values.angle);
       } else if (feature.type === "deleteFace") {
         result = deleteFaces(part.shape, faces);
+      } else if (feature.type === "moveFace" && feature.moveFace) {
+        // Onshape's Offset / Translate / Rotate (older Move faces, with no type, take the original path below).
+        const moved = this.moveFaceTypes(feature, part.shape, faces, values);
+        if (typeof moved === "string") return moved;
+        result = moved;
       } else {
         // How far each flat face moves along its own outward normal.
         const moves: { face: Face; d: number }[] = [];
@@ -5359,6 +5365,35 @@ export class GeometryEngine {
       return describeError(e, `Couldn't apply this ${def.label.toLowerCase()}.`);
     } finally {
       faces.forEach((f) => f.delete());
+    }
+  }
+
+  /** Move face's Offset / Translate / Rotate (see kernel/moveFace.ts); a string = why it can't. */
+  private moveFaceTypes(feature: Feature, shape: Shape3D, faces: Face[], values: Record<string, number>): Shape3D | string {
+    const mv = feature.moveFace!;
+    try {
+      if (mv.mode === "offset") {
+        if (Math.abs(values.distance) < 1e-9) return "Enter a distance to move the faces by.";
+        const r = moveFacesBy(shape, faces, { offset: values.distance });
+        if (r.warning) this.warnings[feature.id] = r.warning;
+        return r.shape;
+      }
+      const axis = mv.along
+        ? this.pickedAxis(mv.along, mv.mode === "rotate")
+        : { dir: ({ x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] } as Record<string, Vec3>)[mv.axis ?? "z"], through: [0, 0, 0] as Vec3 };
+      const k = mv.flip ? -1 : 1;
+      if (mv.mode === "translate") {
+        const d = values.distance * k;
+        if (Math.abs(d) < 1e-9) return "Enter a distance to move the faces by.";
+        const r = moveFacesBy(shape, faces, { move: [axis.dir[0] * d, axis.dir[1] * d, axis.dir[2] * d] });
+        if (r.warning) this.warnings[feature.id] = r.warning;
+        return r.shape;
+      }
+      if (Math.abs(values.angle) < 1e-9) return "Enter an angle to turn the faces by.";
+      return rotateFaces(shape, faces, axis.through, axis.dir, values.angle * k);
+    } catch (e) {
+      if (e instanceof MoveFaceError) return e.message;
+      throw e;
     }
   }
 
