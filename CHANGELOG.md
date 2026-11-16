@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.89 — "Final" tick when editing features
+
+- Editing a feature now shows the Part Studio as it was just after that feature, as in Onshape. Later features are greyed
+  and left out for the moment, so they don't get in the way of your clicks.
+- Tick "Final" in the dialog's header to see the finished design with your change in place. It's remembered while the
+  page is open.
+- Cancelling an edit, or ticking Final without a change, brings the full design back straight away without rebuilding.
+
 ## v0.88 — Move face: offset any face, slide or turn faces
 
 - Move face now has three types, as in Onshape. Offset (the usual one) moves faces in or out by a distance and works on

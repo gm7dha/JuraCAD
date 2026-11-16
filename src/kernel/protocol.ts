@@ -99,6 +99,11 @@ export interface StudioInput {
    * Missing = none.
    */
   contexts?: ContextInput[];
+  /**
+   * Shown rolled back while one of its features is edited (Onshape's "Final" off, src/model/finalPreview.ts):
+   * the engine keeps its whole build aside meanwhile (for other studios, later features' problems, and closing).
+   */
+  preview?: boolean;
 }
 
 /** One context's parts, for the engine. */
