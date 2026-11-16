@@ -8,6 +8,15 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.90 — Pick corners
+
+- Corners of parts can now be picked in the 3D view: hover near one and a dot shows; click to pick it.
+- Measure shows where a corner is, and the distance from it to a second corner, edge or face.
+- Corners work for Extrude up to a corner, Plane points, Mate connectors and Move / copy's triad, and they follow the
+  part when it changes.
+- Select other lists corners first, and the Pick filter has Corners.
+- Claude can use corners for planes and up-to-corner extrudes.
+
 ## v0.89 — "Final" tick when editing features
 
 - Editing a feature now shows the Part Studio as it was just after that feature, as in Onshape. Later features are greyed
