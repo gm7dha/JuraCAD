@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { indexOfRef, sameRef, type TopoPick } from "../geometry/topoRef";
-import { cornersOf } from "../geometry/vertexRef";
+import { cornersOf, indexOfVertex } from "../geometry/vertexRef";
 import { isPatternFeature, isPickFeature } from "../model/features";
 import { madeByDraft } from "../model/document";
 import { planeVisible, sketchVisible, usedSketches } from "../model/visibility";
@@ -12,7 +12,7 @@ import { activeAssembly, activeDrawing, activeFeatures, activeHiddenDatums, acti
 import { ghostParts } from "../app/versionActions";
 import { compose, IDENTITY, placementMatrix, rotate, type Placement } from "../assembly/math";
 import { isOrigin } from "../assembly/origin";
-import { clickedSpot, findPick, findVertex, framePlacement, ownConnectorPick, vertexConnectorPick } from "../assembly/connectors";
+import { clickedSpot, cornerOnCopy, findPick, framePlacement, ownConnectorPick, vertexConnectorPick } from "../assembly/connectors";
 import { explodeAssembly, useAssemblyLeaves, useSolvedAssembly } from "../app/assemblySolve";
 import { stepPartOffsets } from "../assembly/explode";
 import { instanceAt, leafKey, leavesOf, topOfKey, type Leaf } from "../assembly/subassembly";
@@ -100,7 +100,10 @@ function connectorItems(parts: PartMesh[], assembly: Assembly, assemblies: reado
       const key = leafKey(c.instanceId, c.path);
       const instance = instanceAt(assembly, assemblies, key)?.part;
       const part = instance && findMesh(parts, meshIdOf(instance));
-      const index = part ? findVertex(part, c.vertex) : -1;
+      // (Lit on the copy as shown: a copy cut by the assembly's features has its own corners.)
+      const shown = cutMeshFor(key);
+      const p = part ? cornerOnCopy(part, shown, c.vertex) : null;
+      const index = p ? indexOfVertex(cornersOf(shown ?? part!), { kind: "vertex", p }) : -1;
       if (index >= 0) items.push({ partId: key, kind: "vertex", index });
       continue;
     }

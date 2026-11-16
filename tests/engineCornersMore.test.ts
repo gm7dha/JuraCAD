@@ -8,6 +8,9 @@ import { GeometryEngine } from "../src/kernel/engine";
 import { cornersOf, type VertexPick } from "../src/geometry/vertexRef";
 import { connectorFrameFor, placeFrame, solveWithParts } from "../src/assembly/mates";
 import { vertexConnectorPick } from "../src/assembly/connectors";
+import { assemblyExtrudeCut, assemblySketch } from "../src/assembly/assemblyFeatures";
+import { cutMeshesFrom, storedCutInputs } from "../src/assembly/placed";
+import { planeOnFace } from "../src/sketch/planes";
 import type { PartMesh } from "../src/kernel/protocol";
 import type { Assembly, Feature, Mate } from "../src/model/types";
 import { linkCorner } from "../src/sketch/links";
@@ -90,6 +93,54 @@ describe("corners in assemblies", () => {
   });
 });
 
+describe("a corner of a copy cut by the assembly's features", () => {
+  it("is the pocket's corner, not the plain part's corner near it; the part's own corners stay put", () => {
+    const plate = feature("box", { width: "w", depth: 40, height: 5 });
+    const cube = feature("box", { width: 10, depth: 10, height: 10, x: 100 });
+    engine = new GeometryEngine();
+    let parts = engine.rebuild([plate, cube], { w: 40 }).parts;
+    // A 4 mm square pocket, 2 deep, cut by the assembly near the plate's back right corner.
+    const sk = assemblySketch({}, planeOnFace([0, 0, 1], [0, 0, 5], "Top"), rectSketch(34, 34, 4, 4), "s1");
+    const pocket = assemblyExtrudeCut({ features: [sk] }, sk.id, { throughAll: false, depth: 2 }, "c1");
+    const base: Assembly = {
+      id: "A",
+      name: "A",
+      features: [sk, pocket],
+      instances: [
+        { id: "i1", partId: plate.id, name: "Plate <1>", placement: still, fixed: true },
+        { id: "i2", partId: cube.id, name: "Cube <1>", placement: still, fixed: false },
+      ],
+    };
+    const cutsOf = (ps: PartMesh[]) => cutMeshesFrom(engine.assemblyCuts(storedCutInputs([base], ps)).meshes);
+    let cuts = cutsOf(parts);
+    const pc = cornersOf(cuts("A")!.i1).find((c) => near(c.p, [38, 38, 5]))!;
+    const cb = corner(parts.find((p) => p.id === cube.id)!, [100, 0, 0]);
+    const mateTo = (ref: typeof pc): Assembly => ({
+      ...base,
+      mates: [{ id: "m", name: "Fasten 1", type: "fastened", a: { instanceId: "i1", ...vertexConnectorPick(plate.id, ref) }, b: { instanceId: "i2", ...vertexConnectorPick(cube.id, cb.ref) }, flip: true, values: {} }],
+    });
+    let asm = mateTo(pc);
+    expect(connectorFrameFor(asm, parts, asm.mates![0].a, [asm], [], cuts)!.origin).toEqual([38, 38, 5]);
+    let r = solveWithParts(asm, parts, { cutMeshes: cuts });
+    expect(r.mateErrors).toEqual({});
+    expect(near(r.placements.i2.position, [-62, 38, 5], 1e-5)).toBe(true);
+    // The plate moved by a mate on the pocket's corner: the pocket wouldn't be there any more, so the mate says so.
+    const moving: Assembly = { ...asm, instances: asm.instances.map((i) => ({ ...i, fixed: i.id === "i2" })) };
+    const rm = solveWithParts(moving, parts, { cutMeshes: cuts });
+    expect(rm.mateErrors.m).toMatch(/uses a corner made by an assembly feature/);
+    expect(near(rm.placements.i1.position, [0, 0, 0])).toBe(true);
+    // The plate made wider: the pocket stays where it was cut, and so does the cube.
+    parts = engine.rebuild([plate, cube], { w: 60 }).parts;
+    cuts = cutsOf(parts);
+    r = solveWithParts(asm, parts, { cutMeshes: cuts });
+    expect(near(r.placements.i2.position, [-62, 38, 5], 1e-5)).toBe(true);
+    // A corner the plate always had is followed on the plate itself, as it grows.
+    const own = corner(engine.rebuild([plate, cube], { w: 40 }).parts.find((p) => p.id === plate.id)!, [40, 40, 5]);
+    asm = mateTo(own.ref);
+    expect(connectorFrameFor(asm, parts, asm.mates![0].a, [asm], [], cuts)!.origin).toEqual([60, 40, 5]);
+  });
+});
+
 describe("a loft to a corner", () => {
   it("makes a pyramid up to the box's corner, which follows the box", () => {
     const box = feature("box", { width: 40, depth: 40, height: "h" });
@@ -130,5 +181,9 @@ describe("a sketch point used from a corner", () => {
     expect(at).toBeTruthy();
     expect(Math.abs(at![0] - 65)).toBeLessThan(1e-6);
     expect(Math.abs(at![1] - 20)).toBeLessThan(1e-6);
+    // Its part gone: a plain message about the corner (not an edge), and the point stays where it was.
+    const lost = engine.rebuild([{ ...box, suppressed: true }, sk], { w: 65 });
+    expect(lost.sketchLinks?.[sk.id]?.pointLinks?.[used.pointId]).toBeNull();
+    expect(lost.featureErrors[sk.id]).toMatch(/takes from a part's corner can't be found/);
   });
 });

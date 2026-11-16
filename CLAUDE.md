@@ -1100,15 +1100,16 @@
   More uses (`cornerWanted` also: an assembly while `mateDraft` or `mirrorFacePick === "connector"`; a sketch with the Use tool;
   a Loft's `picking` start/end). Assemblies: `MateConnector.vertex` (a VertexRef in the PART's own coordinates; `pick` a stand-in
   flat face at it facing +Z, `vertexConnectorPick`) → `connectorFrameOnParts` → `vertexFrame` (`findVertex` = matchVertex on the
-  part's mesh corners; frame at the corner with X/Y/Z), so mirrored copies (flipFrame), sub-assembly paths and cut copies go the
-  usual way; parsed by `parseConnector` (not with `connector`/`pick2`); Viewport `connectorAt` on a vertex target (corners of the
+  part's mesh corners; frame at the corner with X/Y/Z), so mirrored copies (flipFrame) and sub-assembly paths go the
+  usual way; on a cut copy `cornerOnCopy` (exact on the part, exact on the cut copy, else the nearer — never a plain corner merely
+  near a pocket's; also for its dot and `cutFaceMoved`, "uses a corner made by an assembly feature"); parsed by `parseConnector` (not with `connector`/`pick2`); Viewport `connectorAt` on a vertex target (corners of the
   copy as shown), `connectorItems` lights its dot; Width refuses it (`pickConnector`), a mirror across a face refuses it
   (`pickMirrorFace`); a NEW mate between two corners starts with `flip` (`cornerFlip`: same way, so parts keep their way up); no
   spot choice; label "corner". Loft: `loftClick` takes GeomClick "corner" as `{point: {p, vertex}}`, engine `pointOf` →
   `cornerOnShape` (corners.ts); `loftUses`/`loftWithoutGone`/`profileLabel` know `vertex`. Sketch Use: `linkCorner(s, frame,
   pick)` (links.ts) = a fixed `standalone` point (kept on close, can take a hole) with `PointLink` `{partId, ref: VertexRef, end:
   "corner"}` (validate.ts parses it; one per corner, `samePointLink`; not Pierce's), re-found in `followSketch` among
-  `shapeCorners` by matchVertex. Claude: add_mate ends `{"instance", "vertex": [x, y, z]}` (as the copy sits now, `placedCorner`;
+  `shapeCorners` by matchVertex (lost = its own note, `cornerNote`). Claude: add_mate ends `{"instance", "vertex": [x, y, z]}` (as the copy sits now, `placedCorner`;
   two corners default `flip` true). Not done: box selection, dots for every corner of a hovered part, corners in Measure in
   assemblies (none there), the smoke test mating corners. Tests: tests/cornersMore (pure), engineCornersMore (a corner mate
   followed as w grows, a mirrored copy, a lost corner, a loft to a corner, a Use'd corner point followed), mcpCorners.

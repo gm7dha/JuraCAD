@@ -12,7 +12,7 @@
  */
 import { circleThrough3D } from "../geometry/measureMath";
 import { matchRefs, type TopoPick } from "../geometry/topoRef";
-import { cornersOf, matchVertex, type VertexRef } from "../geometry/vertexRef";
+import { cornersOf, indexOfVertex, matchVertex, vertexDistance, type VertexRef } from "../geometry/vertexRef";
 import type { PartMesh } from "../kernel/protocol";
 import type { ConnectorSpot } from "../model/types";
 import { ORIGIN_ID } from "./origin";
@@ -488,6 +488,29 @@ function meshSize(part: Pick<PartMesh, "vertices">): number {
 /** Index of a picked corner among the part's corners as shown now (-1 when it can't be found). */
 export function findVertex(part: PartMesh, ref: VertexRef): number {
   return matchVertex(ref, cornersOf(part), meshSize(part)) ?? -1;
+}
+
+/**
+ * Where a picked corner is now, on a copy that the assembly's own features may have cut (`cut`, in the part's own
+ * coordinates, as the copy is shown): exactly on the part itself first (so a corner it always had stays put), then
+ * exactly on the cut copy (a pocket's corner the assembly made), then whichever of the two finds it nearer — never a
+ * corner of the plain part merely near one the cut made. Null when it's lost on both.
+ */
+export function cornerOnCopy(part: PartMesh, cut: PartMesh | undefined, ref: VertexRef): Vec3 | null {
+  const plain = cornersOf(part);
+  const exact = indexOfVertex(plain, ref);
+  if (exact >= 0 || !cut) {
+    const i = exact >= 0 ? exact : findVertex(part, ref);
+    return i >= 0 ? plain[i].p : null;
+  }
+  const shown = cornersOf(cut);
+  const onCut = indexOfVertex(shown, ref);
+  if (onCut >= 0) return shown[onCut].p;
+  const i = findVertex(part, ref);
+  const j = findVertex(cut, ref);
+  if (i < 0) return j >= 0 ? shown[j].p : null;
+  if (j < 0) return plain[i].p;
+  return vertexDistance(ref, shown[j], meshSize(cut)) < vertexDistance(ref, plain[i], meshSize(part)) ? shown[j].p : plain[i].p;
 }
 
 /** A corner's frame on its part, in the part's own coordinates: at the corner, lined up with X, Y and Z (null when it's lost). */
