@@ -3,6 +3,7 @@ import { transformKeys } from "./transformMath";
 import { evaluate, type Scope } from "./expr";
 import type { Feature, FeatureType, Operation } from "./types";
 import { curveParamKeys } from "./curves";
+import { sweepParamKeys } from "./sweepOptions";
 
 export interface ParamDef {
   key: string;
@@ -182,6 +183,9 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     description: "Carries a sketch's closed shape along a path drawn in another sketch — for pipes, handles and rails.",
     params: [
       { key: "twist", label: "Twist (turn along the whole path)", defaultValue: "0", group: "size", unit: "°" },
+      { key: "turns", label: "Twist (whole turns along the path)", defaultValue: "1", min: 0, group: "size", unit: "", lazy: true },
+      { key: "pitch", label: "Twist pitch (along the path per turn)", defaultValue: "10", positive: true, group: "size", lazy: true },
+      { key: "scale", label: "Scale at the end (1 = the same size)", defaultValue: "1", positive: true, max: 100, group: "size", unit: "", lazy: true },
       { key: "thickness", label: "Wall thickness", defaultValue: "2", positive: true, group: "thin" },
       { key: "thickness2", label: "Wall thickness on the other side", defaultValue: "0", min: 0, group: "thin" },
     ],
@@ -645,8 +649,8 @@ export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | 
   if (f.type === "curve") return new Set(curveParamKeys(f.curve));
   // Sheet metal from a part's faces has rips but no depth; from a sketch, the other way round.
   if (f.type === "sheetMetal") keys.delete(f.sheetConvert ? "depth" : "ripGap");
-  // A profile kept facing one way can't also twist.
-  if (f.type === "sweep" && f.sweepControl?.lockOrientation) keys.delete("twist");
+  // A profile kept facing one way (or locked to a direction) can't also twist; one box for how the twist is given; the scale when on.
+  if (f.type === "sweep") sweepParamKeys(f, keys);
   // Thin walls: their thicknesses only when Thin is on (one when centred); a revolve's second angle only for two directions.
   if (!f.thin || f.surface) ["thickness", "thickness2"].forEach((k) => keys.delete(k));
   if (f.thin?.midPlane) keys.delete("thickness2");

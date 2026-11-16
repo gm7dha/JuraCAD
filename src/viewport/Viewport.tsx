@@ -1316,7 +1316,7 @@ export function Viewport() {
     return d && (d.type === "mirror" || d.type === "linearPattern" || d.type === "circularPattern") ? d : null;
   });
   // A newer Plane type open: sketch lines can be clicked too (as its line, or a point on one).
-  const lineDraftId = useStore((s) => (s.editing?.draft.type === "frame" ? s.editing.draft.id : s.editing?.draft.type === "plane" && s.editing.draft.planeDef && isMorePlaneMode(s.editing.draft.planeDef.mode) && s.editing.draft.planeDef.mode !== "curvePoint" ? s.editing.draft.id : null));
+  const lineDraftId = useStore((s) => (s.editing?.draft.type === "frame" || (s.editing?.draft.type === "sweep" && s.editing.draft.sweepControl?.picking === "direction") ? s.editing.draft.id : s.editing?.draft.type === "plane" && s.editing.draft.planeDef && isMorePlaneMode(s.editing.draft.planeDef.mode) && s.editing.draft.planeDef.mode !== "curvePoint" ? s.editing.draft.id : null));
   const pickLines = useMemo(() => (refDraft && !inAssembly ? pickableSketchLines(features, refDraft.id) : lineDraftId && !inAssembly ? pickableSketchLines(features, lineDraftId) : NO_LINES), [refDraft, lineDraftId, features, inAssembly]);
   useEffect(() => viewportApi.current?.setPickLines(pickLines), [pickLines]);
   useEffect(() => {

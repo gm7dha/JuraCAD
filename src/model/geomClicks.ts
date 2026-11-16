@@ -221,6 +221,8 @@ export function connectorWanted(s: { editing: { draft: Feature } | null; sketch:
   if (d.type === "mateConnector" || d.type === "plane" || d.type === "mirror") return true;
   // Text: a connector's plane, but a click on a round face wraps the text round it instead.
   if (d.type === "text") return "notOnRound";
+  // A Sweep's locked direction may be a connector's Z.
+  if (d.type === "sweep") return d.sweepControl?.picking === "direction";
   return d.type === "transform" && (d.transform?.picking === "from" || d.transform?.picking === "to");
 }
 
