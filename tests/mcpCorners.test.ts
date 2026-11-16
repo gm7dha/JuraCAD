@@ -68,4 +68,24 @@ describe("corners named by Claude", () => {
     await ok(s, "set_variables", { variables: [{ name: "h", value: 4 }] });
     expect(Math.abs(vol() - 100)).toBeLessThan(1e-3);
   });
+
+  it("fastens a copy's corner to another's in an assembly, pointing the same way", async () => {
+    const s = newSession();
+    await ok(s, "add_feature", { type: "box", width: 40, depth: 20, height: 10, name: "Block" });
+    await ok(s, "add_feature", { type: "box", width: 10, depth: 10, height: 10, x: 100, name: "Cube", operation: "new" });
+    await ok(s, "create_assembly", { name: "A" });
+    await ok(s, "insert_into_assembly", { part: "Part 1" });
+    await ok(s, "insert_into_assembly", { part: "Part 2" });
+    const names = s.doc.assemblies![0].instances.map((i) => i.name);
+    const mated = await ok(s, "add_mate", { type: "fasten", first: { instance: names[0], vertex: [40, 20, 10] }, second: { instance: names[1], vertex: [s.doc.assemblies![0].instances[1].placement.position[0] + 100, 0, 0] } });
+    expect(mated).toMatch(/corner/);
+    const asm = s.doc.assemblies![0];
+    expect(asm.mates![0].flip).toBe(true);
+    expect(asm.mates![0].b.vertex?.p).toEqual([100, 0, 0]);
+    const placed = asm.instances[1].placement;
+    [-60, 20, 10].forEach((v, k) => expect(placed.position[k]).toBeCloseTo(v, 5));
+    expect(Math.abs(placed.rotation[3])).toBeCloseTo(1, 6);
+    // Not a corner: the nearest are named.
+    expect(await fails(s, "add_mate", { type: "fasten", first: { instance: names[0], vertex: [20, 20, 10] }, second: { instance: names[1], face: "top" } })).toMatch(/no corner at/);
+  });
 });

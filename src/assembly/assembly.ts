@@ -4,6 +4,7 @@
  */
 import { newId } from "../model/document";
 import { parsePick } from "../geometry/topoRef";
+import { parseVertexPick, type VertexRef } from "../geometry/vertexRef";
 import { customColumns, customValue } from "./properties";
 import type { Assembly, AssemblyGroup, ConnectorSpot, PartProperties, ExplodeStep, AssemblyPattern, Instance, Replicate, Mate, MateConnector, MateRelation, MateType, NamedPosition, JuraCADDocument } from "../model/types";
 import { parseRelation } from "./relations";
@@ -775,7 +776,14 @@ export function parseConnector(raw: unknown): MateConnector | null {
   const path = pathOf(c.path);
   // (A Width mate's second face on another part of the same sub-assembly copy.)
   const path2 = pick2 && path ? pathOf(c.path2) : null;
-  return { instanceId: c.instanceId, ...(path ? { path } : {}), pick, ...(pick2 ? { pick2 } : {}), ...(path2 ? { path2 } : {}), ...(spot ? { spot } : {}), ...(point ? { point } : {}), ...(typeof c.connector === "string" && !pick2 ? { connector: c.connector } : {}) };
+  return { instanceId: c.instanceId, ...(path ? { path } : {}), pick, ...(pick2 ? { pick2 } : {}), ...(path2 ? { path2 } : {}), ...(spot ? { spot } : {}), ...(point ? { point } : {}), ...(typeof c.connector === "string" && !pick2 ? { connector: c.connector } : {}), ...vertexOf(c.vertex, !pick2 && typeof c.connector !== "string") };
+}
+
+/** A mate end's corner (`MateConnector.vertex`), checked; nothing when it isn't one (or the end is on something else). */
+function vertexOf(raw: unknown, allowed: boolean): { vertex?: VertexRef } {
+  if (!allowed || !raw) return {};
+  const v = parseVertexPick({ partId: "", ref: raw });
+  return v ? { vertex: v.ref } : {};
 }
 
 function parseMate(raw: unknown, ids: Set<string>): Mate | null {

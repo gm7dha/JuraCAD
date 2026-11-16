@@ -51,6 +51,7 @@ export function profileLabel(p: LoftProfile, name: (id: string) => string | unde
   if ("edges" in p) return `${p.edges.length} edge${p.edges.length === 1 ? "" : "s"} of ${name(p.edges[0].partId.split(/[~@]/)[0]) ?? "a part"}`;
   const g = p.point;
   if (g.sketchPoint) return `A point of ${name(g.sketchPoint.sketch) ?? "a deleted sketch"}`;
+  if (g.vertex) return `A corner of ${name(g.vertex.partId.split(/[~@]/)[0]) ?? "a part"}`;
   if (g.pick) return `A corner of ${name(g.pick.partId.split(/[~@]/)[0]) ?? "a part"}`;
   return `The point (${g.p.map((v) => Math.round(v * 100) / 100).join(", ")})`;
 }
@@ -173,9 +174,8 @@ export function loftClick(f: Pick<Feature, "sections" | "loft"> & Partial<Pick<F
     if (typeof towards === "string") return towards;
     return withLoftDef(f, { [which]: { ...(f.loft?.[which] ?? {}), kind: "direction", towards }, picking: undefined });
   }
-  if (c.kind !== "part") return "Click a face or edge of a part.";
   if (picking === "newSectionEdges" || picking === "sectionEdges") {
-    if (c.pick.ref.kind !== "edge") return "Click edges of a part for this section (they must join end to end).";
+    if (c.kind !== "part" || c.pick.ref.kind !== "edge") return "Click edges of a part for this section (they must join end to end).";
     const next = toggleSectionEdge(profiles, c.pick, picking === "newSectionEdges");
     const patch = withProfiles({ loft: { ...f.loft, picking: "sectionEdges" } }, next);
     return { ...patch, ...withLoftDef(patch, tidyEnds(patch.loft ?? undefined, next)) };
@@ -185,6 +185,8 @@ export function loftClick(f: Pick<Feature, "sections" | "loft"> & Partial<Pick<F
     return withLoftDef(f, { [picking]: toggleEdge(f.loft?.[picking], c.pick) });
   }
   if (picking === "start" || picking === "end") {
+    // A corner clicked as itself: the point follows it (Onshape's vertex).
+    if (c.kind === "corner") return withProfiles({ loft: { ...f.loft, picking: undefined } }, withEndPoint(profiles, picking, { p: tidyVec(c.pick.ref.p), vertex: c.pick }));
     if (c.kind !== "part" || c.pick.ref.kind !== "edge") return "Click a corner of a part (near the end of an edge).";
     const end = nearEnd(c.pick.ref, c.at);
     if (!end) return "Click nearer the end of the edge, at the corner you want.";
@@ -192,7 +194,7 @@ export function loftClick(f: Pick<Feature, "sections" | "loft"> & Partial<Pick<F
     const next = withEndPoint(profiles, picking, point);
     return { ...withProfiles({ loft: { ...f.loft, picking: undefined } }, next), ...{} };
   }
-  if (c.pick.ref.kind !== "face") return "Click a face of a part to use it as a section, or choose sketches in the list.";
+  if (c.kind !== "part" || c.pick.ref.kind !== "face") return "Click a face of a part to use it as a section, or choose sketches in the list.";
   const next = toggleFace(profiles, c.pick);
   const patch = withProfiles(f, next);
   return { ...patch, ...withLoftDef(patch, tidyEnds(patch.loft ?? undefined, next)) };
@@ -220,6 +222,7 @@ export function loftUses(f: Pick<Feature, "sections" | "loft">): { sectionFeatur
     else {
       if (p.point.sketchPoint) sectionFeatures.push(p.point.sketchPoint.sketch);
       else if (p.point.pick) sectionParts.push(p.point.pick.partId);
+      else if (p.point.vertex) sectionParts.push(p.point.vertex.partId);
     }
   }
   const features: string[] = [];
@@ -242,7 +245,7 @@ export function loftWithoutGone<F extends Pick<Feature, "sections" | "loft">>(f:
   }
   if (!f.loft?.profiles) return f;
   const gone = (p: LoftProfile) =>
-    "sketch" in p ? featureGone(p.sketch) : "face" in p ? partGone(p.face.partId) : "edges" in p ? p.edges.some((e) => partGone(e.partId)) : p.point.sketchPoint ? featureGone(p.point.sketchPoint.sketch) : p.point.pick ? partGone(p.point.pick.partId) : false;
+    "sketch" in p ? featureGone(p.sketch) : "face" in p ? partGone(p.face.partId) : "edges" in p ? p.edges.some((e) => partGone(e.partId)) : p.point.sketchPoint ? featureGone(p.point.sketchPoint.sketch) : p.point.pick ? partGone(p.point.pick.partId) : p.point.vertex ? partGone(p.point.vertex.partId) : false;
   if (!f.loft.profiles.some(gone)) return f;
   const left = f.loft.profiles.filter((p) => !gone(p));
   const patch = withProfiles(f, left);

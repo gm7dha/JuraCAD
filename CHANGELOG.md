@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.91 — Corners in assemblies, lofts and sketches
+
+- While making a mate, click a part's corner: a Fasten between two corners puts the parts corner to corner (without
+  turning one over), and the mate follows when the part's sizes change.
+- A loft's start or end point can be a part's corner.
+- In a sketch, Use on a part's corner brings in a fixed point that follows the part.
+- Claude can mate parts at corners.
+
 ## v0.90 — Pick corners
 
 - Corners of parts can now be picked in the 3D view: hover near one and a dot shows; click to pick it.
