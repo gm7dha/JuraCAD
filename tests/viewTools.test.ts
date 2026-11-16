@@ -34,7 +34,7 @@ describe("selection filter", () => {
 
   it("ticking every kind is the same as no filter, and the order is fixed", () => {
     let f = NO_FILTER;
-    for (const k of ["sketch", "plane", "part", "edge", "face"] as const) f = toggleFilter(f, k);
+    for (const k of ["sketch", "plane", "part", "vertex", "edge", "face"] as const) f = toggleFilter(f, k);
     expect(f).toEqual(NO_FILTER);
     expect(toggleFilter(toggleFilter(NO_FILTER, "sketch"), "face")).toEqual(["face", "sketch"]);
     expect(toggleFilter(["face"], "face")).toEqual(NO_FILTER);

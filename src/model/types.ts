@@ -1,6 +1,7 @@
 import type { AreaPick } from "../sketch/areas";
 import type { FastenerKind } from "./fasteners";
 import type { TopoPick } from "../geometry/topoRef";
+import type { VertexPick } from "../geometry/vertexRef";
 import type { Variable } from "./variables";
 import type { NamedView } from "./namedViews";
 import type { Configuration } from "./configurations";
@@ -71,6 +72,8 @@ export interface GeomPick {
   axis?: "x" | "y" | "z";
   /** A curve feature (Helix, Fit spline…): with `end` "a"/"b" one of its ends, else a point or place along it. */
   curve?: string;
+  /** A corner (vertex) of a part, found again each rebuild (see geometry/vertexRef.ts). */
+  vertex?: VertexPick;
 }
 
 /**
@@ -392,6 +395,8 @@ export interface Feature {
      */
     upTo?: TopoPick;
     upToEnd?: "a" | "b";
+    /** Up to vertex: a corner clicked as itself (newer than `upTo` + `upToEnd`, which still work); wins over them. */
+    upToCorner?: VertexPick;
     /** One way (blind): also extrude the other way from the sketch, by the second depth (`depth2`). */
     second?: boolean;
   };

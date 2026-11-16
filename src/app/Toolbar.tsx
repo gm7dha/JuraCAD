@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { activeFeatures, activeStudioId, pickFor, studioParts, useStore } from "../model/store";
+import { activeFeatures, activeStudioId, cornerPickFor, pickFor, studioParts, useStore } from "../model/store";
 import { connectorFromClick, type GeomClick } from "../model/geomClicks";
 import { planeFrame } from "../sketch/planes";
 import type { FeatureType } from "../model/types";
@@ -100,7 +100,10 @@ export function startMateConnectorFromSelection() {
   const draft = st.editing?.draft;
   if (!draft?.connector) return;
   const pick = item ? pickFor(st.parts, item) : null;
-  const click: GeomClick | null = pick
+  const corner = item ? cornerPickFor(st.parts, item) : null;
+  const click: GeomClick | null = corner
+    ? { kind: "corner", pick: corner }
+    : pick
     ? { kind: "part", pick, ...(item?.kind === "edge" ? { points: viewportApi.current?.edgePoints(item.partId, item.index) ?? [] } : {}) }
     : plane
       ? { kind: "plane", plane: { kind: "default", name: plane }, frame: planeFrame({ kind: "default", name: plane }) }

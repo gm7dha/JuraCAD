@@ -1028,9 +1028,9 @@ function SketchSolidOptions() {
               onChange={(e) => {
                 const end = e.target.value as ExtrudeEnd;
                 // A pick made for one kind of end doesn't fit another.
-                const { upTo: _u, upToEnd: _e, ...rest } = opts;
+                const { upTo: _u, upToEnd: _e, upToCorner: _c, ...rest } = opts;
                 const keep = PICKED_ENDS[end] && PICKED_ENDS[end] === PICKED_ENDS[opts.end] && opts.upTo;
-                setDraftField({ extrude: { ...rest, end, ...(keep ? { upTo: opts.upTo, ...(opts.upToEnd ? { upToEnd: opts.upToEnd } : {}) } : {}) } });
+                setDraftField({ extrude: { ...rest, end, ...(keep ? { upTo: opts.upTo, ...(opts.upToEnd ? { upToEnd: opts.upToEnd } : {}) } : {}), ...(end === "upToVertex" && opts.upToCorner ? { upToCorner: opts.upToCorner } : {}) } });
               }}
             >
               {EXTRUDE_ENDS.map(([end, label]) => (
@@ -1039,7 +1039,7 @@ function SketchSolidOptions() {
                 </option>
               ))}
             </select>
-            <p className={`dialog-hint field-hint${PICKED_ENDS[opts.end] && !opts.upTo ? " attention" : ""}`}>{extrudeEndHint(opts)}</p>
+            <p className={`dialog-hint field-hint${PICKED_ENDS[opts.end] && !opts.upTo && !opts.upToCorner ? " attention" : ""}`}>{extrudeEndHint(opts)}</p>
           </>
         ))}
       {draft.type === "extrude" && (opts.end === "blind" || opts.end === "upToNext" || opts.end === "upToPart") && (
@@ -1088,7 +1088,7 @@ function extrudeEndHint(opts: NonNullable<Feature["extrude"]>): string {
     case "upToPart":
       return opts.upTo ? "Part chosen — click another part to change it." : "Click the part to extrude up to. All of the sketch must meet it.";
     case "upToVertex":
-      return opts.upTo ? "Corner chosen — the extrude ends level with it. Click near another corner to change it." : "Click near the end of an edge: the extrude ends level with that corner.";
+      return opts.upTo || opts.upToCorner ? "Corner chosen — the extrude ends level with it. Click another corner to change it." : "Click a corner (a dot shows when you're near one): the extrude ends level with it.";
   }
 }
 

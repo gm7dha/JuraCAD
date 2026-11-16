@@ -7,6 +7,7 @@
 import type { EdgeRef, FaceRef, TopoPick, Vec3 } from "../geometry/topoRef";
 import type { PartMesh } from "../kernel/protocol";
 import { InputError } from "./args";
+import { cornersOf, type VertexPick } from "../geometry/vertexRef";
 
 export interface FaceInfo {
   id: string;
@@ -223,3 +224,19 @@ export function pickEdges(part: MeshLike, selectors: unknown[], where: string): 
 }
 
 export const PICK_HELP = { faces: FACE_HELP, edges: EDGE_HELP };
+
+/**
+ * A part's corner at (or nearest) a point, as the app stores a clicked corner (see geometry/vertexRef.ts): within
+ * 0.5 mm or 2% of the part's size, else a plain message naming the nearest corners.
+ */
+export function pickCorner(part: MeshLike, at: Vec3, where: string): VertexPick {
+  const corners = cornersOf(part);
+  if (!corners.length) throw new InputError(`${where}: ${part.name} has no corners (its edges are all closed loops, like a cylinder's). Give an edge or a face instead.`);
+  const box = corners.map((c) => c.p);
+  const size = Math.hypot(...[0, 1, 2].map((k) => Math.max(...box.map((p) => p[k])) - Math.min(...box.map((p) => p[k]))));
+  const gap = (p: Vec3) => Math.hypot(p[0] - at[0], p[1] - at[1], p[2] - at[2]);
+  const sorted = [...corners].sort((a, b) => gap(a.p) - gap(b.p));
+  if (gap(sorted[0].p) > Math.max(0.5, 0.02 * size))
+    throw new InputError(`${where}: ${part.name} has no corner at ${fmt(at)}. The nearest corners are ${sorted.slice(0, 6).map((c) => fmt(c.p)).join(", ")}.`);
+  return { partId: part.id, ref: sorted[0] };
+}

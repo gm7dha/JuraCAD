@@ -2,6 +2,7 @@ import { isSimplifyLevel } from "./simplify";
 import { parseVariableFillet } from "./variableFillet";
 import { parseNamedViews } from "./namedViews";
 import { parsePick } from "../geometry/topoRef";
+import { parseVertexPick } from "../geometry/vertexRef";
 import { parseMoveFace } from "./moveFace";
 import { parseLineRef } from "./patternRefs";
 import { FASTENER_KINDS, FASTENER_SIZES, type FastenerKind } from "./fasteners";
@@ -524,6 +525,8 @@ export function parseGeomPick(raw: unknown): GeomPick | null {
   if (typeof g.connector === "string") out.connector = g.connector;
   if (g.axis === "x" || g.axis === "y" || g.axis === "z") out.axis = g.axis;
   if (typeof g.curve === "string") out.curve = g.curve;
+  const vertex = parseVertexPick(g.vertex);
+  if (vertex) out.vertex = vertex;
   return out;
 }
 
@@ -694,6 +697,7 @@ export function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | n
         ...(upTo ? { upTo } : {}),
         ...(ex?.upToEnd === "a" || ex?.upToEnd === "b" ? { upToEnd: ex.upToEnd } : {}),
         ...(ex?.second === true ? { second: true } : {}),
+        ...(parseVertexPick(ex?.upToCorner) ? { upToCorner: parseVertexPick(ex?.upToCorner)! } : {}),
       };
     }
     const ids = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);

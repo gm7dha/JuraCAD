@@ -4,7 +4,7 @@
  * it changes in the open dialog (or the design). Mate connector marks drawn
  * in the view are worked out here too.
  */
-import { useStore, activeFeatures, pickFor } from "../model/store";
+import { useStore, activeFeatures, cornerPickFor, pickFor } from "../model/store";
 import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 import { planeFrame, type PlaneFrame } from "../sketch/planes";
 import { connectorFromClick, fractionAlong, planeClick, type GeomClick } from "../model/geomClicks";
@@ -82,6 +82,10 @@ export function geomClickOf(manager: SceneManager | null, target: PickTarget | n
     return typeof l === "string" ? null : { kind: "sketchLine", line, a: l.a, b: l.b };
   }
   if (target.kind !== "part") return null;
+  if (target.item.kind === "vertex") {
+    const corner = cornerPickFor(s.parts, target.item);
+    return corner ? { kind: "corner", pick: corner } : null;
+  }
   const pick = pickFor(s.parts, target.item);
   if (!pick) return null;
   return { kind: "part", pick, ...(target.point ? { at: target.point } : {}), ...(target.item.kind === "edge" ? { points: manager?.edgePoints(target.item.partId, target.item.index) ?? [] } : {}) };

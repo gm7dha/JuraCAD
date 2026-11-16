@@ -210,6 +210,7 @@ export function geomPickLabel(g: GeomPick, names: (id: string) => string | undef
   if (g.curve) return `${g.end === "a" ? "The start of " : g.end === "b" ? "The end of " : g.end === "mid" ? "The middle of " : ""}${names(g.curve) ?? "a curve"}`;
   if (g.sketchPoint) return g.sketchPoint.point === "origin" ? `Origin of ${names(g.sketchPoint.sketch) ?? "a sketch"}` : `A point of ${names(g.sketchPoint.sketch) ?? "a sketch"}`;
   if (g.sketchLine) return `A line of ${names(g.sketchLine.sketch) ?? "a sketch"}`;
+  if (g.vertex) return `A corner of ${names(g.vertex.partId) ?? "a part"}`;
   if (g.pick) {
     const part = names(g.pick.partId) ?? "a part";
     if (g.pick.ref.kind === "face") return `${g.pick.ref.surface === "PLANE" ? "A flat face" : "A round face"} of ${part}`;

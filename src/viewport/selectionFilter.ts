@@ -4,8 +4,8 @@
  * way) = everything. Kept for this session only, never in the file.
  */
 
-/** What can be picked: faces, edges, whole parts, planes (and mate connectors), and sketches (areas, lines, curves). */
-export type FilterKind = "face" | "edge" | "part" | "plane" | "sketch";
+/** What can be picked: faces, edges, corners, whole parts, planes (and mate connectors), and sketches (areas, lines, curves). */
+export type FilterKind = "face" | "edge" | "vertex" | "part" | "plane" | "sketch";
 
 /** The kinds chosen; empty = everything (no filter). */
 export type SelectFilter = readonly FilterKind[];
@@ -15,6 +15,7 @@ export const NO_FILTER: SelectFilter = [];
 export const FILTER_OPTIONS: { kind: FilterKind; label: string; hint: string }[] = [
   { kind: "face", label: "Faces", hint: "Flat or curved faces of parts" },
   { kind: "edge", label: "Edges", hint: "Edges of parts" },
+  { kind: "vertex", label: "Corners", hint: "Corners of parts (where edges meet)" },
   { kind: "part", label: "Parts", hint: "A click on a part picks the whole part" },
   { kind: "plane", label: "Planes", hint: "Top, Front, Right, your planes and mate connectors" },
   { kind: "sketch", label: "Sketches", hint: "Areas, lines and curves of sketches" },
@@ -31,7 +32,7 @@ export const allows = (f: SelectFilter, kind: FilterKind) => f.length === 0 || f
  * aren't), or nothing. `wholeOk`: whole parts can be picked now (nothing open); otherwise "part" counts as faces and edges,
  * so a tool that needs them still works.
  */
-export function partHitAs(f: SelectFilter, kind: "face" | "edge", wholeOk = true): "self" | "whole" | null {
+export function partHitAs(f: SelectFilter, kind: "face" | "edge" | "vertex", wholeOk = true): "self" | "whole" | null {
   if (f.length === 0) return "self";
   if (f.includes(kind)) return "self";
   if (f.includes("part")) return wholeOk ? "whole" : "self";

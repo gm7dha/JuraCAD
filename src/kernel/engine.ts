@@ -3,7 +3,7 @@
  * OpenCascade (through replicad). Runs inside the Web Worker, and directly in
  * Node for the automated tests.
  */
-import { assembleWire, basicFaceExtrusion, type Wire, cast, makePolygon, Vector, getOC, makeCompound, makeProjectedEdges, ProjectionCamera, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeVertex, makeSphere, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
+import { assembleWire, basicFaceExtrusion, type Wire, cast, makePolygon, Vector, getOC, makeCompound, makeProjectedEdges, ProjectionCamera, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeVertex, makeSphere, measureVolume, type Vertex, type Edge, type Face, type Shape3D } from "replicad";
 
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
@@ -82,7 +82,10 @@ import { builtInProfile, placedProfile, type ProfileShape } from "../model/frame
 import type { FrameMemberInfo } from "../model/frameTypes";
 import { splitFaces } from "./splitFace";
 import { simplifyReport, type SimplifyLevel, type SimplifySummary } from "../model/simplify";
-import { edgesOf, facesOf, shellsOf, solidsOf } from "./topology";
+import { edgesOf, facesOf, seamEdgeIds, shellsOf, solidsOf } from "./topology";
+export { seamEdgeIds };
+import { findCorner } from "./corners";
+import type { VertexPick } from "../geometry/vertexRef";
 import { radiusPointPick, VariableFilletError } from "../model/variableFillet";
 import { variableFillet, type EdgeRadiusPoint } from "./variableFillet";
 import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
@@ -594,41 +597,6 @@ function cutThread(start: Shape3D, cyl: Cylinder, from: number, to: number, lo: 
     throw e;
   }
   return shape;
-}
-
-/**
- * Seams: the line down the side of a cylinder, cone or sphere where the
- * surface meets itself (a face's outline runs along it twice). Onshape doesn't
- * show those (they aren't real edges of the shape), and clicking one would get
- * in the way of picking the round face. The free edges of a surface (a skin)
- * are real edges, and are kept.
- */
-export function seamEdgeIds(shape: Shape3D): Set<number> {
-  /* eslint-disable @typescript-eslint/no-explicit-any */
-  const oc = getOC() as any;
-  const seams = new Set<number>();
-  for (const f of facesOf(shape)) {
-    try {
-      // A seam runs round the face twice (once each way), so it turns up twice when the face's edges are walked.
-      const seen = new Map<number, number>();
-      const explorer = new oc.TopExp_Explorer(f.wrapped, oc.TopAbs_ShapeEnum.TopAbs_EDGE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
-      try {
-        for (; explorer.More(); explorer.Next()) {
-          const current = explorer.Current();
-          const h = oc.ReplicadShapeHasher.HashCode(current, 2147483647) as number;
-          current.delete();
-          seen.set(h, (seen.get(h) ?? 0) + 1);
-        }
-      } finally {
-        explorer.delete();
-      }
-      for (const [h, n] of seen) if (n > 1) seams.add(h);
-    } finally {
-      f.delete();
-    }
-  }
-  return seams;
-  /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
 /** A part's edge lines without its seams (see seamEdgeIds). */
@@ -1897,6 +1865,12 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         } finally {
           face.delete();
         }
+      }
+      if (opts.end === "upToVertex" && opts.upToCorner) {
+        // A corner clicked as itself.
+        const corner = findCorner(parts, opts.upToCorner);
+        if (typeof corner === "string") throw new Error(corner);
+        return toDistance(dot3([corner[0] - frame.origin[0], corner[1] - frame.origin[1], corner[2] - frame.origin[2]], n), "corner");
       }
       if (opts.end === "upToVertex") {
         if (!opts.upTo || opts.upTo.ref.kind !== "edge") throw new Error("Click near the end of an edge: that corner is where the extrude stops.");
@@ -6571,6 +6545,11 @@ export class GeometryEngine {
     };
     if (g.axis) return { p: [0, 0, 0], dir: g.axis === "x" ? [1, 0, 0] : g.axis === "y" ? [0, 1, 0] : [0, 0, 1] };
     if (g.curve) return this.curveGeom(g, as, position);
+    if (g.vertex) {
+      const corner = findCorner(this.parts, g.vertex);
+      if (typeof corner === "string") throw new Error(corner);
+      return { p: corner };
+    }
     if (g.connector) {
       const c = this.connectorFrames.get(g.connector);
       if (!c) throw new Error("The mate connector it uses is gone, suppressed or comes later in the list. Click something else.");
@@ -6702,6 +6681,12 @@ export class GeometryEngine {
       const frame = sk?.sketch?.plane ? planeFrame(sk.sketch.plane) : null;
       return { origin: found.p, x: frame?.u ?? [1, 0, 0], z: frame?.n ?? [0, 0, 1] };
     }
+    if (at.vertex) {
+      // A corner: there, lined up with X, Y and Z (as Onshape places one on a vertex).
+      const corner = findCorner(this.parts, at.vertex);
+      if (typeof corner === "string") throw new Error(corner);
+      return { origin: corner, x: [1, 0, 0], z: [0, 0, 1] };
+    }
     if (!at.pick) {
       const frame = planeFrame(def.plane ?? { kind: "default", name: "Top" });
       // On a plane: at the clicked point brought onto it (the plane's origin when nothing was clicked).
@@ -6797,7 +6782,7 @@ export class GeometryEngine {
     this.connectorFrames.set(feature.id, frame);
     this.place(moved, feature, connectorPlane(frame));
     // Owned by the part chosen, else the part it's on, else the latest part.
-    const owner = def.owner ?? def.at.pick?.partId ?? this.parts.filter((p) => !p.surface).at(-1)?.id;
+    const owner = def.owner ?? def.at.pick?.partId ?? def.at.vertex?.partId ?? this.parts.filter((p) => !p.surface).at(-1)?.id;
     if (owner && this.parts.some((p) => p.id === owner)) (this.owned[owner] ??= []).push({ id: feature.id, name: feature.name, origin: frame.origin, x: frame.x, z: frame.z });
     else if (def.owner) return "The part chosen to own this mate connector no longer exists. Edit it and choose another.";
     return null;
@@ -7753,34 +7738,42 @@ export class GeometryEngine {
   }
 
   /** Measure one or two picked edges/faces: lengths, areas, round sizes, and the gap and angle between them. */
-  measure(picks: TopoPick[]): Measurement {
-    const found: { item: MeasuredItem; shape: Edge | Face }[] = [];
+  measure(picks: (TopoPick | VertexPick)[]): Measurement {
+    const found: { item: MeasuredItem; shape: Edge | Face | Vertex }[] = [];
     for (const pick of picks.slice(0, 2)) {
       const part = this.parts.find((p) => p.id === pick.partId);
       if (!part) continue;
+      if (pick.ref.kind === "vertex") {
+        // A corner: a point.
+        const corner = findCorner(this.parts, pick as VertexPick);
+        if (typeof corner === "string") continue;
+        found.push({ item: { label: "Corner", point: corner }, shape: makeVertex(corner) });
+        continue;
+      }
+      const pickT = pick as TopoPick;
       const bounds = boundsOf(part.shape);
       const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
-      const item = describePick(pick.ref);
-      if (pick.ref.kind === "edge") {
+      const item = describePick(pickT.ref);
+      if (pickT.ref.kind === "edge") {
         const edges = edgesOf(part.shape);
-        const [i] = matchRefs([pick.ref], edges.map((e) => edgeRefOf(e, bounds)), size);
+        const [i] = matchRefs([pickT.ref], edges.map((e) => edgeRefOf(e, bounds)), size);
         if (i === null) continue;
         const edge = edges[i];
         edges.forEach((e, j) => j !== i && e.delete());
         item.length = measureLength(edge);
-        if (pick.ref.curve === "CIRCLE") {
+        if (pickT.ref.curve === "CIRCLE") {
           const c = circleThrough3D(take(edge.pointAt(0)), take(edge.pointAt(1 / 3)), take(edge.pointAt(2 / 3)));
           if (c) Object.assign(item, { radius: c.radius, centre: c.centre });
         }
         found.push({ item, shape: edge });
       } else {
         const faces = facesOf(part.shape);
-        const [i] = matchRefs([pick.ref], faces.map((f) => faceRefOf(f, bounds)), size);
+        const [i] = matchRefs([pickT.ref], faces.map((f) => faceRefOf(f, bounds)), size);
         if (i === null) continue;
         const face = faces[i];
         faces.forEach((f, j) => j !== i && f.delete());
         item.area = measureArea(face);
-        if (pick.ref.surface === "CYLINDRE") {
+        if (pickT.ref.surface === "CYLINDRE") {
           // A round face's size comes from one of its round edges.
           for (const e of edgesOf(face)) {
             if (!item.radius && e.geomType === "CIRCLE") {
@@ -7800,10 +7793,10 @@ export class GeometryEngine {
         result.distance = near.distance;
         result.closest = [near.a, near.b];
       }
-      const angle = angleBetween(picks[0].ref, picks[1].ref);
+      const angle = picks[0].ref.kind === "vertex" || picks[1].ref.kind === "vertex" ? null : angleBetween((picks[0] as TopoPick).ref, (picks[1] as TopoPick).ref);
       if (angle !== null) result.angle = angle;
-      const [a, b] = found.map((f) => f.item.centre);
-      if (a && b) result.centreDistance = centreGap(a, b);
+      const [a, b] = found.map((f) => f.item.centre ?? f.item.point);
+      if (a && b && (found[0].item.centre || found[1].item.centre)) result.centreDistance = centreGap(a, b);
     }
     found.forEach((f) => f.shape.delete());
     return result;

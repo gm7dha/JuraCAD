@@ -1009,7 +1009,7 @@
   (pure), engineMoveFace (exact volumes: box ±2, Ø10 hole → Ø10.4 and Ø9.6, boss +1, pocket floor, slanted face up Z, along an
   edge, 5° about an edge, refusals, an old Move face as before), mcpMoveFace.
 - Everyday picking and views (Onshape's): selection filter `src/viewport/selectionFilter.ts` (pure; `store.selectFilter`, session
-  only; empty = everything; kinds face/edge/part/plane/sketch — no vertices, JuraCAD can't pick corners; `partHitAs`: a face/edge
+  only; empty = everything; kinds face/edge/vertex ("Corners")/part/plane/sketch; `partHitAs`: a face/edge
   whose kind is off becomes its whole part when Parts is on (`PickTarget.whole`, handlePick → `selectedParts`; only with nothing
   open, else "Parts" = faces and edges); `SceneManager.setSelectFilter` applies it in `pickAt` (a filtered face still hides what's
   behind), hover (`hoverWhole`) and box select (`boxPicks`: faces/edges only → `itemsInBox` → `onBoxSelectItems`; else parts as
@@ -1075,6 +1075,29 @@
   its whole build (`parked`, `sourceBuild`), so Derived/context studios aren't rebuilt, later features' errors/warnings/notes
   stay on their rows, and closing unchanged or ticking Final takes it back without building (only meshed). Sketches are left
   as before (their snap list and "ref:<n>" ids come from the whole build). Tests: tests/finalPreview, engineFinalPreview.
+- Corners (vertices, Onshape's): pure `src/geometry/vertexRef.ts` — `VertexRef` {p, rel (share of the part's box), dirs (unit
+  directions its edges leave in)} / `VertexPick` {partId, ref}; `cornersFromEnds` groups edge ends (`SAME_CORNER` 1 µm; closed
+  edges have none), `meshCorners`/`cornersOf` (cached per PartMesh: ends from `edgeRefs`, directions from the drawn lines — no
+  PartMesh change), `matchVertex` = strictMatch's rules (min of distance and rel × size; every wanted dir must be one of the
+  candidate's, dot ≥ 0.9; within max(0.5, 0.1 × size), unambiguous, else lost), `parseVertexPick`. Engine `src/kernel/corners.ts`
+  (`shapeCorners` from OCCT edges' ends + tangents, seams skipped as the view skips them — `seamEdgeIds`, now in topology.ts; both
+  sides offer/find none past `MOST_CORNER_EDGES` 20,000 edges; `findCorner(parts, pick)` → point or a plain message). SelectionItem kind
+  "vertex" (index into `cornersOf`; `pickFor` returns null for it, `cornerPickFor` gives the VertexPick), so plain selection,
+  Measure (engine `measure` takes VertexPicks: a point, "Corner — X / Y / Z", closest distance via a made vertex; no angle) and
+  the status line include corners. SceneManager: `setCornerPicking` (Viewport from pure `cornerWanted` in geomClicks.ts: nothing
+  open, Extrude Up to vertex, Plane point/pointNormal/threePoint/fit, Mate connector, Move triad/from/to — never assemblies or
+  sketches, so other tools' clicks are unchanged), `cornerAt` (projected corners within `CORNER_PICK_PIXELS` 7 × reach, nearest
+  first, in sight by a ray from the eye through the corner — separate `occluder` Raycaster), checked in `pickAt` right after mate
+  connectors (before areas, curves, edges, faces), `otherHitsAt` (kind "vertex", listed first by `orderChoices`), dots for the
+  hovered/picked corners (`drawCornerDots`, a Points object, depthTest off), `cornerOnScreen` (smoke). Uses: `extrude.upToCorner`
+  (wins over the old `upTo` + `upToEnd`, which still build as before), `GeomPick.vertex` (planes' points; `pointFromClick` /
+  `connectorFromClick` via GeomClick kind "corner"; connector on a corner = X/Y/Z, owned by the corner's part), Move's triad /
+  from / to (`SpotSource` "corner"), Toolbar's mate connector from a selected corner. Dependents: `g.vertex.partId`,
+  `upToCorner.partId`; the feature clipboard remaps its partId like any id. Claude: points `{"vertex": [x, y, z], "part"}`
+  (`pickCorner` in picks.ts, nearest within 0.5 mm / 2 %), extrude `end: "up_to_vertex"` + `up_to_vertex`, list_edges
+  `corners: true`. Not done: corners in loft points, Use/sketches, assemblies (mates on a vertex), box selection, vertex dots
+  for every corner of a hovered part. Tests: tests/vertexPicking (pure), engineCorners (box corner followed, up-to-corner,
+  three-point plane, connector, measure, a lost corner), mcpCorners; the smoke test hovers and clicks a corner of the block.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.

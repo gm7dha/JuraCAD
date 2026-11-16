@@ -153,7 +153,7 @@ export class KernelClient {
     return this.send({ type: "useEdge", partId, ref, plane }).then((body) => (body.type === "useEdge" ? body.result : { error: "Something went wrong reading that edge." }));
   }
 
-  measure(picks: TopoPick[]): Promise<Measurement> {
+  measure(picks: (TopoPick | import("../geometry/vertexRef").VertexPick)[]): Promise<Measurement> {
     return this.send({ type: "measure", picks }).then((body) => body.result as Measurement);
   }
 

@@ -15,7 +15,9 @@ export type SpotSource =
   /** `points`: points along the edge (from the 3D view's lines), to tell a round edge's centre. */
   | { kind: "edge"; ref: EdgeRef; at?: Vec3; points: Vec3[] }
   /** One of Top/Front/Right or a Plane feature. */
-  | { kind: "plane"; frame: PlaneFrame };
+  | { kind: "plane"; frame: PlaneFrame }
+  /** A corner of a part (where it is). */
+  | { kind: "corner"; p: Vec3 };
 
 const dist = (a: Vec3, b: Vec3) => length(sub(a, b));
 
@@ -44,6 +46,8 @@ function nearestOnEdge(ref: EdgeRef, at: Vec3 | undefined): Vec3 {
  * nearest the click (Z along it), or a round edge's centre (Z square to it); on a plane, `near` brought onto it.
  */
 export function spotFrame(src: SpotSource, near: Vec3 = [0, 0, 0]): Frame | string {
+  // A corner: there, along X, Y and Z.
+  if (src.kind === "corner") return frameFromZ(src.p, [0, 0, 1]);
   if (src.kind === "plane") {
     const f = src.frame;
     const at = sub(near, scale(f.n, dot(sub(near, f.origin), f.n)));
@@ -62,6 +66,7 @@ export function spotFrame(src: SpotSource, near: Vec3 = [0, 0, 0]): Frame | stri
 
 /** A direction (Translate by distance) or axis (Rotate): along a straight edge, out of a flat face or plane, or round a round edge. */
 export function directionOf(src: SpotSource): { dir: Vec3; through: Vec3 } | string {
+  if (src.kind === "corner") return "A corner is a point. Click a straight edge, a round edge or a flat face for the direction.";
   if (src.kind === "plane") return { dir: src.frame.n, through: src.frame.origin };
   if (src.kind === "face") {
     if (src.ref.surface !== "PLANE") return "That face is curved. Click a straight edge, a round edge or a flat face.";

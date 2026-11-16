@@ -20,7 +20,7 @@ import { evaluate } from "../model/expr";
 import { amount, bool, InputError, list, MAX_LENGTH, noExtras, oneOf, text, tidy, xy, xyz, type Obj } from "./args";
 import { FEATURE_DEFS, revolveWay } from "../model/features";
 import { isAngleDimension } from "../sketch/types";
-import { pickEdges, pickFace, pickFaces, facing } from "./picks";
+import { pickCorner, pickEdges, pickFace, pickFaces, facing } from "./picks";
 import type { Session } from "./session";
 import { buildSketch } from "./sketchShapes";
 import { applyConnector, applyPlane, basePlane, CONNECTOR_KEYS, PLANE_KEYS } from "./planeSpec";
@@ -65,7 +65,7 @@ const OPERATIONS = ["new", "add", "remove", "intersect"] as const;
 
 /** The settings each kind takes (besides type, name and operation). */
 export const KIND_KEYS: Record<FeatureKind, string[]> = {
-  extrude: ["sketch", "depth", "end", "up_to_face", "up_to_part", "flip", "second_depth", "draft", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
+  extrude: ["sketch", "depth", "end", "up_to_face", "up_to_vertex", "up_to_part", "flip", "second_depth", "draft", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   revolve: ["sketch", "axis", "angle", "symmetric", "second_angle", "flip", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   sweep: ["sketch", "path", "path_edges", "path_part", "twist", "keep_orientation", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   loft: ["sections", "start_point", "end_point", "start", "end", "start_magnitude", "end_magnitude", "guide", "path", "straight", "match_corners", "turns", "closed_loop"],
@@ -378,7 +378,7 @@ function thinWall(f: Feature, a: Obj, ctx: SpecContext) {
   if (f.type === "extrude" && has(a, "draft") && amount(a.draft, "draft", ctx.scope).value !== 0) throw new InputError('A thin wall can\'t taper; leave "draft" out (or 0).');
 }
 
-const END_OF = { blind: "blind", symmetric: "symmetric", through_all: "throughAll", up_to_face: "upToFace" } as const;
+const END_OF = { blind: "blind", symmetric: "symmetric", through_all: "throughAll", up_to_face: "upToFace", up_to_vertex: "upToVertex" } as const;
 
 /** Set up (or change) any other feature from Claude's settings. */
 export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecContext): void {
@@ -434,10 +434,22 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
           const face = pickFace(part, a.up_to_face, "up_to_face");
           if (face.ref.surface !== "PLANE") throw new InputError(`up_to_face: ${face.id} isn't flat. Extrude can go up to a flat face only.`);
           ex.upTo = { partId: part.id, ref: face.ref };
+          delete ex.upToCorner;
         } else if (!ex.upTo) throw new InputError('end "up_to_face" needs "up_to_face": the flat face to stop at, e.g. "top" or "F3" (and "up_to_part" if it isn\'t the latest part).');
+      } else if (ex.end === "upToVertex") {
+        if (has(a, "up_to_face")) throw new InputError('"up_to_face" only goes with end "up_to_face".');
+        if (has(a, "up_to_vertex")) {
+          const part = ctx.session.part(ctx.parts, a.up_to_part, "up_to_part");
+          const [x, y, z] = xyz(a.up_to_vertex, "up_to_vertex", ctx.scope);
+          ex.upToCorner = pickCorner(part, [x.value, y.value, z.value], "up_to_vertex");
+          delete ex.upTo;
+          delete ex.upToEnd;
+        } else if (!ex.upToCorner && !ex.upTo) throw new InputError('end "up_to_vertex" needs "up_to_vertex": the corner to stop at, as [x, y, z] (and "up_to_part" if it isn\'t the latest part).');
       } else {
         if (has(a, "up_to_face")) throw new InputError('"up_to_face" only goes with end "up_to_face".');
+        if (has(a, "up_to_vertex")) throw new InputError('"up_to_vertex" only goes with end "up_to_vertex".');
         delete ex.upTo;
+        delete ex.upToCorner;
       }
       f.extrude = ex;
       param(f, a, "draft", "draft", ctx, { unit: "°" });

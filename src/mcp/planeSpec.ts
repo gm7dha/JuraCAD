@@ -8,7 +8,7 @@ import type { Feature, GeomPick, MateConnectorDef, PlaneOptions } from "../model
 import { planeFrame, type SketchPlane, type Vec3 } from "../sketch/planes";
 import { framesOf, planeAsSketchPlane, planeFeatureFrame } from "../sketch/planeFeature";
 import { amount, bool, InputError, list, noExtras, oneOf, text, xyz, type Obj } from "./args";
-import { pickEdges, pickFace } from "./picks";
+import { pickCorner, pickEdges, pickFace } from "./picks";
 import { connectorFrame } from "../assembly/connectors";
 import type { SpecContext } from "./featureSpec";
 import { geomPickLabel } from "../sketch/planeTypes";
@@ -29,7 +29,7 @@ export const PLANE_TYPES = {
 const TYPE_NAME = Object.fromEntries(Object.entries(PLANE_TYPES).map(([k, v]) => [v, k])) as Record<string, string>;
 
 export const POINT_HELP =
-  'A point is [x, y, z] (fixed), {"corner": "E3", "end": "start"|"end"|"middle", "part": name} (an edge\'s end or middle: follows the part), {"face": "F2" or "top"…, "part": name} (a flat face\'s centre), {"sketch": name, "point": [x, y] (the nearest of its points) or "origin"}, or {"connector": name} (a mate connector\'s origin).';
+  'A point is [x, y, z] (fixed), {"vertex": [x, y, z], "part": name} (the part\'s corner there: follows the part), {"corner": "E3", "end": "start"|"end"|"middle", "part": name} (an edge\'s end or middle: follows the part), {"face": "F2" or "top"…, "part": name} (a flat face\'s centre), {"sketch": name, "point": [x, y] (the nearest of its points) or "origin"}, or {"connector": name} (a mate connector\'s origin).';
 export const LINE_HELP =
   'A line is "x", "y" or "z" (an axis through the origin), {"edge": "E3", "part": name} (a straight or round edge — a round one gives its axis), {"face": "F2", "part": name} (a flat face\'s normal, or a round face\'s axis), {"sketch": name, "line": [x, y] (the line nearest that point)} or {"connector": name} (its Z axis).';
 
@@ -99,6 +99,14 @@ export function geomFrom(v: unknown, where: string, ctx: SpecContext, as: "point
     return { p: world(best.x, best.y), sketchPoint: { sketch: sk.id, point: best.id } };
   }
   const part = ctx.session.part(ctx.parts, o.part, `${where}.part`);
+  if (has(o, "vertex")) {
+    // A corner of the part, at (or nearest) the point given: followed as the part changes.
+    noExtras(o, ["vertex", "part"], where);
+    if (as === "line") throw new InputError(`${where}: a corner is a point, not a line. ${LINE_HELP}`);
+    const [x, y, z] = xyz(o.vertex, `${where}.vertex`, ctx.scope);
+    const vertex = pickCorner(part, [x.value, y.value, z.value], `${where}.vertex`);
+    return { p: vertex.ref.p, vertex };
+  }
   if (has(o, "face")) {
     noExtras(o, ["face", "part"], where);
     const face = pickFace(part, o.face, `${where}.face`);
