@@ -1696,6 +1696,8 @@ export class SceneManager {
 
   dispose(): void {
     cancelAnimationFrame(this.frame);
+    this.cornerDots?.geometry.dispose();
+    this.cornerDots?.material.dispose();
     if (this.longPressTimer) clearTimeout(this.longPressTimer);
     this.cancelHold();
     if (this.longPressFrame !== null) cancelAnimationFrame(this.longPressFrame);
