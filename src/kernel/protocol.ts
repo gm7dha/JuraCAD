@@ -369,7 +369,7 @@ export type KernelRequest =
   | { type: "clashes"; instances: InstanceInput[]; tolerance?: number; withGaps?: boolean; fitRange?: number; fitPairs?: [string, string][] }
   | { type: "assemblyCuts"; instances: InstanceInput[] }
   | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sections?: SectionRequest[]; breakouts?: BreakOutRequest[]; tangent?: boolean }
-  | { type: "measure"; picks: TopoPick[] }
+  | { type: "measure"; picks: (TopoPick | import("../geometry/vertexRef").VertexPick)[] }
   | { type: "measureParts"; partIds: string[] }
   | { type: "massProperties"; partIds: string[] }
   | { type: "unfold"; partId: string }

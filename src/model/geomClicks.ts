@@ -6,6 +6,7 @@
  * connector — each kept with what it's on, so the engine can follow it.
  */
 import type { EdgeRef, TopoPick } from "../geometry/topoRef";
+import type { VertexPick } from "../geometry/vertexRef";
 import type { PlaneFrame, SketchPlane } from "../sketch/planes";
 import type { SketchLineRef } from "./patternRefs";
 import type { ConnectorSpot, Feature, GeomPick, MateConnectorDef, PlaneOptions, TransformFrame } from "./types";
@@ -23,7 +24,9 @@ export type GeomClick =
   /** A Part Studio mate connector. */
   | { kind: "connector"; id: string; origin: Vec3; z: Vec3; x: Vec3 }
   /** A straight line of a sketch. */
-  | { kind: "sketchLine"; line: SketchLineRef; a: Vec3; b: Vec3 };
+  | { kind: "sketchLine"; line: SketchLineRef; a: Vec3; b: Vec3 }
+  /** A corner (vertex) of a part. */
+  | { kind: "corner"; pick: VertexPick };
 
 const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const dist = (a: Vec3, b: Vec3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
@@ -59,6 +62,7 @@ export function fractionAlong(points: Vec3[], q: Vec3): number {
 
 /** A point for a plane to go through. */
 export function pointFromClick(c: GeomClick): GeomPick | string {
+  if (c.kind === "corner") return { p: tidyVec(c.pick.ref.p), vertex: c.pick };
   if (c.kind === "connector") return { p: tidyVec(c.origin), connector: c.id };
   if (c.kind === "plane") return "Click a point: a corner (near the end of an edge), an edge's middle, a flat face's centre or a mate connector.";
   if (c.kind === "sketchLine") return { p: tidyVec(c.a), dir: tidyVec(sub(c.b, c.a)), sketchLine: c.line };
@@ -77,6 +81,7 @@ export function pointFromClick(c: GeomClick): GeomPick | string {
 
 /** A line or direction for a plane: along a straight edge, round a round one, out of a flat face, along a sketch line or a connector's Z. */
 export function lineFromClick(c: GeomClick): GeomPick | string {
+  if (c.kind === "corner") return "A corner is a point, not a line. Click a straight edge, a round edge or face, a flat face or a sketch line.";
   if (c.kind === "connector") return { p: tidyVec(c.origin), dir: tidyVec(c.z), connector: c.id };
   if (c.kind === "plane") return { p: tidyVec(c.frame.origin), dir: tidyVec(c.frame.n) };
   if (c.kind === "sketchLine") return { p: tidyVec(c.a), dir: tidyVec(sub(c.b, c.a)), sketchLine: c.line };
@@ -120,6 +125,8 @@ function orientedPoints(points: Vec3[], ref: EdgeRef): Vec3[] {
 
 /** Where a mate connector goes for a click (and, until the engine has found it, roughly where that is). */
 export function connectorFromClick(c: GeomClick): Pick<MateConnectorDef, "at" | "plane" | "base"> | string {
+  // A corner: there, lined up with X, Y and Z (as Onshape places one on a vertex).
+  if (c.kind === "corner") return { at: { p: tidyVec(c.pick.ref.p), vertex: c.pick }, base: { origin: c.pick.ref.p, x: [1, 0, 0], z: [0, 0, 1] } };
   if (c.kind === "connector") return { at: { p: tidyVec(c.origin), connector: c.id }, base: { origin: c.origin, x: c.x, z: c.z } };
   if (c.kind === "sketchLine") return "Click a face, an edge, a corner, a mate connector or a plane for the mate connector.";
   if (c.kind === "plane") return { at: { p: tidyVec(c.frame.origin) }, plane: c.plane, base: { origin: c.frame.origin, x: c.frame.u, z: c.frame.n } };
@@ -143,6 +150,7 @@ function stripAt(p: TopoPick): TopoPick {
 
 /** True when a click is a point rather than a line for Point normal: a corner, a round edge's centre, or a connector (when no point is chosen yet). */
 function looksLikePoint(c: GeomClick, havePoint: boolean): boolean {
+  if (c.kind === "corner") return true;
   if (c.kind === "connector") return !havePoint;
   if (c.kind !== "part" || c.pick.ref.kind !== "edge") return false;
   return nearEnd(c.pick.ref, c.at) !== null;
@@ -150,6 +158,7 @@ function looksLikePoint(c: GeomClick, havePoint: boolean): boolean {
 
 /** Same pick (the same thing clicked again). */
 function samePick(a: GeomPick, b: GeomPick): boolean {
+  if (a.vertex || b.vertex) return !!a.vertex && !!b.vertex && a.vertex.partId === b.vertex.partId && JSON.stringify(a.vertex.ref.p) === JSON.stringify(b.vertex.ref.p);
   return JSON.stringify([a.pick?.partId, a.pick?.ref, a.end, a.connector, a.sketchLine, a.sketchPoint, a.pick ? null : a.p]) === JSON.stringify([b.pick?.partId, b.pick?.ref, b.end, b.connector, b.sketchLine, b.sketchPoint, b.pick ? null : b.p]);
 }
 
@@ -215,3 +224,25 @@ export function connectorWanted(s: { editing: { draft: Feature } | null; sketch:
   return d.type === "transform" && (d.transform?.picking === "from" || d.transform?.picking === "to");
 }
 
+
+/**
+ * Whether corners of parts can be hovered and picked now: with nothing open (to select them, e.g. to measure), or
+ * while what's open takes a point — an Extrude up to a corner, a Plane through points, a Mate connector, Move / copy's
+ * triad or From / To. Never in assemblies or sketches. Otherwise clicks go to faces and edges exactly as before.
+ */
+export function cornerWanted(s: { editing: { draft: Feature } | null; sketch: unknown }, inAssembly: boolean): boolean {
+  if (inAssembly || s.sketch) return false;
+  const d = s.editing?.draft;
+  if (!d) return true;
+  if (d.type === "extrude") return d.extrude?.end === "upToVertex";
+  if (d.type === "plane") {
+    const m = d.planeDef?.mode;
+    return m === "point" || m === "pointNormal" || m === "threePoint" || m === "fit";
+  }
+  if (d.type === "mateConnector") return true;
+  if (d.type === "transform") {
+    const k = d.transform?.picking;
+    return k === "triad" || k === "from" || k === "to";
+  }
+  return false;
+}

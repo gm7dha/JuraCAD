@@ -63,6 +63,8 @@ export interface MeasuredItem {
   area?: number;
   radius?: number;
   centre?: Vec3;
+  /** A corner: where it is. */
+  point?: Vec3;
   /** Whole parts: how much space they take up (mm³). */
   volume?: number;
 }

@@ -13,7 +13,7 @@ interface OnPart {
   local: [number, number, number];
 }
 
-export type PartHit = (OnPart & { kind: "face" }) | (OnPart & { kind: "edge" });
+export type PartHit = (OnPart & { kind: "face" }) | (OnPart & { kind: "edge" }) | (OnPart & { kind: "vertex" });
 
 export type OtherHit =
   | PartHit
@@ -36,14 +36,14 @@ export const MOST_CHOICES = 16;
 const SAME_PLACE = 1e-6;
 
 const filterKind = (h: OtherHit): FilterKind =>
-  h.kind === "face" || h.kind === "edge" ? h.kind : h.kind === "sketchArea" || h.kind === "curve" || h.kind === "sketchLine" ? "sketch" : "plane";
+  h.kind === "face" || h.kind === "edge" || h.kind === "vertex" ? h.kind : h.kind === "sketchArea" || h.kind === "curve" || h.kind === "sketchLine" ? "sketch" : "plane";
 
 /** Which comes first at the same distance: edges sit on faces, so they're listed first; planes after parts. */
-const RANK: Record<OtherHit["kind"], number> = { connector: 0, edge: 1, sketchLine: 2, curve: 3, sketchArea: 4, face: 5, customPlane: 6, plane: 7 };
+const RANK: Record<OtherHit["kind"], number> = { vertex: -1, connector: 0, edge: 1, sketchLine: 2, curve: 3, sketchArea: 4, face: 5, customPlane: 6, plane: 7 };
 
 export function choiceKey(c: OtherChoice): string {
   if (c.kind === "part") return `part:${c.partId}`;
-  if (c.kind === "face" || c.kind === "edge") return `${c.kind}:${c.partId}:${c.index}`;
+  if (c.kind === "face" || c.kind === "edge" || c.kind === "vertex") return `${c.kind}:${c.partId}:${c.index}`;
   if (c.kind === "plane") return `plane:${c.plane}`;
   if (c.kind === "customPlane") return `customPlane:${c.id}`;
   if (c.kind === "sketchArea") return `area:${c.sketch}:${c.index}`;
@@ -72,7 +72,7 @@ export function orderChoices(hits: OtherHit[], filter: SelectFilter, wholeParts 
     list.push(c);
   };
   for (const h of sorted) {
-    if (h.kind === "face" || h.kind === "edge") {
+    if (h.kind === "face" || h.kind === "edge" || h.kind === "vertex") {
       const as = partHitAs(filter, h.kind, wholeParts);
       if (as === "self") add(h, out);
       if (wholeParts && allows(filter, "part")) add({ kind: "part", whole: true, partId: h.partId, distance: h.distance, via: h }, parts);
@@ -80,8 +80,10 @@ export function orderChoices(hits: OtherHit[], filter: SelectFilter, wholeParts 
     }
     if (allows(filter, filterKind(h))) add(h, out);
   }
-  // Whole parts go after the faces and edges, nearest first (as Onshape lists bodies after their faces).
-  return [...out, ...parts].slice(0, MOST_CHOICES);
+  // Corners first (they're small and hard to click), then the rest front to back; whole parts go after the faces and
+  // edges, nearest first (as Onshape lists bodies after their faces).
+  const corners = out.filter((c) => c.kind === "vertex");
+  return [...corners, ...out.filter((c) => c.kind !== "vertex"), ...parts].slice(0, MOST_CHOICES);
 }
 
 /** What a face or edge looks like, in a word ("flat", "round"…), from its exact surface or curve type. */
@@ -114,6 +116,7 @@ export interface ChoiceNames {
 /** The row's words: "Flat face of Part 1", "Straight edge of Part 1", "Part 1 (whole part)", "Top plane", "Area of Sketch 2"… */
 export function choiceLabel(c: OtherChoice, names: ChoiceNames): string {
   if (c.kind === "part") return `${names.part(c.partId)} (whole part)`;
+  if (c.kind === "vertex") return `Corner of ${names.part(c.partId)}`;
   if (c.kind === "face" || c.kind === "edge") {
     const word = shapeWord(c.kind, names.shape?.(c.kind, c.partId, c.index));
     const what = word ? `${word.charAt(0).toUpperCase()}${word.slice(1)} ${c.kind}` : c.kind === "face" ? "Face" : "Edge";

@@ -1,6 +1,7 @@
 import { rectOf, shapeInBox, type Rect } from "./boxSelect";
 import { allows, boxPicks, NO_FILTER, partHitAs, type SelectFilter } from "./selectionFilter";
 import type { OtherHit } from "./selectOther";
+import { cornersOf, nearestOnScreen } from "../geometry/vertexRef";
 import type { CameraState } from "../model/namedViews";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
@@ -94,6 +95,8 @@ function usesGestures(e: PointerEvent): boolean {
 const FRUSTUM_HEIGHT = 200;
 /** How close (in screen pixels) the pointer must be to an edge to pick it. */
 const EDGE_PICK_PIXELS = 6;
+/** How near (screen pixels) the pointer must be to a part's corner to pick it (more for fingers). */
+export const CORNER_PICK_PIXELS = 7;
 /** Pointer movement (pixels) above which a click becomes a drag. */
 const CLICK_SLOP = 4;
 /** How long (ms) the mouse button is held still on the view before Select other opens (Onshape's click and hold). */
@@ -613,6 +616,7 @@ export class SceneManager {
     const hit = this.pickAt(x, y);
     if (!hit) return null;
     if (hit.kind !== "part") return hit.kind;
+    if (hit.item.kind === "vertex") return "vertex";
     const refs = hit.item.kind === "face" ? this.parts.get(hit.item.partId)?.data.faceRefs : this.parts.get(hit.item.partId)?.data.edgeRefs;
     const ref = refs?.[hit.item.index];
     return `${hit.item.kind}:${ref ? (ref.kind === "face" ? ref.surface : ref.curve) : "?"}`;
@@ -716,6 +720,10 @@ export class SceneManager {
         const index = (this.parts.get(partId)?.data.edgeGroups ?? []).findIndex((g) => vertex >= g.start && vertex < g.start + g.count);
         if (index >= 0) out.push({ kind: "edge", partId, index, distance: h.distance, point: v3(h.point), local: v3(h.object.worldToLocal(h.point.clone())) });
       }
+    {
+      const c = this.facesOnly ? null : this.cornerAt(x, y);
+      if (c) out.push({ kind: "vertex", partId: c.partId, index: c.index, distance: c.distance, point: c.point, local: c.local });
+    }
     const area = this.areaUnderPointer();
     if (area && this.pickAreas) out.push({ kind: "sketchArea", sketch: this.pickAreas.sets[area.set].sketch, index: area.index, distance: area.distance });
     for (const h of this.curveGroup.children.length ? this.raycaster.intersectObjects(this.curveGroup.children, false) : [])
@@ -780,6 +788,133 @@ export class SceneManager {
     this.facesOnly = on;
   }
   private facesOnly = false;
+
+  // -------------------------------------------------------------------------
+  // Corners (vertices): picked only while what's open takes a point, or nothing is open (see Viewport).
+
+  private cornerPicking = false;
+  private readonly occluder = new THREE.Raycaster();
+  private cornerDots: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial> | null = null;
+
+  /** Let corners of parts be hovered and picked (a dot shows under the pointer). */
+  setCornerPicking(on: boolean): void {
+    if (this.cornerPicking === on) return;
+    this.cornerPicking = on;
+    if (!on && this.hover?.kind === "vertex") this.hover = null;
+    this.applyHighlights();
+  }
+
+  /** A corner's place in the view (world coordinates), or null. */
+  private cornerWorld(partId: string, index: number): THREE.Vector3 | null {
+    const p = this.parts.get(partId);
+    const c = p ? cornersOf(p.data)[index] : undefined;
+    if (!p || !c) return null;
+    p.mesh.updateMatrixWorld();
+    return new THREE.Vector3(...c.p).applyMatrix4(p.mesh.matrixWorld);
+  }
+
+  /** Is this point (world) in sight, not behind a part's face (or cut away by the section)? */
+  private inSight(w: THREE.Vector3, meshes: THREE.Object3D[]): boolean {
+    if (this.section && this.section.distanceToPoint(w) < -1e-6) return false;
+    const ndc = w.clone().project(this.camera);
+    this.occluder.setFromCamera(new THREE.Vector2(ndc.x, ndc.y), this.camera);
+    const ray = this.occluder.ray;
+    const depth = w.clone().sub(ray.origin).dot(ray.direction);
+    const kept = (h: THREE.Intersection) => !this.section || this.section.distanceToPoint(h.point) >= -1e-6;
+    const first = this.occluder.intersectObjects(meshes, false).find(kept);
+    const slack = 3 * this.worldPerPixel() + 1e-3;
+    return !first || first.distance >= depth - slack;
+  }
+
+  /** The corner of a part on show nearest the screen point, within `CORNER_PICK_PIXELS` × reach, in sight; or null. */
+  private cornerAt(x: number, y: number, reach = 1): { partId: string; index: number; point: [number, number, number]; local: [number, number, number]; distance: number } | null {
+    if (!this.cornerPicking) return null;
+    const meshes: THREE.Object3D[] = [];
+    const found: { partId: string; index: number; d: number }[] = [];
+    const v = new THREE.Vector3();
+    const limit = CORNER_PICK_PIXELS * reach;
+    for (const p of this.parts.values()) {
+      if (!p.mesh.visible) continue;
+      meshes.push(p.mesh);
+      const corners = cornersOf(p.data);
+      if (!corners.length) continue;
+      p.mesh.updateMatrixWorld();
+      const screen = new Float32Array(corners.length * 2);
+      corners.forEach((c, i) => {
+        v.set(c.p[0], c.p[1], c.p[2]).applyMatrix4(p.mesh.matrixWorld).project(this.camera);
+        screen[2 * i] = v.z > 1 || v.z < -1 ? NaN : ((v.x + 1) / 2) * this.width;
+        screen[2 * i + 1] = ((1 - v.y) / 2) * this.height;
+      });
+      // Every corner within reach, nearest on screen first (the nearest may be hidden behind the part).
+      for (let k = 0; k < 4; k++) {
+        const i = nearestOnScreen(screen, x, y, limit);
+        if (i < 0) break;
+        found.push({ partId: p.data.id, index: i, d: Math.hypot(screen[2 * i] - x, screen[2 * i + 1] - y) });
+        screen[2 * i] = NaN;
+      }
+    }
+    found.sort((a, b) => a.d - b.d);
+    for (const f of found) {
+      const w = this.cornerWorld(f.partId, f.index);
+      if (!w || !this.inSight(w, meshes)) continue;
+      const p = this.parts.get(f.partId)!;
+      const ray = this.raycaster.ray;
+      return { partId: f.partId, index: f.index, point: w.toArray() as [number, number, number], local: p.mesh.worldToLocal(w.clone()).toArray() as [number, number, number], distance: w.clone().sub(ray.origin).dot(ray.direction) };
+    }
+    return null;
+  }
+
+  /** Dots on the corner under the pointer and the corners picked. */
+  private drawCornerDots(): void {
+    const items = [...this.selection.filter((s) => s.kind === "vertex").map((s) => ({ s, lit: false })), ...(this.hover?.kind === "vertex" ? [{ s: this.hover, lit: true }] : [])];
+    const pos: number[] = [];
+    const col: number[] = [];
+    const sel = new THREE.Color(COLOURS.edgeSelected);
+    const hov = new THREE.Color(COLOURS.edgeHover);
+    for (const { s, lit } of items) {
+      const w = this.cornerWorld(s.partId, s.index);
+      if (!w) continue;
+      pos.push(w.x, w.y, w.z);
+      const c = lit ? hov : sel;
+      col.push(c.r, c.g, c.b);
+    }
+    if (!pos.length) {
+      if (this.cornerDots) this.cornerDots.visible = false;
+      return;
+    }
+    if (!this.cornerDots) {
+      const material = new THREE.PointsMaterial({ size: 9, sizeAttenuation: false, vertexColors: true, depthTest: false, transparent: true });
+      this.cornerDots = new THREE.Points(new THREE.BufferGeometry(), material);
+      this.cornerDots.renderOrder = 20;
+      this.cornerDots.frustumCulled = false;
+      this.cornerDots.raycast = () => {};
+      this.scene.add(this.cornerDots);
+    }
+    const g = this.cornerDots.geometry;
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+    g.computeBoundingSphere();
+    this.cornerDots.visible = true;
+  }
+
+  /** Where a part's corner nearest the point (its own coordinates) is on screen (CSS px), for the browser smoke test. */
+  cornerOnScreen(partId: string, near: [number, number, number]): { x: number; y: number } | null {
+    const p = this.parts.get(partId);
+    const corners = p ? cornersOf(p.data) : [];
+    let index = -1;
+    let best = Infinity;
+    corners.forEach((c, i) => {
+      const d = Math.hypot(c.p[0] - near[0], c.p[1] - near[1], c.p[2] - near[2]);
+      if (d < best) {
+        best = d;
+        index = i;
+      }
+    });
+    const w = index >= 0 ? this.cornerWorld(partId, index) : null;
+    if (!w) return null;
+    const c = w.project(this.camera);
+    return { x: ((c.x + 1) / 2) * this.width, y: ((1 - c.y) / 2) * this.height };
+  }
 
   /** Let left-drags on empty space draw a selection box. */
   setBoxSelectEnabled(on: boolean): void {
@@ -1878,6 +2013,11 @@ export class SceneManager {
       const key = this.connectorAt(x, y, reach, (o) => !faceHit || new THREE.Vector3(...o).sub(ray.origin).dot(ray.direction) <= faceHit.distance + threshold * 2);
       if (key) return { kind: "connector", key };
     }
+    // A corner near the pointer, in sight (corners in front win over the face or edge under them, only near the corner).
+    if (this.cornerPicking && !this.facesOnly && allows(filter, "vertex")) {
+      const c = this.cornerAt(x, y, reach);
+      if (c) return { kind: "part", item: { partId: c.partId, kind: "vertex", index: c.index }, point: c.point, local: c.local };
+    }
     // Nothing open: an area wins when it's in front of the part (or on its face), unless an edge in front of it is under the pointer.
     if (area && areaTarget && this.pickAreas?.mode === "nearest" && (!faceHit || area.distance <= faceHit.distance + threshold) && (!edgeHit || this.facesOnly || edgeHit.distance > area.distance + threshold * 2)) {
       // The area lies on a face: say which, so clicking a selected area again can pick the face.
@@ -2636,6 +2776,7 @@ export class SceneManager {
       p.mesh.geometry.groups.forEach((g, i) => (g.materialIndex = state("face", i)));
       p.lines.geometry.groups.forEach((g, i) => (g.materialIndex = state("edge", i)));
     }
+    this.drawCornerDots();
   }
 
   private onPointerDown = (e: PointerEvent) => {

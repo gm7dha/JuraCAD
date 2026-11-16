@@ -44,6 +44,7 @@ import { LASER_TOOLS } from "./laserTools";
 import { libraryTools } from "./libraryTools";
 import { chooseFinish, exportColours, finishFromWords, finishOf, FINISHES, setColourIn } from "../model/finishes";
 import { colourFromWords, PART_COLOURS } from "../model/colours";
+import { cornersOf } from "../geometry/vertexRef";
 
 export type { Content, ToolDef, ToolResult } from "./toolKit";
 export { fileNameFor } from "./toolKit";
@@ -398,7 +399,7 @@ const SHAPES_SCHEMA = {
 };
 
 const KIND_HELP: Record<FeatureKind, string> = {
-  extrude: 'extrude: sketch (name; default the latest), depth, end ("blind" default | "symmetric" | "through_all" (right through, both ways) | "up_to_face" with up_to_face, up_to_part), flip (a "remove" cut on a face sketch goes into the part unless flip is given), second_depth (also extrude the other way), draft (°), areas ([[x,y],…] points inside the sketch areas to use; default every closed shape), more_sketches ([{"sketch": name, "areas": [[x,y],…]}, …]: areas of other sketches made with the same settings, as clicking them in the app does; null or [] for none), thin (a wall this thick along the sketch lines/arcs/circles — open or closed — instead of filling closed shapes; null to turn off), thin_other_side (thickness on the other side too, default 0), thin_centred (true: the thickness shared both sides), thin_flip (swap the sides; on a closed shape the first side is inside), operation',
+  extrude: 'extrude: sketch (name; default the latest), depth, end ("blind" default | "symmetric" | "through_all" (right through, both ways) | "up_to_face" with up_to_face, up_to_part | "up_to_vertex" with up_to_vertex: [x, y, z], a corner of up_to_part (default the latest part), followed as the part changes), flip (a "remove" cut on a face sketch goes into the part unless flip is given), second_depth (also extrude the other way), draft (°), areas ([[x,y],…] points inside the sketch areas to use; default every closed shape), more_sketches ([{"sketch": name, "areas": [[x,y],…]}, …]: areas of other sketches made with the same settings, as clicking them in the app does; null or [] for none), thin (a wall this thick along the sketch lines/arcs/circles — open or closed — instead of filling closed shapes; null to turn off), thin_other_side (thickness on the other side too, default 0), thin_centred (true: the thickness shared both sides), thin_flip (swap the sides; on a closed shape the first side is inside), operation',
   revolve: 'revolve: sketch, axis ("vertical" | "horizontal" — the sketch\'s axes through its origin — or {"from":[x,y],"to":[x,y]} naming a line drawn in the sketch), angle (° default 360), symmetric, second_angle (° the other way from the sketch too; angle + second_angle ≤ 360; 0 to turn off), flip, areas, more_sketches (spun round the same axis, which must lie in their planes), thin, thin_other_side, thin_centred, thin_flip (as extrude; the axis line is left out of the wall), operation',
   sweep: 'sweep: sketch (the closed shape, drawn on a plane across the start of the path), path (another sketch: the lines/arcs to follow — or a curve feature, e.g. a helix for a spring), or path_edges (part edges joined end to end, E-numbers) on path_part, twist (° turned along the whole path, default 0; whole turns — 360, 720… — on a closed loop), keep_orientation (true: the shape doesn\'t turn with the path; no twist then), areas, more_sketches (more shapes swept along the same path), thin, thin_other_side, thin_centred, thin_flip (as extrude: the profile curves made into a wall, then swept), operation',
   loft: 'loft (a smooth solid joining shapes on different planes, as Onshape\'s Loft): sections (in order: sketch names — each with one closed shape — or {"part": name, "face": "F3"} for a flat face of a part), start_point / end_point ([x, y, z] mm: come to a point there — a cone or pyramid tip; null to take it off), start / end ("none" | "normal" — leave square to the shape | "rounded" — a point\'s tip made round, like a nose | "match_tangent" / "match_curvature" — carry on smoothly from the faces round a face section), start_magnitude / end_magnitude (how far that reaches, default 1, at most 4), guide (a sketch with one curve that touches every shape\'s outline: the loft is pulled out or in to follow it), path (a sketch with the curve the loft runs along), straight (true: straight sides between shapes), match_corners (true: line corners up by "turns" — one whole number per section, how many corners on its start is turned — when a loft twists), closed_loop (true: back round to the first shape, a ring), operation',
@@ -800,15 +801,20 @@ export const TOOLS: ToolDef[] = [
   {
     name: "list_edges",
     title: "List a part's edges",
-    description: 'Every edge of a part, numbered E1, E2… with its kind, ends and length — to choose edges for fillets and chamfers. Optionally only those along an axis ("along": "x"|"y"|"z") or round ones ("along": "round"). Numbers change when the part changes. With "assembly" and "instance": that copy\'s edges where it sits in the assembly, for add_mate.',
+    description: 'Every edge of a part, numbered E1, E2… with its kind, ends and length — to choose edges for fillets and chamfers. Optionally only those along an axis ("along": "x"|"y"|"z") or round ones ("along": "round"). Numbers change when the part changes. With "assembly" and "instance": that copy\'s edges where it sits in the assembly, for add_mate. "corners": true lists the part\'s corners instead (where edges meet), for points given as {"vertex": [x, y, z]} and extrudes "up_to_vertex".',
     inputSchema: {
       type: "object",
-      properties: { part: { type: "string" }, along: { type: "string", enum: ["x", "y", "z", "round"] }, assembly: { type: "string" }, instance: { type: "string", description: "A copy in an assembly: its edges as it sits there." } },
+      properties: { part: { type: "string" }, along: { type: "string", enum: ["x", "y", "z", "round"] }, corners: { type: "boolean" }, assembly: { type: "string" }, instance: { type: "string", description: "A copy in an assembly: its edges as it sits there." } },
     },
     readOnly: true,
     run: (s, a) => {
-      noExtras(a, ["part", "along", "assembly", "instance"], "list_edges");
+      noExtras(a, ["part", "along", "corners", "assembly", "instance"], "list_edges");
       const p = partOrInstance(s, a);
+      if (a.corners === true) {
+        const corners = cornersOf(p);
+        const r2 = (v: number) => Math.round(v * 100) / 100 || 0;
+        return say(`${p.name} has ${corners.length} corners:`, ...corners.slice(0, 300).map((c, i) => `V${i + 1}: (${c.p.map(r2).join(", ")}), where ${c.dirs?.length ?? 0} edges meet`), corners.length > 300 && `…and ${corners.length - 300} more.`);
+      }
       const along = a.along === undefined ? null : oneOf(a.along, ["x", "y", "z", "round"] as const, "along");
       const edges = edgeList(p).filter((e) => {
         if (!along) return true;

@@ -7,7 +7,7 @@ import { indexOfRef, sameRef, type TopoPick } from "../geometry/topoRef";
 import { isPatternFeature, isPickFeature } from "../model/features";
 import { madeByDraft } from "../model/document";
 import { planeVisible, sketchVisible, usedSketches } from "../model/visibility";
-import { activeAssembly, activeDrawing, activeFeatures, activeHiddenDatums, activeStudioId, pickFor, studioParts, useLengthUnit, useStore, type PlaneName, type SelectionItem } from "../model/store";
+import { activeAssembly, activeDrawing, activeFeatures, activeHiddenDatums, activeStudioId, cornerPickFor, pickFor, studioParts, useLengthUnit, useStore, type PlaneName, type SelectionItem } from "../model/store";
 import { ghostParts } from "../app/versionActions";
 import { compose, IDENTITY, placementMatrix, rotate, type Placement } from "../assembly/math";
 import { isOrigin } from "../assembly/origin";
@@ -38,7 +38,7 @@ import { setSketchTheme } from "./SketchLayer";
 import { draftEffect, partsOfFeature } from "../model/partLinks";
 import { SceneManager, type ConnectorMark, type PickAreas, type PickAreaSet, type PickTarget, type ScreenRay } from "./SceneManager";
 import { geomPick, studioConnectorMarks } from "./geomPick";
-import { connectorWanted } from "../model/geomClicks";
+import { connectorWanted, cornerWanted } from "../model/geomClicks";
 import { isMorePlaneMode } from "../sketch/planeTypes";
 import { areaClickChange, areaClickMode, areaOutlines, areaShades, areasTaken, clickableAreaSketches, followedSketch, selectArea, selectedAreaShades, selectedCount } from "../sketch/areaClicks";
 import { sketchAreas } from "../sketch/areas";
@@ -344,8 +344,17 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   const ex = s.editing?.draft.type === "extrude" ? s.editing.draft.extrude : undefined;
   if (ex && (ex.end === "upToFace" || ex.end === "upToVertex" || ex.end === "upToPart")) {
     if (target?.kind !== "part") return;
+    if (target.item.kind === "vertex") {
+      // A corner clicked as itself (Up to vertex only; corners can't be picked otherwise here).
+      if (ex.end !== "upToVertex" || target.item.partId === s.editing!.draft.id) return;
+      const corner = cornerPickFor(s.parts, target.item);
+      if (!corner) return;
+      const { upTo: _u, upToEnd: _e, ...rest } = ex;
+      s.setDraftField({ extrude: { ...rest, upToCorner: corner } });
+      return;
+    }
     if (ex.end === "upToFace" && target.item.kind !== "face") return s.showToast("Click a face (not an edge) to extrude up to.");
-    if (ex.end === "upToVertex" && target.item.kind !== "edge") return s.showToast("Click near the end of an edge: the corner there is where the extrude stops.");
+    if (ex.end === "upToVertex" && target.item.kind !== "edge") return s.showToast("Click a corner (or near the end of an edge): that is where the extrude stops.");
     if (target.item.partId === s.editing!.draft.id) return;
     const pick = pickFor(s.parts, target.item);
     if (!pick) return;
@@ -353,8 +362,12 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       // The end of the edge nearest where it was clicked.
       const at = target.point ?? pick.ref.mid;
       const gap = (p: [number, number, number]) => Math.hypot(p[0] - at[0], p[1] - at[1], p[2] - at[2]);
-      s.setDraftField({ extrude: { ...ex, upTo: pick, upToEnd: gap(pick.ref.a) <= gap(pick.ref.b) ? "a" : "b" } });
-    } else s.setDraftField({ extrude: { ...ex, upTo: target.point ? { ...pick, at: target.point } : pick } });
+      const { upToCorner: _c, ...rest } = ex;
+      s.setDraftField({ extrude: { ...rest, upTo: pick, upToEnd: gap(pick.ref.a) <= gap(pick.ref.b) ? "a" : "b" } });
+    } else {
+      const { upToCorner: _c, ...rest } = ex;
+      s.setDraftField({ extrude: { ...rest, upTo: target.point ? { ...pick, at: target.point } : pick } });
+    }
     return;
   }
   // Move / copy: the part to move, or where the triad, a direction, a line or a mate connector goes.
@@ -799,7 +812,7 @@ function boxSelectItems(items: SelectionItem[], additive: boolean) {
 /** What a row of the Select other list picks, as a click would. */
 export function choiceTarget(c: OtherChoice): PickTarget {
   if (c.kind === "part") return { kind: "part", item: { partId: c.partId, kind: c.via.kind, index: c.via.index }, point: c.via.point, local: c.via.local, whole: true };
-  if (c.kind === "face" || c.kind === "edge") return { kind: "part", item: { partId: c.partId, kind: c.kind, index: c.index }, point: c.point, local: c.local };
+  if (c.kind === "face" || c.kind === "edge" || c.kind === "vertex") return { kind: "part", item: { partId: c.partId, kind: c.kind, index: c.index }, point: c.point, local: c.local };
   if (c.kind === "plane") return { kind: "plane", plane: c.plane as PlaneName };
   if (c.kind === "customPlane") return { kind: "customPlane", id: c.id };
   if (c.kind === "sketchArea") return { kind: "sketchArea", sketch: c.sketch, index: c.index };
@@ -1135,6 +1148,8 @@ export function Viewport() {
   }, [assembly, listFeatures, builtCurves, pickedFeatureForPlanes, openDraft]);
   const wantsConnector = useStore((s) => connectorWanted(s, !!activeAssembly(s)));
   useEffect(() => viewportApi.current?.setConnectorPicking(wantsConnector), [wantsConnector]);
+  const wantsCorners = useStore((s) => cornerWanted(s, !!activeAssembly(s)));
+  useEffect(() => viewportApi.current?.setCornerPicking(wantsCorners), [wantsCorners]);
   const selectedParts = useStore((s) => s.selectedParts);
   const pickedFeature = useStore((s) => s.selectedFeatureId);
   const studioFeatures = useStore(activeFeatures);

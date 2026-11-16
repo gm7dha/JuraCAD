@@ -80,11 +80,12 @@ export function SelectionInfo() {
   } else if (selection.length === 1) {
     const s = selection[0];
     const part = parts.find((p) => p.id === s.partId);
-    text = `${s.kind === "face" ? "Face" : "Edge"} ${s.index + 1} of ${part?.name ?? "part"}`;
+    text = `${s.kind === "face" ? "Face" : s.kind === "vertex" ? "Corner" : "Edge"} ${s.index + 1} of ${part?.name ?? "part"}`;
   } else if (selection.length > 1) {
     const faces = selection.filter((s) => s.kind === "face").length;
-    const edges = selection.length - faces;
-    text = [faces && `${faces} face${faces > 1 ? "s" : ""}`, edges && `${edges} edge${edges > 1 ? "s" : ""}`]
+    const corners = selection.filter((s) => s.kind === "vertex").length;
+    const edges = selection.length - faces - corners;
+    text = [faces && `${faces} face${faces > 1 ? "s" : ""}`, edges && `${edges} edge${edges > 1 ? "s" : ""}`, corners && `${corners} corner${corners > 1 ? "s" : ""}`]
       .filter(Boolean)
       .join(", ") + " selected";
   }

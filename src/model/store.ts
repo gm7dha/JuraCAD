@@ -34,6 +34,7 @@ import {
   type History,
 } from "./document";
 import { sameRef, type TopoPick } from "../geometry/topoRef";
+import { cornersOf, type VertexPick } from "../geometry/vertexRef";
 import type { SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 import { setCurrentScope } from "./expr";
@@ -129,17 +130,27 @@ export function keepsSteps(d: Feature): boolean {
 const NO_DIMS: string[] = [];
 export interface SelectionItem {
   partId: string;
-  kind: "face" | "edge";
-  /** Face or edge number within the part. */
+  /** "vertex": a corner (its number in `cornersOf(part)`, geometry/vertexRef.ts). */
+  kind: "face" | "edge" | "vertex";
+  /** Face, edge or corner number within the part. */
   index: number;
 }
 
 /** What a picked face or edge looks like, so a feature can find it again after rebuilds. */
 export function pickFor(parts: PartMesh[], item: SelectionItem): TopoPick | null {
+  if (item.kind === "vertex") return null;
   const part = parts.find((p) => p.id === item.partId);
   const ref = item.kind === "edge" ? part?.edgeRefs?.[item.index] : part?.faceRefs?.[item.index];
   if (!ref || (ref.kind === "edge" ? ref.curve : ref.surface) === "UNKNOWN") return null;
   return { partId: item.partId, ref };
+}
+
+/** A picked corner, so a feature (or Measure) can find it again after rebuilds. */
+export function cornerPickFor(parts: PartMesh[], item: SelectionItem): VertexPick | null {
+  if (item.kind !== "vertex") return null;
+  const part = parts.find((p) => p.id === item.partId);
+  const ref = part ? cornersOf(part)[item.index] : undefined;
+  return part && ref ? { partId: part.id, ref } : null;
 }
 
 export type { PlaneName, DatumName } from "./types";

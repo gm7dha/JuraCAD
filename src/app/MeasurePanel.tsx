@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import type { Measurement } from "../geometry/measureMath";
 import { getKernel } from "../kernel/connect";
-import { pickFor, useLengthUnit, useStore } from "../model/store";
+import { cornerPickFor, pickFor, useLengthUnit, useStore } from "../model/store";
 import { formatArea, formatLength, formatVolume } from "../model/units";
 import { rowsText } from "../model/massProps";
 import { copyText } from "./MassPanel";
@@ -38,7 +38,8 @@ export function MeasurePanel() {
       };
     }
     if (selection.length === 0 || selection.length > 2) return;
-    const picks = selection.map((item) => pickFor(parts, item)).filter((p): p is NonNullable<typeof p> => p !== null);
+    // Faces, edges and corners (a corner is a point).
+    const picks = selection.map((item) => (item.kind === "vertex" ? cornerPickFor(parts, item) : pickFor(parts, item))).filter((p): p is NonNullable<typeof p> => p !== null);
     if (picks.length !== selection.length) return;
     let current = true;
     getKernel()
@@ -72,6 +73,7 @@ export function MeasurePanel() {
     if (item.length !== undefined && item.radius === undefined) rows.push([`${prefix}${item.label} — length`, mm(item.length)]);
     if (item.area !== undefined) rows.push([`${prefix}${item.label} — area`, mm2(item.area)]);
     if (item.volume !== undefined) rows.push([`${prefix}${item.label} — volume`, formatVolume(item.volume)]);
+    if (item.point) rows.push([`${prefix}${item.label} — X / Y / Z`, item.point.map((v) => mm(v)).join(" / ")]);
   });
   if (result.centreDistance) {
     const c = result.centreDistance;

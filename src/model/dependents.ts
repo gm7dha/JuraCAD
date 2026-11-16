@@ -131,6 +131,7 @@ function usesOf(f: Feature): Uses {
   // Newer Plane types' points and line, and a mate connector's spot: the part, sketch or connector each is on.
   for (const g of [...(f.planeDef?.points ?? []), ...(f.planeDef?.line ? [f.planeDef.line] : []), ...(f.connector ? [f.connector.at] : [])]) {
     needPart(g.pick?.partId);
+    needPart(g.vertex?.partId);
     need(g.sketchPoint?.sketch);
     need(g.sketchLine?.sketch);
     need(g.connector);
@@ -157,6 +158,7 @@ function usesOf(f: Feature): Uses {
   need(f.transform?.fromConnector);
   need(f.transform?.toConnector);
   if (UP_TO_PICK.has(f.extrude?.end ?? "")) needPart(f.extrude?.upTo?.partId);
+  if (f.extrude?.end === "upToVertex") needPart(f.extrude.upToCorner?.partId);
   needPart(f.extendTo?.target?.partId);
   needPart(f.transform?.partId);
   // Split face's parts are its picks' (a list below).

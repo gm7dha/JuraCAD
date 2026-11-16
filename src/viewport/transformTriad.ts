@@ -6,7 +6,7 @@
  * in transformMath.ts / transformDrag.ts / transformPicks.ts (pure).
  */
 import { resolveParams } from "../model/features";
-import { activeFeatures, useStore } from "../model/store";
+import { activeFeatures, cornerPickFor, useStore } from "../model/store";
 import { baseFrame, compose, IDENTITY, invert, savedFrame, toMatrix4, transformMode, transformMotion, transformTriad, valuesInFrame, type Frame, type Rigid, type Triad, type TransformValues, type Vec3 } from "../model/transformMath";
 import { directionBy, directionOf, frameBy, lineBy, lineOf, spotFrame, tidyVec, type SpotSource } from "../model/transformPicks";
 import { lengthUnit, startingLength } from "../model/units";
@@ -153,6 +153,10 @@ function spotSource(manager: SceneManager | null, target: PickTarget | null): { 
   if (target.kind !== "part") return null;
   const part = s.parts.find((p) => p.id === target.item.partId);
   const at = target.point;
+  if (target.item.kind === "vertex") {
+    const corner = cornerPickFor(s.parts, target.item);
+    return corner ? { src: { kind: "corner", p: corner.ref.p }, partId: target.item.partId } : null;
+  }
   if (target.item.kind === "face") {
     const ref = part?.faceRefs?.[target.item.index];
     return ref?.kind === "face" ? { src: { kind: "face", ref, at }, partId: target.item.partId } : null;
