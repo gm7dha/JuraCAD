@@ -554,6 +554,23 @@
   Tests: tests/loft (pure; picking stripped, ends tidied), engineLoft (exact pyramid/cone, dome, off-centre tip, upright
   sides at a normal start and on a box's top face, no lip at any magnitude, into-the-part refused, holed face refused, guide
   moving one side only, arc and L paths' volumes and ends, a shape off the path refused, twist, ring), mcpLoft.
+  More (Onshape's): new lofts carry `apart` + `intersectAll` (createFeature; document.ts keeps them for lofts), so Add/Remove/
+  Intersect reach every part — old lofts the latest part as before. Consecutive flat sections on one plane are refused
+  (`samePlaneProblem`, both paths). Before helper copies, the end wires are split as a plain loft splits them (`compatibleEnds`:
+  the plain loft's edges lying on each end, joined) — OCCT's own splitting gives up once helpers are added (a square to a slanted
+  circle). Ruled + any end condition refused. Sections may be curved faces (outer wire; `curved`: ends dropped with a note; a
+  solid closes that end with the face itself, `closedWithFaces` → encloseSurfaces, New only — fusing along the shared face fails)
+  and `{edges}` (part edges, `chainEdges`; open only for surfaces; `toggleSectionEdge`, picking newSectionEdges/sectionEdges).
+  `LoftCurve` `{curve}`: a curve feature as guide/path (`LoftContext.curve`, engine via the `loftCurves` WeakMap per features list;
+  an open one walked from the end nearest the first shape). Ends `profileTangent` (copies a hair on and grown/shrunk a lot,
+  `PROFILE_STEPS`, grow towards the neighbour's size) and `direction` (`towards`: a GeomPick — axis, edge, face normal, plane,
+  connector, sketch line; `dirOf`; copies moved along it; lying in the plane refused; picking startDir/endDir, lineFromClick).
+  Thin (`Feature.thin`, lazy `thickness`/`thickness2` params, ThinOptions): `thinLoft` — each sketch section's ring from
+  `thinSketches` → outer and inner outlines (`Overrides`), both lofted with the same settings, inner cut away; points, faces,
+  edges and a guide refused. Claude: `surface`, `thin…`, guide/path a curve name, sections `{part, edges}` and curved faces, ends
+  `tangent_to_profile` / `direction` + `start_direction`/`end_direction`. Tests: loftMore (pure), engineLoftMore (two boxes
+  cut and joined exactly, same plane, slanted ends sound, fit spline path/guide, curved face and box-edge sections, flared and
+  directed ends, thin volumes exact), mcpLoftMore. Not done: curved-face sections joined to their part, thin with faces/points.
 - Thin (Onshape's "Thin" on Extrude/Revolve/Sweep, solids): `Feature.thin` (`midPlane`: the whole `thickness` centred; else
   `thickness` on the first side + `thickness2` (default 0) on the other; `flip` swaps; missing = solid, old files unchanged;
   params in group "thin", shown by `ThinOptions` in FeatureDialog.tsx, hidden by `visibleParamKeys` unless thin; draft hidden).

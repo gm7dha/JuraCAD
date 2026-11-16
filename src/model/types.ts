@@ -94,25 +94,37 @@ export interface LoftDef {
   matchCorners?: boolean;
   /** Back round to the first section (a closed ring of sections). */
   periodic?: boolean;
-  /** What a click in the 3D view chooses while the dialog is open (missing = a flat face, as a section; "start"/"end" a corner as the first/last section). */
-  picking?: "profile" | "start" | "end" | "guide" | "path";
+  /**
+   * What a click in the 3D view chooses while the dialog is open (missing = a face, as a section; "start"/"end" a corner as
+   * the first/last section; "newSectionEdges"/"sectionEdges" part edges for a new / the last edges section; "startDir"/"endDir"
+   * the direction of a "direction" end).
+   */
+  picking?: "profile" | "start" | "end" | "guide" | "path" | "newSectionEdges" | "sectionEdges" | "startDir" | "endDir";
 }
 
 /** One section of a loft: a sketch (or one picked area of it), a flat face of a part, or a point. */
 export type LoftProfile =
   | { sketch: string; areas?: AreaPick[]; turn?: number }
   | { face: TopoPick; turn?: number }
-  | { point: GeomPick };
+  | { point: GeomPick }
+  /** Part edges joined end to end (open ones only for a surface loft). */
+  | { edges: TopoPick[] };
 
 /** How a loft meets an end: square to the section, a rounded tip (a point), or carrying on from a face's neighbours. */
 export interface LoftEnd {
-  kind: "normal" | "tangent" | "matchTangent" | "matchCurvature";
+  /**
+   * normal: square to the shape; tangent: a point's rounded tip; matchTangent/matchCurvature: carrying on from a face's
+   * neighbours; profileTangent: flaring out (or in) along the shape's own plane; direction: leaving along `towards`.
+   */
+  kind: "normal" | "tangent" | "matchTangent" | "matchCurvature" | "profileTangent" | "direction";
+  /** "direction": the line, edge, face (its normal), axis or mate connector (its Z) it leaves along. */
+  towards?: GeomPick;
   /** How far the condition reaches (Onshape's magnitude; missing = 1). */
   magnitude?: number;
 }
 
 /** A guide or path: one run of curves in a sketch, or edges of parts. */
-export type LoftCurve = { sketch: string } | { edges: TopoPick[] };
+export type LoftCurve = { sketch: string } | { edges: TopoPick[] } | { curve: string };
 
 /** Where a Part Studio mate connector sits and which part it belongs to (Onshape's Mate connector feature). */
 export interface MateConnectorDef {

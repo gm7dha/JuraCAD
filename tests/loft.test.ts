@@ -39,7 +39,8 @@ describe("loft sections", () => {
   it("offers end conditions that fit the section", () => {
     expect(endChoices({ point: { p: [0, 0, 0] } })).toEqual(["tangent"]);
     expect(endChoices({ face })).toContain("matchTangent");
-    expect(endChoices({ sketch: "a" })).toEqual(["normal"]);
+    expect(endChoices({ sketch: "a" })).toEqual(["normal", "profileTangent", "direction"]);
+    expect(endChoices({ face })).toContain("profileTangent");
     expect(tidyEnds({ start: { kind: "matchTangent" } }, [{ sketch: "a" }, { sketch: "b" }])).toEqual({ start: undefined });
   });
 
@@ -49,7 +50,9 @@ describe("loft sections", () => {
     const added = loftClick(f, c);
     expect(typeof added).not.toBe("string");
     expect(loftProfiles(added as Feature)).toHaveLength(2);
-    expect(loftClick(f, { kind: "part", pick: { ...face, ref: { ...face.ref, surface: "CYLINDRE" } as never } })).toMatch(/curved/);
+    // A curved face is a section too (its outline).
+    const round = loftClick(f, { kind: "part", pick: { ...face, ref: { ...face.ref, surface: "CYLINDRE" } as never } });
+    expect(loftProfiles(round as Feature)).toHaveLength(2);
     const corner = loftClick({ ...f, loft: { picking: "end" } }, { kind: "part", pick: edge, at: [19.9, 0, 10] });
     expect(typeof corner).not.toBe("string");
     const pt = loftProfiles(corner as Feature)[1];

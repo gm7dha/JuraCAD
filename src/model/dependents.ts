@@ -345,7 +345,7 @@ export function withoutGone(f: Feature, gone: Set<string>): Feature {
   if (f.blend?.side2.some((p) => partGone(p.partId))) set({ blend: { ...f.blend, side2: f.blend.side2.filter((p) => !partGone(p.partId)) } });
   if (f.pattern?.sources.some(featureGone)) set({ pattern: { ...f.pattern, sources: f.pattern.sources.filter((id) => !featureGone(id)) } });
   if (f.mirror?.sources.some(featureGone)) set({ mirror: { ...f.mirror, sources: f.mirror.sources.filter((id) => !featureGone(id)) } });
-  if (f.loft?.profiles) out = loftWithoutGone(out, featureGone, partGone);
+  if (f.loft) out = loftWithoutGone(out, featureGone, partGone);
   else if (f.sections?.some(featureGone)) set({ sections: f.sections.filter((id) => !featureGone(id)) });
   if (f.curve?.curves?.some(featureGone)) set({ curve: { ...f.curve, curves: f.curve.curves.filter((id) => !featureGone(id)) } });
   if (f.moreAreas?.some((m) => featureGone(m.sketch))) {

@@ -191,7 +191,11 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     label: "Loft",
     namePrefix: "Loft",
     description: "Makes a smooth solid joining shapes drawn on different sketches — for example a square base blending into a round top.",
-    params: [],
+    // Thin loft's wall (lazy: older lofts are saved without them).
+    params: [
+      { key: "thickness", label: "Wall thickness", defaultValue: "2", positive: true, group: "thin", lazy: true },
+      { key: "thickness2", label: "Wall thickness on the other side", defaultValue: "0", min: 0, group: "thin", lazy: true },
+    ],
   },
   text: {
     type: "text",
