@@ -20,7 +20,8 @@ import { MATE_ORDER, MATE_TYPES, nextMateName, rememberCutMeshes, rememberedCutM
 import { isOrigin, originConnector, ORIGIN_PLANES, type OriginPlane } from "../assembly/origin";
 import { cutMeshesFrom, cutsInsideSubAssemblies, explodeAssembly, FLAT_STEP_NOTE, hasAssemblyFeatures, instancesForKernel, partBox, storedCutInputs } from "../assembly/placed";
 import { stepPartOffsets } from "../assembly/explode";
-import { ownConnectorPick } from "../assembly/connectors";
+import { ownConnectorPick, vertexConnectorPick } from "../assembly/connectors";
+import { cornersOf, type VertexRef } from "../geometry/vertexRef";
 import { stepTree } from "../assembly/stepTree";
 import { insertProblem, insertSubAssembly, leavesOf, ownBox, type Leaf } from "../assembly/subassembly";
 import { RELATION_KINDS } from "../assembly/relations";
@@ -160,6 +161,23 @@ export function placedFacesAndEdges(t: Target) {
   return { ...t.mesh, name: t.leaf.name, faceRefs, edgeRefs };
 }
 
+const fmtPoint = (p: Vec3) => `(${p.map(r2).join(", ")})`;
+
+/** The copy's corner nearest a point given where the copy sits in the assembly (within 0.5 mm or 2 % of its size), in the part's own coordinates. */
+function placedCorner(t: Target, at: Vec3, where: string): VertexRef {
+  const mirrored = !!t.leaf.instance.mirrored;
+  const point = (p: Vec3) => applyPlacement(t.placement, mirrored ? flipX(p) : p);
+  const corners = cornersOf(t.mesh);
+  if (!corners.length) throw new InputError(`${where}: ${t.leaf.name} has no corners (its edges are all closed loops, like a cylinder's). Give an edge or a face instead.`);
+  const placed = corners.map((c) => point(c.p));
+  const size = Math.hypot(...[0, 1, 2].map((k) => Math.max(...placed.map((p) => p[k])) - Math.min(...placed.map((p) => p[k]))));
+  const gap = (p: Vec3) => Math.hypot(p[0] - at[0], p[1] - at[1], p[2] - at[2]);
+  const order = placed.map((_, i) => i).sort((a, b) => gap(placed[a]) - gap(placed[b]));
+  if (gap(placed[order[0]]) > Math.max(0.5, 0.02 * size))
+    throw new InputError(`${where}: ${t.leaf.name} has no corner at ${fmtPoint(at)} (as it sits in the assembly). The nearest corners are ${order.slice(0, 6).map((i) => fmtPoint(placed[i])).join(", ")}.`);
+  return corners[order[0]];
+}
+
 /** For list_faces / list_edges with an instance: the copy's faces and edges as they sit in the assembly. */
 export function instanceFaces(s: Session, assemblyRef: unknown, instanceRef: unknown) {
   const asm = findAssembly(s, assemblyRef);
@@ -189,7 +207,7 @@ const MATE_WORDS: Record<string, MateType> = {
 const MATE_HELP = MATE_ORDER.map((t) => `${t === "fastened" ? "fasten" : t === "revolute" ? "hinge (revolute)" : t === "pinSlot" ? "pin_slot" : t}: ${MATE_TYPES[t].description} Amounts: ${MATE_TYPES[t].values.map((v) => `${v.key} (${v.label}, ${v.unit})`).join(", ")}.`);
 
 const CONNECTOR_HELP =
-  `Each end is {"instance": "<copy name>", "face": …} or {"instance": …, "edge": …} (a round edge puts the connector at its centre, on its axis — the usual choice for hinges and pins in holes), optionally "at": "start" | "end" | "middle" on an edge; Width mates take "face" and "face2" (the two sides) on each end — on a sub-assembly copy, "instance2" may name another part of the same copy for "face2" (a slot made by two plates); {"origin": "Top" | "Front" | "Right"} is one of the assembly's own planes (it never moves); {"instance": …, "connector": "<name>"} is one of the part's own mate connectors (made in its Part Studio). Faces and edges are chosen as on a part, but as the copy sits in the assembly now: ${PICK_HELP.faces} Edges: "E5" (list_edges with "assembly" and "instance" numbers them) or {"near": [x, y, z]}. A copy inside a sub-assembly is named "Sub <1> / Part <1>".`;
+  `Each end is {"instance": "<copy name>", "face": …} or {"instance": …, "edge": …} (a round edge puts the connector at its centre, on its axis — the usual choice for hinges and pins in holes), optionally "at": "start" | "end" | "middle" on an edge; Width mates take "face" and "face2" (the two sides) on each end — on a sub-assembly copy, "instance2" may name another part of the same copy for "face2" (a slot made by two plates); {"origin": "Top" | "Front" | "Right"} is one of the assembly's own planes (it never moves); {"instance": …, "connector": "<name>"} is one of the part's own mate connectors (made in its Part Studio); {"instance": …, "vertex": [x, y, z]} is the copy's corner at that point (as it sits in the assembly now; list_edges with "corners": true lists a part's corners) — a connector there lined up with the part's own X, Y and Z (a Fasten between two corners keeps both parts the way up they're drawn). Faces and edges are chosen as on a part, but as the copy sits in the assembly now: ${PICK_HELP.faces} Edges: "E5" (list_edges with "assembly" and "instance" numbers them) or {"near": [x, y, z]}. A copy inside a sub-assembly is named "Sub <1> / Part <1>".`;
 
 export function oneFaceOrEdge(placed: ReturnType<typeof placedFacesAndEdges>, original: PartMesh, o: Obj, key: "face" | "face2" | "edge", where: string): TopoPick {
   const sel = o[key];
@@ -211,7 +229,7 @@ function connector(s: Session, asm: Assembly, raw: unknown, where: string, width
     const plane = oneOf(o.origin, ORIGIN_PLANES, `${where}.origin`) as OriginPlane;
     return { c: originConnector(plane), label: `the assembly's ${plane} plane` };
   }
-  noExtras(o, ["instance", "face", "face2", "instance2", "edge", "at", "connector"], where);
+  noExtras(o, ["instance", "face", "face2", "instance2", "edge", "at", "connector", "vertex"], where);
   if (o.instance === undefined) throw new InputError(`${where}: give "instance" (a copy's name, e.g. "Bracket <1>") and a "face" or "edge" — or {"origin": "Top"}. ${CONNECTOR_HELP}`);
   const t = findTarget(s, asm, o.instance, `${where}.instance`, solved);
   // One of the part's own mate connectors (made in its Part Studio with add_feature "mate_connector").
@@ -222,6 +240,12 @@ function connector(s: Session, asm: Assembly, raw: unknown, where: string, width
     const mc = own.find((c) => c.id.toLowerCase() === want) ?? own.find((c) => c.name.toLowerCase() === want);
     if (!mc) throw new InputError(`${where}.connector: ${t.leaf.name} has ${own.length ? `these mate connectors: ${own.map((c) => c.name).join(", ")}` : "no mate connectors of its own (add one in its Part Studio with add_feature \"mate_connector\")"}.`);
     return { c: { instanceId: t.leaf.top, ...(t.leaf.path.length ? { path: t.leaf.path } : {}), ...ownConnectorPick(t.mesh.id, mc) }, label: `${t.leaf.name} (${mc.name})` };
+  }
+  // A corner of the copy (where it sits in the assembly now): a connector there, lined up with the part's X, Y and Z.
+  if (o.vertex !== undefined) {
+    if (o.face !== undefined || o.edge !== undefined || width) throw new InputError(`${where}: "vertex" goes on its own (no face or edge), and not in a Width mate.`);
+    const corner = placedCorner(t, xyz(o.vertex, `${where}.vertex`, s.scope()).map((v) => v.value) as Vec3, `${where}.vertex`);
+    return { c: { instanceId: t.leaf.top, ...(t.leaf.path.length ? { path: t.leaf.path } : {}), ...vertexConnectorPick(t.mesh.id, corner) }, label: `${t.leaf.name} (the corner at ${fmtPoint(corner.p)} on the part)` };
   }
   const placed = placedFacesAndEdges(t);
   if ((o.face === undefined) === (o.edge === undefined)) throw new InputError(`${where}: give either "face" or "edge" (one of them).`);
@@ -636,7 +660,8 @@ export const ASSEMBLY_TOOLS: ToolDef[] = [
         }
       }
       const name = a.name === undefined ? nextMateName(asm, type) : text(a.name, "name").slice(0, 80);
-      const mate: Mate = { id: newId("m"), name, type, a: first.c, b: second.c, flip: bool(a.flip, "flip"), values };
+      // (Between two corners the connectors point the same way unless told: the parts keep their way up.)
+      const mate: Mate = { id: newId("m"), name, type, a: first.c, b: second.c, flip: bool(a.flip, "flip", !!(first.c.vertex && second.c.vertex)), values };
       const r = await tryAssemblyChange(s, asm.id, putMate(s.doc, asm.id, mate), `add the ${MATE_TYPES[type].label} mate`, [mate.id]);
       const moved = r.asm.instances.filter((i) => r.solved.drivenBy[i.id] === mate.id);
       const fixedBoth = [first.c, second.c].every((c) => isOrigin(c) || r.asm.instances.find((i) => i.id === c.instanceId)?.fixed);

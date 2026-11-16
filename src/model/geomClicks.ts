@@ -230,12 +230,23 @@ export function connectorWanted(s: { editing: { draft: Feature } | null; sketch:
 /**
  * Whether corners of parts can be hovered and picked now: with nothing open (to select them, e.g. to measure), or
  * while what's open takes a point — an Extrude up to a corner, a Plane through points, a Mate connector, Move / copy's
- * triad or From / To. Never in assemblies or sketches. Otherwise clicks go to faces and edges exactly as before.
+ * triad or From / To, a Loft's start / end point; in an assembly while a mate is made (or a mirror's connector placed);
+ * in a sketch with the Use tool. Otherwise clicks go to faces and edges exactly as before.
  */
-export function cornerWanted(s: { editing: { draft: Feature } | null; sketch: unknown }, inAssembly: boolean): boolean {
-  if (inAssembly || s.sketch) return false;
+export function cornerWanted(
+  s: { editing: { draft: Feature } | null; sketch: unknown; mateDraft?: unknown; mirrorFacePick?: boolean | "connector" },
+  inAssembly: boolean,
+): boolean {
+  // In an assembly: while a mate is being made, or a mirror's mate connector placed (a corner is where it goes).
+  if (inAssembly) return !!s.mateDraft || s.mirrorFacePick === "connector";
+  // In a sketch: the Use tool brings a corner in as a point that follows it.
+  if (s.sketch) return (s.sketch as { tool?: string }).tool === "useEdge";
   const d = s.editing?.draft;
   if (!d) return true;
+  if (d.type === "loft") {
+    const k = d.loft?.picking;
+    return k === "start" || k === "end";
+  }
   if (d.type === "extrude") return d.extrude?.end === "upToVertex";
   if (d.type === "plane") {
     const m = d.planeDef?.mode;

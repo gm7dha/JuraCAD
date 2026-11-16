@@ -13,7 +13,7 @@ import { evaluate, getCurrentScope, type Scope } from "../model/expr";
 import type { Assembly, AssemblyPattern, Instance, Mate, MateConnector, MateType } from "../model/types";
 import { sameRef } from "../geometry/topoRef";
 import { applyPlacement, compose, IDENTITY, invert, quatConjugate, quatFromAxisAngle, quatFromEulerDeg, quatMultiply, rotate, sub, type Placement, type Vec3 } from "./math";
-import { connectorFrameOnParts, framePlacement, widthFrame, type Frame } from "./connectors";
+import { connectorFrameOnParts, cornerOnCopy, framePlacement, widthFrame, type Frame } from "./connectors";
 import { axisPlane, flipOwnPlane, mirrorAcross, OWN_YZ, patternStep, placeCopy, placedConnector, type MirrorPlane, type OwnPlane } from "./patterns";
 import { findMesh, meshIdOf } from "./configured";
 import { withoutSuppressed } from "./suppress";
@@ -309,9 +309,12 @@ function cutFaceMoved(assembly: Assembly, parts: PartMesh[], assemblies: readonl
       if (!instance || instance.subAssembly || !cutMeshAt(assembly, instance.id, assemblies, cuts)) continue;
       const now = places[instance.id];
       if (!now || samePlace(now, instance.placement)) continue;
-      if (connectorFrameFor(assembly, parts, c, assemblies)) continue;
-      if (!connectorFrameFor(assembly, parts, c, assemblies, [], cuts)) continue;
-      out[m.id] = { part: instance.id, text: `This mate uses a face made by an assembly feature on ${instance.name}, and the mate would move ${instance.name} away from where the feature cut it — so the face wouldn't be there any more. Mate the other part to it instead, or fix ${instance.name} where it is.` };
+      const plain = connectorFrameFor(assembly, parts, c, assemblies);
+      const withCuts = connectorFrameFor(assembly, parts, c, assemblies, [], cuts);
+      // (A corner the plain part has near one the cut made isn't it: what counts is where it's found with the cuts.)
+      if (plain && (!c.vertex || (withCuts && Math.hypot(...sub(plain.origin, withCuts.origin)) < 1e-9))) continue;
+      if (!withCuts) continue;
+      out[m.id] = { part: instance.id, text: `This mate uses a ${c.vertex ? "corner" : "face"} made by an assembly feature on ${instance.name}, and the mate would move ${instance.name} away from where the feature cut it — so the ${c.vertex ? "corner" : "face"} wouldn't be there any more. Mate the other part to it instead, or fix ${instance.name} where it is.` };
       break;
     }
   }
@@ -1148,7 +1151,10 @@ export function connectorFrameFor(assembly: Assembly, parts: PartMesh[], c: Mate
   // A face or edge made by the assembly's own features (a drilled hole's wall) is found on the cut copy — only when
   // the part itself hasn't got it, so mates on faces it always had stay exactly where they were.
   const cut = instance ? cutMeshAt(assembly, instance.id, assemblies, cutMeshes) : undefined;
-  const f = mesh ? on(mesh) ?? (cut ? on(cut) : null) : connectorFrameOnParts(parts, c);
+  // (A corner: on the part, or on the cut copy where only the cut made it — never a plain corner merely near it.)
+  const corner = mesh && c.vertex && cut ? cornerOnCopy(mesh, cut, c.vertex) : undefined;
+  const f =
+    corner !== undefined ? (corner ? { origin: [...corner] as Vec3, x: [1, 0, 0] as Vec3, z: [0, 0, 1] as Vec3 } : null) : mesh ? on(mesh) ?? (cut ? on(cut) : null) : connectorFrameOnParts(parts, c);
   // A mirrored instance shows its part flipped across its own YZ plane: so are its connectors.
   return f && instance?.mirrored ? flipFrame(f) : f;
 }
@@ -1243,10 +1249,21 @@ export function samePieceClick(m: { type: MateType; a?: MateConnector; b?: MateC
  * moves over to second place.
  */
 export function pickConnector(m: { type: MateType; a?: MateConnector; b?: MateConnector }, c: MateConnector): { a?: MateConnector; b?: MateConnector } {
-  if (m.type === "width") return pickWidthFace(m, c);
+  // (A Width mate measures between flat faces: a corner can't be one of them.)
+  if (m.type === "width") return c.vertex ? { a: m.a, b: m.b } : pickWidthFace(m, c);
   if (isOrigin(c)) return { a: c, b: [m.b, m.a].find((x) => x && !isOrigin(x)) };
   if (!m.a || (m.a && m.b) || (!m.b && m.a.instanceId === c.instanceId)) return { a: c, b: undefined };
   return { a: m.a, b: c };
+}
+
+/**
+ * A new mate between two corners points their connectors the same way (`flip`), so the parts keep the way up
+ * they're drawn in (both connectors are lined up with their part's own X, Y and Z); otherwise as it was.
+ */
+export function cornerFlip(before: { a?: MateConnector; b?: MateConnector }, after: { a?: MateConnector; b?: MateConnector }, flip: boolean): boolean {
+  const done = (m: { a?: MateConnector; b?: MateConnector }) => !!m.a && !!m.b;
+  if (done(before) || !done(after)) return flip;
+  return after.a!.vertex && after.b!.vertex ? true : flip;
 }
 
 /**

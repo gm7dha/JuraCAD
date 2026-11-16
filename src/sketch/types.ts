@@ -1,4 +1,5 @@
 import type { EdgeRef, FaceRef, TopoPick } from "../geometry/topoRef";
+import type { VertexRef } from "../geometry/vertexRef";
 
 /**
  * Sketch data. Everything is stored in the sketch's own 2D coordinates (u, v)
@@ -54,7 +55,11 @@ export const isPartLink = (l: CurveLink): l is PartLink => "partId" in l;
  * curve, passes through this sketch's plane (the place nearest the point,
  * when it passes through more than once).
  */
-export type PointLink = (SketchItemLink & { end?: "mid" | "pierce" }) | { partId: string; ref: EdgeRef; end: "a" | "b" | "centre" | "mid" | "pierce" };
+export type PointLink =
+  | (SketchItemLink & { end?: "mid" | "pierce" })
+  | { partId: string; ref: EdgeRef; end: "a" | "b" | "centre" | "mid" | "pierce" }
+  /** A corner (vertex) of the part, clicked with Use: found again on the part each rebuild (geometry/vertexRef.ts). */
+  | { partId: string; ref: VertexRef; end: "corner" };
 
 export interface SketchPoint {
   id: string;

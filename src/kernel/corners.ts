@@ -53,6 +53,17 @@ export function shapeCorners(shape: Shape3D): VertexRef[] {
   return cornersFromEnds(ends, min, max);
 }
 
+/** Where a picked corner is now on this shape (its own coordinates), or null when it can't be found. */
+export function cornerOnShape(shape: Shape3D, ref: VertexRef): Vec3 | null {
+  const box = shape.boundingBox;
+  const [min, max] = box.bounds as [Vec3, Vec3];
+  box.delete();
+  const size = Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+  const corners = shapeCorners(shape);
+  const m = matchVertex(ref, corners, size);
+  return m === null ? null : corners[m].p;
+}
+
 /** Where a picked corner is now on its part, or a plain message saying why it can't be found. */
 export function findCorner(parts: { id: string; name: string; shape: Shape3D }[], pick: VertexPick): Vec3 | string {
   const part = parts.find((p) => p.id === pick.partId);

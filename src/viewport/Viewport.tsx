@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { findMesh, meshIdOf } from "../assembly/configured";
 import { indexOfRef, sameRef, type TopoPick } from "../geometry/topoRef";
+import { cornersOf, indexOfVertex } from "../geometry/vertexRef";
 import { isPatternFeature, isPickFeature } from "../model/features";
 import { madeByDraft } from "../model/document";
 import { planeVisible, sketchVisible, usedSketches } from "../model/visibility";
@@ -11,7 +12,7 @@ import { activeAssembly, activeDrawing, activeFeatures, activeHiddenDatums, acti
 import { ghostParts } from "../app/versionActions";
 import { compose, IDENTITY, placementMatrix, rotate, type Placement } from "../assembly/math";
 import { isOrigin } from "../assembly/origin";
-import { clickedSpot, findPick, framePlacement, ownConnectorPick } from "../assembly/connectors";
+import { clickedSpot, cornerOnCopy, findPick, framePlacement, ownConnectorPick, vertexConnectorPick } from "../assembly/connectors";
 import { explodeAssembly, useAssemblyLeaves, useSolvedAssembly } from "../app/assemblySolve";
 import { stepPartOffsets } from "../assembly/explode";
 import { instanceAt, leafKey, leavesOf, topOfKey, type Leaf } from "../assembly/subassembly";
@@ -31,7 +32,7 @@ import { framesOf, planeAsSketchPlane, planeFeatureFrame } from "../sketch/plane
 import { resolveParams } from "../model/features";
 import { copyEdge } from "../sketch/tools";
 import { takeWholeFace } from "../app/sketchUseFace";
-import { projectEdge, linkEdge, type SketchLinkInfo } from "../sketch/links";
+import { projectEdge, linkCorner, linkEdge, type SketchLinkInfo } from "../sketch/links";
 import { analyzeSketch, solveSketch, type SketchAnalysis } from "../sketch/solver";
 import type { SketchData } from "../sketch/types";
 import { setSketchTheme } from "./SketchLayer";
@@ -94,6 +95,18 @@ function connectorItems(parts: PartMesh[], assembly: Assembly, assemblies: reado
   for (const c of connectors) {
     // (A part's own mate connector is drawn as its marker, not a face.)
     if (!c || c.connector) continue;
+    // A corner: its dot.
+    if (c.vertex) {
+      const key = leafKey(c.instanceId, c.path);
+      const instance = instanceAt(assembly, assemblies, key)?.part;
+      const part = instance && findMesh(parts, meshIdOf(instance));
+      // (Lit on the copy as shown: a copy cut by the assembly's features has its own corners.)
+      const shown = cutMeshFor(key);
+      const p = part ? cornerOnCopy(part, shown, c.vertex) : null;
+      const index = p ? indexOfVertex(cornersOf(shown ?? part!), { kind: "vertex", p }) : -1;
+      if (index >= 0) items.push({ partId: key, kind: "vertex", index });
+      continue;
+    }
     // On a part inside a sub-assembly, the path leads to it (a Width mate's second face may be on another part of the copy).
     const sides: [TopoPick, string[] | undefined][] = c.pick2 ? [[c.pick, c.path], [c.pick2, c.path2 ?? c.path]] : [[c.pick, c.path]];
     for (const [pick, path] of sides) {
@@ -128,6 +141,11 @@ function connectorAt(target: PickTarget | null): MateConnector | null {
   if (!found || !instance || !part) return null;
   // (A copy cut by the assembly's features is shown cut: the click names its faces and edges.)
   const shown = cutMeshFor(target.item.partId) ?? part;
+  // A corner: a connector there, lined up with the part's own X, Y and Z (Onshape's vertex connector).
+  if (target.item.kind === "vertex") {
+    const corner = cornersOf(shown)[target.item.index];
+    return corner ? { instanceId: found.top.id, ...(found.path.length ? { path: found.path } : {}), ...vertexConnectorPick(instance.partId, corner) } : null;
+  }
   const ref = target.item.kind === "edge" ? shown.edgeRefs?.[target.item.index] : shown.faceRefs?.[target.item.index];
   if (!ref || (ref.kind === "edge" ? ref.curve : ref.surface) === "UNKNOWN") return null;
   // Picks name the part itself, whichever configuration it's shown in. Where it was clicked is kept
@@ -316,6 +334,18 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   // Copying part edges into the open sketch ("Use").
   if (s.sketch?.tool === "useEdge" && s.editing?.draft.sketch?.plane) {
     if (target?.kind !== "part") return;
+    if (target.item.kind === "vertex") {
+      // A corner: a fixed point there that follows it.
+      const corner = cornerPickFor(withContextParts(s.parts), target.item);
+      if (!corner) return;
+      const r = linkCorner(s.editing.draft.sketch.data, planeFrame(s.editing.draft.sketch.plane), corner);
+      if (r.error) s.setSketchMessage(r.error, "error");
+      else {
+        s.updateSketch(r.sketch, { selection: [r.pointId] });
+        s.setSketchMessage(null);
+      }
+      return;
+    }
     if (target.item.kind !== "edge") {
       // A face: its whole outline (and its holes) at once.
       const face = withContextParts(s.parts).find((p) => p.id === target.item.partId);
