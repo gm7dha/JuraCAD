@@ -4846,3 +4846,16 @@ kbd {
 .sketch-overlay.handles-on .constraint-badge {
   pointer-events: none;
 }
+
+/* The "Final" tick on touch screens: a box big enough for a finger. */
+@media (pointer: coarse) {
+  .final-toggle {
+    min-height: 44px;
+    font-size: 14px;
+  }
+
+  .final-toggle input {
+    width: 20px;
+    height: 20px;
+  }
+}
