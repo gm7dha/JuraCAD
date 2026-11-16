@@ -23,6 +23,7 @@
  * All positions are sketch millimetres.
  */
 import { sameRef, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
+import { SAME_CORNER, type VertexPick } from "../geometry/vertexRef";
 import { joinPoints, pointPos, settle, sketchId, type EditResult } from "./ops";
 import { toSketch, type PlaneFrame, type SketchPlane } from "./planes";
 import { splineThrough } from "./curves";
@@ -419,7 +420,10 @@ export function pointLinkOf(e: RefEdge, at: "a" | "b" | "centre" | "mid"): Point
 }
 
 function samePointLink(a: PointLink, b: PointLink): boolean {
-  if ("partId" in a && "partId" in b) return a.partId === b.partId && a.end === b.end && sameRef(a.ref, b.ref);
+  if ("partId" in a && "partId" in b) {
+    if (a.end === "corner" || b.end === "corner") return a.end === "corner" && b.end === "corner" && a.partId === b.partId && dist3(a.ref.p, b.ref.p) <= SAME_CORNER;
+    return a.partId === b.partId && a.end === b.end && sameRef(a.ref, b.ref);
+  }
   if (!("partId" in a) && !("partId" in b)) return a.sketch === b.sketch && a.item === b.item && (a.end ?? "") === (b.end ?? "");
   return false;
 }
@@ -438,6 +442,24 @@ export function linkPoint(s: SketchData, e: RefEdge, at: "a" | "b" | "centre" | 
   if (known) return { sketch: s, pointId: known.id };
   const id = sketchId("p");
   const r = settle({ ...s, points: [...s.points, { id, x: p[0], y: p[1], link }], constraints: [...s.constraints, fixAt(id, p)] });
+  return { ...r, pointId: id };
+}
+
+const dist3 = (a: Vec3, b: Vec3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+/**
+ * Use on a part's corner (Onshape's vertex): a fixed point where the corner is, seen square-on to the sketch, that
+ * follows it (`end: "corner"`, found again each rebuild). One already brought in from that corner is reused. The point
+ * is kept as a point of its own (a hole can be put there), so it stays when the sketch closes.
+ */
+export function linkCorner(s: SketchData, frame: PlaneFrame, corner: VertexPick): EditResult & { pointId: string } {
+  const link: PointLink = { partId: corner.partId, ref: corner.ref, end: "corner" };
+  const known = s.points.find((q) => q.link && samePointLink(q.link, link));
+  if (known) return { sketch: s, pointId: known.id };
+  const p = toSketch(frame, corner.ref.p);
+  if (!p.every(Number.isFinite)) return { sketch: s, pointId: "", error: "That corner can't be used here." };
+  const id = sketchId("p");
+  const r = settle({ ...s, points: [...s.points, { id, x: p[0], y: p[1], standalone: true, link }], constraints: [...s.constraints, fixAt(id, p)] });
   return { ...r, pointId: id };
 }
 
@@ -480,6 +502,8 @@ export function piercePoint(s: SketchData, selection: string[], refs: RefEdge[])
     const other = pts.find((p) => p !== from);
     if (!from || !other) return { sketch: s, error: hint };
     point = other;
+    // (A corner is a point, not something passing through the sketch.)
+    if (from.link?.end === "corner") return { sketch: s, error: hint };
     const pl = from.link as { partId: string; ref: EdgeRef; end: string };
     // Already a pierce point: just join them.
     if (pl.end === "pierce") {

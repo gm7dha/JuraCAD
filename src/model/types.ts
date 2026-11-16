@@ -1,7 +1,7 @@
 import type { AreaPick } from "../sketch/areas";
 import type { FastenerKind } from "./fasteners";
 import type { TopoPick } from "../geometry/topoRef";
-import type { VertexPick } from "../geometry/vertexRef";
+import type { VertexPick, VertexRef } from "../geometry/vertexRef";
 import type { Variable } from "./variables";
 import type { NamedView } from "./namedViews";
 import type { Configuration } from "./configurations";
@@ -1229,6 +1229,11 @@ export interface MateConnector {
    * connector's, as built (`pick` is then a stand-in at its origin). Missing = the face or edge picked.
    */
   connector?: string;
+  /**
+   * A corner (vertex) of the part, in the part's own coordinates, found again on the part as built (Onshape's
+   * vertex connector: there, lined up with the part's X, Y and Z). `pick` is then a stand-in at it. Missing = the face or edge picked.
+   */
+  vertex?: VertexRef;
 }
 
 /** What a parts list says about a part besides its name (as in Onshape's part properties). */

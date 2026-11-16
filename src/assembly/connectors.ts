@@ -12,6 +12,7 @@
  */
 import { circleThrough3D } from "../geometry/measureMath";
 import { matchRefs, type TopoPick } from "../geometry/topoRef";
+import { cornersOf, matchVertex, type VertexRef } from "../geometry/vertexRef";
 import type { PartMesh } from "../kernel/protocol";
 import type { ConnectorSpot } from "../model/types";
 import { ORIGIN_ID } from "./origin";
@@ -413,9 +414,11 @@ export function spotOptions(c: { instanceId: string; pick: TopoPick; point?: Vec
 }
 
 /** A connector's frame on its part as built now — halfway between both faces for a Width mate (null if it can't be found). */
-export function connectorFrameOnParts(parts: PartMesh[], c: { pick: TopoPick; pick2?: TopoPick; spot?: ConnectorSpot; point?: Vec3; connector?: string }): Frame | null {
+export function connectorFrameOnParts(parts: PartMesh[], c: { pick: TopoPick; pick2?: TopoPick; spot?: ConnectorSpot; point?: Vec3; connector?: string; vertex?: VertexRef }): Frame | null {
   // One of the part's own mate connectors (made in its Part Studio): where the engine put it.
   if (c.connector) return ownConnectorFrame(parts.find((p) => p.id === c.pick.partId), c.connector);
+  // A corner: found again on the part as built, lined up with the part's own X, Y and Z.
+  if (c.vertex) return vertexFrame(parts.find((p) => p.id === c.pick.partId), c.vertex);
   if (!c.pick2 && c.spot) {
     const part = parts.find((p) => p.id === c.pick.partId);
     const index = part ? findPick(part, c.pick) : -1;
@@ -467,6 +470,40 @@ export function matchingConnectors(part: PartMesh, pick: TopoPick): TopoPick[] {
     out.push({ partId: part.id, ref: kind === "face" ? part.faceRefs[i] : part.edgeRefs[i] });
   }
   return out;
+}
+
+/** The size of a part as shown (its box's diagonal, mm). */
+function meshSize(part: Pick<PartMesh, "vertices">): number {
+  const min: Vec3 = [Infinity, Infinity, Infinity];
+  const max: Vec3 = [-Infinity, -Infinity, -Infinity];
+  const v = part.vertices;
+  for (let i = 0; i + 2 < v.length; i += 3)
+    for (let k = 0; k < 3; k++) {
+      min[k] = Math.min(min[k], v[i + k]);
+      max[k] = Math.max(max[k], v[i + k]);
+    }
+  return Number.isFinite(min[0]) ? length(sub(max, min)) : 0;
+}
+
+/** Index of a picked corner among the part's corners as shown now (-1 when it can't be found). */
+export function findVertex(part: PartMesh, ref: VertexRef): number {
+  return matchVertex(ref, cornersOf(part), meshSize(part)) ?? -1;
+}
+
+/** A corner's frame on its part, in the part's own coordinates: at the corner, lined up with X, Y and Z (null when it's lost). */
+export function vertexFrame(part: PartMesh | undefined, ref: VertexRef): Frame | null {
+  if (!part) return null;
+  const i = findVertex(part, ref);
+  const at = i >= 0 ? cornersOf(part)[i] : undefined;
+  return at ? { origin: [...at.p], x: [1, 0, 0], z: [0, 0, 1] } : null;
+}
+
+/**
+ * A mate end on a corner of a part: the corner, and a stand-in flat face at it facing up (so everything that looks at
+ * `pick` — which part, which copy — works as for a clicked face).
+ */
+export function vertexConnectorPick(partId: string, ref: VertexRef): { pick: TopoPick; vertex: VertexRef } {
+  return { pick: { partId, ref: { kind: "face", surface: "PLANE", center: [...ref.p], normal: [0, 0, 1] } }, vertex: ref };
 }
 
 /** A Part Studio mate connector the part owns (by the feature's id), as a frame in the part's own coordinates; null when it's gone. */

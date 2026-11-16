@@ -63,7 +63,7 @@ import { ownSymmetry, subAssemblySymmetry } from "../assembly/symmetry";
 import { setFlexible } from "../assembly/flexible";
 
 import { addAssembly, applyPosition, updateAssembly, insertInstance, putMate, putRelation, removeAssembly, removeInstances, removeMate, removePosition, removeRelation, savePosition, renameAssembly, setExplode, settlePlacements, settleSolved, updateInstance } from "../assembly/assembly";
-import { MATE_TYPES, nextMateName, pickConnector, samePieceClick, solveWithParts } from "../assembly/mates";
+import { MATE_TYPES, nextMateName, pickConnector, cornerFlip, samePieceClick, solveWithParts } from "../assembly/mates";
 import { insertProblem, insertSubAssembly, instanceAt, ownBox, PATH_SEP, whereUsed } from "../assembly/subassembly";
 import { setSuppressed as setInstancesOff } from "../assembly/suppress";
 import { setPartProperties as setPartPropertiesIn } from "../assembly/properties";
@@ -1892,7 +1892,9 @@ export const useStore = create<AppState>((set, get) => {
       set((st) => {
         if (!st.mateDraft) return {};
         const m = st.mateDraft.mate;
-        const next: MateDraft = { ...m, ...pickConnector(m, c) };
+        const ends = pickConnector(m, c);
+        // (Two corners: pointed the same way, so the parts keep their way up.)
+        const next: MateDraft = { ...m, ...ends, flip: st.mateDraft.mode === "create" ? cornerFlip(m, ends, m.flip) : m.flip };
         return { mateDraft: { ...st.mateDraft, mate: next } };
       });
     },
@@ -2004,7 +2006,8 @@ export const useStore = create<AppState>((set, get) => {
       if (!connector && (c.pick.ref.kind !== "face" || c.pick.ref.surface !== "PLANE")) return s.showToast("Click a flat face to mirror across.", "info");
       if (asm.instances.find((i) => i.id === c.instanceId)?.copyOf?.pattern === p.id) return s.showToast("That's one of this mirror's own copies — click a face on another part.", "info");
       // Only the face matters (not where on it it was clicked).
-      const plane: MateConnector = { instanceId: c.instanceId, ...(c.path ? { path: c.path } : {}), pick: c.pick };
+      if (!connector && c.vertex) return s.showToast("Click a flat face to mirror across.", "info");
+      const plane: MateConnector = { instanceId: c.instanceId, ...(c.path ? { path: c.path } : {}), pick: c.pick, ...(c.vertex ? { vertex: c.vertex } : {}) };
       set({ mirrorFacePick: false });
       s.updatePattern(p.id, connector ? { plane, placed: p.placed ?? {} } : { plane, placed: undefined });
     },

@@ -84,8 +84,8 @@ import { splitFaces } from "./splitFace";
 import { simplifyReport, type SimplifyLevel, type SimplifySummary } from "../model/simplify";
 import { edgesOf, facesOf, seamEdgeIds, shellsOf, solidsOf } from "./topology";
 export { seamEdgeIds };
-import { findCorner } from "./corners";
-import type { VertexPick } from "../geometry/vertexRef";
+import { findCorner, shapeCorners } from "./corners";
+import { matchVertex, type VertexPick } from "../geometry/vertexRef";
 import { radiusPointPick, VariableFilletError } from "../model/variableFillet";
 import { variableFillet, type EdgeRadiusPoint } from "./variableFillet";
 import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
@@ -3142,7 +3142,14 @@ export class GeometryEngine {
             links[c.id] = m === null ? null : c.type === "spline" || c.type === "ellipse" ? sameKind(c, shaped(c, projectEdge(frame, { partId, ref: refs[m] }), all[m])) : projectEdge(frame, { partId, ref: refs[m] });
           });
           // Points following a corner, the middle or the centre of an edge, from anywhere on the part.
+          // Points following a corner (Use on a vertex): found again among the part's corners.
+          const corners = points.some((p) => p.link?.end === "corner") ? shapeCorners(part.shape) : [];
           points.forEach((p) => {
+            if (p.link && "partId" in p.link && p.link.end === "corner") {
+              const m = matchVertex(p.link.ref, corners, sizeOf(bounds));
+              pointLinks[p.id] = m === null ? null : toSketch(frame, corners[m].p);
+              return;
+            }
             const link = p.link as { ref: EdgeRef; end: "a" | "b" | "centre" | "mid" | "pierce" };
             const m = strictMatch(link.ref, refs, sizeOf(bounds), 0.3);
             if (link.end === "pierce") {

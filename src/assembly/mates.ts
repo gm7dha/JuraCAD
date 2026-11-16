@@ -1243,10 +1243,21 @@ export function samePieceClick(m: { type: MateType; a?: MateConnector; b?: MateC
  * moves over to second place.
  */
 export function pickConnector(m: { type: MateType; a?: MateConnector; b?: MateConnector }, c: MateConnector): { a?: MateConnector; b?: MateConnector } {
-  if (m.type === "width") return pickWidthFace(m, c);
+  // (A Width mate measures between flat faces: a corner can't be one of them.)
+  if (m.type === "width") return c.vertex ? { a: m.a, b: m.b } : pickWidthFace(m, c);
   if (isOrigin(c)) return { a: c, b: [m.b, m.a].find((x) => x && !isOrigin(x)) };
   if (!m.a || (m.a && m.b) || (!m.b && m.a.instanceId === c.instanceId)) return { a: c, b: undefined };
   return { a: m.a, b: c };
+}
+
+/**
+ * A new mate between two corners points their connectors the same way (`flip`), so the parts keep the way up
+ * they're drawn in (both connectors are lined up with their part's own X, Y and Z); otherwise as it was.
+ */
+export function cornerFlip(before: { a?: MateConnector; b?: MateConnector }, after: { a?: MateConnector; b?: MateConnector }, flip: boolean): boolean {
+  const done = (m: { a?: MateConnector; b?: MateConnector }) => !!m.a && !!m.b;
+  if (done(before) || !done(after)) return flip;
+  return after.a!.vertex && after.b!.vertex ? true : flip;
 }
 
 /**

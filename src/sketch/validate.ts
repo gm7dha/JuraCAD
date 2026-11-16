@@ -1,5 +1,6 @@
 /** Checks sketch data loaded from storage, keeping only what's well-formed. */
 import { parsePick } from "../geometry/topoRef";
+import { parseVertexPick } from "../geometry/vertexRef";
 import type { SketchPlane, Vec3 } from "./planes";
 import { DIMENSION_TYPES, type ConstraintType, type CurveLink, type PointLink, type SketchConstraint, type SketchCurve, type SketchData, type SketchImage, type SketchPoint, type SketchText } from "./types";
 
@@ -137,6 +138,10 @@ function parsePointLink(raw: unknown): { link?: PointLink } {
   if (!raw || typeof raw !== "object") return {};
   const r = raw as Record<string, unknown>;
   if (str(r.sketch) && str(r.item)) return { link: { sketch: r.sketch, item: r.item, ...(r.end === "mid" || r.end === "pierce" ? { end: r.end } : {}) } };
+  if (r.end === "corner") {
+    const corner = parseVertexPick(raw);
+    return corner ? { link: { partId: corner.partId, ref: corner.ref, end: "corner" } } : {};
+  }
   const pick = parsePick(raw);
   if (pick?.ref.kind === "edge" && typeof r.end === "string" && POINT_ENDS.has(r.end)) return { link: { partId: pick.partId, ref: pick.ref, end: r.end as "a" | "b" | "centre" | "mid" | "pierce" } };
   return {};
