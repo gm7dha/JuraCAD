@@ -1067,6 +1067,14 @@
   `src/model/lastOptions.ts` (`REMEMBERED_TYPES`; plain-number params but thin/position groups, extrude end blind/symmetric/
   throughAll + `second` (through all only into a remove/intersect of the same operation; surfaces/thin never remembered), revolve symmetric/second, hole kind/standard/fit/end, chamfer type) — `remembered` in the store closure,
   `rememberOptions` on commitDraft (create only), `withRemembered` in startCreate. Tests: tests/featureList (pure), featureListStore.
+  Final (Onshape's): editing an existing non-sketch feature shows the Part Studio rolled back to just after it unless the
+  dialog header's "Final" tick (`FinalToggle.tsx`, `store.showFinal`, session only, default off) is on — pure
+  `src/model/finalPreview.ts` (`finalChoice`: an unsuppressed feature after it, before any bar; `editRollback` = the bar
+  connect.ts builds with; a bar already above it wins; new features unchanged); `shownRollback(s)` greys later rows and lets
+  setRebuildResult keep later parts' hidden/see-through flags. That studio goes with `StudioInput.preview`: the engine parks
+  its whole build (`parked`, `sourceBuild`), so Derived/context studios aren't rebuilt, later features' errors/warnings/notes
+  stay on their rows, and closing unchanged or ticking Final takes it back without building (only meshed). Sketches are left
+  as before (their snap list and "ref:<n>" ids come from the whole build). Tests: tests/finalPreview, engineFinalPreview.
 - Corners (vertices, Onshape's): pure `src/geometry/vertexRef.ts` — `VertexRef` {p, rel (share of the part's box), dirs (unit
   directions its edges leave in)} / `VertexPick` {partId, ref}; `cornersFromEnds` groups edge ends (`SAME_CORNER` 1 µm; closed
   edges have none), `meshCorners`/`cornersOf` (cached per PartMesh: ends from `edgeRefs`, directions from the drawn lines — no

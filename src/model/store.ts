@@ -82,6 +82,7 @@ import { deleteFeatures as deleteFeaturesIn, findDependents } from "./dependents
 import { designOf, withVersionsOf } from "./versions";
 import { newKeepId, readKept } from "./browserKeep";
 import { rememberOptions, withRemembered, type OptionsMemory } from "./lastOptions";
+import { editRollback } from "./finalPreview";
 
 /** Which instances show a symmetric part, or a symmetric sub-assembly (for mirrors that show such things as themselves). */
 const symmetricIn = (parts: readonly PartMesh[], assemblies: readonly Assembly[] = []) => (i: Instance) => {
@@ -154,6 +155,16 @@ export function cornerPickFor(parts: PartMesh[], item: SelectionItem): VertexPic
 }
 
 export type { PlaneName, DatumName } from "./types";
+
+/** Where the Part Studio on show is rolled back to right now (the rollback bar, or the feature being edited with "Final" off). */
+export function shownRollback(s: Pick<AppState, "editing" | "rollbackTo" | "showFinal" | "activeTab" | "history">): string | null {
+  return editRollback(activeFeatures(s), s.editing, s.rollbackTo, s.showFinal);
+}
+
+/** Is the Part Studio on show rolled back just for the feature being edited ("Final" off)? */
+function shownRolledBackForEdit(s: AppState): boolean {
+  return shownRollback(s) !== s.rollbackTo;
+}
 
 export interface Editing {
   mode: "create" | "edit";
@@ -399,6 +410,12 @@ export interface AppState {
   selectedDims: string[];
   /** Part Studio rolled back to just after this feature (Onshape's rollback bar); null = showing everything. */
   rollbackTo: string | null;
+  /**
+   * Onshape's "Final" tick in feature dialogs: while an existing feature is edited, show the whole design (true)
+   * or the Part Studio rolled back to just after it (false, the usual). This session only, never in the file.
+   */
+  showFinal: boolean;
+  setShowFinal: (on: boolean) => void;
   /** What a mouse drag in an assembly is changing, while the button is held. */
   dragPreview: DragChange | null;
   /** Mate whose movement is being animated in the 3D view. */
@@ -994,6 +1011,8 @@ export const useStore = create<AppState>((set, get) => {
     selectedDim: null,
     selectedDims: NO_DIMS,
     rollbackTo: null,
+    showFinal: false,
+    setShowFinal: (showFinal) => set({ showFinal }),
 
     startCreate: (type) => {
       if (readOnly()) return;
@@ -2331,7 +2350,7 @@ export const useStore = create<AppState>((set, get) => {
         const ids = new Set(parts.map((p) => p.id));
         // Picking parts for the open feature shows only the parts before it for a while: later parts' hidden,
         // see-through and selected flags are kept for when they're back.
-        const keep = picksPartsBefore(s.editing?.draft ?? null);
+        const keep = picksPartsBefore(s.editing?.draft ?? null) || shownRolledBackForEdit(s);
         return {
           parts,
           featureErrors,

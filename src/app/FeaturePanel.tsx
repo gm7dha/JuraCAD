@@ -3,7 +3,7 @@ import { addHeld } from "../viewport/touchKeys";
 
 import { DEFAULT_PART_COLOUR, PART_COLOURS } from "../model/colours";
 import { describeParamErrors, FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, OPERATION_LABELS } from "../model/features";
-import { activeFeatures, activeHiddenDatums, activeStudioId, pickedFeatures, studioParts, useStore, type DatumName, type PlaneName } from "../model/store";
+import { activeFeatures, activeHiddenDatums, activeStudioId, pickedFeatures, shownRollback, studioParts, useStore, type DatumName, type PlaneName } from "../model/store";
 import { featureVisible, hasEye } from "../model/visibility";
 import { nextFolderName } from "../model/document";
 import { insertOfFeature } from "../library/insert";
@@ -320,9 +320,11 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
     return !!d && ((d.mirror?.sources ?? d.pattern?.sources ?? []) as string[]).includes(feature.id);
   });
   const rolledBack = useStore((s) => {
-    if (!s.rollbackTo) return false;
+    // (Also while a feature is edited with "Final" off: the rows after it, as Onshape shows them.)
+    const bar = shownRollback(s);
+    if (!bar) return false;
     const list = activeFeatures(s);
-    const at = list.findIndex((f) => f.id === s.rollbackTo);
+    const at = list.findIndex((f) => f.id === bar);
     return at >= 0 && list.findIndex((f) => f.id === feature.id) > at;
   });
   // Sketches and planes have an eye. Used sketches hide by themselves (as in Onshape); one being edited is always shown.

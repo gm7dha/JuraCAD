@@ -1311,6 +1311,35 @@ try {
     await page.waitForTimeout(1_500);
   }
 
+  step = "editing an early feature: the Part Studio rolled back to it, then Final ticked shows everything";
+  {
+    const plan = await page.evaluate(() => {
+      const fs = window.juracadStore.getState().history.present.features;
+      const ex = fs.find((f) => f.sketchRef === window.__smokeSketch && f.type === "extrude");
+      const at = fs.indexOf(ex);
+      const early = fs.slice(0, at).find((f) => f.type !== "sketch" && !f.suppressed);
+      return ex && early ? { early: early.id, earlyName: early.name, extrude: ex.id } : null;
+    });
+    if (!plan) throw new Error("no earlier feature before the extrude to edit");
+    const shows = (id) => page.evaluate((x) => window.juracadStore.getState().parts.some((p) => p.id.split(/[~@]/)[0] === x), id);
+    if (!(await shows(plan.extrude))) throw new Error("the extruded part should be shown before editing");
+    await page.evaluate(() => window.juracadStore.getState().setShowFinal(false));
+    await page.evaluate((id) => window.juracadStore.getState().startEdit(id), plan.early);
+    await page.waitForSelector(".feature-dialog .final-toggle", { timeout: 10_000 });
+    await page.waitForFunction((x) => !window.juracadStore.getState().parts.some((p) => p.id.split(/[~@]/)[0] === x) && !window.juracadStore.getState().rebuildBusy, plan.extrude, { timeout: 60_000 });
+    if ((await page.locator(".feature-row.rolled-back").count()) === 0) throw new Error("the features after the one being edited should look rolled back");
+    await page.locator(".feature-dialog .final-toggle input").check();
+    await page.waitForFunction((x) => window.juracadStore.getState().parts.some((p) => p.id.split(/[~@]/)[0] === x) && !window.juracadStore.getState().rebuildBusy, plan.extrude, { timeout: 60_000 });
+    if ((await page.locator(".feature-row.rolled-back").count()) !== 0) throw new Error("with Final ticked nothing should look rolled back");
+    console.log(`Editing ${plan.earlyName}: later parts hidden with Final off, shown with Final ticked.`);
+    // Untick (the usual) and close: the whole design comes back.
+    await page.locator(".feature-dialog .final-toggle input").uncheck();
+    await page.locator(".feature-dialog .dialog-cancel").click();
+    await page.waitForFunction((x) => !window.juracadStore.getState().editing && window.juracadStore.getState().parts.some((p) => p.id.split(/[~@]/)[0] === x) && !window.juracadStore.getState().rebuildBusy, plan.extrude, { timeout: 60_000 });
+    await page.waitForTimeout(1_000);
+    if ((await page.locator(".feature-row.failed").count()) > 0) throw new Error("a feature failed after closing the edit");
+  }
+
   step = "sketching a profile with a construction line to spin around";
   await page.getByRole("button", { name: "Sketch", exact: true }).click();
   await page.waitForSelector(".sketch-panel");

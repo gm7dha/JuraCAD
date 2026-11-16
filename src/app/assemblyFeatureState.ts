@@ -40,7 +40,7 @@ import { cutMeshesFrom, hasAssemblyFeatures, instancesForKernel, storedCutInputs
 import { compose, type Placement } from "../assembly/math";
 import { getKernel } from "../kernel/connect";
 import type { AssemblyCutsResult, PartMesh } from "../kernel/protocol";
-import { activeAssembly, activeStudioId, useStore } from "../model/store";
+import { activeAssembly, activeStudioId, shownRollback, useStore } from "../model/store";
 import type { Assembly, EditContext } from "../model/types";
 import { addCircle, addPoint, addRectangle } from "../sketch/ops";
 import type { SketchPlane } from "../sketch/planes";
@@ -126,6 +126,9 @@ function settleAfterRebuild(list: readonly Assembly[], parts: readonly PartMesh[
   const s = useStore.getState();
   // (Not now — an old version on show, a drag, or the design changed meanwhile: the next answer for these parts settles.)
   if (s.versionView || s.dragPreview || s.history.present.assemblies !== list) return;
+  // (Nor while a feature is edited with "Final" off: the parts shown are the Part Studio rolled back to it, not the
+  // design — settling to them would move drilled copies just for opening a dialog.)
+  if (shownRollback(s) !== s.rollbackTo) return;
   settledFor = parts;
   const next = settleCutCopiesIn(s.history.present, parts, cuts);
   if (next !== s.history.present) s.changeVersions(() => next);

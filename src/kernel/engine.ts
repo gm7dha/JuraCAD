@@ -2276,6 +2276,8 @@ interface StudioBuild {
   /** Curve features (Helix, Fit spline…) built: their wires, and lines to draw (see RebuildResult.curves). */
   curves?: Map<string, BuiltCurve>;
   curveLines?: Record<string, number[][]>;
+  /** Built from a StudioInput with `preview` (rolled back while a feature is edited). */
+  preview?: boolean;
 }
 
 /** A curve feature as built: its runs (usually one wire), and whether a sweep along it should follow its own bending (a helix). */
@@ -2330,6 +2332,16 @@ export class GeometryEngine {
   /** While a Part Studio is being built: what its sketches' part faces and edges are now (see followSketch). */
   private links: Record<string, SketchLinkInfo> = {};
   private builds = new Map<string, StudioBuild>();
+  /**
+   * While a Part Studio is shown rolled back for an edit (StudioInput.preview, Onshape's "Final" off): its
+   * whole build, kept aside — other studios still use it, its later features' problems are still shown,
+   * and it's taken back at once when the dialog closes unchanged or Final is ticked.
+   */
+  private parked = new Map<string, StudioBuild>();
+  /** A Part Studio's build as other studios see it (its whole one while it's shown rolled back for an edit). */
+  private sourceBuild(id: string): StudioBuild | undefined {
+    return this.parked.get(id) ?? this.builds.get(id);
+  }
   /** While a Part Studio whose features use its context parts is being built: those parts (Edit in context). */
   private contextParts: BuiltPart[] = [];
   /**
@@ -2353,7 +2365,7 @@ export class GeometryEngine {
           missing?.add(cp.studioId);
           continue;
         }
-        const source = this.builds.get(cp.studioId)?.parts.find((p) => p.id === cp.partId);
+        const source = this.sourceBuild(cp.studioId)?.parts.find((p) => p.id === cp.partId);
         if (!source) continue;
         let shape = source.shape.clone();
         if (cp.mirrored) shape = shape.mirror("YZ", [0, 0, 0]);
@@ -2387,7 +2399,7 @@ export class GeometryEngine {
     for (const s of studios) {
       if (!wanted.has(s.id)) continue;
       const sources = [...new Set(s.contexts!.flatMap((c) => c.parts.map((p) => p.studioId)))];
-      const key = JSON.stringify([s.contexts, sources.map((id) => (this.studiosBuilt.has(id) ? this.builds.get(id)?.key ?? "" : "?"))]);
+      const key = JSON.stringify([s.contexts, sources.map((id) => (this.studiosBuilt.has(id) ? this.sourceBuild(id)?.key ?? "" : "?"))]);
       const old = this.contextBuilds.get(s.id);
       if (old?.key === key) continue;
       old?.parts.forEach((p) => p.shape.delete());
@@ -2454,6 +2466,11 @@ export class GeometryEngine {
         this.builds.delete(id);
       }
     }
+    for (const [id, b] of this.parked) {
+      if (wanted.has(id)) continue;
+      this.disposeBuild(b);
+      this.parked.delete(id);
+    }
     const rebuilt: string[] = [];
     const meshes: PartMesh[] = [];
     const contextMeshes: PartMesh[] = [];
@@ -2483,7 +2500,7 @@ export class GeometryEngine {
     let finished = false;
     try {
       for (const studio of ordered) {
-        const deps = sourcesOf(studio).map((id) => (this.studiosBuilt.has(id) ? this.builds.get(id)?.key ?? "" : "?"));
+        const deps = sourcesOf(studio).map((id) => (this.studiosBuilt.has(id) ? this.sourceBuild(id)?.key ?? "" : "?"));
         const key =
           JSON.stringify(studio.features) +
           shared +
@@ -2492,8 +2509,24 @@ export class GeometryEngine {
           (studio.contexts?.length && usesContext(studio) ? JSON.stringify(studio.contexts) : "") +
           (deps.length ? JSON.stringify(deps) : "");
         let b = this.builds.get(studio.id);
+        // Rolled back for an edit (see `parked`): the whole build is kept aside, and taken back when it's wanted again.
+        const kept = this.parked.get(studio.id);
+        let restored = false;
+        if (kept) {
+          if (b?.key !== key && kept.key === key) {
+            if (b) this.disposeBuild(b);
+            this.parked.delete(studio.id);
+            this.builds.set(studio.id, kept);
+            b = kept;
+            restored = true;
+          } else if (!studio.preview) {
+            this.disposeBuild(kept);
+            this.parked.delete(studio.id);
+          }
+        }
         if (!b || b.key !== key) {
-          if (b) this.disposeBuild(b);
+          if (b && studio.preview && !b.preview && !this.parked.has(studio.id)) this.parked.set(studio.id, b);
+          else if (b) this.disposeBuild(b);
           building = studio.id;
           this.parts = [];
           this.tools = new Map();
@@ -2539,7 +2572,7 @@ export class GeometryEngine {
           for (const p of this.parts) for (const m of p.members ?? []) if (names[m.id]) m.name = names[m.id];
           // Another configuration's copies of the parts (for assemblies).
           if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
-          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, centres: this.centres, framePaths: this.framePaths, links: this.links, snaps: this.snaps ?? new Map(), followed: this.followed, owned: this.owned, curves: this.curves, curveLines: this.curveLines };
+          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, centres: this.centres, framePaths: this.framePaths, links: this.links, snaps: this.snaps ?? new Map(), followed: this.followed, owned: this.owned, curves: this.curves, curveLines: this.curveLines, ...(studio.preview ? { preview: true } : {}) };
           this.curves = new Map();
           this.snaps = null;
           this.builds.set(studio.id, b);
@@ -2550,6 +2583,13 @@ export class GeometryEngine {
             const owned = b.owned?.[studio.partSuffix ? p.id.slice(0, -studio.partSuffix.length) : p.id];
             meshes.push({ ...this.meshPart(p), studioId: studio.id, ...(configuration ? { configuration } : {}), ...(owned?.length ? { connectors: owned } : {}) });
           }
+        } else if (restored) {
+          // Its whole build taken back: only meshed again.
+          rebuilt.push(studio.id);
+          for (const p of b.parts) {
+            const owned = b.owned?.[p.id];
+            meshes.push({ ...this.meshPart(p), studioId: studio.id, ...(owned?.length ? { connectors: owned } : {}) });
+          }
         }
         // Problems are shown for the configuration on show only.
         if (!studio.partSuffix) {
@@ -2558,6 +2598,17 @@ export class GeometryEngine {
           Object.assign(featureNotes, b.notes ?? {});
           Object.assign(transformCentres, b.centres ?? {});
           Object.assign(framePaths, b.framePaths ?? {});
+          // Rolled back for an edit: the later features' problems (from the whole build) stay on their rows.
+          const whole = studio.preview ? this.parked.get(studio.id) : undefined;
+          if (whole) {
+            const here = new Set(studio.features.map((f) => f.id));
+            const later = (from: Record<string, string> | undefined, to: Record<string, string>) => {
+              for (const [id, text] of Object.entries(from ?? {})) if (!here.has(id) && !(id in to)) to[id] = text;
+            };
+            later(whole.errors, featureErrors);
+            later(whole.warnings, featureWarnings);
+            later(whole.notes, featureNotes);
+          }
         }
         this.studiosBuilt.add(studio.id);
       }
@@ -2659,7 +2710,7 @@ export class GeometryEngine {
   private derivedSource(feature: Feature): BuiltPart | null {
     const d = feature.derived;
     if (!d || !this.studiosBuilt.has(d.studioId)) return null;
-    return this.builds.get(d.studioId)?.parts.find((p) => p.id === d.partId) ?? null;
+    return this.sourceBuild(d.studioId)?.parts.find((p) => p.id === d.partId) ?? null;
   }
 
   /** A copy of the part a Derived feature brings in, moved by its X, Y, Z. */
@@ -8868,6 +8919,8 @@ export class GeometryEngine {
 
   private disposeParts(): void {
     for (const b of this.builds.values()) this.disposeBuild(b);
+    for (const b of this.parked.values()) this.disposeBuild(b);
+    this.parked.clear();
     for (const c of this.contextBuilds.values()) c.parts.forEach((p) => p.shape.delete());
     this.contextBuilds.clear();
     this.builds.clear();
