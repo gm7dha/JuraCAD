@@ -244,6 +244,23 @@ export interface ImportedFile {
 export type Axis = "x" | "y" | "z";
 
 /**
+ * Move face (Onshape's): "offset" moves each picked face out (or in, with a minus distance) along its own normal —
+ * curved faces too (a hole's wall offset −0.2 makes the hole 0.4 bigger across); "translate" moves flat faces along a
+ * direction by the distance; "rotate" turns flat faces about an axis by the angle. The direction / axis is `along`
+ * (picked in the 3D view and followed as the part changes: a straight edge or a flat face's normal for Translate; a
+ * straight edge, a round edge or a round face's axis for Rotate), else `axis` (X/Y/Z through the origin; missing = Z).
+ */
+export interface MoveFaceDef {
+  mode: "offset" | "translate" | "rotate";
+  axis?: Axis;
+  along?: TopoPick;
+  /** The other way along the direction (Translate), or the other way round (Rotate). */
+  flip?: boolean;
+  /** While the dialog is open: a click in the 3D view picks the direction / axis instead of faces. Not saved. */
+  picking?: "along";
+}
+
+/**
  * How an extrude runs: one way from the sketch (optionally flipped), equally
  * both ways, right through, or up to something — a face (flat or curved), the
  * next face it meets, a corner (vertex) or a part.
@@ -432,6 +449,8 @@ export interface Feature {
    * rounded faces of the same radius running on from them (Onshape's "Propagate", on unless this is set).
    */
   modifyFillet?: { remove?: boolean; noPropagate?: boolean };
+  /** Move face (Onshape's Offset / Translate / Rotate types). Missing = the original Move face (flat faces pushed out along their normals). */
+  moveFace?: MoveFaceDef;
   /** Fillet and Chamfer: round (bevel) every edge of the parts the picks are on, whatever was picked on them (Onshape's picking a whole part). */
   allEdges?: boolean;
   /**

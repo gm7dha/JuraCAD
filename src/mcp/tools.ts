@@ -10,6 +10,7 @@ import { createFeature, emptyDocument, renamePart, replaceFeature, addFeature, n
 import { readDocumentFile, serializeDocument, nameFromFileName, FILE_EXTENSION, OLD_FILE_EXTENSION } from "../model/fileFormat";
 import { applyVariables, resolveVariables, checkName, type Variable } from "../model/variables";
 import { describeHole } from "../model/holes";
+import { describeRef } from "../geometry/topoRef";
 import type { Feature, JuraCADDocument } from "../model/types";
 import { describeMore, LINE_HELP, POINT_HELP } from "./planeSpec";
 import { CURVE_HELP } from "./curveSpec";
@@ -157,6 +158,15 @@ export function summarize(f: Feature, doc: JuraCADDocument, built?: Record<strin
       return `face blend radius ${mm(p.radius)} between ${f.picks?.length ?? 0} and ${f.blend?.side2.length ?? 0} face(s)${f.blend?.noTrim ? ", not trimmed" : ""}`;
     case "fillet":
       return `fillet radius ${mm(p.radius)} on ${f.picks?.length ?? 0} edge/face pick(s)`;
+    case "moveFace": {
+      const mv = f.moveFace;
+      const n = f.picks?.length ?? 0;
+      if (!mv) return `move face (pushes flat faces out) by ${mm(p.distance)} on ${n} face(s)`;
+      const along = mv.along ? describeRef(mv.along.ref, true) : (mv.axis ?? "z").toUpperCase();
+      if (mv.mode === "offset") return `move face (offset) ${mm(p.distance)} on ${n} face(s)`;
+      if (mv.mode === "translate") return `move face (translate) ${mm(p.distance)} along ${along}${mv.flip ? " (flipped)" : ""} on ${n} face(s)`;
+      return `move face (rotate) ${p.angle ?? "5"}° about ${along}${mv.flip ? " (flipped)" : ""} on ${n} face(s)`;
+    }
     case "modifyFillet":
       return `modify fillet: ${f.modifyFillet?.remove ? "take off" : `new radius ${mm(p.radius)} on`} ${f.picks?.length ?? 0} rounded face(s)${f.modifyFillet?.noPropagate ? " (only those)" : ""}`;
     case "split":
@@ -406,6 +416,7 @@ const KIND_HELP: Record<FeatureKind, string> = {
   sphere: "sphere: diameter, x, y, z (its centre), operation",
   plane: `plane (a construction plane to sketch on, mirror across or use in assemblies; Onshape's types): plane_type ("offset" default — from + distance; "angle" — from + angle + tilt_about "across"|"up"; "point" — through point, parallel to from; "point_normal" — through point, square to line; "line_angle" — through line, turned by angle from the upright plane holding it; "three_point" — through points (3); "curve_point" — square to line (an edge) at position 0…1 along it; "fit" — best fit through points (3 or more)), from ("Top"|"Front"|"Right" or a Plane / mate connector name), point, points, line, angle (°), distance, position, flip (turn it over). ${POINT_HELP} ${LINE_HELP} Points and lines on parts follow them when the design changes`,
   modify_fillet: 'modify_fillet (Onshape\'s Modify fillet — also works on imported or simplified parts): faces (the rounded faces of fillets, cylinder or ring pieces from list_faces), radius (the new radius), or remove: true (take the fillets off, putting the sharp edges back); propagate (default true: also the rounded faces of the same radius that carry on smoothly from them), part',
+  move_face: 'move_face (Onshape\'s Move face): faces (of one part), move ("offset" default — each face straight out from itself by distance, or in with a minus distance; works on round faces too: a hole\'s wall offset -0.2 makes the hole 0.4 mm bigger across, a boss\'s wall +1 makes it 2 mm bigger | "translate" — flat faces moved by distance along direction: "x"|"y"|"z" or {"edge": "E3"} (a straight edge) or {"face": "F2"} (a flat face: square to it), with "part" | "rotate" — flat faces turned by angle (°) about axis: "x"|"y"|"z" through the origin, or {"edge": "E3"} (a straight or round edge) or {"face": "F2"} (a round face\'s axis)), flip (the other way), part. The faces round them stretch to meet; a warning says where they can\'t',
   split_face: 'split_face (Onshape\'s Split, type Face: the part keeps its shape, the faces are divided so part of a face can be picked — e.g. Draft only the top half): faces (of one part), plane ("Top"|"Front"|"Right") with offset, or sketch (its lines and curves pushed straight through, square to the sketch), part',
   mate_connector: 'mate_connector (a point with its own X/Y/Z that belongs to a part: mate to it in assemblies with add_mate\'s "connector", sketch on it with add_sketch "plane", move parts by it): at (a point — see plane; or {"edge": "E3", "part": name}: an edge\'s middle with Z along it, a round edge\'s centre with Z along its axis; or {"face": "F2", "part": name}: a flat face\'s centre, Z out of it), or on_plane ("Top"|"Front"|"Right" or a Plane name: at its origin), spot ("start"|"end"|"middle" on an edge), owner (the part it belongs to; default the part it\'s on), flip_z, move ([x, y, z] mm along its own axes), turn ([x, y, z]° about its own axes)',
   curve: CURVE_HELP,

@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.88 — Move face: offset any face, slide or turn faces
+
+- Move face now has three types, as in Onshape. Offset (the usual one) moves faces in or out by a distance and works on
+  round faces too: offset a hole's wall by −0.2 mm and a 10 mm hole becomes 10.4 mm — handy for printed fits.
+- Translate slides flat faces along X, Y, Z or a clicked edge; Rotate turns them about an edge or a hole's axis.
+- It says plainly when a move can't be made (a hole closing up, a face pushed through the part).
+- Claude can move faces too.
+
 ## v0.87 — Variable fillet
 
 - Fillet has a new Variable option, as in Onshape: set the radius at the ends of edges and at points along them, and the

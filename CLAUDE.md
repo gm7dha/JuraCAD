@@ -989,6 +989,25 @@
   `variable_straight`. Not done: vertex radii shared by a chain's edges in one box (each edge's point is its own), `allEdges` +
   variable, conic sections. Tests: tests/variableFillet (pure), engineVariableFillet (1 → 4 probed at both ends, three points smooth
   and straight, a reversed pick, main radius on the rest, a tangent run, the ordinary fillet unchanged, too big refused), mcpVariableFillet.
+- Move face types (Onshape's Offset / Translate / Rotate): `Feature.moveFace` (`MoveFaceDef`: `mode`, `axis` X/Y/Z or `along`
+  (TopoPick, followed via the engine's `pickedAxis`; Translate: straight edge or flat face's normal, Rotate: straight/round edge or
+  round face's axis — `moveFaceAxisProblem`), `flip`, `picking` "along" not saved/stripped in buildInput); missing = the original
+  Move face (flat faces swept along their normals), exactly as before; new ones are made `{mode: "offset"}` (createFeature). Param
+  `angle` is `lazy` (Rotate only, `visibleParamKeys`). Pure `src/model/moveFace.ts` (parse, `withMoveFaceMode`/`Axis`,
+  `moveFaceAxisNow` for the view, `rotationPivot`: the turned plane as pivot line + lean + tilt). Kernel `src/kernel/moveFace.ts`:
+  `moveFacesBy` — flat faces swept (`basicFaceExtrusion`) along the normal (Offset) or the vector (Translate; curved refused),
+  curved faces' room = `MakeThickSolidBySimple` (oriented with `OrientClosedSolid`; a hole/boss closing up — cylinder/sphere radius
+  from BRepAdaptor — refused first; a whole closed sphere face, which OCCT can't thicken, = the shell between two balls); added rooms fall back to box − ((box − part) − room) as the plain fuse returns nothing for a room
+  sharing a curved face; with a curved face picked the volume must be V ± rooms exactly (flat-only moves add/cut as the original did — a top pushed into a pocket opens it), else refused ("out through the other side" / "into another part"),
+  unless a neighbour isn't square to the move or two moved faces meet — then built with a `featureWarnings` note. `rotateFaces` =
+  BRepOffsetAPI_DraftAngle per face (pull = lean, angle = tilt < 80°, neutral plane through the pivot square to the lean), so
+  neighbours re-trim. Dialog `src/app/MoveFaceOptions.tsx` (segmented choice; Direction/Axis slot → view clicks in Viewport's
+  handlePick, edges allowed then); manipulators: Translate arrow along the direction, Rotate arc round a straight/X/Y/Z axis (none
+  round a round face's axis). Claude: add_feature "move_face" (`move`, `distance`/`angle`, `direction`/`axis` "x"|"y"|"z"|{edge}|{face},
+  `flip`). Dependents: `along`'s part (not for Offset). Not done: Translate of round faces (moving a hole), Rotate of curved faces,
+  neighbours that aren't square carried on to meet (warned), filling the corner where two moved faces meet. Tests: tests/moveFace
+  (pure), engineMoveFace (exact volumes: box ±2, Ø10 hole → Ø10.4 and Ø9.6, boss +1, pocket floor, slanted face up Z, along an
+  edge, 5° about an edge, refusals, an old Move face as before), mcpMoveFace.
 - Everyday picking and views (Onshape's): selection filter `src/viewport/selectionFilter.ts` (pure; `store.selectFilter`, session
   only; empty = everything; kinds face/edge/part/plane/sketch — no vertices, JuraCAD can't pick corners; `partHitAs`: a face/edge
   whose kind is off becomes its whole part when Parts is on (`PickTarget.whole`, handlePick → `selectedParts`; only with nothing

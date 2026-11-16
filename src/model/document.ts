@@ -2,6 +2,7 @@ import { isSimplifyLevel } from "./simplify";
 import { parseVariableFillet } from "./variableFillet";
 import { parseNamedViews } from "./namedViews";
 import { parsePick } from "../geometry/topoRef";
+import { parseMoveFace } from "./moveFace";
 import { parseLineRef } from "./patternRefs";
 import { FASTENER_KINDS, FASTENER_SIZES, type FastenerKind } from "./fasteners";
 import { parsePlane, parseSketchData } from "../sketch/validate";
@@ -148,6 +149,8 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     feature.sketchRef = sketches[sketches.length - 1]?.id;
     feature.operation = "add";
   }
+  // New Move faces are Onshape's Offset type (curved faces too); older ones have no moveFace and build as before.
+  if (type === "moveFace") feature.moveFace = { mode: "offset" };
   if (type === "replaceFace") {
     feature.picks = [];
     feature.replaceDef = { target: null, picking: "faces" };
@@ -797,6 +800,10 @@ export function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | n
       if (Object.keys(def).length) feature.modifyFillet = def;
     }
     if ((feature.type === "fillet" || feature.type === "chamfer") && f.allEdges === true) feature.allEdges = true;
+    if (feature.type === "moveFace" && f.moveFace && typeof f.moveFace === "object") {
+      const mv = parseMoveFace(f.moveFace);
+      if (mv) feature.moveFace = mv;
+    }
     if (feature.type === "fillet" && f.variableFillet) {
       const vf = parseVariableFillet(f.variableFillet);
       if (vf) feature.variableFillet = vf;

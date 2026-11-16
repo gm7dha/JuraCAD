@@ -19,6 +19,7 @@ import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 import { holePositionsIn } from "../sketch/holePositions";
 import { strictMatch, type EdgeRef, type FaceRef, type TopoPick } from "../geometry/topoRef";
+import { moveFaceAxisNow } from "./moveFace";
 
 export interface Manipulator {
   /** Which handle (unique within the draft): "depth", "depthBack", "depth2", "angle", "radius"… */
@@ -406,6 +407,17 @@ function otherHandles(draft: Feature, ctx: ManipContext, base: (key: string, lab
     const both = !!draft.bothSides;
     const d = scale(n, draft.flipSide && !both ? -1 : 1);
     out.push(make(base("thickness", "Thickness"), { id: "thickness", kind: "arrow", origin: face.center, dir: d, scale: both ? 0.5 : 1, angle: false, flips: false, max: Infinity, tip: "Drag to change the thickness" }));
+  } else if (draft.type === "moveFace" && (draft.moveFace?.mode === "translate" || draft.moveFace?.mode === "rotate")) {
+    // Translate: along the chosen direction; Rotate: round the chosen axis (none when only the engine knows where it is — a round edge or face).
+    const ax = moveFaceAxisNow(draft.moveFace);
+    if (!ax) return out;
+    if (draft.moveFace.mode === "translate") {
+      out.push(make(base("distance", "Distance"), { id: "distance", kind: "arrow", origin: face.center, dir: ax.dir, scale: 1, angle: false, flips: false, signed: true, max: Infinity, tip: "Drag to move the face along the direction (back past it moves it the other way)" }));
+    } else {
+      const off = sub(face.center, ax.through);
+      if (length(sub(off, scale(ax.dir, dot(off, ax.dir)))) < 1e-6) return out;
+      out.push(make(base("angle", "Angle"), { id: "angle", kind: "arc", origin: face.center, dir: n, axis: { through: ax.through, dir: ax.dir }, scale: 1, angle: true, flips: false, signed: true, max: 79, tip: "Drag round to turn the face" }));
+    }
   } else if (draft.type === "moveFace" || draft.type === "offsetSurface") {
     const tip = draft.type === "moveFace" ? "Drag to move the face (back past it moves it in)" : "Drag to change how far the copy is (back past the surface puts it on the other side)";
     out.push(make(base("distance", "Distance"), { id: "distance", kind: "arrow", origin: face.center, dir: n, scale: 1, angle: false, flips: false, signed: true, max: Infinity, tip }));
