@@ -25,6 +25,7 @@ import { loftProfiles, profilesProblem } from "../model/loft";
 import { segmentsWire } from "./extrude";
 import { loopStart, pathWire } from "./sweep";
 import { asIs } from "./surface";
+import { cornerOnShape } from "./corners";
 
 type Vec3 = [number, number, number];
 const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -89,6 +90,14 @@ function pointOf(g: GeomPick, ctx: LoftContext): Vec3 {
     const pt = id === "origin" ? { x: 0, y: 0 } : sk.data.points.find((q) => q.id === id);
     if (!pt) throw new Error(`The point picked in ${sk.name} has been deleted. Choose another point for the loft.`);
     return toWorld(planeFrame(sk.plane), pt.x, pt.y);
+  }
+  if (g.vertex) {
+    // A corner clicked as itself.
+    const shape = ctx.part(g.vertex.partId);
+    if (!shape) throw new Error("The part with the loft's corner no longer exists (or comes later in the list). Click another corner.");
+    const at = cornerOnShape(shape, g.vertex.ref);
+    if (!at) throw new Error("The loft's corner can't be found on its part any more (the part has changed too much). Click the corner again.");
+    return at;
   }
   if (g.pick) {
     const shape = ctx.part(g.pick.partId);

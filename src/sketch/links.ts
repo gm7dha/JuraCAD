@@ -23,6 +23,7 @@
  * All positions are sketch millimetres.
  */
 import { sameRef, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
+import { SAME_CORNER, type VertexPick } from "../geometry/vertexRef";
 import { joinPoints, pointPos, settle, sketchId, type EditResult } from "./ops";
 import { toSketch, type PlaneFrame, type SketchPlane } from "./planes";
 import { splineThrough } from "./curves";
@@ -419,7 +420,10 @@ export function pointLinkOf(e: RefEdge, at: "a" | "b" | "centre" | "mid"): Point
 }
 
 function samePointLink(a: PointLink, b: PointLink): boolean {
-  if ("partId" in a && "partId" in b) return a.partId === b.partId && a.end === b.end && sameRef(a.ref, b.ref);
+  if ("partId" in a && "partId" in b) {
+    if (a.end === "corner" || b.end === "corner") return a.end === "corner" && b.end === "corner" && a.partId === b.partId && dist3(a.ref.p, b.ref.p) <= SAME_CORNER;
+    return a.partId === b.partId && a.end === b.end && sameRef(a.ref, b.ref);
+  }
   if (!("partId" in a) && !("partId" in b)) return a.sketch === b.sketch && a.item === b.item && (a.end ?? "") === (b.end ?? "");
   return false;
 }
@@ -438,6 +442,24 @@ export function linkPoint(s: SketchData, e: RefEdge, at: "a" | "b" | "centre" | 
   if (known) return { sketch: s, pointId: known.id };
   const id = sketchId("p");
   const r = settle({ ...s, points: [...s.points, { id, x: p[0], y: p[1], link }], constraints: [...s.constraints, fixAt(id, p)] });
+  return { ...r, pointId: id };
+}
+
+const dist3 = (a: Vec3, b: Vec3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+/**
+ * Use on a part's corner (Onshape's vertex): a fixed point where the corner is, seen square-on to the sketch, that
+ * follows it (`end: "corner"`, found again each rebuild). One already brought in from that corner is reused. The point
+ * is kept as a point of its own (a hole can be put there), so it stays when the sketch closes.
+ */
+export function linkCorner(s: SketchData, frame: PlaneFrame, corner: VertexPick): EditResult & { pointId: string } {
+  const link: PointLink = { partId: corner.partId, ref: corner.ref, end: "corner" };
+  const known = s.points.find((q) => q.link && samePointLink(q.link, link));
+  if (known) return { sketch: s, pointId: known.id };
+  const p = toSketch(frame, corner.ref.p);
+  if (!p.every(Number.isFinite)) return { sketch: s, pointId: "", error: "That corner can't be used here." };
+  const id = sketchId("p");
+  const r = settle({ ...s, points: [...s.points, { id, x: p[0], y: p[1], standalone: true, link }], constraints: [...s.constraints, fixAt(id, p)] });
   return { ...r, pointId: id };
 }
 
@@ -480,6 +502,8 @@ export function piercePoint(s: SketchData, selection: string[], refs: RefEdge[])
     const other = pts.find((p) => p !== from);
     if (!from || !other) return { sketch: s, error: hint };
     point = other;
+    // (A corner is a point, not something passing through the sketch.)
+    if (from.link?.end === "corner") return { sketch: s, error: hint };
     const pl = from.link as { partId: string; ref: EdgeRef; end: string };
     // Already a pierce point: just join them.
     if (pl.end === "pierce") {
@@ -750,23 +774,30 @@ export function followLinks(s: SketchData, links: Record<string, RefEdge | null 
 }
 
 /** How many references can't be found, by where they come from: parts (edges and their points), other sketches, and Pierce points (which say why their own way). */
-function lostCounts(s: SketchData | undefined, info: SketchLinkInfo): { part: number; sketch: number; pierce: number } {
-  let part = 0, sketch = 0, pierce = 0;
+function lostCounts(s: SketchData | undefined, info: SketchLinkInfo): { part: number; sketch: number; pierce: number; corner: number } {
+  let part = 0, sketch = 0, pierce = 0, corner = 0;
   const fromSketch = new Set<string>();
   const piercing = new Set<string>();
+  const corners = new Set<string>();
   if (s) {
     for (const c of s.curves) if ("link" in c && c.link && !isPartLink(c.link)) fromSketch.add(c.id);
     for (const p of s.points) if (p.link && !("partId" in p.link)) fromSketch.add(p.id);
     for (const p of s.points) if (p.link?.end === "pierce") piercing.add(p.id);
+    for (const p of s.points) if (p.link?.end === "corner") corners.add(p.id);
   }
   for (const [id, e] of [...Object.entries(info.links), ...Object.entries(info.pointLinks ?? {})]) {
     if (e !== null) continue;
     if (piercing.has(id)) pierce++;
+    else if (corners.has(id)) corner++;
     else if (fromSketch.has(id)) sketch++;
     else part++;
   }
-  return { part, sketch, pierce };
+  return { part, sketch, pierce, corner };
 }
+
+/** About points following a part's corner (Use on a corner) that can't be found. */
+const cornerNote = (n: number) =>
+  `${n === 1 ? "A point" : `${n} points`} this sketch takes from a part's corner can't be found any more (the corner has gone, or the part has changed too much), so ${n === 1 ? "it stays" : "they stay"} where ${n === 1 ? "it was" : "they were"}.`;
 
 const fromSketchesNote = (n: number) =>
   `${n === 1 ? "1 thing" : `${n} things`} this sketch takes from other sketches can't be found any more (that sketch, or the shape in it, was deleted or turned off, or moved below this one in the feature list), so ${n === 1 ? "its copy stays" : "their copies stay"} where ${n === 1 ? "it was" : "they were"}.`;
@@ -787,6 +818,7 @@ export function lostLinksMessage(s: SketchData, info: SketchLinkInfo | undefined
     );
   if (lost.sketch) parts.push(`${fromSketchesNote(lost.sketch)} Delete ${lost.sketch === 1 ? "it" : "them"}, or move that sketch back above this one.`);
   if (lost.pierce) parts.push(`${pierceNote(lost.pierce)} Delete ${lost.pierce === 1 ? "it" : "them"}, or pierce with an edge or curve that goes through the sketch.`);
+  if (lost.corner) parts.push(`${cornerNote(lost.corner)} Delete ${lost.corner === 1 ? "it" : "them"}, or use another corner.`);
   return parts.length ? parts.join(" ") : null;
 }
 
@@ -809,6 +841,7 @@ export function linkProblem(info: SketchLinkInfo | undefined, s?: SketchData): s
     return `${lost.part === 1 ? "A part edge" : `${lost.part} part edges`} this sketch uses can't be found any more, so ${lost.part === 1 ? "its copy stays" : "their copies stay"} where ${lost.part === 1 ? "it was" : "they were"}. Edit the sketch and delete ${lost.part === 1 ? "it" : "them"} (shown in the sketch panel), or use other edges.`;
   if (lost.sketch) return `${fromSketchesNote(lost.sketch)} Edit the sketch and delete ${lost.sketch === 1 ? "it" : "them"} (shown in the sketch panel), or move that sketch back above this one.`;
   if (lost.pierce) return `${pierceNote(lost.pierce)} Edit the sketch and delete ${lost.pierce === 1 ? "it" : "them"} (shown in the sketch panel), or pierce with an edge or curve that goes through the sketch.`;
+  if (lost.corner) return `${cornerNote(lost.corner)} Edit the sketch and delete ${lost.corner === 1 ? "it" : "them"} (shown in the sketch panel), or use another corner.`;
   return null;
 }
 
