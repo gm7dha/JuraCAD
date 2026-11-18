@@ -26,18 +26,19 @@ import { holeTool, type ThreadedHoleCache } from "./hole";
 import { HOLE_LEAD_IN, SCREW_SIZES, straightStart, type HoleSize } from "../model/holes";
 import { copyNumber, isSkipped } from "../model/patterns";
 import { materialRuns, shapeDistance, upToFaceSolid, upToPartsSolid } from "./upTo";
-import { loftSketches, pathWire, sweepAlongSpine, sweepSketch } from "./sweep";
+import { faceProfile, loftSketches, pathWire, sketchProfile, sweepAlongSketch, sweepProfileAlongSpine, type SweepProfile } from "./sweep";
+import { sweepSettings } from "../model/sweepOptions";
 import { bezierEdge, chainEdges, compoundOf, endFrame, helixWire, interpolatedEdge, planeSheet, reversedWire, sectionEdges, sheetAlong, squareTo, takeVec, wirePolyline } from "./curves";
 import { isoclineWires, offsetOnFace, trimWire } from "./curvesMore";
 import { assignCheapest } from "../geometry/assign";
 import { bridgePoints, curveKindInfo, fitSplineProblem, helixSizes, type BridgeEnd } from "../model/curves";
 import { walkPoints } from "../sketch/pathSample";
-import { buildLoft } from "./loft";
+import { buildLoft, samePlaneProblem } from "./loft";
 import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
 import { offsetSolid, shellByCutting } from "./surface";
 import { boundarySurface, type BoundaryInput } from "./boundary";
 import { faceBlend, nearestOnFace, sewnLoosely, trimUnder, type BlendPiece } from "./faceBlend";
-import { encloseSurfaces, extendSurface, extrudeSurface, fillEdges, gapReport, gathered, joinSurfaces, loftSurface, offsetSurface, removeFaces, revolveSurface, ruledSurface, splitBySurface, sweepSurface, thickenSurface } from "./surface";
+import { encloseSurfaces, extendSurface, extrudeSurface, fillEdges, gapReport, gathered, joinSurfaces, loftSurface, offsetSurface, removeFaces, revolveSurface, ruledSurface, splitBySurface, sweepSurface, sweepSurfaceAlongSpine, thickenSurface } from "./surface";
 import { grooveVolume, maxGrooveDepth, threadPieces } from "./thread";
 import { fastenerSolid } from "./fastener";
 import { coilSolid } from "./thread";
@@ -1752,10 +1753,11 @@ function buildThin(feature: Feature, v: Record<string, number>, sketches: Sketch
 /** `notes`: problems that don't stop it being built (shown on the feature). */
 function buildSolid(feature: Feature, v: Record<string, number>, sketches: SketchMap, all: Feature[], parts: BuiltPart[], threaded?: ThreadedHoleCache, notes?: string[], paths?: PathLookup): Shape3D {
   // Thin (Onshape's): a wall along the sketch's curves — each run's outlines made into a sketch of their own and built as usual.
+  if (feature.type === "sweep" && feature.thin && !feature.surface && feature.sweepControl?.face) throw new Error("A thin sweep needs a sketch as its profile (the wall follows the sketch's lines). Untick Thin, or choose a sketch.");
   if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") && feature.thin && !feature.surface) return buildThin(feature, v, sketches, all, parts, notes, paths);
   // An extrude, revolve or sweep using areas of other sketches too: each made from its own sketch with the same settings
   // (a revolve round the first sketch's axis, a sweep along the same path), then put together.
-  if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") && feature.moreAreas?.length && !feature.surface) {
+  if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") && feature.moreAreas?.length && !feature.surface && !feature.sweepControl?.face) {
     const verb = feature.type;
     let shape = buildSolid({ ...feature, moreAreas: undefined }, v, sketches, all, parts, threaded, undefined, paths);
     const main = all.find((f) => f.id === feature.sketchRef)?.name ?? "its sketch";
@@ -1923,28 +1925,68 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         if (!sk?.sketch?.plane) {
           const exists = all.find((f) => f.id === id);
           if (!exists) throw new Error(`Its ${what} sketch has been deleted. Pick another.`);
-          if (all.indexOf(exists) > all.indexOf(feature)) throw new Error(`${exists.name} comes after this sweep in the list.`);
+          // By id: buildThin and the extra sketches' areas pass copies of the feature.
+          if (all.indexOf(exists) > all.findIndex((f) => f.id === feature.id)) throw new Error(`${exists.name} comes after this sweep in the list.`);
           throw new Error(`${exists.name} couldn't be used.`);
         }
         return sk.sketch;
       };
-      if (feature.sketchRef && feature.sketchRef === feature.pathRef) throw new Error("The profile and the path must be different sketches.");
+      // A part's face as the profile (a surface sweep always takes a sketch's outlines).
+      const face = feature.surface ? undefined : feature.sweepControl?.face;
+      if (!face && feature.sketchRef && feature.sketchRef === feature.pathRef) throw new Error("The profile and the path must be different sketches.");
+      // Lock profile direction: the direction clicked, found as the model is now.
+      const dirPick = feature.sweepControl?.lockOrientation ? undefined : feature.sweepControl?.lockDirection;
+      let direction: Vec3 | undefined;
+      if (dirPick) {
+        direction = dirPick.axis ? (dirPick.axis === "x" ? [1, 0, 0] : dirPick.axis === "y" ? [0, 1, 0] : [0, 0, 1]) : paths?.direction?.(dirPick) ?? dirPick.dir;
+        if (!direction) throw new Error("Click the direction to lock the profile to: a line, a straight edge, a flat face or a mate connector.");
+      }
+      const control = sweepSettings(feature, v, direction);
+      // The profile: a sketch's closed shapes, or a flat face of a part.
+      const profileOf = (): SweepProfile => {
+        if (!face) {
+          const prof = need(feature.sketchRef, "profile");
+          return sketchProfile(prof.plane!, prof.data, feature.areas);
+        }
+        const part = parts.find((p) => p.id === face.partId);
+        if (!part) throw new Error("The part with the profile face no longer exists (or comes later in the list). Edit the sweep and click the face again.");
+        const found = findPickedFace(part.shape, face);
+        try {
+          return faceProfile(found);
+        } finally {
+          found.delete();
+        }
+      };
       // Along a curve feature or picked part edges.
       const spine = paths?.(feature) ?? null;
       if (spine) {
         try {
-          const prof = need(feature.sketchRef, "profile");
-          if (feature.surface) throw new Error("A surface sweep follows a sketch for now. Untick Surface, or draw the path in a sketch.");
-          return sweepAlongSpine(prof.plane!, prof.data, spine.wire, feature.areas, { twist: v.twist ?? 0, lockOrientation: feature.sweepControl?.lockOrientation === true }, spine.frenet);
+          if (feature.surface) {
+            const prof = need(feature.sketchRef, "profile");
+            return sweepSurfaceAlongSpine(prof.plane!, prof.data, spine.wire, control, spine.frenet);
+          }
+          const profile = profileOf();
+          try {
+            return sweepProfileAlongSpine(profile, spine.wire, control, spine.frenet);
+          } finally {
+            profile.dispose?.();
+          }
         } finally {
           spine.wire.delete();
         }
       }
-      const profile = need(feature.sketchRef, "profile");
-      const path = need(feature.pathRef, "path");
-      const control = { twist: v.twist ?? 0, lockOrientation: feature.sweepControl?.lockOrientation === true };
-      if (feature.surface) return sweepSurface(profile.plane!, profile.data, path.plane!, path.data, control);
-      return sweepSketch(profile.plane!, profile.data, path.plane!, path.data, feature.areas, control);
+      if (feature.surface) {
+        const profile = need(feature.sketchRef, "profile");
+        const path = need(feature.pathRef, "path");
+        return sweepSurface(profile.plane!, profile.data, path.plane!, path.data, control);
+      }
+      const profile = profileOf();
+      try {
+        const path = need(feature.pathRef, "path");
+        return sweepAlongSketch(profile, path.plane!, path.data, control);
+      } finally {
+        profile.dispose?.();
+      }
     }
     case "wrap": {
       // A sketch's closed shapes wrapped round a round face, raised (Add) or engraved (Remove).
@@ -2005,8 +2047,9 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       return textSolid(t.plane, { value: t.value, bold: t.bold, flip: t.flip, size: v.size, depth: v.depth, x: v.x, y: v.y, angle: v.angle });
     }
     case "loft": {
-      if (feature.loft) {
-        // Onshape's further loft choices (faces, points, end conditions, a guide or path…): src/kernel/loft.ts.
+      if (feature.loft || (feature.thin && !feature.surface)) {
+        // Onshape's further loft choices (faces, points, end conditions, a guide or path, thin…): src/kernel/loft.ts.
+        const thin = feature.thin && !feature.surface ? { thickness: v.thickness ?? 2, thickness2: v.thickness2 ?? 0, midPlane: feature.thin.midPlane, flip: feature.thin.flip } : undefined;
         return buildLoft(feature, {
           sketch: (id) => {
             const sk = sketches.get(id);
@@ -2016,7 +2059,17 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
           face: (shape, pick) => findPickedFace(shape, pick),
           edges: (shape, picks) => findPickedEdges(shape, picks),
           name: (id) => all.find((f) => f.id === id)?.name,
-        }, notes);
+          // A curve feature (Helix, Fit spline…) as the guide or path, found as a Curve pattern's path is.
+          curve: (id, what) => {
+            const target = all.find((f) => f.id === id);
+            if (target?.type !== "curve") throw new Error(`The loft's ${what} has been deleted. Edit the loft and choose another.`);
+            if (all.indexOf(target) > all.indexOf(feature)) throw new Error(`${target.name} comes after this in the list. Move it above, or choose another ${what}.`);
+            const c = loftCurves.get(all)?.(id);
+            if (!c?.wires.length) throw new Error(target.suppressed ? `${target.name} is suppressed, so it can't be the ${what}.` : `${target.name} couldn't be made, so it can't be the ${what}.`);
+            if (c.wires.length > 1) throw new Error(`${target.name} is in ${c.wires.length} separate pieces. The ${what} must be one run: join them with a Composite curve or a Bridging curve.`);
+            return c.wires[0].clone() as Wire;
+          },
+        }, notes, thin);
       }
       const sections = (feature.sections ?? []).map((id) => {
         const sk = sketches.get(id);
@@ -2024,6 +2077,8 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         if (!sk?.sketch?.plane) throw new Error(f ? `${f.name} can't be used (it's suppressed, comes later in the list, or has no plane).` : "One of its sketches has been deleted. Edit the loft.");
         return { plane: sk.sketch.plane, data: sk.sketch.data, name: sk.name };
       });
+      const flat = samePlaneProblem(sections.map((x) => ({ name: x.name, ...planeFrame(x.plane) })), false);
+      if (flat) throw new Error(flat);
       if (feature.surface) return loftSurface(sections);
       return loftSketches(sections, { ruled: !!feature.loftRuled });
     }
@@ -2288,11 +2343,17 @@ interface BuiltCurve {
   frenet?: boolean;
 }
 
+/** A build's curve features by id, for a Loft's guide or path (keyed by the features list buildSolid is given). */
+const loftCurves = new WeakMap<Feature[], (id: string) => BuiltCurve | undefined>();
+
 /**
  * The path a sweep follows when it's a curve feature or picked part edges (null for a sketch path): a fresh wire the
  * caller frees. Given to buildSolid by the engine.
  */
-type PathLookup = (feature: Feature) => { wire: Wire; frenet: boolean } | null;
+type PathLookup = ((feature: Feature) => { wire: Wire; frenet: boolean } | null) & {
+  /** A sweep's locked direction, found as the model is now (a line's or edge's direction, a flat face's normal, a connector's Z). */
+  direction?: (g: GeomPick) => Vec3 | undefined;
+};
 
 /** What a sketch could snap to, kept from a build: the parts (shared copies) and sketches before it, and the list it's in. */
 interface SketchSnap {
@@ -3470,6 +3531,7 @@ export class GeometryEngine {
         if (features === listed) features = [...listed];
         features[index] = feature;
       }
+      if (feature.type === "loft") loftCurves.set(features, (id) => this.curves.get(id));
       if (feature.suppressed) continue;
       if (lastBuilt) this.faceMakers.after(lastBuilt, this.parts, lastMoved);
       lastBuilt = feature.id;
@@ -3689,7 +3751,7 @@ export class GeometryEngine {
           continue;
         }
         try {
-          const skin = feature.type === "boundary" ? this.boundaryShape(feature, sketches, features) : buildSolid(feature, values, sketches, features, this.parts, this.threadedHoles, undefined, (f) => this.sweepSpine(f, features, sketches));
+          const skin = feature.type === "boundary" ? this.boundaryShape(feature, sketches, features) : buildSolid(feature, values, sketches, features, this.parts, this.threadedHoles, undefined, this.pathLookup(features, sketches));
           surfaceCounter++;
           this.tools.set(feature.id, { shape: skin.clone(), operation: "new", partId: feature.id });
           this.parts.push({ id: feature.id, name: `Surface ${surfaceCounter}`, featureIds: [feature.id], shape: skin, surface: true });
@@ -3746,7 +3808,7 @@ export class GeometryEngine {
       let tool: Shape3D;
       const notes: string[] = [];
       try {
-        tool = feature.type === "derived" ? this.derivedSolid(feature, values) : buildSolid(feature, values, sketches, features, this.parts, this.threadedHoles, notes, (f) => this.sweepSpine(f, features, sketches));
+        tool = feature.type === "derived" ? this.derivedSolid(feature, values) : buildSolid(feature, values, sketches, features, this.parts, this.threadedHoles, notes, this.pathLookup(features, sketches));
       } catch (e) {
         featureErrors[feature.id] = describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`);
         continue;
@@ -8333,6 +8395,13 @@ export class GeometryEngine {
     return along(0.5);
   }
 
+  /** What buildSolid asks the engine for a sweep: its path (a curve feature or part edges) and a locked direction. */
+  private pathLookup(features: Feature[], sketches: SketchMap): PathLookup {
+    return Object.assign((f: Feature) => this.sweepSpine(f, features, sketches), {
+      direction: (g: GeomPick) => this.findGeom(g, "line", sketches, features).dir,
+    });
+  }
+
   /**
    * A sweep's or curve pattern's path when it's a curve feature or picked part edges: one wire (the caller frees it),
    * an open one starting at the end nearest the profile. Null for a sketch path. Throws a plain message when it can't be made.
@@ -8352,7 +8421,8 @@ export class GeometryEngine {
     } else {
       const target = all.find((f) => f.id === feature.pathRef);
       if (target?.type !== "curve") return null;
-      if (all.indexOf(target) > all.indexOf(feature)) throw new Error(`${target.name} comes after this in the list. Move it above, or pick another path.`);
+      // By id: a thin sweep, or one using other sketches' areas, asks with a copy of the feature.
+      if (all.indexOf(target) > all.findIndex((f) => f.id === feature.id)) throw new Error(`${target.name} comes after this in the list. Move it above, or pick another path.`);
       const c = this.curves.get(target.id);
       if (!c?.wires.length) throw new Error(target.suppressed ? `${target.name} is suppressed, so it can't be the path.` : `${target.name} couldn't be made, so it can't be the path.`);
       if (c.wires.length > 1) throw new Error(`${target.name} is in ${c.wires.length} separate pieces. A path must be one run: join them with a Composite curve or a Bridging curve.`);

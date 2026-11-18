@@ -7,7 +7,7 @@
  */
 import type { TopoPick } from "../geometry/topoRef";
 import type { SketchData } from "../sketch/types";
-import { nearEnd, type GeomClick } from "./geomClicks";
+import { lineFromClick, nearEnd, type GeomClick } from "./geomClicks";
 import { tidyVec } from "./transformPicks";
 import type { Feature, GeomPick, LoftCurve, LoftDef, LoftEnd, LoftProfile } from "./types";
 
@@ -47,7 +47,8 @@ export function withProfiles(f: Pick<Feature, "loft">, profiles: LoftProfile[]):
 /** A plain description of a section, for the dialog's list. */
 export function profileLabel(p: LoftProfile, name: (id: string) => string | undefined): string {
   if ("sketch" in p) return `${name(p.sketch) ?? "A deleted sketch"}${p.areas?.length ? " (one area)" : ""}`;
-  if ("face" in p) return `A flat face of ${name(p.face.partId.split(/[~@]/)[0]) ?? "a part"}`;
+  if ("face" in p) return `A face of ${name(p.face.partId.split(/[~@]/)[0]) ?? "a part"}`;
+  if ("edges" in p) return `${p.edges.length} edge${p.edges.length === 1 ? "" : "s"} of ${name(p.edges[0].partId.split(/[~@]/)[0]) ?? "a part"}`;
   const g = p.point;
   if (g.sketchPoint) return `A point of ${name(g.sketchPoint.sketch) ?? "a deleted sketch"}`;
   if (g.vertex) return `A corner of ${name(g.vertex.partId.split(/[~@]/)[0]) ?? "a part"}`;
@@ -64,12 +65,15 @@ export function profilesProblem(profiles: LoftProfile[]): string | null {
   return null;
 }
 
-/** Which end conditions a section can have: a point a rounded tip, a face carrying on from its neighbours too. */
+/**
+ * Which end conditions a section can have (Onshape's): a point a rounded tip; a shape square to it, along its own plane
+ * or along a picked direction; a face carrying on from its neighbours too.
+ */
 export function endChoices(p: LoftProfile | undefined): LoftEnd["kind"][] {
   if (!p) return [];
   if ("point" in p) return ["tangent"];
-  if ("face" in p) return ["normal", "matchTangent", "matchCurvature"];
-  return ["normal"];
+  if ("face" in p) return ["normal", "profileTangent", "direction", "matchTangent", "matchCurvature"];
+  return ["normal", "profileTangent", "direction"];
 }
 
 export const END_LABELS: Record<LoftEnd["kind"], string> = {
@@ -77,6 +81,8 @@ export const END_LABELS: Record<LoftEnd["kind"], string> = {
   tangent: "Rounded tip",
   matchTangent: "Carry on from the faces round it",
   matchCurvature: "Carry on very smoothly from the faces",
+  profileTangent: "Along the shape's own plane (flared)",
+  direction: "Along a direction you pick",
 };
 
 /** End conditions that no longer fit their section (it was changed) are dropped. */
@@ -93,6 +99,27 @@ export function lonePoints(data: SketchData): { id: string; x: number; y: number
 }
 
 const samePick = (a: TopoPick, b: TopoPick) => a.partId === b.partId && JSON.stringify(a.ref) === JSON.stringify(b.ref);
+
+/**
+ * The sections with a part's edge put in an edges section: a new one (before an end point) when `fresh`, else the last
+ * edges section (the edge taken out when it's already there; a section left with none goes).
+ */
+export function toggleSectionEdge(profiles: LoftProfile[], edge: TopoPick, fresh: boolean): LoftProfile[] {
+  const list = [...profiles];
+  const endPoint = list.length > 1 && "point" in list[list.length - 1];
+  let at = -1;
+  if (!fresh) for (let i = list.length - 1; i >= 0 && at < 0; i--) if ("edges" in list[i]) at = i;
+  if (at < 0) {
+    list.splice(endPoint ? list.length - 1 : list.length, 0, { edges: [stripAt(edge)] });
+    return list;
+  }
+  const cur = list[at] as { edges: TopoPick[] };
+  const has = cur.edges.some((e) => samePick(e, edge));
+  const edges = has ? cur.edges.filter((e) => !samePick(e, edge)) : [...cur.edges, stripAt(edge)];
+  if (edges.length) list[at] = { edges };
+  else list.splice(at, 1);
+  return list;
+}
 const stripAt = (p: TopoPick): TopoPick => ({ partId: p.partId, ref: p.ref });
 
 /** The sections with the first (or last) set to a point, or with an end point taken off (`point` null). */
@@ -138,9 +165,21 @@ export function toggleEdge(curve: LoftCurve | undefined, edge: TopoPick): LoftCu
  * A click in the 3D view while the Loft dialog is open: what it changes (a patch for the feature), or a message.
  * Faces are sections; a corner the start/end point; edges the guide or path.
  */
-export function loftClick(f: Pick<Feature, "sections" | "loft">, c: GeomClick): Pick<Feature, "sections" | "loft"> | string {
+export function loftClick(f: Pick<Feature, "sections" | "loft"> & Partial<Pick<Feature, "surface">>, c: GeomClick): Pick<Feature, "sections" | "loft"> | string {
   const picking = f.loft?.picking ?? "profile";
   const profiles = loftProfiles(f);
+  if (picking === "startDir" || picking === "endDir") {
+    const which = picking === "startDir" ? "start" : "end";
+    const towards = lineFromClick(c);
+    if (typeof towards === "string") return towards;
+    return withLoftDef(f, { [which]: { ...(f.loft?.[which] ?? {}), kind: "direction", towards }, picking: undefined });
+  }
+  if (picking === "newSectionEdges" || picking === "sectionEdges") {
+    if (c.kind !== "part" || c.pick.ref.kind !== "edge") return "Click edges of a part for this section (they must join end to end).";
+    const next = toggleSectionEdge(profiles, c.pick, picking === "newSectionEdges");
+    const patch = withProfiles({ loft: { ...f.loft, picking: "sectionEdges" } }, next);
+    return { ...patch, ...withLoftDef(patch, tidyEnds(patch.loft ?? undefined, next)) };
+  }
   if (picking === "guide" || picking === "path") {
     if (c.kind !== "part" || c.pick.ref.kind !== "edge") return `Click edges of a part for the ${picking}, or choose a sketch for it.`;
     return withLoftDef(f, { [picking]: toggleEdge(f.loft?.[picking], c.pick) });
@@ -155,8 +194,7 @@ export function loftClick(f: Pick<Feature, "sections" | "loft">, c: GeomClick): 
     const next = withEndPoint(profiles, picking, point);
     return { ...withProfiles({ loft: { ...f.loft, picking: undefined } }, next), ...{} };
   }
-  if (c.kind !== "part" || c.pick.ref.kind !== "face") return "Click a flat face of a part to use it as a section, or tick sketches in the list.";
-  if (c.pick.ref.surface !== "PLANE") return "That face is curved. A loft section must be a flat face.";
+  if (c.kind !== "part" || c.pick.ref.kind !== "face") return "Click a face of a part to use it as a section, or choose sketches in the list.";
   const next = toggleFace(profiles, c.pick);
   const patch = withProfiles(f, next);
   return { ...patch, ...withLoftDef(patch, tidyEnds(patch.loft ?? undefined, next)) };
@@ -180,6 +218,7 @@ export function loftUses(f: Pick<Feature, "sections" | "loft">): { sectionFeatur
   for (const p of loftProfiles(f)) {
     if ("sketch" in p) sectionFeatures.push(p.sketch);
     else if ("face" in p) sectionParts.push(p.face.partId);
+    else if ("edges" in p) sectionParts.push(p.edges[0].partId);
     else {
       if (p.point.sketchPoint) sectionFeatures.push(p.point.sketchPoint.sketch);
       else if (p.point.pick) sectionParts.push(p.point.pick.partId);
@@ -191,6 +230,7 @@ export function loftUses(f: Pick<Feature, "sections" | "loft">): { sectionFeatur
   for (const c of [f.loft?.guide, f.loft?.path]) {
     if (!c) continue;
     if ("sketch" in c) features.push(c.sketch);
+    else if ("curve" in c) features.push(c.curve);
     else parts.push(...c.edges.map((e) => e.partId));
   }
   return { sectionFeatures, sectionParts, features, parts };
@@ -198,9 +238,14 @@ export function loftUses(f: Pick<Feature, "sections" | "loft">): { sectionFeatur
 
 /** A loft with the sections that used deleted features or parts taken out (the same object when nothing changes). */
 export function loftWithoutGone<F extends Pick<Feature, "sections" | "loft">>(f: F, featureGone: (id: string) => boolean, partGone: (id: string) => boolean): F {
+  // A "direction" end whose picked edge or face went: that end is left free.
+  const lostEnd = (e: LoftEnd | undefined) => !!e?.towards?.pick && partGone(e.towards.pick.partId);
+  if (f.loft && (lostEnd(f.loft.start) || lostEnd(f.loft.end))) {
+    f = { ...f, ...withLoftDef(f, { ...(lostEnd(f.loft.start) ? { start: undefined } : {}), ...(lostEnd(f.loft.end) ? { end: undefined } : {}) }) };
+  }
   if (!f.loft?.profiles) return f;
   const gone = (p: LoftProfile) =>
-    "sketch" in p ? featureGone(p.sketch) : "face" in p ? partGone(p.face.partId) : p.point.sketchPoint ? featureGone(p.point.sketchPoint.sketch) : p.point.pick ? partGone(p.point.pick.partId) : p.point.vertex ? partGone(p.point.vertex.partId) : false;
+    "sketch" in p ? featureGone(p.sketch) : "face" in p ? partGone(p.face.partId) : "edges" in p ? p.edges.some((e) => partGone(e.partId)) : p.point.sketchPoint ? featureGone(p.point.sketchPoint.sketch) : p.point.pick ? partGone(p.point.pick.partId) : p.point.vertex ? partGone(p.point.vertex.partId) : false;
   if (!f.loft.profiles.some(gone)) return f;
   const left = f.loft.profiles.filter((p) => !gone(p));
   const patch = withProfiles(f, left);

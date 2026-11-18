@@ -358,3 +358,37 @@ export function cornerRoom(reach: number, a: Pt, b: Pt): number {
   const t = Math.tan(between / 2);
   return reach * 1.1 * Math.max(1, t > 1e-9 ? 1 / t : Infinity) + 0.01;
 }
+
+/** An open run cut in two at `place`: the part before it (ending there) and the part after (starting there). Either may be empty. */
+export function splitAtPlace(segments: Segment[], place: PathPlace): [Segment[], Segment[]] {
+  const end = 1e-9;
+  if (place.t <= end) return [segments.slice(0, place.index), segments.slice(place.index)];
+  if (place.t >= 1 - end) return [segments.slice(0, place.index + 1), segments.slice(place.index + 1)];
+  const [a, b] = splitSegment(segments[place.index], place.t);
+  return [
+    [...segments.slice(0, place.index), a],
+    [b, ...segments.slice(place.index + 1)],
+  ];
+}
+
+/**
+ * Sharing a twist and a scale between the two halves of an open path cut where the profile sits part way along (each
+ * half swept from the profile outwards). `before`/`after` are the halves' lengths. The twist is shared by length; the
+ * half walked backwards turns the other way round its own direction, so its share keeps the same sign. The size is 1 at
+ * the profile and `scale` at the path's end, in step with the length, so the start gets 1 − (scale − 1)·before/after.
+ */
+export function shareHalves(before: number, after: number, twistDeg: number, scale: number): { before: { twist: number; scale: number }; after: { twist: number; scale: number } } {
+  const total = before + after;
+  const startScale = after > 1e-12 ? 1 - ((scale - 1) * before) / after : 1;
+  return {
+    before: { twist: total > 0 ? (twistDeg * before) / total : 0, scale: startScale },
+    after: { twist: total > 0 ? (twistDeg * after) / total : 0, scale },
+  };
+}
+
+/** The size, a share of the profile's, at a stretch's two ends: the change spread over `scaling` (the stretches that change size), `at` mm into them. */
+export function scaleAlong(start: number, end: number, scaling: number, at: number, length: number): [number, number] {
+  if (!(scaling > 1e-12)) return [start, start];
+  const f = (s: number) => start + ((end - start) * s) / scaling;
+  return [f(at), f(at + length)];
+}

@@ -77,6 +77,27 @@ export interface GeomPick {
 }
 
 /**
+ * Sweep's further choices, as Onshape's Sweep (see model/sweepOptions.ts). All missing = as before: the profile turns
+ * with the path, twisted by the "twist" box (degrees).
+ */
+export interface SweepOptions {
+  /** Profile control "Keep profile orientation": the profile faces the same way all along (no twist). */
+  lockOrientation?: boolean;
+  /** Profile control "Lock profile direction": the profile keeps the same angle to this direction (a line, edge, axis, flat face or mate connector). */
+  lockDirection?: GeomPick;
+  /** How the twist is given: missing = an angle (the "twist" box), "turns" (the "turns" box), "pitch" (the "pitch" box: mm per turn). */
+  twistBy?: "turns" | "pitch";
+  /** The twist turns the other way. */
+  opposite?: boolean;
+  /** Changes size along the path: the "scale" box is the size at the path's end compared with the profile's. */
+  scaled?: boolean;
+  /** A flat face of a part as the profile, instead of a sketch's shapes. */
+  face?: TopoPick;
+  /** What a click in the view chooses while the dialog is open (not saved). */
+  picking?: "face" | "direction";
+}
+
+/**
  * A loft's further choices, as Onshape's Loft. `profiles` is the sections in order when any isn't a whole sketch (a
  * picked area of a sketch, a flat face of a part, a point as the first or last); `sections` then still lists the
  * sketches among them, so code that only reads `sections` sees every sketch used. Missing = each of `sections`.
@@ -94,25 +115,37 @@ export interface LoftDef {
   matchCorners?: boolean;
   /** Back round to the first section (a closed ring of sections). */
   periodic?: boolean;
-  /** What a click in the 3D view chooses while the dialog is open (missing = a flat face, as a section; "start"/"end" a corner as the first/last section). */
-  picking?: "profile" | "start" | "end" | "guide" | "path";
+  /**
+   * What a click in the 3D view chooses while the dialog is open (missing = a face, as a section; "start"/"end" a corner as
+   * the first/last section; "newSectionEdges"/"sectionEdges" part edges for a new / the last edges section; "startDir"/"endDir"
+   * the direction of a "direction" end).
+   */
+  picking?: "profile" | "start" | "end" | "guide" | "path" | "newSectionEdges" | "sectionEdges" | "startDir" | "endDir";
 }
 
 /** One section of a loft: a sketch (or one picked area of it), a flat face of a part, or a point. */
 export type LoftProfile =
   | { sketch: string; areas?: AreaPick[]; turn?: number }
   | { face: TopoPick; turn?: number }
-  | { point: GeomPick };
+  | { point: GeomPick }
+  /** Part edges joined end to end (open ones only for a surface loft). */
+  | { edges: TopoPick[] };
 
 /** How a loft meets an end: square to the section, a rounded tip (a point), or carrying on from a face's neighbours. */
 export interface LoftEnd {
-  kind: "normal" | "tangent" | "matchTangent" | "matchCurvature";
+  /**
+   * normal: square to the shape; tangent: a point's rounded tip; matchTangent/matchCurvature: carrying on from a face's
+   * neighbours; profileTangent: flaring out (or in) along the shape's own plane; direction: leaving along `towards`.
+   */
+  kind: "normal" | "tangent" | "matchTangent" | "matchCurvature" | "profileTangent" | "direction";
+  /** "direction": the line, edge, face (its normal), axis or mate connector (its Z) it leaves along. */
+  towards?: GeomPick;
   /** How far the condition reaches (Onshape's magnitude; missing = 1). */
   magnitude?: number;
 }
 
 /** A guide or path: one run of curves in a sketch, or edges of parts. */
-export type LoftCurve = { sketch: string } | { edges: TopoPick[] };
+export type LoftCurve = { sketch: string } | { edges: TopoPick[] } | { curve: string };
 
 /** Where a Part Studio mate connector sits and which part it belongs to (Onshape's Mate connector feature). */
 export interface MateConnectorDef {
@@ -368,7 +401,7 @@ export interface Feature {
    * twist is ignored). Missing: it turns to follow the path, as before.
    * (The twist itself is the "twist" box, in degrees.)
    */
-  sweepControl?: { lockOrientation?: boolean };
+  sweepControl?: SweepOptions;
   /** Loft: the sketches to pass through, in order. */
   sections?: string[];
   /**
