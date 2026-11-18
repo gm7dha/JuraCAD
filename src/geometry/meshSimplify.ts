@@ -125,6 +125,11 @@ export const FRUITLESS_SEEDS = 150;
 
 /** …or after this many misses for every round face found. */
 export const FRUITLESS_RATIO = 20;
+/**
+ * How many times the same face may be grown and turned down (from different seeds) before none of it is a seed
+ * again. (A rounded pocket's floor fillet needs a few goes — 6 — before the seed that finds its torus.)
+ */
+export const SAME_TURNED_DOWN = 12;
 /** A plan leaving more than this many facet faces (or more than half the triangles as facets) isn't built: nothing to gain. */
 export const MAX_FACET_FACES = 5_000;
 
@@ -351,6 +356,8 @@ export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<numbe
   // Biggest first: a real round face's facets are bigger than the bits of whatever's beside it.
   const order = groups.map((_, i) => i).sort((a, b) => groups[b].area - groups[a].area);
   const tried = new Set<number>();
+  /** Faces grown and then turned down (a thin band…), and how often each was grown again from another seed. */
+  const turnedDown = new Map<string, number>();
   let fruitless = 0;
   for (const seed of options.flatOnly ? [] : order) {
     if (work > budget) return TOO_DETAILED;
@@ -444,6 +451,12 @@ export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<numbe
     }
     const final = fitRound(members);
     if (!final || thinBand(final, members) || flatEnough(members)) {
+      // Grown just the same from several seeds already (a thread's crest was, hundreds of times, each time costing
+      // as much as the face is big): none of it is a seed again.
+      const key = [...members].sort((a, b) => a - b).join(",");
+      const again = (turnedDown.get(key) ?? 0) + 1;
+      turnedDown.set(key, again);
+      if (again >= SAME_TURNED_DOWN) for (const m of members) tried.add(m);
       fruitless++;
       continue;
     }

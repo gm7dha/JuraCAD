@@ -673,7 +673,7 @@
   sample kept (ShapeFix can't add their seam). Partial tori: neighbouring round regions one surface fits together are
   merged after growing (a corner's slivers of cylinders → one torus); a too-big first growth is retried with its first half,
   quarter… (a boss's fillet ring); a flat group's facing is asked per triangle when its middle fails (a strip round a ring's
-  top); `fitTorus` is polished by Gauss–Newton on the points (`polishTorus`); a real flat face's own triangles never move to a
+  top); `fitTorus` is polished by Gauss–Newton on the points (`polishTorus`); the same face grown and turned down from `SAME_TURNED_DOWN` (12) seeds isn't seeded again (a printed nut's thread crest was regrown hundreds of times once tori fitted better: 13× the work; tests/engineSimplifyThread); a real flat face's own triangles never move to a
   round face they lie on within the distance (they made a chord of a fillet's curved edge); where two round faces meet
   smoothly in a `meetCircle` (new: a straight fillet into a corner's torus — the cylinder's axis touching the torus's middle
   circle) whose plane parts them, triangles near the join go to their side of it and both are fitted again (cylinders,
