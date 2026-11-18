@@ -2056,6 +2056,7 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
             return sk?.sketch?.plane ? { plane: sk.sketch.plane, data: sk.sketch.data, name: sk.name } : null;
           },
           part: (id) => parts.find((p) => p.id === id)?.shape ?? null,
+          allParts: () => parts.filter((p) => !p.surface).map((p) => p.shape),
           face: (shape, pick) => findPickedFace(shape, pick),
           edges: (shape, picks) => findPickedEdges(shape, picks),
           name: (id) => all.find((f) => f.id === id)?.name,

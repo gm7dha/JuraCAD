@@ -7,7 +7,7 @@ import { AreaPicker } from "./AreaPicker";
 import { followedSketch } from "../sketch/areaClicks";
 import { findRegions } from "../sketch/regions";
 import { activeFeatures, useStore } from "../model/store";
-import { END_LABELS, endChoices, lonePoints, loftProfiles, moveProfile, profileLabel, tidyEnds, withEndPoint, withLoftDef, withProfiles } from "../model/loft";
+import { END_LABELS, cornerPoints, endChoices, lonePoints, loftGuides, loftProfiles, moveProfile, pickingIndex, profileLabel, setConnectionSketchPoint, tidyEnds, withEndPoint, withGuide, withLoftDef, withoutConnection, withProfiles } from "../model/loft";
 import type { Feature, LoftCurve, LoftDef, LoftEnd, LoftProfile } from "../model/types";
 
 type Picking = NonNullable<LoftDef["picking"]>;
@@ -22,9 +22,14 @@ export function LoftOptions({ sketches }: { sketches: Feature[] }) {
   const profiles = loftProfiles(draft);
   const name = (id: string) => features.find((f) => f.id === id)?.name;
   const picking: Picking = def.picking ?? "profile";
+  // A sketch drawn on a part's face may carry on from the faces round that face.
+  const onFace = (id: string) => {
+    const pl = features.find((f) => f.id === id)?.sketch?.plane;
+    return !!pl && pl.kind === "face" && !!pl.face;
+  };
   const setProfiles = (next: LoftProfile[]) => {
     const patch = withProfiles(draft, next);
-    setDraftField({ ...patch, ...withLoftDef({ loft: patch.loft ?? undefined }, tidyEnds(patch.loft ?? undefined, next)) });
+    setDraftField({ ...patch, ...withLoftDef({ loft: patch.loft ?? undefined }, tidyEnds(patch.loft ?? undefined, next, onFace)) });
   };
   const setDef = (patch: Partial<LoftDef>) => setDraftField(withLoftDef(draft, patch));
   const pickButton = (mode: Picking, label: string) => (
@@ -83,7 +88,7 @@ export function LoftOptions({ sketches }: { sketches: Feature[] }) {
   };
   const endSelect = (which: "start" | "end") => {
     const p = which === "start" ? profiles[0] : profiles[profiles.length - 1];
-    const choices = endChoices(p);
+    const choices = endChoices(p, !!p && "sketch" in p && onFace(p.sketch));
     const cond = def[which];
     const set = (c: LoftEnd | undefined) => setDef(which === "start" ? { start: c } : { end: c });
     return (
@@ -149,8 +154,11 @@ export function LoftOptions({ sketches }: { sketches: Feature[] }) {
       </div>
     );
   };
-  const curveSelect = (which: "guide" | "path", label: string) => {
-    const c: LoftCurve | undefined = def[which];
+  const curveSelect = (which: "guide" | "path" | number, label: string) => {
+    // A number: guide curve number which + 1 (0 = the first, `guide`).
+    const guides = loftGuides(def);
+    const c: LoftCurve | undefined = typeof which === "number" ? guides[which] : def[which];
+    const mode: Picking = typeof which === "number" ? (which === 0 ? "guide" : `moreGuide:${which - 1}`) : which;
     const value = c && "sketch" in c ? c.sketch : c && "curve" in c ? `curve:${c.curve}` : c ? "edges" : "";
     return (
       <>
@@ -159,7 +167,8 @@ export function LoftOptions({ sketches }: { sketches: Feature[] }) {
           <select className="full-select" aria-label={label} value={value} onChange={(e) => {
               const v = e.target.value;
               const next: LoftCurve | undefined = v === "edges" ? (c && "edges" in c ? c : undefined) : v.startsWith("curve:") ? { curve: v.slice(6) } : v ? { sketch: v } : undefined;
-              setDef({ ...(which === "guide" ? { guide: next } : { path: next }), picking: v === "edges" ? which : undefined });
+              const set = typeof which === "number" ? withGuide(def, which, next) : which === "guide" ? { guide: next } : { path: next };
+              setDef({ ...set, picking: v === "edges" ? mode : undefined });
             }}>
             <option value="">None</option>
             {sketches.map((f) => (
@@ -178,10 +187,90 @@ export function LoftOptions({ sketches }: { sketches: Feature[] }) {
         {value === "edges" && (
           <p className="dialog-hint field-hint">
             {c && "edges" in c ? `${c.edges.length} edge${c.edges.length === 1 ? "" : "s"} picked. ` : ""}
-            {pickButton(which, picking === which ? "Done picking edges" : "Click edges…")}
+            {pickButton(mode, picking === mode ? "Done picking edges" : "Click edges…")}
           </p>
         )}
       </>
+    );
+  };
+  const guideList = () => {
+    const guides = loftGuides(def);
+    // One more slot while the last guide is being picked from edges (it has none yet).
+    const picked = pickingIndex(picking, "moreGuide");
+    const count = Math.max(guides.length, picked !== null ? picked + 2 : 0, 1);
+    return (
+      <>
+        {Array.from({ length: count }, (_, i) => (
+          <div key={i} className="loft-guide">
+            {curveSelect(i, i === 0 ? (count > 1 ? "Guide curve 1 (the shapes' outlines touch it)" : "Guide curve (the shapes' outlines touch it)") : `Guide curve ${i + 1}`)}
+            {i > 0 && guides[i] && (
+              <button type="button" className="link-button" onClick={() => setDef({ ...withGuide(def, i, undefined), picking: undefined })}>
+                Take guide curve {i + 1} out
+              </button>
+            )}
+          </div>
+        ))}
+        {guides.length > 0 && guides.length === count && (
+          <p className="dialog-hint field-hint">
+            <button type="button" className="link-button" onClick={() => setDef({ picking: `moreGuide:${guides.length - 1}` })}>
+              + Add another guide curve
+            </button>{" "}
+            (every shape's outline must touch each one)
+          </p>
+        )}
+      </>
+    );
+  };
+  const connectionList = () => {
+    const list = def.connections ?? [];
+    const pickingAt = pickingIndex(picking, "connection");
+    const count = Math.max(list.length, pickingAt !== null ? pickingAt + 1 : 0);
+    const shapes = profiles.flatMap((p) => ("sketch" in p ? [p.sketch] : []));
+    return (
+      <fieldset className="param-group loft-connections">
+        <legend>Connections (which corners join)</legend>
+        {Array.from({ length: count }, (_, j) => {
+          const pts = list[j]?.points ?? [];
+          const clicked = pts.filter((g) => !g.sketchPoint).length;
+          return (
+            <div key={j} className="loft-connection">
+              <strong>Connection {j + 1}</strong>{" "}
+              <button type="button" className="icon-button" title="Take out" aria-label={`Take connection ${j + 1} out`} onClick={() => setDef({ ...withoutConnection(def, j), picking: undefined })}>
+                ✕
+              </button>
+              {shapes.map((id) => {
+                const sk = sketches.find((f) => f.id === id);
+                const data = sk ? followedSketch(sk, sketchLinks)?.data ?? sk.sketch?.data : undefined;
+                const corners = data ? cornerPoints(data) : [];
+                const cur = pts.find((g) => g.sketchPoint?.sketch === id)?.sketchPoint?.point ?? "";
+                return (
+                  <label key={id} className="field-label">
+                    {name(id) ?? "A sketch"}
+                    <select className="full-select" aria-label={`Connection ${j + 1} on ${name(id) ?? "a sketch"}`} value={cur} onChange={(e) => setDef(setConnectionSketchPoint(def, j, id, e.target.value || null))}>
+                      <option value="">Choose a corner…</option>
+                      {corners.map((c, k) => (
+                        <option key={c.id} value={c.id}>
+                          Corner {k + 1} ({Math.round(c.x * 100) / 100}, {Math.round(c.y * 100) / 100})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                );
+              })}
+              <p className="dialog-hint field-hint">
+                {clicked ? `${clicked} corner${clicked === 1 ? "" : "s"} of parts clicked. ` : ""}
+                {pickButton(`connection:${j}`, picking === `connection:${j}` ? "Done clicking corners" : "Click corners of faces…")}
+              </p>
+            </div>
+          );
+        })}
+        <p className="dialog-hint field-hint">
+          Pick one corner on every shape for each connection; the loft joins them (for shapes with different numbers of sides, or when it comes out twisted).{" "}
+          <button type="button" className="link-button" onClick={() => setDef({ picking: `connection:${count}`, matchCorners: undefined })}>
+            + Add a connection
+          </button>
+        </p>
+      </fieldset>
     );
   };
   return (
@@ -268,10 +357,11 @@ export function LoftOptions({ sketches }: { sketches: Feature[] }) {
       {(picking === "start" || picking === "end") && <p className="dialog-hint field-hint">Click near the corner of a part you want the loft to come to a point at.</p>}
       {!def.periodic && endSelect("start")}
       {!def.periodic && endSelect("end")}
-      {curveSelect("guide", "Guide curve (the shapes' outlines touch it)")}
+      {guideList()}
       {curveSelect("path", "Path to follow")}
+      {connectionList()}
       <label className="check-row" title="Choose which corner of each shape joins which, if the loft comes out twisted">
-        <input type="checkbox" checked={!!def.matchCorners} onChange={(e) => setDef({ matchCorners: e.target.checked || undefined })} />
+        <input type="checkbox" checked={!!def.matchCorners} onChange={(e) => setDef({ matchCorners: e.target.checked || undefined, ...(e.target.checked ? { connections: undefined } : {}) })} />
         Line up the corners myself (if it twists)
       </label>
       <label className="check-row" title="Carry on from the last shape back round to the first, making a closed ring">

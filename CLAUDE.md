@@ -573,8 +573,7 @@
   (`alignAlongPath`: a rotation-minimising reference), else the pipe twists between them. `loft.picking` is stripped by
   `withoutPicking` and `featureForEngine`. Dependents: `loftUses`/`loftWithoutGone` (sections a list of ≥ 2, guide/path
   needed); `loftSketches` for the eyes and partLinks. Claude: add_feature "loft" (sections, start_point/end_point, start/end,
-  magnitudes, guide, path, straight, match_corners + turns, closed_loop; `applyLoft`). UI `src/app/LoftOptions.tsx`. Not done: more
-  than one guide (OCCT has nothing for it), corner matching across different piece counts, end conditions eased only between parallel outlines.
+  magnitudes, guide, path, straight, match_corners + turns, closed_loop; `applyLoft`). UI `src/app/LoftOptions.tsx`. Not done: end conditions eased only between parallel outlines.
   Tests: tests/loft (pure; picking stripped, ends tidied), engineLoft (exact pyramid/cone, dome, off-centre tip, upright
   sides at a normal start and on a box's top face, no lip at any magnitude, into-the-part refused, holed face refused, guide
   moving one side only, arc and L paths' volumes and ends, a shape off the path refused, twist, ring), mcpLoft.
@@ -595,6 +594,35 @@
   `tangent_to_profile` / `direction` + `start_direction`/`end_direction`. Tests: loftMore (pure), engineLoftMore (two boxes
   cut and joined exactly, same plane, slanted ends sound, fit spline path/guide, curved face and box-edge sections, flared and
   directed ends, thin volumes exact), mcpLoftMore. Not done: curved-face sections joined to their part, thin with faces/points.
+  Several guides, connections, sketch-on-face ends: `LoftDef.moreGuides` (guides after `guide`; `loftGuides`/`withGuide`) and
+  `connections` (`LoftConnection` = `{points: GeomPick[]}`, each point found on the section it lies on, so section order doesn't
+  matter); missing = as before. One guide between parallel sections keeps the old `guidedStation` path exactly; 2+ guides, one
+  guide between non-parallel sections, guides with a path or with connections go through `guidedLoft`: the unguided loft
+  (ThruSections, or `pipeLoft` along the path) cut at `STATIONS` planes per gap — origin/normal interpolated between the two
+  sections (normals turned to face along the loft), along a path square to it — and `warpedStation` bends each cut in its
+  plane (pure `src/geometry/warp2d.ts`: anchor = where the ray from the cut's middle towards the guide's crossing leaves the
+  outline, `rayHit`; `fitWarp` 1 = move, 2 = the affine closest to identity (stretch/shear along the line between the
+  anchors), 3+ = thin-plate spline; lines stay lines only for affine warps); guides swapping places between stations (any pair's
+  difference vector turning round) or missing a section are refused, named "guide curve k"; stations ordered by `alongLine`
+  (the path, or the line through the section middles). Connections (`connectSections`): every wire walked the same way round
+  (`chainOf` + Newell `windingAbout` against the way along), split at its connection points (`placeOnChain`, `splitPiece`),
+  each stretch between connections given as many pieces as the shape with most there (longest pieces halved), restarted at
+  connection 1 (`pieceEdge` rebuilds lines/arcs exactly, other curves fitted; whole edges kept/reversed), then lofted with
+  CheckCompatibility off (`lined` = matchCorners || connections; not both); stations of a lined guided loft are restarted near
+  the interpolated section starts (`restartNear`). Refusals: a connection with no / two points on a shape, two at one corner,
+  different orders round the shapes. Sketch-on-face ends: `endChoices(p, sketchOnFace)` / `tidyEnds(…, onFace)` (app: the
+  plane's `face`; Claude: any non-default plane) offer match tangent/curvature; the engine's `faceUnder` uses `SketchPlane.face`,
+  else a flat face of a part (`LoftContext.allParts`) lying in the sketch's plane under its middle; `spreadOf` its neighbours,
+  `Section.adjacent` (as `isFace` for the checks), normal turned out of the part; none = refused plainly. UI: guide list (+ Add
+  another guide curve; picking `moreGuide:<k>` for edges), Connections fieldset (per section sketch a corner select —
+  `cornerPoints`, `setConnectionSketchPoint` — and "Click corners of faces…", picking `connection:<k>` → `loftClick` corner or
+  edge end, `toggleConnectionPoint`; `cornerWanted` turns corner picking on). Dependents: guides needed (`loftUses`); connection
+  points on gone sketches/parts dropped by `loftWithoutGone`. Claude: `guides` (list), `connections` ([[x, y, z], …] per
+  connection), match_tangent on sketch sections. Tests: loftGuides (pure), engineLoftGuides (two/three guides, crossing and missing
+  refused, tipped top, guides along a path, square straight/twisted by connections, square→hexagon, sketch on a frustum's face =
+  the face's own result, found without the pick, refused off any face), mcpLoftGuides. Not done: clicking sketch points in
+  the 3D view for connections (chosen in the dialog's lists), connections on circles (no corner to pick), anchors that follow a
+  guide by its own touch point rather than the ray from the middle (very lopsided shapes).
 - Thin (Onshape's "Thin" on Extrude/Revolve/Sweep, solids): `Feature.thin` (`midPlane`: the whole `thickness` centred; else
   `thickness` on the first side + `thickness2` (default 0) on the other; `flip` swaps; missing = solid, old files unchanged;
   params in group "thin", shown by `ThinOptions` in FeatureDialog.tsx, hidden by `visibleParamKeys` unless thin; draft hidden).

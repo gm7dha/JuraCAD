@@ -12,6 +12,7 @@ import type { TopoPick } from "../geometry/topoRef";
 import type { BoundaryCurve, GeomPick, MoveFaceDef, Feature, FilletRadiusPoint, FeatureType, JuraCADDocument, LoftDef, LoftProfile, Operation } from "../model/types";
 import { tidySweepControl } from "../model/sweepOptions";
 import { endChoices, loftProfiles, profilesProblem, tidyEnds, withEndPoint, withLoftDef, withProfiles } from "../model/loft";
+import type { LoftCurve } from "../model/types";
 import { tidyRadiusPoints } from "../model/variableFillet";
 import { sameRef } from "../geometry/topoRef";
 import type { PartMesh } from "../kernel/protocol";
@@ -70,7 +71,7 @@ export const KIND_KEYS: Record<FeatureKind, string[]> = {
   extrude: ["sketch", "depth", "end", "up_to_face", "up_to_vertex", "up_to_part", "flip", "second_depth", "draft", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   revolve: ["sketch", "axis", "angle", "symmetric", "second_angle", "flip", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   sweep: ["sketch", "profile_face", "path", "path_edges", "path_part", "twist", "twist_turns", "twist_pitch", "twist_opposite", "keep_orientation", "lock_direction", "scale", "surface", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
-  loft: ["sections", "start_point", "end_point", "start", "end", "start_magnitude", "end_magnitude", "start_direction", "end_direction", "guide", "path", "straight", "match_corners", "turns", "closed_loop", "surface", "thin", "thin_other_side", "thin_centred", "thin_flip"],
+  loft: ["sections", "start_point", "end_point", "start", "end", "start_magnitude", "end_magnitude", "start_direction", "end_direction", "guide", "guides", "connections", "path", "straight", "match_corners", "turns", "closed_loop", "surface", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   hole: ["sketch", "size", "fit", "style", "end", "depth", "diameter", "counterbore_diameter", "counterbore_depth", "countersink_diameter", "countersink_angle", "flip"],
   fillet: ["part", "edges", "radius", "end_radius", "all_edges", "variable", "variable_straight"],
   chamfer: ["part", "edges", "distance", "second_distance", "angle", "flip_side", "all_edges"],
@@ -369,14 +370,17 @@ function applyLoft(f: Feature, a: Obj, ctx: SpecContext) {
   const problem = profilesProblem(profiles);
   if (problem) throw new InputError(problem);
   Object.assign(f, withProfiles(f, profiles));
+  // A sketch not on a default plane may lie on a part's face (the engine finds it, or says it can't).
+  const onFace = (id: string) => ctx.doc.features.find((x) => x.id === id)?.sketch?.plane?.kind === "face";
   // Ends that no longer suit their section (it was changed) are dropped, as the app's dialog does.
-  Object.assign(f, withLoftDef(f, tidyEnds(f.loft, profiles)));
+  Object.assign(f, withLoftDef(f, tidyEnds(f.loft, profiles, onFace)));
   const def: Partial<LoftDef> = {};
   for (const which of ["start", "end"] as const) {
     if (has(a, which)) {
       const kind = LOFT_ENDS[oneOf(a[which], Object.keys(LOFT_ENDS) as (keyof typeof LOFT_ENDS)[], which)];
       const p = which === "start" ? profiles[0] : profiles[profiles.length - 1];
-      if (kind && !endChoices(p).includes(kind)) throw new InputError(`"${which}": ${a[which]} doesn't suit that section. A point takes "rounded"; a sketch "normal", "tangent_to_profile" or "direction"; a face those or "match_tangent" / "match_curvature".`);
+      if (kind && !endChoices(p, !!p && "sketch" in p && onFace(p.sketch)).includes(kind))
+        throw new InputError(`"${which}": ${a[which]} doesn't suit that section. A point takes "rounded"; a sketch "normal", "tangent_to_profile" or "direction"; a face — or a sketch drawn on a part's face — those or "match_tangent" / "match_curvature".`);
       def[which] = kind ? { kind } : undefined;
     }
     const dk = `${which}_direction`;
@@ -404,6 +408,24 @@ function applyLoft(f: Feature, a: Obj, ctx: SpecContext) {
       const c = ctx.session.feature(a[which], which, ["sketch", "curve"], ctx.doc);
       def[which] = c.type === "curve" ? { curve: c.id } : { sketch: c.id };
     }
+  }
+  if ("guides" in a && a.guides !== undefined) {
+    if (has(a, "guide")) throw new InputError('Give either "guide" (one) or "guides" (a list), not both.');
+    const curves = a.guides === null ? [] : list(a.guides, "guides").map((g, i): LoftCurve => {
+      const c = ctx.session.feature(g, `guides[${i}]`, ["sketch", "curve"], ctx.doc);
+      return c.type === "curve" ? { curve: c.id } : { sketch: c.id };
+    });
+    def.guide = curves[0];
+    def.moreGuides = curves.length > 1 ? curves.slice(1) : undefined;
+  } else if (has(a, "guide")) def.moreGuides = undefined;
+  if ("connections" in a && a.connections !== undefined) {
+    const sets = a.connections === null ? [] : list(a.connections, "connections").map((c, j) => {
+      const pts = list(c, `connections[${j}]`);
+      if (pts.length < 2) throw new InputError(`connections[${j}] needs a point on each shape ([x, y, z] mm, a corner of each), at least two.`);
+      return { points: pts.map((q, k) => ({ p: xyz(q, `connections[${j}][${k}]`, ctx.scope).map((v) => v.value) as [number, number, number] })) };
+    });
+    def.connections = sets.length ? sets : undefined;
+    if (sets.length) def.matchCorners = undefined;
   }
   if (has(a, "match_corners")) def.matchCorners = bool(a.match_corners, "match_corners") || undefined;
   if (has(a, "closed_loop")) def.periodic = bool(a.closed_loop, "closed_loop") || undefined;

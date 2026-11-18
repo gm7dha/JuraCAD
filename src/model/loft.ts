@@ -9,7 +9,7 @@ import type { TopoPick } from "../geometry/topoRef";
 import type { SketchData } from "../sketch/types";
 import { lineFromClick, nearEnd, type GeomClick } from "./geomClicks";
 import { tidyVec } from "./transformPicks";
-import type { Feature, GeomPick, LoftCurve, LoftDef, LoftEnd, LoftProfile } from "./types";
+import type { Feature, GeomPick, LoftConnection, LoftCurve, LoftDef, LoftEnd, LoftProfile } from "./types";
 
 /** The loft's sections in order: its `profiles`, else each of `sections` as a whole sketch. */
 export function loftProfiles(f: Pick<Feature, "sections" | "loft">): LoftProfile[] {
@@ -69,10 +69,11 @@ export function profilesProblem(profiles: LoftProfile[]): string | null {
  * Which end conditions a section can have (Onshape's): a point a rounded tip; a shape square to it, along its own plane
  * or along a picked direction; a face carrying on from its neighbours too.
  */
-export function endChoices(p: LoftProfile | undefined): LoftEnd["kind"][] {
+export function endChoices(p: LoftProfile | undefined, sketchOnFace?: boolean): LoftEnd["kind"][] {
   if (!p) return [];
   if ("point" in p) return ["tangent"];
-  if ("face" in p) return ["normal", "profileTangent", "direction", "matchTangent", "matchCurvature"];
+  // A sketch drawn on a part's face may carry on from the faces round that face too (Onshape's "Adjacent faces").
+  if ("face" in p || ("sketch" in p && sketchOnFace)) return ["normal", "profileTangent", "direction", "matchTangent", "matchCurvature"];
   return ["normal", "profileTangent", "direction"];
 }
 
@@ -85,12 +86,83 @@ export const END_LABELS: Record<LoftEnd["kind"], string> = {
   direction: "Along a direction you pick",
 };
 
-/** End conditions that no longer fit their section (it was changed) are dropped. */
-export function tidyEnds(def: LoftDef | undefined, profiles: LoftProfile[]): Partial<LoftDef> {
+/**
+ * End conditions that no longer fit their section (it was changed) are dropped. `onFace` says whether a sketch lies on a
+ * part's face (so it may carry on from the faces round it); without it no sketch does.
+ */
+export function tidyEnds(def: LoftDef | undefined, profiles: LoftProfile[], onFace?: (sketch: string) => boolean): Partial<LoftDef> {
   const out: Partial<LoftDef> = {};
-  if (def?.start && !endChoices(profiles[0]).includes(def.start.kind)) out.start = undefined;
-  if (def?.end && !endChoices(profiles[profiles.length - 1]).includes(def.end.kind)) out.end = undefined;
+  const fits = (e: LoftEnd, p: LoftProfile | undefined) => endChoices(p, p && "sketch" in p ? !!onFace?.(p.sketch) : undefined).includes(e.kind);
+  if (def?.start && !fits(def.start, profiles[0])) out.start = undefined;
+  if (def?.end && !fits(def.end, profiles[profiles.length - 1])) out.end = undefined;
   return out;
+}
+
+/** Every guide curve of a loft, in order: `guide` and then `moreGuides`. */
+export function loftGuides(def: LoftDef | undefined): LoftCurve[] {
+  return [...(def?.guide ? [def.guide] : []), ...(def?.moreGuides ?? [])];
+}
+
+/** The change that sets guide number `i` (0 = `guide`), or takes it out (`curve` undefined; later ones move up). */
+export function withGuide(def: LoftDef | undefined, i: number, curve: LoftCurve | undefined): Partial<LoftDef> {
+  const list = loftGuides(def);
+  if (curve) list[Math.min(i, list.length)] = curve;
+  else list.splice(i, 1);
+  return { guide: list[0], moreGuides: list.length > 1 ? list.slice(1) : undefined };
+}
+
+const sameGeom = (a: GeomPick, b: GeomPick) =>
+  JSON.stringify(a.sketchPoint ?? a.vertex ?? (a.pick ? [a.pick.partId, a.pick.ref, a.end] : a.p)) === JSON.stringify(b.sketchPoint ?? b.vertex ?? (b.pick ? [b.pick.partId, b.pick.ref, b.end] : b.p));
+
+/** The change that adds a point to connection `i` (a new connection when `i` is past the end), or takes it out when it's there. */
+export function toggleConnectionPoint(def: LoftDef | undefined, i: number, point: GeomPick): Partial<LoftDef> {
+  const list: LoftConnection[] = [...(def?.connections ?? [])];
+  if (i >= list.length) list.push({ points: [] });
+  const k = Math.min(i, list.length - 1);
+  const pts = list[k].points;
+  const has = pts.some((q) => sameGeom(q, point));
+  list[k] = { points: has ? pts.filter((q) => !sameGeom(q, point)) : [...pts, point] };
+  const left = list.filter((c) => c.points.length);
+  return { connections: left.length ? left : undefined };
+}
+
+/** The change that sets connection `i`'s point on a sketch's shape (a new connection when `i` is past the end; `point` null takes it out). */
+export function setConnectionSketchPoint(def: LoftDef | undefined, i: number, sketch: string, point: string | null): Partial<LoftDef> {
+  const list: LoftConnection[] = [...(def?.connections ?? [])];
+  if (i >= list.length) list.push({ points: [] });
+  const k = Math.min(i, list.length - 1);
+  const others = list[k].points.filter((g) => g.sketchPoint?.sketch !== sketch);
+  list[k] = { points: point ? [...others, { p: [0, 0, 0], sketchPoint: { sketch, point } }] : others };
+  const left = list.filter((c) => c.points.length);
+  return { connections: left.length ? left : undefined };
+}
+
+/** The points of a sketch a connection can use: every end of its lines and curves (not construction ones), in order. */
+export function cornerPoints(data: SketchData): { id: string; x: number; y: number }[] {
+  const used = new Set<string>();
+  for (const c of data.curves) {
+    if ((c as { construction?: boolean }).construction) continue;
+    for (const key of ["p1", "p2", "start", "end"] as const) {
+      const id = (c as unknown as Record<string, unknown>)[key];
+      if (typeof id === "string") used.add(id);
+    }
+    const pts = (c as unknown as { points?: unknown }).points;
+    if (Array.isArray(pts)) for (const id of pts) if (typeof id === "string") used.add(id);
+  }
+  return data.points.filter((p) => used.has(p.id)).map((p) => ({ id: p.id, x: p.x, y: p.y }));
+}
+
+/** The change that takes connection `i` out. */
+export function withoutConnection(def: LoftDef | undefined, i: number): Partial<LoftDef> {
+  const left = (def?.connections ?? []).filter((_, j) => j !== i);
+  return { connections: left.length ? left : undefined };
+}
+
+/** Which guide or connection a picking mode is for ("moreGuide:2" → 2), or null. */
+export function pickingIndex(picking: LoftDef["picking"], kind: "moreGuide" | "connection"): number | null {
+  if (!picking || !picking.startsWith(`${kind}:`)) return null;
+  const n = Number(picking.slice(kind.length + 1));
+  return Number.isInteger(n) && n >= 0 ? n : null;
 }
 
 /** The standalone points of a sketch (placed on their own, not just curve ends), which a loft may start or end at. */
@@ -184,6 +256,26 @@ export function loftClick(f: Pick<Feature, "sections" | "loft"> & Partial<Pick<F
     if (c.kind !== "part" || c.pick.ref.kind !== "edge") return `Click edges of a part for the ${picking}, or choose a sketch for it.`;
     return withLoftDef(f, { [picking]: toggleEdge(f.loft?.[picking], c.pick) });
   }
+  const g = pickingIndex(picking, "moreGuide");
+  if (g !== null) {
+    if (c.kind !== "part" || c.pick.ref.kind !== "edge") return "Click edges of a part for this guide curve, or choose a sketch for it.";
+    const i = g + 1;
+    const cur = loftGuides(f.loft)[i];
+    const next = toggleEdge(cur && "edges" in cur ? cur : undefined, c.pick);
+    return withLoftDef(f, withGuide(f.loft, i, next));
+  }
+  const k = pickingIndex(picking, "connection");
+  if (k !== null) {
+    // A corner of a part (clicked as itself, or near an edge's end) on one of the shapes.
+    let point: GeomPick;
+    if (c.kind === "corner") point = { p: tidyVec(c.pick.ref.p), vertex: c.pick };
+    else if (c.kind === "part" && c.pick.ref.kind === "edge") {
+      const end = nearEnd(c.pick.ref, c.at);
+      if (!end) return "Click nearer the end of the edge, at the corner you want to connect.";
+      point = { p: tidyVec(c.pick.ref[end]), pick: stripAt(c.pick), end };
+    } else return "Click a corner of a shape (or choose a sketch's point in the list) for this connection.";
+    return withLoftDef(f, toggleConnectionPoint(f.loft, k, point));
+  }
   if (picking === "start" || picking === "end") {
     // A corner clicked as itself: the point follows it (Onshape's vertex).
     if (c.kind === "corner") return withProfiles({ loft: { ...f.loft, picking: undefined } }, withEndPoint(profiles, picking, { p: tidyVec(c.pick.ref.p), vertex: c.pick }));
@@ -207,7 +299,7 @@ export function loftSketches(f: Pick<Feature, "sections" | "loft">): string[] {
     if ("sketch" in p) out.add(p.sketch);
     if ("point" in p && p.point.sketchPoint) out.add(p.point.sketchPoint.sketch);
   }
-  for (const c of [f.loft?.guide, f.loft?.path]) if (c && "sketch" in c) out.add(c.sketch);
+  for (const c of [...loftGuides(f.loft), f.loft?.path]) if (c && "sketch" in c) out.add(c.sketch);
   return [...out];
 }
 
@@ -227,7 +319,7 @@ export function loftUses(f: Pick<Feature, "sections" | "loft">): { sectionFeatur
   }
   const features: string[] = [];
   const parts: string[] = [];
-  for (const c of [f.loft?.guide, f.loft?.path]) {
+  for (const c of [...loftGuides(f.loft), f.loft?.path]) {
     if (!c) continue;
     if ("sketch" in c) features.push(c.sketch);
     else if ("curve" in c) features.push(c.curve);
@@ -242,6 +334,12 @@ export function loftWithoutGone<F extends Pick<Feature, "sections" | "loft">>(f:
   const lostEnd = (e: LoftEnd | undefined) => !!e?.towards?.pick && partGone(e.towards.pick.partId);
   if (f.loft && (lostEnd(f.loft.start) || lostEnd(f.loft.end))) {
     f = { ...f, ...withLoftDef(f, { ...(lostEnd(f.loft.start) ? { start: undefined } : {}), ...(lostEnd(f.loft.end) ? { end: undefined } : {}) }) };
+  }
+  // Connection points on gone sketches or parts are let go (a connection left with fewer than two goes).
+  const pointGone = (g: GeomPick) => (g.sketchPoint ? featureGone(g.sketchPoint.sketch) : g.vertex ? partGone(g.vertex.partId) : g.pick ? partGone(g.pick.partId) : false);
+  if (f.loft?.connections?.some((c) => c.points.some(pointGone))) {
+    const left = f.loft.connections.map((c) => ({ points: c.points.filter((g) => !pointGone(g)) })).filter((c) => c.points.length >= 2);
+    f = { ...f, ...withLoftDef(f, { connections: left.length ? left : undefined }) };
   }
   if (!f.loft?.profiles) return f;
   const gone = (p: LoftProfile) =>

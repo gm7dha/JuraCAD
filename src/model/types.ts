@@ -115,12 +115,21 @@ export interface LoftDef {
   matchCorners?: boolean;
   /** Back round to the first section (a closed ring of sections). */
   periodic?: boolean;
+  /** More guide curves besides `guide` (Onshape takes several): the outlines between the shapes are bent to pass through every one. */
+  moreGuides?: LoftCurve[];
+  /** Onshape's Connections: each set is a point on each shape (a sketch point or a part's corner) that join along the loft. */
+  connections?: LoftConnection[];
   /**
    * What a click in the 3D view chooses while the dialog is open (missing = a face, as a section; "start"/"end" a corner as
    * the first/last section; "newSectionEdges"/"sectionEdges" part edges for a new / the last edges section; "startDir"/"endDir"
    * the direction of a "direction" end).
    */
-  picking?: "profile" | "start" | "end" | "guide" | "path" | "newSectionEdges" | "sectionEdges" | "startDir" | "endDir";
+  picking?: "profile" | "start" | "end" | "guide" | "path" | "newSectionEdges" | "sectionEdges" | "startDir" | "endDir" | `moreGuide:${number}` | `connection:${number}`;
+}
+
+/** One of a loft's Connections: a point on each shape it joins (each found on the shape it lies on, so order doesn't matter). */
+export interface LoftConnection {
+  points: GeomPick[];
 }
 
 /** One section of a loft: a sketch (or one picked area of it), a flat face of a part, or a point. */

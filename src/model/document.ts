@@ -617,6 +617,18 @@ export function parseLoftDef(raw: unknown): LoftDef | null {
   if (path) out.path = path;
   if (d.matchCorners === true) out.matchCorners = true;
   if (d.periodic === true) out.periodic = true;
+  if (Array.isArray(d.moreGuides)) {
+    const moreGuides = d.moreGuides.map(parseLoftCurve).filter((x): x is LoftCurve => x !== null);
+    if (moreGuides.length) out.moreGuides = moreGuides;
+  }
+  if (Array.isArray(d.connections)) {
+    const connections = d.connections.flatMap((c) => {
+      const pts = c && typeof c === "object" && Array.isArray((c as Record<string, unknown>).points) ? ((c as Record<string, unknown>).points as unknown[]) : [];
+      const points = pts.map(parseGeomPick).filter((x): x is GeomPick => x !== null);
+      return points.length ? [{ points }] : [];
+    });
+    if (connections.length) out.connections = connections;
+  }
   return Object.keys(out).length ? out : null;
 }
 
