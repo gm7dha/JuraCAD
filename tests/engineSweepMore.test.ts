@@ -227,6 +227,9 @@ describe("Scale", () => {
     const across = sketchFeature({ kind: "default", name: "Front" }, addCircle(emptySketch(), { x: 0, y: 0 }, 2).sketch);
     const loop = build([ring, across, sweep(across.id, ring.id, { scale: 0.5 }, control({ scaled: true }))]);
     expect(Object.values(loop.featureErrors)[0]).toMatch(/needs a path with two ends/);
+    // A locked direction can't change size round a sharp corner: said plainly, naming the corners.
+    const lockedScaled = build([L, d, sweep(d.id, L.id, { scale: 0.5 }, control({ scaled: true, lockDirection: { p: [0, 0, 0], axis: "z" } }))]);
+    expect(Object.values(lockedScaled.featureErrors)[0]).toMatch(/size round the path's sharp corners with its direction locked/);
   });
 
   it("scales along a curve feature, with the profile at its start", () => {

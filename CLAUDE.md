@@ -536,7 +536,7 @@
   the size at the end / at the profile): `addSection` → SetLaw with a Law_Linear (its range is spread over the path BY LENGTH, the
   section scaled about the path; RoundCorner + a law throws, so corners are stretches: `pathStretches(…, corners)` builds the
   rounded-corner plan even untwisted, `stretchedSweep(…, size)` shares the change by length over the stretches that aren't corners,
-  each corner keeps the size it starts with (`scaledAbout`); a locked direction with corners falls back to RightCorner); refused
+  each corner keeps the size it starts with (`scaledAbout`); a locked direction with corners tries RightCorner, which OpenCascade doesn't manage with a law in practice, so it's refused naming the corners, `SCALE_CORNERS_LOCKED`; likewise curve/edge paths with corners); refused
   round closed loops. A profile part way along an open sketch path, when scaled or twisted round corners, is swept both ways
   from it (`startOnLoop` → `splitAtPlace`, `shareHalves`: twist by length, the half walked backwards keeping its sign; size 1 at
   the profile, the far end `scale`, the start 1 − (scale − 1)·before/after, refused ≤ 0) and the halves fused; along a curve

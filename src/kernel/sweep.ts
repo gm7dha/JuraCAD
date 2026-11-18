@@ -792,6 +792,10 @@ function runsAlong(spine: Wire, d: Vec3): boolean {
 const ALONG_LOCKED =
   'The path runs along the direction the profile is locked to (somewhere along it), so there\'s no telling which way the profile should face there. Pick a direction that crosses the path everywhere — e.g. square to the plane the path is drawn on — or choose "None" for the profile control.';
 
+/** What to say when a locked direction and a scale can't go round a sketch path's sharp corners together. */
+const SCALE_CORNERS_LOCKED =
+  'Couldn\'t change the profile\'s size round the path\'s sharp corners with its direction locked. Round the corners with a sketch fillet, set the scale to 1, or choose "None" for the profile control (a scale goes round sharp corners then).';
+
 /** What to say when a scale can't be used on a closed loop. */
 const SCALE_LOOP = "A sweep that changes size needs a path with two ends (round a closed loop it would meet itself at a different size). Set the scale to 1, or open the path.";
 
@@ -958,7 +962,9 @@ export function sweepAlongSketch(prof: SweepProfile, pathPlane: SketchPlane, pat
             : lock
               ? "Couldn't sweep the profile along that path while keeping it facing the same way. Try without \"Keep profile orientation\", or a gentler path."
               : dir
-                ? "Couldn't sweep the profile along that path with its direction locked. Try another direction, or \"None\" for the profile control."
+                ? scaled && sharp
+                  ? SCALE_CORNERS_LOCKED
+                  : "Couldn't sweep the profile along that path with its direction locked. Try another direction, or \"None\" for the profile control."
                 : "Couldn't sweep the profile along that path while changing its size. Try a scale nearer 1, a smaller profile, or round the path's corners with a sketch fillet.",
       );
     } finally {
@@ -1152,7 +1158,9 @@ export function sweepProfileAlongSpine(prof: SweepProfile, spine: Wire, control:
     } catch {
       throw new Error(
         scaled
-          ? "Couldn't sweep the profile along that path while changing its size. Try a scale nearer 1, a smaller profile, or a smoother path."
+          ? spineHasCorner(spine)
+            ? "Couldn't change the profile's size round the sharp corners of that curve or those part edges. Draw the path in a sketch instead (a scale goes round a sketch's sharp corners), or set the scale to 1."
+            : "Couldn't sweep the profile along that path while changing its size. Try a scale nearer 1, a smaller profile, or a smoother path."
           : "Couldn't sweep the profile along that path. Check the profile sits at the start of the path and is small enough for its bends.",
       );
     } finally {
