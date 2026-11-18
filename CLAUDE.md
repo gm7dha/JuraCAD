@@ -555,10 +555,10 @@
   sides at a normal start and on a box's top face, no lip at any magnitude, into-the-part refused, holed face refused, guide
   moving one side only, arc and L paths' volumes and ends, a shape off the path refused, twist, ring), mcpLoft.
   More (Onshape's): new lofts carry `apart` + `intersectAll` (createFeature; document.ts keeps them for lofts), so Add/Remove/
-  Intersect reach every part — old lofts the latest part as before. Consecutive flat sections on one plane are refused
-  (`samePlaneProblem`, both paths). Before helper copies, the end wires are split as a plain loft splits them (`compatibleEnds`:
-  the plain loft's edges lying on each end, joined) — OCCT's own splitting gives up once helpers are added (a square to a slanted
-  circle). Ruled + any end condition refused. Sections may be curved faces (outer wire; `curved`: ends dropped with a note; a
+  Intersect reach every part — old lofts the latest part as before. Sections all on one plane are refused
+  (`samePlaneProblem`, both paths; not along a path; only some on one plane builds as before). When a loft with helper copies fails,
+  the end wires are split as a plain loft splits them (`compatibleEnds`: the plain loft's edges lying on each end, joined) and it's
+  tried again — OCCT's own splitting gives up once helpers are added (a square to a slanted circle); older lofts build unchanged. Ruled + any end condition refused. Sections may be curved faces (outer wire; `curved`: ends dropped with a note; a
   solid closes that end with the face itself, `closedWithFaces` → encloseSurfaces, New only — fusing along the shared face fails)
   and `{edges}` (part edges, `chainEdges`; open only for surfaces; `toggleSectionEdge`, picking newSectionEdges/sectionEdges).
   `LoftCurve` `{curve}`: a curve feature as guide/path (`LoftContext.curve`, engine via the `loftCurves` WeakMap per features list;
