@@ -738,6 +738,16 @@
   drag whose dialog closed is dropped; finger taps on handles do nothing; a live move only shifts the triad's drawing.
   `transform.picking` says what a click chooses (missing = the part). Tests: tests/transformDrag.test.ts (pure), tests/transformStore.test.ts,
   tests/engineTransform.test.ts.
+  Scale uniformly (Onshape's): `mode` "scale", lazy param `factor` (> 0), about `triad.origin` (Click a point: corner/edge/face/plane,
+  or a mate connector via geomPick) else the centre / origin (`about`); `scaleOf`/`scaling` (a Rigid with r = k·I — only
+  compose/applyPoint/`invert` (Rᵀ/k² when det ≠ 1; plain moves exactly as before) take it; no triad drawn). Engine: `scaledShape`
+  (src/kernel/scaleShape.ts, gp_Trsf SetScale) instead of toAxisAngle; a resized part drops its threads and sheet; owned
+  connectors keep unit directions. Claude: add_feature "scale_part" (part, scale, about, copy). Import: lazy param `scale` + `Feature.importUnits`
+  (`ImportUnit` mm/cm/m/in/ft; missing = as in the file; an STL's mm/in stay `ImportedFile.units`) → pure src/model/importScale.ts
+  (`stepLengthUnit` reads the STEP's LENGTH_UNIT, `importScaleFactor` = scale × chosen ÷ file's own, exactly 1 when unset);
+  `importSolids(file, simplify, scale)` scales only the cached copies (file read + Simplify cached unscaled, as before), mesh keys get
+  `scaleKey`. Dialog "File units" + "Size: a × b × c" (`.import-size`); Claude's edit_feature on an import takes `scale`/`units`.
+  Tests: tests/importScale (pure), engineScale, mcpScale; the smoke test imports the STEP at Scale 2. Not done: a drag handle for the factor.
 - Manipulators (Onshape's in-view handles for feature dialogs): pure `src/model/manipulators.ts` (`MANIPULATED` types: extrude,
   revolve, fillet, chamfer, shell, thicken; `manipulatorsFor(draft, {sketch, parts})` → `Manipulator`s: an arrow (`origin` = where the
   value is 0, `dir`, handle at value × `scale`) or an arc round `axis`; Extrude blind/symmetric (two arrows, scale ½, both edit `depth`)

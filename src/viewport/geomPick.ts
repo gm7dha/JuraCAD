@@ -207,6 +207,12 @@ export function geomPick(manager: SceneManager | null, target: PickTarget | null
   if (target?.kind !== "connector") return false;
   // A mate connector clicked for Move / copy's "Transform by mate connectors".
   const t = transformDraft();
+  if (t && t.transform.picking === "triad" && t.transform.mode === "scale") {
+    // Scale uniformly: the part grows from the connector's middle (kept as clicked).
+    const fr = connectorFrames(activeFeatures(s), s.parts, s.builtFrames).get(target.key);
+    if (fr) s.changeDraftStep({ transform: { ...t.transform, triad: { origin: fr.origin, x: fr.x, z: fr.z }, picking: undefined } });
+    return true;
+  }
   if (t && (t.transform.picking === "from" || t.transform.picking === "to")) {
     const fr = connectorFrames(activeFeatures(s), s.parts, s.builtFrames).get(target.key);
     if (!fr) return true;

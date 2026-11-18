@@ -8,6 +8,16 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.94 — Scale imports and parts
+
+- Importing a STEP or STL file: a Scale box and a File units choice (as in the file, mm, cm, m, inches, feet), with the
+  size the part will come out at. Changing it doesn't read the file again.
+- STEP files are read in the units they were made in; an STL drawn in inches can be brought in at its true size.
+- Move / copy has a new "Scale uniformly" type: make any part bigger or smaller about its centre, the origin or a point
+  you click, or make a scaled copy.
+- A scaled part's thread marks and sheet-metal settings are left out, with a note saying so.
+- Claude can scale parts and imports too.
+
 ## v0.93 — Sweep: fixes and Onshape's options
 
 - Scale: the shape can grow or shrink along the path (cones, tapered springs), with or without a twist.

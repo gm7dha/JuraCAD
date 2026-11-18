@@ -225,7 +225,8 @@ export function connectorWanted(s: { editing: { draft: Feature } | null; sketch:
   if (d.type === "sweep") return d.sweepControl?.picking === "direction";
   // A Loft end's direction: a connector's Z.
   if (d.type === "loft") return d.loft?.picking === "startDir" || d.loft?.picking === "endDir";
-  return d.type === "transform" && (d.transform?.picking === "from" || d.transform?.picking === "to");
+  // (Scale uniformly: a connector clicked is the point it grows from.)
+  return d.type === "transform" && (d.transform?.picking === "from" || d.transform?.picking === "to" || (d.transform?.picking === "triad" && d.transform.mode === "scale"));
 }
 
 

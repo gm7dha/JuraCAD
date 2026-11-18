@@ -135,6 +135,7 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "dz", label: "Move Z (blue)", defaultValue: "0", group: "position" },
       { key: "turn", label: "Angle", defaultValue: "0", group: "size", unit: "°" },
       { key: "distance", label: "Distance", defaultValue: "0", group: "position" },
+      { key: "factor", label: "Scale", defaultValue: "1", positive: true, group: "size", unit: "", lazy: true },
     ],
   },
   mirror: {
@@ -311,7 +312,7 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     label: "Import",
     namePrefix: "Import",
     description: "A STEP or STL file from another program, brought in as a part.",
-    params: [],
+    params: [{ key: "scale", label: "Scale", defaultValue: "1", positive: true, group: "size", unit: "", lazy: true }],
   },
   draft: {
     type: "draft",

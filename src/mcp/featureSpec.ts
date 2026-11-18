@@ -58,6 +58,7 @@ export const FEATURE_KINDS = {
   boundary_surface: "boundary",
   face_blend: "faceBlend",
   move_face: "moveFace",
+  scale_part: "transform",
 } as const satisfies Record<string, FeatureType>;
 export type FeatureKind = keyof typeof FEATURE_KINDS;
 export const KIND_OF: Partial<Record<FeatureType, FeatureKind>> = Object.fromEntries(Object.entries(FEATURE_KINDS).map(([k, v]) => [v, k as FeatureKind]));
@@ -93,6 +94,7 @@ export const KIND_KEYS: Record<FeatureKind, string[]> = {
   boundary_surface: ["u", "v"],
   face_blend: ["part", "faces", "part2", "faces2", "radius", "flip1", "flip2", "trim"],
   move_face: ["part", "faces", "move", "distance", "angle", "direction", "axis", "flip"],
+  scale_part: ["part", "scale", "about", "copy"],
 };
 
 /** Most copies in one direction of a pattern, and in all (bigger takes minutes to build). */
@@ -1033,6 +1035,29 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
     case "curve":
       applyCurve(f, a, ctx);
       break;
+    case "scale_part": {
+      // Onshape's Transform › Scale uniformly (Move / copy in the app). A Move / copy made in the app that moves or turns
+      // can only be renamed or switched off here.
+      const t = { ...(f.transform ?? { axis: "z" as const, about: "centre" as const, copy: false }) };
+      const changing = ["part", "scale", "about", "copy"].some((k) => has(a, k));
+      if (ctx.editing && t.mode !== "scale" && changing) throw new InputError(`${f.name} moves or turns a part (made in the app); only "name" and "suppressed" can be changed here.`);
+      if (has(a, "part") || !ctx.editing) t.partId = ctx.session.part(ctx.parts, a.part, "part").id;
+      param(f, a, "scale", "factor", ctx, { positive: true, required: true, unit: "" });
+      if (has(a, "about")) {
+        if (a.about === "centre" || a.about === "center" || a.about === "origin") {
+          t.about = a.about === "origin" ? "origin" : "centre";
+          delete t.triad;
+        } else {
+          const p = xyz(a.about, "about", ctx.scope).map((n) => n.value) as Vec3;
+          t.triad = { origin: p, x: [1, 0, 0], z: [0, 0, 1] };
+        }
+      }
+      if (has(a, "copy")) t.copy = bool(a.copy, "copy");
+      t.mode = "scale";
+      f.transform = t;
+      f.operation = "add";
+      break;
+    }
     case "composite_part": {
       if (has(a, "parts") || !ctx.editing) {
         const ids = [...new Set(list(a.parts, "parts").map((r, i) => ctx.session.part(ctx.parts, r, `parts[${i}]`).id))];
