@@ -55,7 +55,10 @@ export function compose(a: Rigid, b: Rigid): Rigid {
 
 export function invert(m: Rigid): Rigid {
   const r = m.r;
-  const rt = [r[0], r[3], r[6], r[1], r[4], r[7], r[2], r[5], r[8]];
+  // A move that also scales (Scale uniformly: R = k·Q): R⁻¹ = Rᵀ / k². A plain move: Rᵀ, exactly as before.
+  const det = r[0] * (r[4] * r[8] - r[5] * r[7]) - r[1] * (r[3] * r[8] - r[5] * r[6]) + r[2] * (r[3] * r[7] - r[4] * r[6]);
+  const k2 = Math.abs(det - 1) > 1e-9 && det > 0 ? Math.cbrt(det) ** 2 : 1;
+  const rt = k2 === 1 ? [r[0], r[3], r[6], r[1], r[4], r[7], r[2], r[5], r[8]] : [r[0], r[3], r[6], r[1], r[4], r[7], r[2], r[5], r[8]].map((n) => n / k2);
   const inv = { r: rt, t: [0, 0, 0] as Vec3 };
   return { r: rt, t: scale(applyVec(inv, m.t), -1) };
 }
@@ -172,6 +175,8 @@ export interface TransformValues {
   rz?: number;
   distance?: number;
   turn?: number;
+  /** Scale uniformly: how many times bigger (missing = 1). */
+  factor?: number;
 }
 
 const v0 = (n: number | undefined) => (typeof n === "number" && Number.isFinite(n) ? n : 0);
@@ -205,6 +210,11 @@ export function transformMotion(t: TransformDef, values: TransformValues, centre
     const { dir, through } = transformAxis(t, centre);
     return rotation(dir, sign * v0(values.turn), through);
   }
+  if (mode === "scale") {
+    const s = scaleOf(t, values, centre);
+    if (typeof s === "string") return s;
+    return scaling(s.factor, s.about);
+  }
   // Mate connectors: the first one is carried onto the second (Z onto Z, X onto X; Flip turns it over about X).
   if (!t.from) return "Click where to move from: a face, an edge or a corner on the part.";
   if (!t.to) return "Now click where to move it to: a face, an edge or a corner.";
@@ -213,6 +223,21 @@ export function transformMotion(t: TransformDef, values: TransformValues, centre
   const toWorld = (fr: Frame): Rigid => ({ r: [fr.x[0], fr.y[0], fr.z[0], fr.x[1], fr.y[1], fr.z[1], fr.x[2], fr.y[2], fr.z[2]], t: [...fr.origin] });
   const flip: Rigid = t.flip ? { r: [1, 0, 0, 0, -1, 0, 0, 0, -1], t: [0, 0, 0] } : IDENTITY;
   return compose(toWorld(b), compose(flip, invert(toWorld(a))));
+}
+
+/**
+ * Scale uniformly (Onshape's): how many times bigger, and about which point — where "Move triad" put the point (a
+ * clicked corner, edge, face, plane or mate connector), else the part's centre (or the origin with "about the origin").
+ */
+export function scaleOf(t: TransformDef, values: TransformValues, centre: Vec3): { factor: number; about: Vec3 } | string {
+  const factor = typeof values.factor === "number" && Number.isFinite(values.factor) ? values.factor : 1;
+  if (!(factor > 0)) return "The scale must be more than 0 (1 keeps the size, 2 makes it twice as big, 0.5 half).";
+  return { factor, about: t.triad ? [...t.triad.origin] : [...centre] };
+}
+
+/** Scaling by `k` about `about`: p → k·(p − about) + about. (Not rigid: only `invert`, `compose` and `applyPoint` take it.) */
+export function scaling(k: number, about: Vec3): Rigid {
+  return { r: [k, 0, 0, 0, k, 0, 0, 0, k], t: sub(about, scale(about, k)) };
 }
 
 /** Is this move no move at all? */
@@ -270,6 +295,8 @@ export function transformKeys(t: Pick<TransformDef, "mode"> | undefined): string
       return ["distance"];
     case "rotate":
       return ["turn"];
+    case "scale":
+      return ["factor"];
     default:
       return [];
   }
@@ -283,6 +310,7 @@ export const TRANSFORM_MODES: { mode: TransformMode; label: string; hint: string
   { mode: "line", label: "Translate by line", hint: "Click a straight edge: the part moves by that edge, from one end to the other." },
   { mode: "rotate", label: "Rotate", hint: "Turn about an axis: X, Y or Z through the triad, or click a straight edge, a round edge or a flat face." },
   { mode: "mates", label: "Transform by mate connectors", hint: "Click a spot on the part, then the spot to move it to: they line up (Flip turns it over)." },
+  { mode: "scale", label: "Scale uniformly", hint: "Make the part bigger or smaller by the same amount every way: 2 = twice the size, 0.5 = half. It grows from its centre, or from a point you click." },
 ];
 
 /**

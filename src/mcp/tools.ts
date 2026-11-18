@@ -23,7 +23,7 @@ import { evaluate } from "../model/expr";
 import { analyzeSketch } from "../sketch/solver";
 import { DIMENSION_TYPES } from "../sketch/types";
 import type { FollowedFrame, PartMesh } from "../kernel/protocol";
-import { bool, InputError, list, MAX_LENGTH, noExtras, object, oneOf, text, type Obj } from "./args";
+import { amount, bool, InputError, list, MAX_LENGTH, noExtras, object, oneOf, text, tidy, type Obj } from "./args";
 import { deleteFeatures, deletePlan, listNames, outsideLines } from "../model/dependents";
 import { firstStudioId } from "../model/studios";
 import { followedSketch } from "../sketch/areaClicks";
@@ -209,6 +209,16 @@ export function summarize(f: Feature, doc: JuraCADDocument, built?: Record<strin
     case "plane":
     case "mateConnector":
       return describeMore(f, (id) => doc.features.find((x) => x.id === id)?.name, built?.[f.id]);
+    case "transform": {
+      const t = f.transform;
+      if (t?.mode !== "scale") return `${f.type} (made in the app)`;
+      const about = t.triad ? `about (${t.triad.origin.map((n) => tidy(n)).join(", ")})` : t.about === "origin" ? "about the origin" : "about its centre";
+      return `scale ${t.partId ?? "(no part)"} by ${p.factor ?? "1"} ${about}${t.copy ? " (a copy)" : ""}`;
+    }
+    case "import": {
+      const units = f.importUnits ? `, its numbers read as ${f.importUnits}` : "";
+      return `import of ${f.import?.fileName ?? "a file"} (made in the app), scale ${p.scale ?? "1"}${units}`;
+    }
     default:
       return `${f.type} (made in the app)`;
   }
@@ -411,6 +421,7 @@ const KIND_HELP: Record<FeatureKind, string> = {
   circular_pattern: 'circular_pattern: features, parts or faces (+ part) as for linear_pattern; axis ("x"|"y"|"z", default "z"), count, angle (° spread over, default 360), center ([x,y,z] a point on the axis), skip',
   mirror: 'mirror: features (to copy across), part (a whole part), or faces (face choices of "part": a boss, pocket or hole mirrored onto the same part); plane ("Top"|"Front"|"Right"), offset (moves the plane along its normal), join (whole part only: join the copy on)',
   boolean: 'boolean: op ("union"|"subtract"|"intersect"), parts, tools (subtract: the cutters), keep_tools',
+  scale_part: 'scale_part (Onshape\'s Transform › Scale uniformly): part, scale (how many times bigger: 2 = twice the size, 0.5 = half; more than 0), about ("centre" default — the part\'s middle stays put | "origin" | [x, y, z] a point that stays put), copy (true: a scaled copy, the original kept). Works on any part, imported ones too (its holes scale with it)',
   composite_part: "composite_part: parts (two or more) grouped into one composite part — it acts as one part (picked, coloured, exported, put in assemblies as one) while they stay separate solids inside",
   box: "box: width (X), depth (Y), height (Z), x, y, z (its corner), operation",
   cylinder: "cylinder: diameter, height (Z), x, y, z (centre of its base), operation",
@@ -552,7 +563,7 @@ export const TOOLS: ToolDef[] = [
     name: "edit_feature",
     title: "Change a feature",
     description:
-      'Change settings of an existing feature, given by "feature" (its name or id). Pass only what changes, using the same settings as add_feature (or, for a sketch, add_sketch: a new "shapes" list replaces the drawing; "plane"/"on_face" move it). Also "name" to rename it and "suppressed": true/false to switch it off/on. Faces and edges are chosen on the part as it is just before this feature. If the change would break the design, nothing changes and the reason is given.',
+      'Change settings of an existing feature, given by "feature" (its name or id). Pass only what changes, using the same settings as add_feature (or, for a sketch, add_sketch: a new "shapes" list replaces the drawing; "plane"/"on_face" move it). Also "name" to rename it and "suppressed": true/false to switch it off/on. An import made in the app takes \"scale\" (2 = twice the size) and \"units\" (\"file\" = as the file says, or \"mm\" | \"cm\" | \"m\" | \"in\" | \"ft\": what the numbers in the file are taken to be). Faces and edges are chosen on the part as it is just before this feature. If the change would break the design, nothing changes and the reason is given.',
     inputSchema: {
       type: "object",
       properties: { feature: { type: "string", description: "Name or id, e.g. \"Extrude 1\"." }, name: { type: "string" }, suppressed: { type: "boolean" } },
@@ -570,7 +581,18 @@ export const TOOLS: ToolDef[] = [
         if (a.suppressed !== undefined) f.suppressed = !!a.suppressed;
       } else {
         const kind = KIND_OF[f.type];
-        if (!kind) {
+        if (f.type === "import") {
+          // An import (made in the app): its Scale and File units can be changed here.
+          noExtras(a, ["feature", "name", "suppressed", "scale", "units"], `edit_feature (${old.name} is an import, made in the app; only these can be changed here)`);
+          if (a.name !== undefined) f.name = text(a.name, "name").slice(0, 80);
+          if (a.suppressed !== undefined) f.suppressed = !!a.suppressed;
+          if (a.scale !== undefined) f.params = { ...f.params, scale: amount(a.scale, "scale", s.scope(), { positive: true, unit: "" }).text };
+          if (a.units !== undefined) {
+            const u = oneOf(a.units, ["file", "mm", "cm", "m", "in", "ft"] as const, "units");
+            if (u === "file") delete f.importUnits;
+            else f.importUnits = u;
+          }
+        } else if (!kind) {
           const allowed = ["feature", "name", "suppressed"];
           noExtras(a, allowed, `edit_feature (${old.name} is a ${old.type}, made in the app; only these can be changed here)`);
           if (a.name !== undefined) f.name = text(a.name, "name").slice(0, 80);

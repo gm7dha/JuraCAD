@@ -1,4 +1,5 @@
 import { isSimplifyLevel } from "./simplify";
+import { isImportUnit } from "./importScale";
 import { parseVariableFillet } from "./variableFillet";
 import { parseNamedViews } from "./namedViews";
 import { parsePick } from "../geometry/topoRef";
@@ -487,7 +488,7 @@ const FEATURE_TYPES = new Set<string>(Object.keys(FEATURE_DEFS));
 const OPERATIONS = new Set<string>(["new", "add", "remove", "intersect"]);
 
 /** Check one Part Studio's features from untrusted JSON (ids must be unique across the document: `seen`). */
-const TRANSFORM_MODES = new Set(["free", "xyz", "distance", "line", "rotate", "mates"]);
+const TRANSFORM_MODES = new Set(["free", "xyz", "distance", "line", "rotate", "mates", "scale"]);
 const TRANSFORM_PICKING = new Set(["part", "triad", "along", "line", "from", "to"]);
 
 /** Three finite numbers, or null. */
@@ -929,6 +930,7 @@ export function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | n
       const im = parseImportedFile(f.import);
       if (!im) return null;
       feature.import = im;
+      if (isImportUnit(f.importUnits)) feature.importUnits = f.importUnits;
     }
     if (feature.type === "draft" || feature.type === "ruled") feature.neutral = parsePlane(f.neutral) ?? { kind: "default", name: "Top" };
     if ((feature.type === "draft" || feature.type === "ruled") && f.flipSide === true) feature.flipSide = true;

@@ -8,7 +8,7 @@ import { assembleWire, basicFaceExtrusion, type Wire, cast, makePolygon, Vector,
 import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
 import { matchRefs, refDistance, relativeTo, roundVec, sameRef, strictMatch, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
-import { applyPoint, applyVec, isClassicTransform, isStill, toAxisAngle, transformMotion, type Rigid } from "../model/transformMath";
+import { applyPoint, applyVec, isClassicTransform, isStill, scaleOf, toAxisAngle, transformMode, transformMotion, type Rigid } from "../model/transformMath";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams, visibleParamKeys } from "../model/features";
 import { planeFrame, toSketch, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
 import { planeAsSketchPlane, planeFeatureFrame, repointFeature } from "../sketch/planeFeature";
@@ -72,7 +72,9 @@ import { arrangeOnBed, bedExtents, bedRotation, rotate, type PrintPartResult } f
 import { DEFAULT_PART_COLOUR } from "../model/colours";
 import { writeStep, writeStepAssembly } from "./stepExport";
 import { stepPartCount } from "./stepCount";
-import { importCacheKey, importKey, importReport, importSolids, isImportedSurface } from "./importer";
+import { importCacheKey, importKey, importReport, importSolids, isImportedSurface, scaleKey } from "./importer";
+import { featureImportFactor } from "../model/importScale";
+import { scaledShape } from "./scaleShape";
 import { simplifyShape } from "./simplify";
 import { regionOfFaces } from "./facePattern";
 import { modifyFillets, NotAFillet } from "./modifyFillet";
@@ -1634,8 +1636,8 @@ function grewWithin(before: Shape3D, after: Shape3D, by: number): boolean {
 
 /** True when the shape is at least one solid and passes OpenCascade's own check. */
 /** The surfaces (skins) in an imported file, as one shape, or null when it has none. */
-function importedSurface(file: ImportedFile, simplify?: SimplifyLevel): Shape3D | null {
-  const shapes = importSolids(file, simplify);
+function importedSurface(file: ImportedFile, simplify?: SimplifyLevel, scale = 1): Shape3D | null {
+  const shapes = importSolids(file, simplify, scale);
   let skin: Shape3D | null = null;
   for (const s of shapes) {
     if (isImportedSurface(s) && !skin) skin = s;
@@ -2195,7 +2197,7 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       throw new Error("This feature doesn't make a solid of its own.");
     case "import": {
       if (!feature.import) throw new Error("This import has lost its file. Delete it and import the file again.");
-      const shapes = importSolids(feature.import, feature.simplify);
+      const shapes = importSolids(feature.import, feature.simplify, featureImportFactor(feature, v.scale));
       const solids = shapes.filter((s) => !isImportedSurface(s));
       shapes.filter((s) => isImportedSurface(s)).forEach((s) => s.delete());
       if (solids.length === 0 && feature.operation !== "new") throw new Error("The file holds only surfaces, which can't be added to or cut from a part. Import it as New.");
@@ -3768,16 +3770,19 @@ export class GeometryEngine {
         // A STEP file may hold several parts: each solid becomes its own part, and any surfaces one surface part.
         this.tools.set(feature.id, { shape: tool.clone(), operation: "new", partId: feature.id });
         const solids = solidsOf(tool);
+        // (Scaled imports: the same file at another size is another mesh.)
+        const factor = featureImportFactor(feature, values.scale);
+        const key = importCacheKey(feature.import!, feature.simplify) + scaleKey(factor);
         solids.forEach((solid, i) => {
           partCounter++;
           const id = i === 0 ? feature.id : `${feature.id}~${i + 1}`;
-          this.parts.push({ id, name: `Part ${partCounter}`, featureIds: [feature.id], shape: solid, meshKey: `${importCacheKey(feature.import!, feature.simplify)}#${i}` });
+          this.parts.push({ id, name: `Part ${partCounter}`, featureIds: [feature.id], shape: solid, meshKey: `${key}#${i}` });
         });
-        const skin = importedSurface(feature.import!, feature.simplify);
+        const skin = importedSurface(feature.import!, feature.simplify, factor);
         if (skin) {
           surfaceCounter++;
           const id = solids.length === 0 ? feature.id : `${feature.id}~${solids.length + 1}`;
-          this.parts.push({ id, name: `Surface ${surfaceCounter}`, featureIds: [feature.id], shape: skin, surface: true, meshKey: `${importCacheKey(feature.import!, feature.simplify)}#s` });
+          this.parts.push({ id, name: `Surface ${surfaceCounter}`, featureIds: [feature.id], shape: skin, surface: true, meshKey: `${key}#s` });
         }
         tool.delete();
         continue;
@@ -5677,14 +5682,24 @@ export class GeometryEngine {
     const motion = classic ? null : transformMotion(t, values, centre);
     if (typeof motion === "string") return { error: motion };
     const turning = turns.some(([a]) => Math.abs(a) > 1e-12);
+    // Scale uniformly: the part made bigger or smaller about a point (not a turn and a move).
+    const scaled = transformMode(t) === "scale" ? scaleOf(t, values, centre) : null;
+    if (typeof scaled === "string") return { error: scaled };
+    if (scaled && Math.abs(scaled.factor - 1) < 1e-12 && !t.copy) return { error: "Nothing to do yet — type a scale other than 1 (2 makes it twice the size, 0.5 half)." };
     if (classic ? !turning && Math.abs(values.dx) + Math.abs(values.dy) + Math.abs(values.dz) < 1e-12 && !t.copy : isStill(motion!) && !t.copy) {
       return { error: "Nothing to do yet — enter a distance to move or an angle to turn." };
     }
-    const turned = motion ? toAxisAngle(motion) : null;
+    const turned = motion && !scaled ? toAxisAngle(motion) : null;
     const asRigid = motion ?? transformMotion({ ...t, mode: "free" }, values, centre);
     this.lastMotion = typeof asRigid === "string" ? null : asRigid;
     const move = (s: Shape3D): Shape3D => {
       let out = s;
+      if (scaled) {
+        if (Math.abs(scaled.factor - 1) < 1e-12) return out;
+        out = scaledShape(s, scaled.factor, scaled.about);
+        s.delete();
+        return out;
+      }
       if (turned) {
         if (turned.degrees > 1e-12) out = out.rotate(turned.degrees, [0, 0, 0], turned.axis);
         if (Math.abs(turned.t[0]) + Math.abs(turned.t[1]) + Math.abs(turned.t[2]) > 0) out = out.translate(turned.t);
@@ -5708,9 +5723,11 @@ export class GeometryEngine {
       for (const [a, axis] of turns) if (Math.abs(a) > 1e-12) q = rotateAbout(q, axis, (a * Math.PI) / 180);
       return withCentre ? [q[0] + centre[0] + values.dx, q[1] + centre[1] + values.dy, q[2] + centre[2] + values.dz] : q;
     };
-    const threads = part.threads?.map((m) => ({ ...m, origin: turnVec(m.origin, true), axis: turnVec(m.axis, false) }));
+    // (A part made bigger or smaller keeps neither: its threads and sheet thickness are no longer those sizes.)
+    const resized = !!scaled && Math.abs(scaled.factor - 1) > 1e-12;
+    const threads = resized ? undefined : part.threads?.map((m) => ({ ...m, origin: turnVec(m.origin, true), axis: turnVec(m.axis, false) }));
     // A sheet metal part's sheet moves with it, so flanges can still be added and its flat pattern still drawn.
-    const f0 = part.sheet?.base.frame;
+    const f0 = resized ? undefined : part.sheet?.base.frame;
     const sheet = part.sheet && f0 ? { ...part.sheet, base: { ...part.sheet.base, frame: { origin: turnVec(f0.origin, true), u: turnVec(f0.u, false), v: turnVec(f0.v, false), n: turnVec(f0.n, false) } } } : undefined;
     const sheetCopy = sheet ? { sheet, sheetFeatures: [...(part.sheetFeatures ?? []), feature.id], ...(part.sheetCuts ? { sheetCuts: part.sheetCuts.map((c) => ({ ...c, lines: c.lines.map((l) => l.map((q) => [...q]) as [[number, number], [number, number]]) })) } : {}) } : {};
     if (t.copy) {
@@ -5725,6 +5742,12 @@ export class GeometryEngine {
     part.shape.delete();
     part.shape = shape;
     part.featureIds.push(feature.id);
+    if (resized) {
+      delete part.threads;
+      delete part.sheet;
+      delete part.sheetFeatures;
+      delete part.sheetCuts;
+    }
     if (threads) part.threads = threads;
     if (sheet) {
       part.sheet = sheet;
@@ -6800,7 +6823,13 @@ export class GeometryEngine {
     for (const c of this.owned[partId] ?? []) {
       const was = this.connectorFrames.get(c.id);
       if (!was) continue;
-      const frame: FullFrame = { origin: applyPoint(m, was.origin), x: applyVec(m, was.x), y: applyVec(m, was.y), z: applyVec(m, was.z) };
+      // (Scaled: the directions keep their length.)
+      const k = Math.hypot(m.r[0], m.r[3], m.r[6]);
+      const dir = (v: Vec3): Vec3 => {
+        const w = applyVec(m, v);
+        return Math.abs(k - 1) > 1e-9 ? [w[0] / k, w[1] / k, w[2] / k] : w;
+      };
+      const frame: FullFrame = { origin: applyPoint(m, was.origin), x: dir(was.x), y: dir(was.y), z: dir(was.z) };
       this.connectorFrames.set(c.id, frame);
       Object.assign(c, { origin: frame.origin, x: frame.x, z: frame.z });
       const f = all.find((x) => x.id === c.id);

@@ -5,6 +5,7 @@
  * gets a fresh copy instead of reading the file again.
  */
 import { assembleWire, cast, getOC, makeFace, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
+import { scaledShape } from "./scaleShape";
 
 import { describeError } from "./engine";
 import { solidsOf as listSolids } from "./topology";
@@ -483,8 +484,12 @@ export function importReport(file: ImportedFile, simplify: SimplifyLevel): strin
   return reports.get(importCacheKey(file, simplify));
 }
 
-/** The solids in an imported file (fresh copies the caller owns), tidied into real faces with `simplify`. */
-export function importSolids(file: ImportedFile, simplify?: SimplifyLevel): Shape3D[] {
+/**
+ * The solids in an imported file (fresh copies the caller owns), tidied into real faces with `simplify`, then made
+ * `scale` times bigger about the origin (Import's Scale / File units). The file is read (and tidied) once, as it is;
+ * only the copies are scaled, so a new scale never reads the file again. A scale of 1 gives plain copies, as before.
+ */
+export function importSolids(file: ImportedFile, simplify?: SimplifyLevel, scale = 1): Shape3D[] {
   const key = importCacheKey(file, simplify);
   let solids = cache.get(key);
   if (!solids) {
@@ -505,9 +510,13 @@ export function importSolids(file: ImportedFile, simplify?: SimplifyLevel): Shap
     cache.delete(key);
     cache.set(key, solids);
   }
+  const scaled = Math.abs(scale - 1) > 1e-12;
   return solids.map((s) => {
-    const copy = s.clone();
+    const copy = scaled ? scaledShape(s, scale) : s.clone();
     if (surfaceShapes.has(s)) surfaceShapes.add(copy);
     return copy;
   });
 }
+
+/** The part of a mesh key that tells scaled imports apart ("" at scale 1, so older keys stay the same). */
+export const scaleKey = (scale: number): string => (Math.abs(scale - 1) > 1e-12 ? `|x${scale}` : "");

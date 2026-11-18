@@ -133,7 +133,7 @@ export interface MateConnectorDef {
  * missing, as in older designs): turn about X, Y and Z, then move along them —
  * typed, or by dragging the triad.
  */
-export type TransformMode = "free" | "xyz" | "distance" | "line" | "rotate" | "mates";
+export type TransformMode = "free" | "xyz" | "distance" | "line" | "rotate" | "mates" | "scale";
 
 /** A frame kept by Move / copy: where it is, and its X and Z directions (Y = Z × X). */
 export interface TransformFrame {
@@ -242,6 +242,9 @@ export interface ImportedFile {
   /** STL files have no units: what one unit in the file means. STEP files say for themselves. */
   units: "mm" | "in";
 }
+
+/** Import's "File units" (Onshape's): what one unit in the file is taken to be, instead of what the file says. */
+export type ImportUnit = "mm" | "cm" | "m" | "in" | "ft";
 
 /** A world axis, for patterns. */
 export type Axis = "x" | "y" | "z";
@@ -580,6 +583,8 @@ export interface Feature {
   compositeParts?: string[];
   /** Import: the file, stored in the design. */
   import?: ImportedFile;
+  /** Import: the file's numbers read as these units instead of as the file says (missing = as in the file; see model/importScale.ts). */
+  importUnits?: ImportUnit;
   /** Frame (Onshape's): profiles along sketch lines and arcs, one part per member (see model/frame.ts). */
   frame?: import("./frameTypes").FrameDef;
   /** Trim frame: frame members cut back to a plane, face or part. */
