@@ -202,6 +202,19 @@ describe("curve features as the guide or path", () => {
     expect(build([base, top, { ...curve, suppressed: true }, lo]).featureErrors[lo.id]).toMatch(/suppressed/);
   });
 
+  it("follows a helix, its two shapes on one plane (fine along a path)", () => {
+    const h: Feature = { ...feature("curve", { diameter: 20, height: 30, turns: 5 }), curve: { kind: "helix", around: "axis", axis: { p: [0, 0, 0], axis: "z" } } as CurveDef };
+    const front: SketchPlane = { kind: "default", name: "Front" };
+    const a = sketchFeature(front, addCircle(emptySketch(), { x: 10, y: 0 }, 1).sketch);
+    const b = sketchFeature(front, addCircle(emptySketch(), { x: 10, y: 30 }, 1).sketch);
+    // A circle of area π round 5 turns of radius 10: about π × 2π × 10 × 5, as a sweep makes it.
+    for (const sections of [[a.id, b.id], [b.id, a.id]]) {
+      const r = build([h, a, b, loftOf(sections, { path: { curve: h.id } })]);
+      expect(r.featureErrors).toEqual({});
+      expect(relativeError(volumeOf(r.parts[0].id), Math.PI * 2 * Math.PI * 10 * 5)).toBeLessThan(0.03);
+    }
+  });
+
   it("bulges out to a fit spline guide", () => {
     const base = sketchFeature(TOP, rectSketch(-10, -10, 20, 20));
     const top = sketchFeature(at(30), rectSketch(-10, -10, 20, 20));

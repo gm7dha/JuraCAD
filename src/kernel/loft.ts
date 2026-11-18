@@ -806,8 +806,9 @@ export function buildLoft(feature: Pick<Feature, "sections" | "loft" | "loftRule
       const op = (feature as Partial<Feature>).operation;
       if (op && op !== "new") throw new Error("A solid loft from a curved face can only be a new part (it can't yet be joined to or cut from parts along that face). Choose New, or tick Surface.");
     }
-    // Two flat shapes one after the other on the same plane: nothing to loft through.
-    const flat = samePlaneProblem(
+    // Every flat shape on the same plane: nothing to loft through (along a path they may well share one: a U-shaped
+    // handle's two ends).
+    const flat = def.path ? null : samePlaneProblem(
       sections.map((s) => (s.kind === "wire" && !s.curved ? { name: s.name, n: s.normal, origin: s.centre } : { name: s.name, n: [0, 0, 0] as Vec3, origin: centreOf(s) })),
       !!def.periodic,
     );
