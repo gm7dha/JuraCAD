@@ -136,6 +136,9 @@ describe("shapes it can't loft between", () => {
     // On parallel planes it's fine.
     const up = sketchFeature(at(10), rectSketch(-5, -5, 10, 10));
     expect(build([big, up, { ...plain, sections: [big.id, up.id] }]).featureErrors).toEqual({});
+    // Only some of them on one plane (a step at the top, as older files may have) still builds, as it always did.
+    const step = sketchFeature(at(10), rectSketch(-2, -2, 4, 4));
+    expect(build([big, up, step, { ...plain, sections: [big.id, up.id, step.id] }]).featureErrors).toEqual({});
   });
 
   it("refuses straight sides with a shaped end", () => {

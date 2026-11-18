@@ -223,18 +223,19 @@ function wireNormal(w: Wire): { normal: Vec3; flat: boolean } {
 }
 
 /**
- * Two shapes one after the other on the same plane leave nothing to loft through (OpenCascade makes a flat part of
- * nothing), so it's refused in plain words. `ring`: the last and first follow one another too.
+ * Every shape on the same plane leaves nothing to loft through (OpenCascade makes a flat part of nothing), so it's
+ * refused in plain words. Only some of them on one plane (a step between two shapes on a plane, reached from another)
+ * still makes a solid, as it always has, so that's left alone. `ring`: kept for callers (a ring is no different).
  */
 export function samePlaneProblem(list: { name: string; n: Vec3; origin: Vec3 }[], ring: boolean): string | null {
-  for (let i = 0; i + 1 < list.length + (ring ? 1 : 0); i++) {
-    const a = list[i];
-    const b = list[(i + 1) % list.length];
-    if (a === b) continue;
-    const same = Math.abs(dot(unit(a.n), unit(b.n))) > 1 - 1e-9 && Math.abs(dot(sub(b.origin, a.origin), unit(a.n))) < 1e-6;
-    if (same) return `${a.name === b.name ? "Two of the shapes" : `${a.name} and ${b.name}`} lie on the same plane, so there's nothing between them to loft through. Put each shape on its own plane (an offset plane, or a Plane feature).`;
-  }
-  return null;
+  void ring;
+  if (list.length < 2) return null;
+  const a = list[0];
+  if (len(a.n) < 1e-12) return null;
+  const onIt = (b: { n: Vec3; origin: Vec3 }) => len(b.n) > 1e-12 && Math.abs(dot(unit(a.n), unit(b.n))) > 1 - 1e-9 && Math.abs(dot(sub(b.origin, a.origin), unit(a.n))) < 1e-6;
+  if (!list.every(onIt)) return null;
+  const b = list[1];
+  return `${a.name === b.name ? "Two of the shapes" : list.length > 2 ? "All the shapes" : `${a.name} and ${b.name}`} lie on the same plane, so there's nothing between them to loft through. Put each shape on its own plane (an offset plane, or a Plane feature).`;
 }
 
 /** Which way a "direction" end leaves: the picked line's, edge's, face's (its normal), axis's or connector's direction. */
@@ -895,9 +896,114 @@ export function buildLoft(feature: Pick<Feature, "sections" | "loft" | "loftRule
         seq.splice(g + 1, 0, ...ws);
       }
     }
-    if (sections.length >= 2 && ((def.end && !easeEnd) || (def.start && !easeStart))) {
-      // Helper copies need the ends already split as the loft would split them (else OpenCascade gives up).
-      const [a, b] = compatibleEnds(seq, made);
+    // Helper copies of a shaped end go in, then the loft is made (`finish`). Ends with as many pieces as all the others
+    // are used as drawn, exactly as before; when that fails and the outlines differ, the ends are split first as a
+    // plain loft splits them and it's tried again (OpenCascade's own splitting gives up once helpers are added).
+    const shapedEnds = sections.length >= 2 && ((def.end && !easeEnd) || (def.start && !easeStart));
+    const before = [...seq];
+    const finish = (): Shape3D => {
+      if (sections.length >= 2) {
+        if (def.end && !easeEnd) {
+          const h = helpers(sections[sections.length - 1], sections[sections.length - 2], def.end, "end", ctx);
+          for (const w of h) if (!Array.isArray(w)) made.push(w);
+          seq.splice(seq.length - 1, 0, ...[...h].reverse());
+        }
+        if (def.start && !easeStart) {
+          const h = helpers(sections[0], sections[1], def.start, "start", ctx);
+          for (const w of h) if (!Array.isArray(w)) made.push(w);
+          seq.splice(1, 0, ...h);
+        }
+      }
+      if (def.guide && def.path) throw new Error("A loft can follow a guide curve or a path, not both. Take one of them out.");
+      if (def.guide) {
+        const guide = curveWire(def.guide, ctx, "guide curve", centreOf(sections[0]));
+        made.push(guide);
+        for (const s of sections) if (s.kind === "wire" && !touches(s.wire, guide)) throw new Error(`The guide curve must touch the outline of every shape, but it misses ${s.name}.`);
+        // The loft without the guide, cut across at stations between the sections; each cut outline is then scaled about
+        // its middle until it reaches the guide, and the loft is made again through the sections and those outlines.
+        const base = thruSections(seq, false, false, !def.matchCorners, made);
+        made.push(base);
+        const first = centreOf(sections[0]);
+        const axis = unit(sub(centreOf(sections[sections.length - 1]), first));
+        const along = (p: Vec3) => dot(sub(p, first), axis);
+        const stations: { at: number; wire: Wire }[] = [];
+        for (let i = 0; i + 1 < sections.length; i++) {
+          const a = along(centreOf(sections[i]));
+          const b = along(centreOf(sections[i + 1]));
+          if (b - a < 1e-6) throw new Error("With a guide curve, the shapes must follow one another in one direction (each further on than the last).");
+          for (let k = 1; k <= STATIONS; k++) {
+            const t = a + ((b - a) * k) / (STATIONS + 1);
+            const w = guidedStation(base, guide, add(first, mul(axis, t)), axis);
+            if (w) {
+              made.push(w);
+              stations.push({ at: t, wire: w });
+            }
+          }
+        }
+        // Everything in order along the way: points first/last, helper and real sections and stations by how far along they are.
+        const wiresAlong = seq.filter((x): x is Wire => !Array.isArray(x)).map((w) => ({ at: along(tuple(w.boundingBox.center)), wire: w }));
+        const all = [...wiresAlong, ...stations].sort((x, y) => x.at - y.at).map((x) => x.wire as Wire | Vec3);
+        if (Array.isArray(seq[0])) all.unshift(seq[0]);
+        if (seq.length > 1 && Array.isArray(seq[seq.length - 1])) all.push(seq[seq.length - 1]);
+        try {
+          const shape = thruSections(all, !surface, false, true, made);
+          return surface ? asIs(shape) : shape;
+        } catch {
+          throw new Error("Couldn't loft along that guide curve. It must touch every shape's outline and run from the first shape to the last.");
+        }
+      }
+      if (def.path) {
+        const oc = getOC();
+        const path = pathW!;
+        const builder = new oc.BRepOffsetAPI_MakePipeShell(path.wrapped);
+        try {
+          builder.SetMode(false);
+          // Sharp corners of the path: the pieces meet in a mitre, as Onshape's.
+          builder.SetTransitionMode(oc.BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RightCorner);
+          for (const s of seq) {
+            if (Array.isArray(s)) {
+              const v = makeVertex(s);
+              made.push(v);
+              builder.Add(v.wrapped, false, false);
+            } else builder.Add(s.wrapped, false, false);
+          }
+          builder.Build();
+          if (!builder.IsDone()) throw new Error("no shape");
+          if (!surface) builder.MakeSolid();
+          const shape = cast(builder.Shape());
+          if (!isShape3D(shape)) throw new Error("no shape");
+          return surface ? asIs(shape) : shape;
+        } catch {
+          throw new Error("Couldn't loft along that path. Draw the shapes across the path (each standing square to it, near where it passes).");
+        } finally {
+          builder.delete();
+        }
+      }
+      // A ring: back to the very same first outline, which OpenCascade joins up smoothly.
+      const ring = periodic ? [...seq, seq[0]] : seq;
+      try {
+        if (capped) return closedWithFaces(thruSections(ring, false, ruled, !def.matchCorners, made), endSecs, made);
+        const shape = thruSections(ring, !surface, ruled, !def.matchCorners, made);
+        return surface ? asIs(shape) : shape;
+      } catch {
+        const shaped = [def.start && `how it leaves the first shape (${END_LABELS[def.start.kind]})`, def.end && `how it reaches the last shape (${END_LABELS[def.end.kind]})`].filter(Boolean);
+        throw new Error(
+          def.matchCorners
+            ? "Couldn't loft with the corners lined up that way. Try another turn for one of the shapes."
+            : shaped.length
+              ? `Couldn't shape the loft's ends that way: ${shaped.join(" and ")}. Try a smaller “How far it reaches”, or leave that end free.`
+              : "Couldn't loft between those shapes. Try outlines with the same number of sides, or add a shape between them.",
+        );
+      }
+    };
+    try {
+      return finish();
+    } catch (e) {
+      if (!shapedEnds) throw e;
+      const [a, b] = compatibleEnds(before, made);
+      if (!a && !b) throw e;
+      seq.length = 0;
+      seq.push(...before);
       const swap = (i: number, w: Wire | null) => {
         const s = sections[i];
         if (!w || s.kind !== "wire") return;
@@ -906,99 +1012,7 @@ export function buildLoft(feature: Pick<Feature, "sections" | "loft" | "loftRule
       };
       swap(0, a);
       swap(sections.length - 1, b);
-    }
-    if (sections.length >= 2) {
-      if (def.end && !easeEnd) {
-        const h = helpers(sections[sections.length - 1], sections[sections.length - 2], def.end, "end", ctx);
-        for (const w of h) if (!Array.isArray(w)) made.push(w);
-        seq.splice(seq.length - 1, 0, ...[...h].reverse());
-      }
-      if (def.start && !easeStart) {
-        const h = helpers(sections[0], sections[1], def.start, "start", ctx);
-        for (const w of h) if (!Array.isArray(w)) made.push(w);
-        seq.splice(1, 0, ...h);
-      }
-    }
-    if (def.guide && def.path) throw new Error("A loft can follow a guide curve or a path, not both. Take one of them out.");
-    if (def.guide) {
-      const guide = curveWire(def.guide, ctx, "guide curve", centreOf(sections[0]));
-      made.push(guide);
-      for (const s of sections) if (s.kind === "wire" && !touches(s.wire, guide)) throw new Error(`The guide curve must touch the outline of every shape, but it misses ${s.name}.`);
-      // The loft without the guide, cut across at stations between the sections; each cut outline is then scaled about
-      // its middle until it reaches the guide, and the loft is made again through the sections and those outlines.
-      const base = thruSections(seq, false, false, !def.matchCorners, made);
-      made.push(base);
-      const first = centreOf(sections[0]);
-      const axis = unit(sub(centreOf(sections[sections.length - 1]), first));
-      const along = (p: Vec3) => dot(sub(p, first), axis);
-      const stations: { at: number; wire: Wire }[] = [];
-      for (let i = 0; i + 1 < sections.length; i++) {
-        const a = along(centreOf(sections[i]));
-        const b = along(centreOf(sections[i + 1]));
-        if (b - a < 1e-6) throw new Error("With a guide curve, the shapes must follow one another in one direction (each further on than the last).");
-        for (let k = 1; k <= STATIONS; k++) {
-          const t = a + ((b - a) * k) / (STATIONS + 1);
-          const w = guidedStation(base, guide, add(first, mul(axis, t)), axis);
-          if (w) {
-            made.push(w);
-            stations.push({ at: t, wire: w });
-          }
-        }
-      }
-      // Everything in order along the way: points first/last, helper and real sections and stations by how far along they are.
-      const wiresAlong = seq.filter((x): x is Wire => !Array.isArray(x)).map((w) => ({ at: along(tuple(w.boundingBox.center)), wire: w }));
-      const all = [...wiresAlong, ...stations].sort((x, y) => x.at - y.at).map((x) => x.wire as Wire | Vec3);
-      if (Array.isArray(seq[0])) all.unshift(seq[0]);
-      if (seq.length > 1 && Array.isArray(seq[seq.length - 1])) all.push(seq[seq.length - 1]);
-      try {
-        const shape = thruSections(all, !surface, false, true, made);
-        return surface ? asIs(shape) : shape;
-      } catch {
-        throw new Error("Couldn't loft along that guide curve. It must touch every shape's outline and run from the first shape to the last.");
-      }
-    }
-    if (def.path) {
-      const oc = getOC();
-      const path = pathW!;
-      const builder = new oc.BRepOffsetAPI_MakePipeShell(path.wrapped);
-      try {
-        builder.SetMode(false);
-        // Sharp corners of the path: the pieces meet in a mitre, as Onshape's.
-        builder.SetTransitionMode(oc.BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RightCorner);
-        for (const s of seq) {
-          if (Array.isArray(s)) {
-            const v = makeVertex(s);
-            made.push(v);
-            builder.Add(v.wrapped, false, false);
-          } else builder.Add(s.wrapped, false, false);
-        }
-        builder.Build();
-        if (!builder.IsDone()) throw new Error("no shape");
-        if (!surface) builder.MakeSolid();
-        const shape = cast(builder.Shape());
-        if (!isShape3D(shape)) throw new Error("no shape");
-        return surface ? asIs(shape) : shape;
-      } catch {
-        throw new Error("Couldn't loft along that path. Draw the shapes across the path (each standing square to it, near where it passes).");
-      } finally {
-        builder.delete();
-      }
-    }
-    // A ring: back to the very same first outline, which OpenCascade joins up smoothly.
-    const ring = periodic ? [...seq, seq[0]] : seq;
-    try {
-      if (capped) return closedWithFaces(thruSections(ring, false, ruled, !def.matchCorners, made), endSecs, made);
-      const shape = thruSections(ring, !surface, ruled, !def.matchCorners, made);
-      return surface ? asIs(shape) : shape;
-    } catch {
-      const shaped = [def.start && `how it leaves the first shape (${END_LABELS[def.start.kind]})`, def.end && `how it reaches the last shape (${END_LABELS[def.end.kind]})`].filter(Boolean);
-      throw new Error(
-        def.matchCorners
-          ? "Couldn't loft with the corners lined up that way. Try another turn for one of the shapes."
-          : shaped.length
-            ? `Couldn't shape the loft's ends that way: ${shaped.join(" and ")}. Try a smaller “How far it reaches”, or leave that end free.`
-            : "Couldn't loft between those shapes. Try outlines with the same number of sides, or add a shape between them.",
-      );
+      return finish();
     }
   } finally {
     for (const m of made) {
