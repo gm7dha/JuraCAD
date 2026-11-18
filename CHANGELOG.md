@@ -8,6 +8,17 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.93 — Sweep: fixes and Onshape's options
+
+- Scale: the shape can grow or shrink along the path (cones, tapered springs), with or without a twist.
+- Twist can be typed as an angle, a number of turns or a pitch, and turned the other way.
+- Profile control as in Onshape: None, Keep profile orientation, or Lock profile direction (pick a direction).
+- A part's flat face can be the shape that's swept, holes and all; surface sweeps can follow curves and part edges.
+- Fixed: hollow sweeps along a helix or other curve; a twist with the shape part way along a path with sharp corners.
+- A "Keep profile orientation" sweep with a stretch of path lying in the shape's own plane is now refused plainly
+  (it used to make a paper-thin fin).
+- Claude can use all of these.
+
 ## v0.92 — Loft: fixes and Onshape's options
 
 - An Add, Remove or Intersect loft now works on every part it reaches, not only the newest one.
