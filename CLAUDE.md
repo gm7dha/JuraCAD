@@ -596,12 +596,13 @@
   directed ends, thin volumes exact), mcpLoftMore. Not done: curved-face sections joined to their part, thin with faces/points.
   Several guides, connections, sketch-on-face ends: `LoftDef.moreGuides` (guides after `guide`; `loftGuides`/`withGuide`) and
   `connections` (`LoftConnection` = `{points: GeomPick[]}`, each point found on the section it lies on, so section order doesn't
-  matter); missing = as before. One guide between parallel sections keeps the old `guidedStation` path exactly; 2+ guides, one
-  guide between non-parallel sections, guides with a path or with connections go through `guidedLoft`: the unguided loft
+  matter); missing = as before. One guide alone (parallel sections or not) keeps the old `guidedStation` path exactly (main built
+  tipped tops that way; volumes must not change); 2+ guides, guides with a path or with connections go through `guidedLoft`: the unguided loft
   (ThruSections, or `pipeLoft` along the path) cut at `STATIONS` planes per gap — origin/normal interpolated between the two
   sections (normals turned to face along the loft), along a path square to it — and `warpedStation` bends each cut in its
-  plane (pure `src/geometry/warp2d.ts`: anchor = where the ray from the cut's middle towards the guide's crossing leaves the
-  outline, `rayHit`; `fitWarp` 1 = move, 2 = the affine closest to identity (stretch/shear along the line between the
+  plane (pure `src/geometry/warp2d.ts`: anchor = the outline's farthest point from its middle towards the guide's crossing
+  (`outermostTowards`, ties by nearness; else `rayHit`), so nothing pokes out past a guide; one guide = `stretchTowards` (along
+  the guide's way, far side kept, as guidedStation); `fitWarp` 2 = the affine closest to identity (stretch/shear along the line between the
   anchors), 3+ = thin-plate spline; lines stay lines only for affine warps); guides swapping places between stations (any pair's
   difference vector turning round) or missing a section are refused, named "guide curve k"; stations ordered by `alongLine`
   (the path, or the line through the section middles). Connections (`connectSections`): every wire walked the same way round
@@ -612,7 +613,8 @@
   the interpolated section starts (`restartNear`). Refusals: a connection with no / two points on a shape, two at one corner,
   different orders round the shapes. Sketch-on-face ends: `endChoices(p, sketchOnFace)` / `tidyEnds(…, onFace)` (app: the
   plane's `face`; Claude: any non-default plane) offer match tangent/curvature; the engine's `faceUnder` uses `SketchPlane.face`,
-  else a flat face of a part (`LoftContext.allParts`) lying in the sketch's plane under its middle; `spreadOf` its neighbours,
+  else a flat face of a part (`LoftContext.allParts`) lying in the sketch's plane with the whole outline on it
+  (faces of two parts there = refused, never guessed); `spreadOf` its neighbours,
   `Section.adjacent` (as `isFace` for the checks), normal turned out of the part; none = refused plainly. UI: guide list (+ Add
   another guide curve; picking `moreGuide:<k>` for edges), Connections fieldset (per section sketch a corner select —
   `cornerPoints`, `setConnectionSketchPoint` — and "Click corners of faces…", picking `connection:<k>` → `loftClick` corner or

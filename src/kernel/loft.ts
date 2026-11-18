@@ -807,25 +807,35 @@ function faceUnder(s: Extract<Section, { kind: "wire" }>, ctx: LoftContext): { s
       }
     }
   }
+  // Not picked (Claude's sketches, or the face lost): a flat face lying in the sketch's plane that the whole outline is on.
+  // Faces of two parts there (side by side, or overlapping) can't be told apart, so that's refused rather than guessed.
+  const tol = 1e-4;
+  const samples = Array.from({ length: 16 }, (_, i) => makeVertex(tuple(s.wire.pointAt(i / 16))));
   const at = makeVertex(s.centre);
+  const found: { shape: Shape3D; face: Face }[] = [];
   try {
     for (const shape of ctx.allParts?.() ?? []) {
       const faces = shape.faces;
-      let found: Face | null = null;
       for (const f of faces) {
-        if (found || f.geomType !== "PLANE") continue;
+        if (f.geomType !== "PLANE") continue;
         const n = unit(tuple(f.normalAt(tuple(f.center))));
         if (Math.abs(dot(n, s.normal)) < 1 - 1e-6) continue;
-        if (Math.abs(dot(sub(s.centre, tuple(f.center)), n)) > 1e-4) continue;
-        if (measureDistanceBetween(at, f) <= 1e-4) found = f.clone();
+        if (Math.abs(dot(sub(s.centre, tuple(f.center)), n)) > tol) continue;
+        if (measureDistanceBetween(at, f) > tol) continue;
+        if (samples.some((q) => measureDistanceBetween(q, f) > tol)) continue;
+        found.push({ shape, face: f.clone() });
       }
       faces.forEach((f) => f.delete());
-      if (found) return { shape, face: found };
     }
-    return null;
   } finally {
     at.delete();
+    samples.forEach((q) => q.delete());
   }
+  if (found.length > 1) {
+    found.forEach((x) => x.face.delete());
+    throw new Error(`${s.name} lies on faces of more than one part, so it isn't clear which faces round it the loft should carry on from. Draw the sketch on the face itself (click the face when starting the sketch), or choose “Square to the shape”.`);
+  }
+  return found[0] ?? null;
 }
 
 /** Two directions square to `n` (a plane's own x and y). */
@@ -838,7 +848,7 @@ function planeAxes(n: Vec3): { u: Vec3; v: Vec3 } {
 type GuideWire = { wire: Wire; name: string };
 
 /**
- * One station of a loft with several guides (or one, between shapes that aren't parallel): the unguided loft cut by the
+ * One station of a loft with several guides (or guides with a path or connections): the unguided loft cut by the
  * plane through `at` square to `n`, then bent in that plane so the point of the outline towards each guide (seen from
  * the outline's middle) lands on the guide — two guides by the gentlest stretch and shear, three or more by a smooth
  * bend through them all (src/geometry/warp2d.ts). Null when the cut gives no single outline.
@@ -852,6 +862,8 @@ function warpedStation(base: Shape3D, guides: GuideWire[], at: Vec3, n: Vec3, be
     wire = assembleWire(cut);
   } catch {
     return null;
+  } finally {
+    cut.forEach((e) => e.delete());
   }
   const { u, v } = planeAxes(n);
   const to2 = (q: Vec3): P2 => [dot(sub(q, at), u), dot(sub(q, at), v)];
@@ -871,7 +883,7 @@ function warpedStation(base: Shape3D, guides: GuideWire[], at: Vec3, n: Vec3, be
       const target = points.reduce((best, p) => (minDist(samples, p) < minDist(samples, best) ? p : best), points[0]);
       hits.push(target);
       const t2 = to2(target);
-      const a2 = rayHit(poly, c, t2) ?? poly.reduce((b, q) => (Math.hypot(q[0] - t2[0], q[1] - t2[1]) < Math.hypot(b[0] - t2[0], b[1] - t2[1]) ? q : b), poly[0]);
+      const a2 = outermostTowards(poly, c, t2) ?? rayHit(poly, c, t2) ?? poly.reduce((b, q) => (Math.hypot(q[0] - t2[0], q[1] - t2[1]) < Math.hypot(b[0] - t2[0], b[1] - t2[1]) ? q : b), poly[0]);
       anchors.push(a2);
       targets.push(t2);
     }
@@ -880,7 +892,9 @@ function warpedStation(base: Shape3D, guides: GuideWire[], at: Vec3, n: Vec3, be
     wire.delete();
     throw e;
   }
-  const warp = fitWarp(anchors, targets);
+  // One guide: stretched along the guide's way only, from the outline's far side (which stays put), as a lone guide
+  // between two parallel shapes always is (guidedStation); two or more: bent through them all.
+  const warp = anchors.length === 1 ? stretchTowards(poly, c, anchors[0], targets[0]) : fitWarp(anchors, targets);
   const map = (q: Vec3): Vec3 => add(from2(warp.map(to2(q))), mul(n, dot(sub(q, at), n)));
   const edges = wire.edges.map((e) => {
     if (warp.affine && e.geomType === "LINE") return makeLine(map(tuple(e.startPoint)), map(tuple(e.endPoint)));
@@ -892,7 +906,39 @@ function warpedStation(base: Shape3D, guides: GuideWire[], at: Vec3, n: Vec3, be
     return { wire: assembleWire(edges), hits };
   } catch {
     return null;
+  } finally {
+    edges.forEach((e) => e.delete());
   }
+}
+
+/**
+ * The outline's point farthest out from its middle `c` towards `target` (ties — a flat side — broken by nearness to the
+ * target), so the guide sets the outline's extent that way and no part of the outline is bent out past it.
+ */
+function outermostTowards(poly: P2[], c: P2, target: P2): P2 | null {
+  const dl = Math.hypot(target[0] - c[0], target[1] - c[1]);
+  if (dl < 1e-12 || !poly.length) return null;
+  const along = (p: P2) => ((p[0] - c[0]) * (target[0] - c[0]) + (p[1] - c[1]) * (target[1] - c[1])) / dl;
+  const most = Math.max(...poly.map(along));
+  const size = Math.max(...poly.map((p) => Math.hypot(p[0] - c[0], p[1] - c[1])));
+  let best: P2 | null = null;
+  for (const p of poly)
+    if (most - along(p) <= 1e-3 * size && (!best || Math.hypot(p[0] - target[0], p[1] - target[1]) < Math.hypot(best[0] - target[0], best[1] - target[1]))) best = p;
+  return best;
+}
+
+/** The outline stretched along the way from its middle `c` to `target`, its far side kept, so `anchor` lands on `target`'s line across. */
+function stretchTowards(poly: P2[], c: P2, anchor: P2, target: P2): { map: (p: P2) => P2; affine: boolean } {
+  const dl = Math.hypot(target[0] - c[0], target[1] - c[1]);
+  if (dl < 1e-12) return { map: (p) => p, affine: true };
+  const d: P2 = [(target[0] - c[0]) / dl, (target[1] - c[1]) / dl];
+  const along = (p: P2) => (p[0] - c[0]) * d[0] + (p[1] - c[1]) * d[1];
+  const lo = Math.min(...poly.map(along));
+  // The outline's farthest point that way goes to the guide (so nothing pokes out past it).
+  const from = Math.max(along(anchor), ...poly.map(along));
+  if (from - lo < 1e-9) return { map: (p) => p, affine: true };
+  const k = (along(target) - lo) / (from - lo);
+  return { map: (p) => { const m = (along(p) - lo) * (k - 1); return [p[0] + d[0] * m, p[1] + d[1] * m]; }, affine: true };
 }
 
 /** Where a point lies along a line of points (its distance from the first, by length, at the nearest place). */
@@ -1154,7 +1200,7 @@ function pipeLoft(path: Wire, seq: (Wire | Vec3)[], surface: boolean, made: { de
 }
 
 /**
- * A loft with several guide curves, or one between shapes that aren't parallel, or along a path: the loft without the
+ * A loft with several guide curves, or guides along a path or with connections: the loft without the
  * guides cut across at stations between each two shapes — planes turned from one shape's to the next (along a path:
  * square to it) — each cut bent to pass through every guide, then lofted again through the shapes and the stations.
  */
@@ -1206,6 +1252,7 @@ function guidedLoft(opts: {
         at = add(centres[i], mul(sub(centres[i + 1], centres[i]), t));
         n = unit(add(mul(nA, 1 - t), mul(nB, t)));
       }
+      const near = add(mul(startOf(A), 1 - t), mul(startOf(B), t));
       const got = warpedStation(base, guides, at, n, between);
       if (!got) continue;
       let w = got.wire;
@@ -1216,7 +1263,7 @@ function guidedLoft(opts: {
             if (dot(sub(got.hits[q], got.hits[p]), sub(lastHits[q], lastHits[p])) <= 0)
               throw new Error(`${guides[p].name[0].toUpperCase()}${guides[p].name.slice(1)} and ${guides[q].name} cross over each other ${between}. Each guide must keep to its own side of the shapes.`);
       lastHits = got.hits;
-      if (lined) w = restartNear(w, add(mul(startOf(A), 1 - t), mul(startOf(B), t)), n, made);
+      if (lined) w = restartNear(w, near, n, made);
       stations.push({ at: along(at), wire: w });
     }
   }
@@ -1383,12 +1430,9 @@ export function buildLoft(feature: Pick<Feature, "sections" | "loft" | "loftRule
           seq.splice(1, 0, ...h);
         }
       }
-      // Several guides, guides between shapes that aren't parallel, or guides along a path: stations bent to every guide.
-      const parallel = (() => {
-        const ws = sections.filter((x): x is Extract<Section, { kind: "wire" }> => x.kind === "wire");
-        return ws.every((x) => Math.abs(dot(x.normal, ws[0].normal)) > 1 - 1e-9);
-      })();
-      if (guideCurves.length && (guideCurves.length > 1 || def.path || !parallel || def.connections?.length)) {
+      // Several guides, guides along a path or guides with connections: stations bent to every guide. One guide alone
+      // (parallel shapes or not) keeps the older way below exactly, so lofts made before build just as they did.
+      if (guideCurves.length && (guideCurves.length > 1 || def.path || def.connections?.length)) {
         const many = guideCurves.length > 1;
         const guides: GuideWire[] = guideCurves.map((c, i) => {
           const name = many ? `guide curve ${i + 1}` : "the guide curve";

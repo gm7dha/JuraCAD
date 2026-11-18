@@ -126,10 +126,11 @@ describe("several guide curves", () => {
     expect(inside(shape, [15.5, 0, 15])).toBe(false);
     expect(inside(shape, [-12.4, 0, 15])).toBe(true);
     expect(inside(shape, [-13.5, 0, 15])).toBe(false);
-    // One guide between them goes the new way too (cuts turned from one shape's plane to the next).
+    // One guide between them builds exactly as it always has (the older way: each cut scaled about its middle), so
+    // older files keep their shape.
     const one = build([base, top, g1, { ...lo, loft: { guide: { sketch: g1.id } } }]);
     expect(one.featureErrors).toEqual({});
-    expect(inside(shapeOf(lo.id)!, [14.4, 0, 15])).toBe(true);
+    expect(analyzeMesh(one.parts[0].vertices, one.parts[0].triangles).volume).toBeCloseTo(13039.92, 0);
   });
 });
 
@@ -236,5 +237,46 @@ describe("a sketch on a part's face", () => {
     const air = sketchFeature(at(12), rectSketch(-5, -5, 10, 10));
     const ra = build([b20, t10, frustum, air, hi, { ...bySketch, sections: [air.id, hi.id] }]);
     expect(Object.values(ra.featureErrors)[0]).toMatch(/drawn on a flat face/);
+  });
+});
+
+describe("review: older lofts, one guide among new options, faces under a sketch", () => {
+  it("keeps the far side put with one guide and connections, and reaches the guides exactly", () => {
+    const base = sketchFeature(TOP, rectSketch(-10, -10, 20, 20));
+    const hex: [number, number][] = Array.from({ length: 6 }, (_, i) => [10 * Math.cos((i * Math.PI) / 3), 10 * Math.sin((i * Math.PI) / 3)]);
+    const top = sketchFeature(at(30), polySketch(hex));
+    const g1 = guideArc(FRONT, 10, 5);
+    const g2 = guideArc(FRONT, -10, -5);
+    const connections = [{ points: [{ p: [10, 10, 0] as [number, number, number] }, { p: [hex[1][0], hex[1][1], 30] as [number, number, number] }] }];
+    const one = build([base, top, g1, loftOf([base.id, top.id], { guide: { sketch: g1.id }, connections })]);
+    expect(one.featureErrors).toEqual({});
+    const a = analyzeMesh(one.parts[0].vertices, one.parts[0].triangles);
+    expect(a.watertight).toBe(true);
+    // Stretched towards the guide from the far side, which stays where it is (not moved bodily across).
+    expect(a.bounds!.min[0]).toBeCloseTo(-10, 2);
+    expect(a.bounds!.max[0]).toBeGreaterThan(14.8);
+    expect(a.bounds!.max[0]).toBeLessThan(15.05);
+    const two = build([base, top, g1, g2, loftOf([base.id, top.id], { guide: { sketch: g1.id }, moreGuides: [{ sketch: g2.id }], connections })]);
+    expect(two.featureErrors).toEqual({});
+    const b = analyzeMesh(two.parts[0].vertices, two.parts[0].triangles);
+    expect(b.watertight).toBe(true);
+    // Nothing pokes out past either guide (the outline's farthest point that way is what lands on it).
+    expect(b.bounds!.max[0]).toBeLessThan(15.05);
+    expect(b.bounds!.min[0]).toBeGreaterThan(-15.05);
+  });
+
+  it("refuses to guess between faces of two parts under a sketch", () => {
+    const a1 = sketchFeature(TOP, rectSketch(-20, -10, 30, 20));
+    const ea: Feature = { ...feature("extrude", { depth: 10 }), sketchRef: a1.id, apart: true };
+    const b1 = sketchFeature(TOP, rectSketch(-10, -10, 30, 20));
+    const eb: Feature = { ...feature("extrude", { depth: 10 }), sketchRef: b1.id, apart: true };
+    const s = sketchFeature(at(10), rectSketch(-5, -5, 10, 10));
+    const hi = sketchFeature(at(30), rectSketch(-2, -2, 4, 4));
+    const lo = loftOf([s.id, hi.id], { start: { kind: "matchTangent" } });
+    const r = build([a1, ea, b1, eb, s, hi, lo]);
+    expect(r.featureErrors[lo.id]).toMatch(/more than one part/);
+    // A sketch reaching past the face it sits on isn't "drawn on" it.
+    const wide = sketchFeature(at(10), rectSketch(-5, -15, 10, 30));
+    expect(build([a1, ea, wide, hi, { ...lo, sections: [wide.id, hi.id] }]).featureErrors[lo.id]).toMatch(/drawn on a flat face/);
   });
 });
