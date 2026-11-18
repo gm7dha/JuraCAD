@@ -41,7 +41,12 @@ import {
   surfaceNormal,
   tidySurface,
   unit,
+  ellipseParam,
+  ellipsePoint,
+  ontoBoth,
+  projectOnEllipse,
   type Circle3,
+  type Ellipse3,
   type FitSurface,
   type Vec3,
   circleDistance,
@@ -52,7 +57,18 @@ import {
 export type PlanCurve =
   | { kind: "line"; from: Vec3; to: Vec3 }
   /** Anticlockwise about `normal` from `from` to `to` (all the way round when `full`; then `to` = `from`). */
-  | { kind: "arc"; centre: Vec3; normal: Vec3; radius: number; from: Vec3; to: Vec3; full: boolean };
+  | { kind: "arc"; centre: Vec3; normal: Vec3; radius: number; from: Vec3; to: Vec3; full: boolean }
+  /**
+   * Where a plane cuts a cylinder at a slant (a slanted hole's rim): anticlockwise about `normal`
+   * from `from` to `to` (all the way round when `full`; then `to` = `from`).
+   */
+  | { kind: "ellipse"; centre: Vec3; normal: Vec3; xdir: Vec3; major: number; minor: number; from: Vec3; to: Vec3; full: boolean }
+  /**
+   * Where two surfaces cross in a curve that isn't a line or a conic (two round faces meeting: a
+   * pipe into a pipe, a hole through a hole): points lying exactly on both, in order from `from` to
+   * `to`, for a smooth spline through them. `closed`: a loop (the first point isn't repeated at the end; `to` = `from`).
+   */
+  | { kind: "spline"; points: Vec3[]; closed: boolean; from: Vec3; to: Vec3 };
 
 export interface CurveUse {
   curve: number;
@@ -253,7 +269,12 @@ export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<numbe
   // much leeway is allowed. It's what tells a real round face from a nearly flat stretch that a big
   // cylinder happens to fit within the distance.
   const facing = Math.cos(Math.max(2 * tol.angle, (1.5 * Math.PI) / 180));
-  const faces = (s: FitSurface, g: number) => Math.abs(dot(surfaceNormal(s, groups[g].centre), groups[g].normal)) >= facing;
+  const triMiddle = (t: number) => scale(add(add(V[T[t][0]], V[T[t][1]]), V[T[t][2]]), 1 / 3);
+  // (A flat group can be a long strip round a ring — the top of a fillet round a boss — whose middle is far off
+  // the surface: then each of its triangles is asked instead.)
+  const faces = (s: FitSurface, g: number) =>
+    Math.abs(dot(surfaceNormal(s, groups[g].centre), groups[g].normal)) >= facing ||
+    (groups[g].tris.length > 2 && groups[g].tris.every((t) => areas[t] < 1e-12 || Math.abs(dot(surfaceNormal(s, triMiddle(t)), normals[t])) >= facing));
   const fitRound = (gs: number[]): FitSurface | null => {
     const pts = pointsOf(gs);
     work += pts.length;
@@ -374,6 +395,19 @@ export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<numbe
     }
     if (members.length < 3 || (flat && flatEnough(members))) continue;
     surface = fitRound(members);
+    // Grown over two round faces before it was sure it curved (small facets of a fillet round a boss, which lie
+    // nearly flat going round it): the first few on their own may fit.
+    for (let n = Math.floor(members.length / 2); !surface && n >= 4; n = Math.floor(n / 2)) {
+      const first = members.slice(0, n);
+      if (flatEnough(first)) break;
+      const s = fitRound(first);
+      if (!s) continue;
+      members.length = 0;
+      inside.clear();
+      join.clear();
+      first.forEach(add);
+      surface = s;
+    }
     if (!surface) {
       // Its neighbourhood fits nothing round: don't start again from right beside it.
       for (const m of members.slice(0, 3)) tried.add(m);
@@ -416,6 +450,29 @@ export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<numbe
     const r = regions.length;
     regions.push({ groups: members, surface: final, curved: true });
     for (const m of members) regionOf[m] = r;
+  }
+  // A round face grown from several seeds can come out in pieces, each fitting something simpler on its
+  // own (a fillet's corner — part of a torus — as slivers of cylinders): neighbouring round faces that
+  // one surface fits together are joined.
+  for (let pass = 0; pass < 8 && !options.flatOnly; pass++) {
+    let merged = 0;
+    for (let i = 0; i < regions.length; i++) {
+      if (!regions[i].groups.length) continue;
+      const others = new Set<number>();
+      for (const g of regions[i].groups) for (const h of near[g]) if (regionOf[h] >= 0 && regionOf[h] !== i && soft(g, h)) others.add(regionOf[h]);
+      for (const j of [...others].sort((a, b) => regions[b].groups.length - regions[a].groups.length)) {
+        if (work > budget) break;
+        const both = [...regions[i].groups, ...regions[j].groups];
+        const s = fitRound(both);
+        if (!s || thinBand(s, both)) continue;
+        for (const g of regions[j].groups) regionOf[g] = i;
+        regions[i] = { groups: both, surface: s, curved: true };
+        regions[j].groups = [];
+        merged++;
+        break;
+      }
+    }
+    if (!merged) break;
   }
   if (options.stats) options.stats.work = work;
   if (work > budget) return TOO_DETAILED;
@@ -520,6 +577,8 @@ export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<numbe
       if (!T[t].every((v) => surfaceDistance(s, V[v]) <= tol.distance)) return Infinity;
       return 1 - Math.abs(dot(surfaceNormal(s, triCentre(t)), normals[t]));
     };
+    const regionArea = all.map(() => 0);
+    for (let t = 0; t < nt; t++) regionArea[triRegion[t]] += areas[t];
     for (let pass = 0; pass < 6; pass++) {
       let moved = 0;
       for (let t = 0; t < nt; t++) {
@@ -528,7 +587,11 @@ export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<numbe
         let best = own;
         // A triangle of a flat facet group that lies on a round face beside it joins that face (slivers
         // can face well off the surface's normal even with their corners right on it, so it's lenient).
-        let bestErr = all[own].curved ? triError(own, t) : 1 - Math.cos(tol.bend);
+        // (Not a triangle lying square on its own flat face, though: near a smooth curved join — a fillet round
+        // a corner — the flat face's own triangles lie on the round face within the distance too.)
+        const ownSurface = all[own].surface;
+        const realFlat = ownSurface.kind === "plane" && regionArea[own] > 20 * areas[t];
+        let bestErr = all[own].curved ? triError(own, t) : realFlat ? Math.min(1 - Math.cos(tol.bend), 1 - Math.abs(dot(ownSurface.normal, normals[t]))) : 1 - Math.cos(tol.bend);
         for (let k = 0; k < 3; k++) {
           const r = triRegion[across(t, k)];
           if (r === own || r === best) continue;
@@ -545,6 +608,83 @@ export function planMesh(vertices: ArrayLike<number>, triangles: ArrayLike<numbe
         }
       }
       if (!moved) break;
+    }
+    // Where two round faces meet smoothly in a circle whose plane parts them (a straight fillet running into
+    // the corner of a rounded rectangle), triangles near the join lie on both within the distance and are
+    // shared out raggedly; each goes to the face on its side of the circle's plane.
+    {
+      const pairs = new Map<number, [number, number]>();
+      for (let t = 0; t < nt; t++)
+        for (let k = 0; k < 3; k++) {
+          const a = triRegion[t];
+          const b = triRegion[across(t, k)];
+          if (a < b && all[a].curved && all[b].curved) pairs.set(a * all.length + b, [a, b]);
+        }
+      const reshaped = new Set<number>();
+      if (pairs.size) {
+        const trisOfRegion: number[][] = all.map(() => []);
+        for (let t = 0; t < nt; t++) trisOfRegion[triRegion[t]].push(t);
+        for (const [a, b] of pairs.values()) {
+          const sa = all[a].surface;
+          const sb = all[b].surface;
+          const ring = meetCircle(sa, sb, triCentre(trisOfRegion[a][0]), Math.max(tol.angle, (2 * Math.PI) / 180), tol.distance);
+          if (!ring) continue;
+          const side = (t: number) => dot(sub(triCentre(t), ring.centre), ring.normal);
+          // Only where the plane really parts them (most of each face clearly on its own side).
+          const vote = (ts: number[]) => {
+            let plus = 0;
+            let minus = 0;
+            for (const t of ts) {
+              const d = side(t);
+              if (d > tol.distance) plus++;
+              else if (d < -tol.distance) minus++;
+            }
+            return plus > 4 * minus && plus > 0 ? 1 : minus > 4 * plus && minus > 0 ? -1 : 0;
+          };
+          const va = vote(trisOfRegion[a]);
+          const vb = vote(trisOfRegion[b]);
+          if (!va || va !== -vb) continue;
+          for (let pass = 0; pass < 50; pass++) {
+            let moved = 0;
+            for (const [from, to, sign] of [
+              [a, b, vb],
+              [b, a, va],
+            ] as const)
+              for (const t of trisOfRegion[from]) {
+                if (triRegion[t] !== from || side(t) * sign <= 0) continue;
+                if (!T[t].every((v) => surfaceDistance(all[to].surface, V[v]) <= tol.distance)) continue;
+                // Only triangles beside the join (touching the other face, or a triangle already moved to it).
+                if (![0, 1, 2].some((k) => triRegion[across(t, k)] === to)) continue;
+                triRegion[t] = to;
+                trisOfRegion[to].push(t);
+                reshaped.add(to);
+                reshaped.add(from);
+                moved++;
+              }
+            if (!moved) break;
+          }
+        }
+      }
+      // Faces that gained or lost triangles fitted again to the ones they have now (and tidied as before).
+      for (const r of reshaped) {
+        const ts: number[] = [];
+        for (let t = 0; t < nt; t++) if (triRegion[t] === r) ts.push(t);
+        const s0 = all[r].surface;
+        // (A torus's fit is a search, less exact than the one it was given from all its facets: kept.)
+        if (s0.kind === "torus" || s0.kind === "plane") continue;
+        const ids = new Set<number>();
+        for (const t of ts) T[t].forEach((v) => ids.add(v));
+        const pts = [...ids].map((v) => V[v]);
+        const ns = ts.map((t) => normals[t]);
+        const ws = ts.map((t) => areas[t]);
+        work += pts.length;
+        const f =
+          s0.kind === "cylinder" ? fitCylinder(pts, ns, ws, tol.distance) : s0.kind === "cone" ? fitCone(pts, ns, ws, tol.distance) : s0.kind === "sphere" ? fitSphere(pts) : null;
+        if (!f || f.maxError > tol.distance) continue;
+        const sizeTol = Math.min(tol.distance / 2, Math.max(0.002, 1.5 * f.maxError));
+        const tidy = tidySurface(f.shape, sizeTol, snapAngle);
+        all[r].surface = pts.every((p) => surfaceDistance(tidy, p) <= tol.distance) ? tidy : f.shape;
+      }
     }
     const regionOfTri = (t: number) => triRegion[t];
     const result = buildEdges(V, T, nv, across, regionOfTri, all, tol);
@@ -636,8 +776,12 @@ function buildEdges(
   tol: SimplifyTolerances,
 ): { curves: PlanCurve[]; loops: CurveUse[][][]; demote: number[] } | string {
   // Boundary half-edges of each region (the region on their left).
-  type Half = { a: number; b: number; other: number; used: boolean };
+  type Half = { a: number; b: number; other: number; used: boolean; t: number; k: number };
   const halves: Half[][] = regions.map(() => []);
+  /** Each boundary half-edge by its triangle and side (3t + k). */
+  const halfAt = new Map<number, Half>();
+  /** How many boundary half-edges (both sides') start or end at each corner of the mesh. */
+  const boundaryAt = new Map<number, number>();
   const regionsAt = new Map<number, Set<number>>();
   T.forEach((tri, t) => {
     const r = regionOfTri(t);
@@ -648,10 +792,33 @@ function buildEdges(
     }
     for (let k = 0; k < 3; k++) {
       const o = regionOfTri(across(t, k));
-      if (o !== r) halves[r].push({ a: tri[k], b: tri[(k + 1) % 3], other: o, used: false });
+      if (o !== r) {
+        const h = { a: tri[k], b: tri[(k + 1) % 3], other: o, used: false, t, k };
+        halves[r].push(h);
+        halfAt.set(3 * t + k, h);
+        boundaryAt.set(h.a, (boundaryAt.get(h.a) ?? 0) + 1);
+        boundaryAt.set(h.b, (boundaryAt.get(h.b) ?? 0) + 1);
+      }
     }
   });
-  const corner = (v: number) => (regionsAt.get(v)?.size ?? 0) >= 3;
+  // Where three or more faces meet — or where one face's outline passes twice (two faces touching at a
+  // point, which a ragged join can leave): either way more than two boundary edges meet there.
+  const corner = (v: number) => (regionsAt.get(v)?.size ?? 0) >= 3 || (boundaryAt.get(v) ?? 0) > 4;
+  /** The boundary half-edge after h round its own face: turning about h's end through the face's triangles. */
+  const nextHalf = (h: Half, r: number): Half | undefined => {
+    let cur = h.t;
+    let j = (h.k + 1) % 3;
+    for (let guard = 0; guard < 10_000; guard++) {
+      const u = across(cur, j);
+      if (regionOfTri(u) !== r) return halfAt.get(3 * cur + j);
+      const x = T[cur][(j + 1) % 3];
+      const m = T[u].findIndex((w, i) => w === x && T[u][(i + 1) % 3] === h.b);
+      if (m < 0) return undefined;
+      cur = u;
+      j = (m + 1) % 3;
+    }
+    return undefined;
+  };
 
   const chains: Chain[] = [];
   const chainOfEdge = new Map<number, number>();
@@ -671,7 +838,8 @@ function buildEdges(
         h.used = true;
         loop.push(h);
         if (h.b === start.a) break;
-        h = out.get(h.b)?.find((x) => !x.used);
+        const turned: Half | undefined = nextHalf(h, r);
+        h = turned && !turned.used ? turned : out.get(h.b)?.find((x) => !x.used);
       }
       if (!h) return "A face's outline doesn't close up.";
       // Where the loop breaks into separate edges: at corners, or where the face on the other side changes.
@@ -742,7 +910,8 @@ function buildEdges(
     if (fitted) {
       curvesOf.push([curves.length]);
       curves.push(fitted);
-      const whole = fitted.kind === "arc" && fitted.full && c.verts[0] !== c.verts[c.verts.length - 1];
+      // (A loop with no corner keeps the start it was given: where the round faces' seams are.)
+      const whole = (fitted.kind === "arc" || fitted.kind === "ellipse") && fitted.full && (c.closed || c.verts[0] !== c.verts[c.verts.length - 1]);
       ends.push(whole ? [-1, -1] : [c.verts[0], c.verts[c.verts.length - 1]]);
       continue;
     }
@@ -760,13 +929,14 @@ function buildEdges(
   if (demote.size) return { curves: [], loops: [], demote: [...demote] };
   // Corners exactly on the arcs that end there (where two arcs meet, where their circles cross), and every
   // line and arc ending exactly there, so the edges join up to OpenCascade's precision.
-  const arcsAt = new Map<number, Circle3[]>();
+  const arcsAt = new Map<number, ((p: Vec3) => Vec3)[]>();
   curves.forEach((c, i) => {
-    if (c.kind !== "arc") return;
+    if (c.kind !== "arc" && c.kind !== "ellipse") return;
+    const onto = c.kind === "arc" ? (p: Vec3) => projectOnCircle(c, p) : (p: Vec3) => projectOnEllipse(c, p);
     for (const v of ends[i]) {
       if (v < 0) continue;
       const list = arcsAt.get(v) ?? [];
-      list.push(c);
+      list.push(onto);
       arcsAt.set(v, list);
     }
   });
@@ -776,15 +946,24 @@ function buildEdges(
     if (p) return p;
     p = place(v);
     const arcs = arcsAt.get(v) ?? [];
-    for (let it = 0; it < (arcs.length > 1 ? 200 : 1); it++) for (const a of arcs) p = projectOnCircle(a, p);
+    for (let it = 0; it < (arcs.length > 1 ? 200 : 1); it++) for (const a of arcs) p = a(p);
     finalAt.set(v, p);
     return p;
   };
   curves.forEach((c, i) => {
     const [a, b] = ends[i];
+    if (c.kind === "spline") {
+      // A loop keeps its own first point (exactly on both surfaces); an open one ends on its corners.
+      if (c.closed) return;
+      c.from = at(a);
+      c.to = at(b);
+      c.points[0] = c.from;
+      c.points[c.points.length - 1] = c.to;
+      return;
+    }
     if (a >= 0) c.from = at(a);
     if (b >= 0) c.to = at(b);
-    if (c.kind === "arc" && c.full && a >= 0) c.to = c.from;
+    if ((c.kind === "arc" || c.kind === "ellipse") && c.full && a >= 0) c.to = c.from;
   });
   const loops: CurveUse[][][] = loopsOf.map((ls) =>
     ls.map((uses) => uses.flatMap((u): CurveUse[] => (u.reversed ? [...curvesOf[u.chain]].reverse().map((curve) => ({ curve, reversed: true })) : curvesOf[u.chain].map((curve) => ({ curve, reversed: false }))))),
@@ -869,8 +1048,7 @@ export function meetCircle(a: FitSurface, b: FitSurface, near: Vec3, angle: numb
         const options = [rs.major + Math.sqrt(Math.max(0, k)), rs.major - Math.sqrt(Math.max(0, k))];
         return placeNear(h, options.reduce((x, y) => (Math.abs(y - nrho) < Math.abs(x - nrho) ? y : x)));
       }
-      if (o.kind === "cylinder") {
-        if (Math.abs(dot(o.axis, rs.axis)) < Math.cos(angle)) continue;
+      if (o.kind === "cylinder" && Math.abs(dot(o.axis, rs.axis)) >= Math.cos(angle)) {
         const off = sub(o.origin, rs.origin);
         if (norm(sub(off, scale(rs.axis, dot(off, rs.axis)))) > 1e-3) continue;
         // (Just touching, as a fillet does, k is 0; fitting leaves it a little either way.)
@@ -881,6 +1059,19 @@ export function meetCircle(a: FitSurface, b: FitSurface, near: Vec3, angle: numb
           options.reduce((x, y) => (Math.abs(y - nh) < Math.abs(x - nh) ? y : x)),
           o.radius,
         );
+      }
+      if (o.kind === "cylinder" && Math.abs(dot(o.axis, rs.axis)) < Math.sin(angle)) {
+        // A straight fillet running on into a fillet round a corner: the cylinder's axis touches the torus's
+        // middle circle, and they meet in the tube's circle there.
+        if (Math.abs(o.radius - rs.minor) > Math.max(slack, 1e-6)) return null;
+        const off = sub(o.origin, rs.origin);
+        const lift = dot(off, rs.axis);
+        if (Math.abs(lift) > Math.max(slack, 1e-6)) continue;
+        // The point of the axis line nearest the torus's centre must be a major radius out.
+        const foot = sub(off, scale(o.axis, dot(off, o.axis)));
+        const footFlat = sub(foot, scale(rs.axis, dot(foot, rs.axis)));
+        if (Math.abs(norm(footFlat) - rs.major) > Math.max(slack, 1e-6)) continue;
+        return { centre: add(rs.origin, footFlat), normal: o.axis, radius: rs.minor };
       }
       continue;
     }
@@ -912,8 +1103,28 @@ export function meetCircle(a: FitSurface, b: FitSurface, near: Vec3, angle: numb
   return null;
 }
 
-/** A chain of mesh edges as one line or arc, or null when it's neither (within the tolerance). */
+/**
+ * A chain of mesh edges as one line or arc — or, where the surfaces either
+ * side give it exactly, an ellipse (a plane across a cylinder at a slant) or
+ * the curve where two surfaces cross — or null when it's none of them
+ * (within the tolerance).
+ */
 function fitChain(c: Chain, pts: Vec3[], place: (v: number) => Vec3, sa: FitSurface, sb: FitSurface, tol: SimplifyTolerances): PlanCurve | null {
+  const ring = c.closed ? pts.slice(0, -1) : pts;
+  const slanted = meetEllipse(sa, sb, Math.max(tol.angle, (2 * Math.PI) / 180));
+  if (slanted) {
+    const e = ellipseChain(c, pts, place, slanted, sa, sb, tol);
+    if (e) return e;
+  }
+  const plain = fitLineOrArc(c, pts, place, sa, sb, tol);
+  if (plain) return plain;
+  if (sa.kind === "plane" && sb.kind === "plane") return null;
+  if (ring.length < 3) return null;
+  return crossingChain(c, pts, place, sa, sb, tol);
+}
+
+/** A chain of mesh edges as one line or arc, or null when it's neither (within the tolerance). */
+function fitLineOrArc(c: Chain, pts: Vec3[], place: (v: number) => Vec3, sa: FitSurface, sb: FitSurface, tol: SimplifyTolerances): PlanCurve | null {
   const onBoth = (p: Vec3) => surfaceDistance(sa, p) <= tol.distance && surfaceDistance(sb, p) <= tol.distance;
   const ring = c.closed ? pts.slice(0, -1) : pts;
   const mid = ring[Math.floor(ring.length / 2)];
@@ -995,4 +1206,152 @@ function winding(pts: Vec3[], c: Circle3): number {
     total += Math.atan2(dot(cross(a, b), c.normal), dot(a, b));
   }
   return total;
+}
+
+/**
+ * The ellipse where a plane cuts a cylinder at a slant (not square to its
+ * axis, nor along it), worked out exactly from the two surfaces.
+ */
+export function meetEllipse(a: FitSurface, b: FitSurface, angle: number): Ellipse3 | null {
+  for (const [cyl, pl] of [
+    [a, b],
+    [b, a],
+  ] as const) {
+    if (cyl.kind !== "cylinder" || pl.kind !== "plane") continue;
+    const c = dot(cyl.axis, pl.normal);
+    // Square to the axis is a circle; nearly along it, two lines (or a very long ellipse no edge needs).
+    if (Math.abs(c) >= Math.cos(angle) || Math.abs(c) < 0.05) return null;
+    const t = dot(sub(pl.origin, cyl.origin), pl.normal) / c;
+    const centre = add(cyl.origin, scale(cyl.axis, t));
+    // The short axis lies in the plane square to the cylinder's axis; the long one square to it, in the plane.
+    const minorDir = unit(cross(cyl.axis, pl.normal));
+    const xdir = unit(cross(minorDir, pl.normal));
+    return { centre, normal: pl.normal, xdir, major: cyl.radius / Math.abs(c), minor: cyl.radius };
+  }
+  return null;
+}
+
+/** A chain on an exact ellipse: every point on it and on both surfaces. */
+function ellipseChain(c: Chain, pts: Vec3[], place: (v: number) => Vec3, e: Ellipse3, sa: FitSurface, sb: FitSurface, tol: SimplifyTolerances): PlanCurve | null {
+  const ring = c.closed ? pts.slice(0, -1) : pts;
+  if (ring.length < 3) return null;
+  const onBoth = (p: Vec3) => surfaceDistance(sa, p) <= tol.distance && surfaceDistance(sb, p) <= tol.distance;
+  if (!ring.every((p) => onBoth(p) && dist(projectOnEllipse(e, p), p) <= tol.distance)) return null;
+  // Small steps round it (an ellipse, not a polygon).
+  const ts = pts.map((p) => ellipseParam(e, p));
+  let turn = 0;
+  for (let i = 1; i < ts.length; i++) {
+    let step = ts[i] - ts[i - 1];
+    step -= 2 * Math.PI * Math.round(step / (2 * Math.PI));
+    if (Math.abs(step) > tol.bend * 1.05) return null;
+    turn += step;
+  }
+  const normal = turn >= 0 ? e.normal : scale(e.normal, -1);
+  // Turned round the other way, the short axis flips so the ellipse is the same one.
+  const shape = { centre: e.centre, normal, xdir: e.xdir, major: e.major, minor: e.minor };
+  if (c.closed || c.verts[0] === c.verts[c.verts.length - 1]) {
+    // A loop starts on the cylinder's seam (see canonicalX), where a face cut from a band of it is split.
+    const cyl = sa.kind === "cylinder" ? sa : sb.kind === "cylinder" ? sb : null;
+    const seam = cyl ? add(cyl.origin, scale(canonicalX(cyl.axis), cyl.radius)) : e.centre;
+    const onSeam = cyl ? add(seam, scale(cyl.axis, dot(sub(e.centre, seam), e.normal) / dot(cyl.axis, e.normal))) : ellipsePoint(shape, 0);
+    const from = c.closed ? projectOnEllipse(shape, onSeam) : projectOnEllipse(shape, place(c.verts[0]));
+    return { kind: "ellipse", ...shape, from, to: from, full: true };
+  }
+  const from = projectOnEllipse(shape, place(c.verts[0]));
+  const to = projectOnEllipse(shape, place(c.verts[c.verts.length - 1]));
+  if (dist(from, place(c.verts[0])) > tol.distance || dist(to, place(c.verts[c.verts.length - 1])) > tol.distance) return null;
+  return { kind: "ellipse", ...shape, from, to, full: false };
+}
+
+/** Points along a crossing curve between mesh corners: enough that a spline through them stays on it. */
+const CROSSING_STEPS = 4;
+/** The most points a crossing curve is given. */
+const MOST_CROSSING_POINTS = 600;
+
+/**
+ * A chain where two surfaces cross in a curve that isn't a conic (a pipe into
+ * a pipe): each corner moved exactly onto both surfaces (within the
+ * distance), with more points between, exactly on both. Null where they
+ * don't cross cleanly (they touch, or the chain wanders off either).
+ */
+function crossingChain(c: Chain, pts: Vec3[], place: (v: number) => Vec3, sa: FitSurface, sb: FitSurface, tol: SimplifyTolerances): PlanCurve | null {
+  const ring = c.closed ? pts.slice(0, -1) : pts;
+  if (!c.closed && c.verts[0] === c.verts[c.verts.length - 1]) return null;
+  const exact: Vec3[] = [];
+  for (let i = 0; i < ring.length; i++) {
+    const end = !c.closed && (i === 0 || i === ring.length - 1);
+    const q = end ? place(c.verts[i]) : ontoBoth(ring[i], sa, sb);
+    if (!q || dist(q, ring[i]) > tol.distance) return null;
+    if (end && (surfaceDistance(sa, q) > 1e-6 || surfaceDistance(sb, q) > 1e-6)) {
+      const r = ontoBoth(q, sa, sb);
+      if (!r || dist(r, q) > 1e-4) return null;
+    }
+    exact.push(q);
+  }
+  const n = exact.length;
+  const segments = c.closed ? n : n - 1;
+  const steps = Math.max(1, Math.min(CROSSING_STEPS, Math.floor(MOST_CROSSING_POINTS / segments)));
+  const out: Vec3[] = [];
+  for (let i = 0; i < segments; i++) {
+    const a = exact[i];
+    const b = exact[(i + 1) % n];
+    out.push(a);
+    for (let k = 1; k < steps; k++) {
+      const q = ontoBoth(add(a, scale(sub(b, a), k / steps)), sa, sb);
+      if (!q) return null;
+      out.push(q);
+    }
+  }
+  if (!c.closed) out.push(exact[n - 1]);
+  // Smooth and going one way: no step turning back, nor sharply.
+  const m = out.length;
+  for (let i = 0; i < (c.closed ? m : m - 2); i++) {
+    const p0 = out[i];
+    const p1 = out[(i + 1) % m];
+    const p2 = out[(i + 2) % m];
+    const d0 = sub(p1, p0);
+    const d1 = sub(p2, p1);
+    const l0 = norm(d0);
+    const l1 = norm(d1);
+    if (l0 < 1e-7 || l1 < 1e-7) return null;
+    if (dot(d0, d1) < Math.cos(Math.min(tol.bend, (30 * Math.PI) / 180)) * l0 * l1) return null;
+  }
+  if (c.closed) {
+    // A loop starts as far round as it can from the seams of the round faces either side (a face cut from a
+    // band of its surface is split there, and a corner just beside it would leave a sliver of an edge).
+    const seamGap = (p: Vec3) => {
+      let least = Infinity;
+      for (const s of [sa, sb]) {
+        if (s.kind !== "cylinder" && s.kind !== "cone") continue;
+        const x = canonicalX(s.axis);
+        const y = cross(s.axis, x);
+        const d = sub(p, s.origin);
+        least = Math.min(least, Math.abs(Math.atan2(dot(d, y), dot(d, x))));
+      }
+      return least;
+    };
+    let start = 0;
+    for (let i = 1; i < m; i++) if (seamGap(out[i]) > seamGap(out[start])) start = i;
+    const turned = [...out.slice(start), ...out.slice(0, start)];
+    return { kind: "spline", points: turned, closed: true, from: turned[0], to: turned[0] };
+  }
+  return { kind: "spline", points: out, closed: false, from: out[0], to: out[m - 1] };
+}
+
+/** Points along a plan curve (both ends, and enough between to follow it), for measuring where it lies. */
+export function curveSamples(c: PlanCurve, n = 32): Vec3[] {
+  switch (c.kind) {
+    case "line":
+      return [c.from, c.to];
+    case "spline":
+      return c.points;
+    case "arc":
+    case "ellipse": {
+      const shape: Ellipse3 = c.kind === "arc" ? { centre: c.centre, normal: c.normal, xdir: unit(sub(c.from, c.centre)), major: c.radius, minor: c.radius } : c;
+      const t0 = ellipseParam(shape, c.from);
+      let span = c.full ? 2 * Math.PI : ellipseParam(shape, c.to) - t0;
+      if (!c.full) span = ((span % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+      return Array.from({ length: n + 1 }, (_, i) => ellipsePoint(shape, t0 + (span * i) / n));
+    }
+  }
 }

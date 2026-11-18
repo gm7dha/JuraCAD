@@ -417,6 +417,86 @@ export function fitCircle3D(pts: Vec3[], refine = true): Fit<Circle3> | null {
   return errors<Circle3>({ centre, normal: plane.shape.normal, radius: c.circle.r }, pts, circleDistance);
 }
 
+export interface Ellipse3 {
+  centre: Vec3;
+  /** Unit normal of the ellipse's plane. */
+  normal: Vec3;
+  /** Unit direction of the long axis (square to the normal). */
+  xdir: Vec3;
+  /** Half the long axis, and half the short one (along normal × xdir). */
+  major: number;
+  minor: number;
+}
+
+/** Where a point is round an ellipse: the angle t of the nearest point centre + major·cos t·x + minor·sin t·y (Newton's method). */
+export function ellipseParam(e: Ellipse3, p: Vec3): number {
+  const y = cross(e.normal, e.xdir);
+  const d = sub(p, e.centre);
+  const px = dot(d, e.xdir);
+  const py = dot(d, y);
+  const a = e.major;
+  const b = e.minor;
+  let t = Math.atan2(py / b, px / a);
+  for (let it = 0; it < 40; it++) {
+    const c = Math.cos(t);
+    const s = Math.sin(t);
+    // f = d/dt of half the squared distance.
+    const f = (a * c - px) * (-a * s) + (b * s - py) * (b * c);
+    const df = a * a * s * s - (a * c - px) * a * c + b * b * c * c - (b * s - py) * b * s;
+    if (Math.abs(df) < 1e-300) break;
+    const step = f / df;
+    t -= Math.max(-0.5, Math.min(0.5, step));
+    if (Math.abs(step) < 1e-14) break;
+  }
+  return t;
+}
+
+/** The point at angle t round an ellipse. */
+export function ellipsePoint(e: Ellipse3, t: number): Vec3 {
+  const y = cross(e.normal, e.xdir);
+  return add(e.centre, add(scale(e.xdir, e.major * Math.cos(t)), scale(y, e.minor * Math.sin(t))));
+}
+
+/** The nearest point on an ellipse. */
+export const projectOnEllipse = (e: Ellipse3, p: Vec3): Vec3 => ellipsePoint(e, ellipseParam(e, p));
+
+/**
+ * How far a point is from a surface, signed: + on the side the surface's own
+ * normal points to (outside a cylinder, sphere…), and that normal there.
+ */
+export function signedSurfaceDistance(s: FitSurface, p: Vec3): { d: number; normal: Vec3 } {
+  const q = projectOnSurface(s, p);
+  const n = surfaceNormal(s, q);
+  return { d: dot(sub(p, q), n), normal: n };
+}
+
+/**
+ * The point nearest p lying on both surfaces (where they cross), by
+ * Gauss–Newton steps square to both; null when they don't cross cleanly
+ * there (touching, or meeting at less than `least` radians).
+ */
+export function ontoBoth(p: Vec3, a: FitSurface, b: FitSurface, least = (3 * Math.PI) / 180): Vec3 | null {
+  let x = p;
+  for (let it = 0; it < 40; it++) {
+    const fa = signedSurfaceDistance(a, x);
+    const fb = signedSurfaceDistance(b, x);
+    if (Math.abs(fa.d) < 1e-11 && Math.abs(fb.d) < 1e-11) break;
+    // The smallest step that puts both to zero (to first order): x − Jᵀ (J Jᵀ)⁻¹ f.
+    const g = dot(fa.normal, fb.normal);
+    const det = 1 - g * g;
+    if (det < Math.sin(least) ** 2) return null;
+    const la = (fa.d - g * fb.d) / det;
+    const lb = (fb.d - g * fa.d) / det;
+    x = sub(sub(x, scale(fa.normal, la)), scale(fb.normal, lb));
+    if (!x.every(Number.isFinite)) return null;
+  }
+  const na = signedSurfaceDistance(a, x);
+  const nb = signedSurfaceDistance(b, x);
+  if (Math.abs(na.d) > 1e-8 || Math.abs(nb.d) > 1e-8) return null;
+  if (1 - dot(na.normal, nb.normal) ** 2 < Math.sin(least) ** 2) return null;
+  return x;
+}
+
 export interface Line3 {
   origin: Vec3;
   dir: Vec3;
@@ -663,7 +743,62 @@ export function fitTorus(pts: Vec3[], middles: Vec3[], normals: Vec3[], size: nu
   const major = circle.shape.radius;
   if (!(major > minor * 1.0001)) return null;
   const surface: TorusSurface = { kind: "torus", origin: circle.shape.centre, axis: circle.shape.normal, major, minor };
-  return errors<TorusSurface>(surface, pts, surfaceDistance);
+  const first = errors<TorusSurface>(surface, pts, surfaceDistance);
+  // Polished on the points themselves (the facets' middles sit a little inside the surface, and only some
+  // were looked at): least squares on the true distances, kept only if it's better.
+  const polished = polishTorus(first.shape, pts);
+  return polished && polished.rms < first.rms ? polished : first;
+}
+
+/** A torus moved to fit points better (Gauss–Newton on their distances; 7 numbers: centre, tilt, radii). */
+function polishTorus(t: TorusSurface, all: Vec3[]): Fit<TorusSurface> | null {
+  if (all.length < 8) return null;
+  const every = Math.max(1, Math.ceil(all.length / 400));
+  const pts = all.filter((_, i) => i % every === 0);
+  const [u0, v0] = frameOf(t.axis);
+  const make = (x: number[]): TorusSurface => ({
+    kind: "torus",
+    origin: add(t.origin, [x[0], x[1], x[2]]),
+    axis: unit(add(t.axis, add(scale(u0, x[3]), scale(v0, x[4])))),
+    major: t.major + x[5],
+    minor: t.minor + x[6],
+  });
+  const resid = (s: TorusSurface, p: Vec3) => {
+    const { w } = torusPlace(s, p);
+    return Math.hypot(w[0], w[1]) - s.minor;
+  };
+  let x = [0, 0, 0, 0, 0, 0, 0];
+  let best = make(x);
+  let bestRms = Math.sqrt(pts.reduce((a, p) => a + resid(best, p) ** 2, 0) / pts.length);
+  const h = 1e-6 * (1 + t.major);
+  for (let it = 0; it < 12; it++) {
+    const J: number[][] = [];
+    const f: number[] = [];
+    for (const p of pts) {
+      const r0 = resid(best, p);
+      const row: number[] = [];
+      for (let k = 0; k < 7; k++) {
+        const xk = [...x];
+        xk[k] += h;
+        row.push((resid(make(xk), p) - r0) / h);
+      }
+      J.push(row);
+      f.push(-r0);
+    }
+    const step = leastSquares(J, f);
+    if (!step) break;
+    const xn = x.map((v, k) => v + step[k]);
+    const cand = make(xn);
+    if (!(cand.minor > 0) || !(cand.major > cand.minor * 1.0001)) break;
+    const rms = Math.sqrt(pts.reduce((a, p) => a + resid(cand, p) ** 2, 0) / pts.length);
+    if (!(rms < bestRms)) break;
+    x = xn;
+    best = cand;
+    const done = bestRms - rms < 1e-12 * (1 + t.major);
+    bestRms = rms;
+    if (done) break;
+  }
+  return errors<TorusSurface>(best, all, surfaceDistance);
 }
 
 // ---------------------------------------------------------------- tidy numbers

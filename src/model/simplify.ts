@@ -47,6 +47,10 @@ export interface SimplifiedFace {
   concave?: boolean;
   /** Left as flat pieces of the original triangles (nothing simpler fitted). */
   mesh?: boolean;
+  /** Round faces: an end is cut at a slant (a slanted hole's rim is an ellipse). */
+  slanted?: boolean;
+  /** Round faces: how many of its edges are curves where it meets another round face (a pipe into a pipe). */
+  meets?: number;
 }
 
 export interface SimplifySummary {
@@ -92,18 +96,23 @@ export function simplifyReport(s: SimplifySummary): string {
   const round = s.faces.filter((f) => f.kind !== "plane" && f.kind !== "other" && !f.mesh);
   const other = s.faces.filter((f) => f.kind === "other" && !f.mesh).length;
   const cyl = round.filter((f) => f.kind === "cylinder" && f.radius !== undefined);
-  const holes = cyl.filter((f) => f.full && f.concave).map((f) => 2 * f.radius!);
+  const holes = cyl.filter((f) => f.full && f.concave && !f.slanted).map((f) => 2 * f.radius!);
+  const slantedHoles = cyl.filter((f) => f.full && f.concave && f.slanted).map((f) => 2 * f.radius!);
+  // Each such edge is on two round faces.
+  const meets = Math.round(round.reduce((n, f) => n + (f.meets ?? 0), 0) / 2);
   const bosses = cyl.filter((f) => f.full && !f.concave).map((f) => 2 * f.radius!);
   // Part-way round a cylinder, or a ring round a hole or boss (a torus): fillets.
   const fillets = [...cyl.filter((f) => !f.full).map((f) => f.radius!), ...round.filter((f) => f.kind === "torus" && f.radius !== undefined).map((f) => f.radius!)];
   const details: string[] = [];
   if (holes.length) details.push(`hole${holes.length > 1 ? "s" : ""} ${listSizes("Ø", holes)}`);
+  if (slantedHoles.length) details.push(`slanted hole${slantedHoles.length > 1 ? "s" : ""} ${listSizes("Ø", slantedHoles)}`);
   if (bosses.length) details.push(`round${bosses.length > 1 ? "s" : ""} ${listSizes("Ø", bosses)}`);
   if (fillets.length) details.push(`rounded edge${fillets.length > 1 ? "s" : ""} ${listSizes("R", fillets)}`);
   const cones = round.filter((f) => f.kind === "cone").length;
   const balls = round.filter((f) => f.kind === "sphere").map((f) => f.radius ?? 0);
   if (cones) details.push(`${cones} cone${cones > 1 ? "s" : ""}`);
   if (balls.length) details.push(`ball${balls.length > 1 ? "s" : ""} ${listSizes("R", balls)}`);
+  if (meets) details.push(`${meets === 1 ? "1 curved edge" : `${count(meets)} curved edges`} where round faces meet`);
   const parts = [`${count(flat)} flat`];
   if (round.length) parts.push(`${count(round.length)} round${details.length ? ` (${details.join(", ")})` : ""}`);
   if (other) parts.push(`${count(other)} curved`);
