@@ -21,6 +21,12 @@ describe("Import: scale and file units", () => {
     expect(fileUnitMm(step("nothing"))).toBe(1);
     expect(fileUnitOf(step(inStep))).toBe("in");
     expect(fileUnitOf(stl("in"))).toBe("in");
+    // An inch defined from a millimetre unit written before it: the unit the geometry's context names wins, so an
+    // inch file taken "as inches" isn't made 25.4 times bigger again.
+    const inchAfterMm =
+      "DATA;\n#5=(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.));\n#6=LENGTH_MEASURE_WITH_UNIT(LENGTH_MEASURE(25.4),#5);\n#7=DIMENSIONAL_EXPONENTS(1.,0.,0.,0.,0.,0.,0.);\n#8=(CONVERSION_BASED_UNIT('INCH',#6)LENGTH_UNIT()NAMED_UNIT(#7));\n#9=(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#10))\nGLOBAL_UNIT_ASSIGNED_CONTEXT((#8,#11,#12))REPRESENTATION_CONTEXT('',''));\nENDSEC;";
+    expect(stepLengthUnit(inchAfterMm)).toBe(25.4);
+    expect(importScaleFactor(step(inchAfterMm), "in")).toBe(1);
   });
 
   it("works out how much bigger the part is made", () => {

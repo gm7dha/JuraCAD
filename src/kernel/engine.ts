@@ -3647,6 +3647,7 @@ export class GeometryEngine {
         this.lastMotion = null;
         const r = this.applyTransform(feature, partCounter + 1);
         if (r.error) featureErrors[feature.id] = r.error;
+        else if (r.note) warnings[feature.id] = r.note;
         if (r.newPart) partCounter++;
         // Mate connectors owned by the moved part go with it (not with a copy).
         else if (!r.error && this.lastMotion && feature.transform?.partId) this.moveOwnedConnectors(feature.transform.partId, this.lastMotion, moved, features);
@@ -3763,7 +3764,7 @@ export class GeometryEngine {
       if (notes.length) warnings[feature.id] = notes.join(" ");
 
       if (feature.type === "import" && feature.simplify && feature.import) {
-        const report = importReport(feature.import, feature.simplify);
+        const report = importReport(feature.import, feature.simplify, featureImportFactor(feature, values.scale));
         if (report) infoNotes[feature.id] = report;
       }
       if (feature.operation === "new" && feature.type === "import") {
@@ -5658,7 +5659,7 @@ export class GeometryEngine {
   }
 
   /** Move and/or turn a part, or a copy of it. */
-  private applyTransform(feature: Feature, nextPartNumber: number): { error?: string; newPart?: boolean } {
+  private applyTransform(feature: Feature, nextPartNumber: number): { error?: string; newPart?: boolean; note?: string } {
     const def = FEATURE_DEFS.transform;
     const { values, errors } = resolveParams(feature);
     const badParam = def.params.find((p) => errors[p.key]);
@@ -5725,6 +5726,8 @@ export class GeometryEngine {
     };
     // (A part made bigger or smaller keeps neither: its threads and sheet thickness are no longer those sizes.)
     const resized = !!scaled && Math.abs(scaled.factor - 1) > 1e-12;
+    const lost = resized ? [part.threads?.length ? "its modelled threads" : "", part.sheet ? "its sheet metal settings (flanges and the flat pattern)" : ""].filter(Boolean) : [];
+    const note = lost.length ? `The ${t.copy ? "scaled copy" : "part"} is now plain solid: ${lost.join(" and ")} no longer fit${lost.length > 1 ? "" : "s"} its new size, so ${lost.length > 1 ? "they're" : "it's"} left out.` : undefined;
     const threads = resized ? undefined : part.threads?.map((m) => ({ ...m, origin: turnVec(m.origin, true), axis: turnVec(m.axis, false) }));
     // A sheet metal part's sheet moves with it, so flanges can still be added and its flat pattern still drawn.
     const f0 = resized ? undefined : part.sheet?.base.frame;
@@ -5737,7 +5740,7 @@ export class GeometryEngine {
         return {};
       }
       this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [feature.id], shape, ...(threads ? { threads } : {}), ...sheetCopy });
-      return { newPart: true };
+      return { newPart: true, ...(note ? { note } : {}) };
     }
     part.shape.delete();
     part.shape = shape;
@@ -5762,7 +5765,7 @@ export class GeometryEngine {
         // Leave it where it was; a pattern of it would then start from the old place.
       }
     }
-    return {};
+    return note ? { note } : {};
   }
 
   /**

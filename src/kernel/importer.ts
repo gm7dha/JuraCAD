@@ -19,7 +19,7 @@ import { MAX_TRIANGLES, NOTHING_TO_TIDY, TOO_DETAILED } from "../geometry/meshSi
 
 const cache = new Map<string, Shape3D[]>();
 /** The summary of what simplifying an imported file did, by its cache key. */
-const reports = new Map<string, string>();
+const reports = new Map<string, SimplifySummary>();
 /** The imported shapes that are surfaces (skins) rather than solids. */
 const surfaceShapes = new WeakSet<Shape3D>();
 /** Whether an imported shape (as `importSolids` returned it) is a surface rather than a solid. */
@@ -480,8 +480,12 @@ function tidiedFile(file: ImportedFile, level: SimplifyLevel): { shapes: Shape3D
 }
 
 /** What simplifying an imported file did (after importSolids with the same level), as a short summary. */
-export function importReport(file: ImportedFile, simplify: SimplifyLevel): string | undefined {
-  return reports.get(importCacheKey(file, simplify));
+export function importReport(file: ImportedFile, simplify: SimplifyLevel, scale = 1): string | undefined {
+  const summary = reports.get(importCacheKey(file, simplify));
+  if (!summary) return undefined;
+  // (Scaled imports: the file is tidied as it is, then scaled, so its sizes are told at the size it comes out.)
+  if (Math.abs(scale - 1) < 1e-12) return simplifyReport(summary);
+  return simplifyReport({ ...summary, faces: summary.faces.map((f) => (f.radius === undefined ? f : { ...f, radius: f.radius * scale })) });
 }
 
 /**
@@ -496,7 +500,7 @@ export function importSolids(file: ImportedFile, simplify?: SimplifyLevel, scale
     if (simplify) {
       const r = readSimplified(file, simplify);
       solids = r.shapes;
-      reports.set(key, simplifyReport(r.summary));
+      reports.set(key, r.summary);
     } else solids = readPlain(file);
     cache.set(key, solids);
     while (cache.size > CACHE_SIZE) {

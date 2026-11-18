@@ -31,6 +31,21 @@ const CONVERSION: Record<string, number> = { INCH: 25.4, INCHES: 25.4, IN: 25.4,
  * `SI_UNIT(.MILLI.,.METRE.)` → 1, `SI_UNIT($,.METRE.)` → 1000, `CONVERSION_BASED_UNIT('INCH',…)` → 25.4.
  */
 export function stepLengthUnit(text: string): number | null {
+  // The unit the geometry uses is the one its GLOBAL_UNIT_ASSIGNED_CONTEXT names: other length units may come first
+  // (an inch is defined from a millimetre unit, which some programs write before it).
+  const ctx = /GLOBAL_UNIT_ASSIGNED_CONTEXT\s*\(\s*\(([^)]*)\)/i.exec(text);
+  if (ctx) {
+    for (const ref of ctx[1].split(",").map((r) => r.trim())) {
+      const id = /^#(\d+)$/.exec(ref)?.[1];
+      if (!id) continue;
+      const at = new RegExp(`(^|[;\\s])#${id}\\s*=`).exec(text);
+      if (!at) continue;
+      const end = text.indexOf(";", at.index + at[0].length);
+      if (end < 0) continue;
+      const mm = lengthUnitOf(text.slice(at.index + at[0].length, end).toUpperCase());
+      if (mm !== undefined) return mm;
+    }
+  }
   const re = /LENGTH_UNIT/gi;
   let m: RegExpExecArray | null;
   let tries = 0;
@@ -42,18 +57,19 @@ export function stepLengthUnit(text: string): number | null {
     const entity = text.slice(start, end).trim().toUpperCase();
     // (A unit's dimensions, not a length unit itself.)
     if (/^#\d+\s*=\s*DIMENSIONAL_EXPONENTS/.test(entity)) continue;
-    const conv = /CONVERSION_BASED_UNIT\s*\(\s*'([^']*)'/.exec(entity);
-    if (conv) {
-      const mm = CONVERSION[conv[1].trim().replace(/\s+/g, "")];
-      if (mm) return mm;
-      continue;
-    }
-    const si = /SI_UNIT\s*\(\s*(\$|\.([A-Z]+)\.)\s*,\s*\.METRE\.\s*\)/.exec(entity);
-    if (si) {
-      const mm = SI_PREFIX[si[2] ?? "$"];
-      if (mm) return mm;
-    }
+    const mm = lengthUnitOf(entity);
+    if (mm) return mm;
   }
+  return null;
+}
+
+/** An entity's length unit in mm (null: a length unit not understood; undefined: not a length unit). */
+function lengthUnitOf(entity: string): number | null | undefined {
+  if (!/LENGTH_UNIT/.test(entity)) return undefined;
+  const conv = /CONVERSION_BASED_UNIT\s*\(\s*'([^']*)'/.exec(entity);
+  if (conv) return CONVERSION[conv[1].trim().toUpperCase().replace(/\s+/g, "")] ?? null;
+  const si = /SI_UNIT\s*\(\s*(\$|\.([A-Z]+)\.)\s*,\s*\.METRE\.\s*\)/.exec(entity);
+  if (si) return SI_PREFIX[si[2] ?? "$"] ?? null;
   return null;
 }
 

@@ -73,6 +73,25 @@ describe("Import: Scale and File units", () => {
     expect(zero.featureErrors[plain.id]).toMatch(/Scale.*more than 0/);
   });
 
+  it("gives an inch or metre STEP file its real size, and reads its numbers as other units without converting twice", async () => {
+    const step = await boxStep();
+    const m = /#(\d+)\s*=\s*\(\s*LENGTH_UNIT\s*\(\s*\)\s*NAMED_UNIT\s*\(\s*\*\s*\)\s*SI_UNIT\s*\(\s*\.MILLI\.\s*,\s*\.METRE\.\s*\)\s*\)\s*;/.exec(step)!;
+    // As another program writes inches: a millimetre unit first, then an inch made from it.
+    const inch = step
+      .replace(m[0], `#${m[1]}=(CONVERSION_BASED_UNIT('INCH',#9001)LENGTH_UNIT()NAMED_UNIT(#9002));`)
+      .replace("DATA;\n", "DATA;\n#9003=(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.));\n#9001=LENGTH_MEASURE_WITH_UNIT(LENGTH_MEASURE(25.4),#9003);\n#9002=DIMENSIONAL_EXPONENTS(1.,0.,0.,0.,0.,0.,0.);\n");
+    const metre = step.replace(m[0], `#${m[1]}=(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT($,.METRE.));`);
+    const f = (data: string) => importFeature({ fileName: "b.step", format: "step", data, units: "mm" });
+    const inF = f(inch);
+    expect(bounds(build([inF]))[1]).toEqual([1270, 762, 508]);
+    expect(bounds(engine.rebuild([{ ...inF, importUnits: "in" }]))[1]).toEqual([1270, 762, 508]);
+    expect(bounds(engine.rebuild([{ ...inF, importUnits: "mm" }]))[1]).toEqual([50, 30, 20]);
+    engine.dispose();
+    const mF = f(metre);
+    expect(bounds(build([mF]))[1]).toEqual([50000, 30000, 20000]);
+    expect(bounds(engine.rebuild([{ ...mF, importUnits: "mm" }]))[1]).toEqual([50, 30, 20]);
+  });
+
   it("reads an STL's numbers as inches (25.4 × every way)", () => {
     const data = boxStl();
     const file = { fileName: "cube.stl", format: "stl" as const, data, units: "mm" as const };
@@ -83,6 +102,24 @@ describe("Import: Scale and File units", () => {
     const s = engine.rebuild([{ ...importFeature(file), importUnits: "in", simplify: "normal" }]);
     expect(s.featureErrors).toEqual({});
     expect(volume(s)).toBeCloseTo(8000 * 25.4 ** 3, -4);
+  });
+});
+
+describe("Import: Simplify at a scale", () => {
+  it("tidies the file as it is, then tells its sizes as scaled", () => {
+    build([feature("cylinder", { diameter: 10, height: 5 })]);
+    const raw = new Uint8Array(engine.exportStl([], "fine").stl);
+    engine.dispose();
+    let b64 = "";
+    for (const x of raw) b64 += String.fromCharCode(x);
+    const file = { fileName: "disc.stl", format: "stl" as const, data: btoa(b64), units: "mm" as const };
+    const plain = { ...importFeature(file), simplify: "normal" as const };
+    const r1 = build([plain]);
+    expect(r1.featureNotes?.[plain.id]).toMatch(/Ø10\b/);
+    const r2 = engine.rebuild([{ ...plain, params: { scale: "2" } }]);
+    expect(r2.featureErrors).toEqual({});
+    expect(r2.featureNotes?.[plain.id]).toMatch(/Ø20\b/);
+    expect(bounds(r2)[1][2]).toBeCloseTo(10, 2);
   });
 });
 
@@ -121,5 +158,22 @@ describe("Move / copy: Scale uniformly", () => {
     expect(engine.rebuild([imp, zero]).featureErrors[zero.id]).toMatch(/more than 0/);
     const one = move(imp.id, {}, { factor: 1 });
     expect(engine.rebuild([imp, one]).featureErrors[one.id]).toMatch(/other than 1/);
+  });
+
+  it("carries a connector the part owns along (its directions stay one long), and says what a bigger part leaves out", () => {
+    const b = feature("box", { width: 10, depth: 10, height: 10 });
+    const conn: Feature = { ...feature("mateConnector", {}), connector: { at: { p: [10, 10, 10] }, plane: { kind: "default", name: "Top" }, owner: b.id, base: { origin: [0, 0, 0], x: [1, 0, 0], z: [0, 0, 1] } } };
+    const r = build([b, conn, move(b.id, { about: "origin" }, { factor: 2 })]);
+    expect(r.featureErrors).toEqual({});
+    const c = r.parts[0].connectors![0];
+    expect(c.origin.map((n) => Math.round(n * 1e6) / 1e6)).toEqual([20, 20, 0]);
+    expect(Math.hypot(...c.z)).toBeCloseTo(1, 9);
+    expect(Math.hypot(...c.x)).toBeCloseTo(1, 9);
+    engine.dispose();
+
+    const bolt: Feature = { ...feature("fastener", { length: 8, x: 0, y: 0, z: 0 }), fastener: { kind: "bolt", size: "M6", threaded: false } };
+    const big = build([bolt, move(bolt.id, {}, { factor: 2 })]);
+    expect(big.featureErrors).toEqual({});
+    expect(Object.values(big.featureWarnings ?? {}).join(" ")).toMatch(/modelled threads/);
   });
 });
