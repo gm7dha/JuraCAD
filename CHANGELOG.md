@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.95 — Simplify brings back more real faces from STL files
+
+- Slanted holes and slanted cut ends come back as real faces with their true sizes (you can fillet or chamfer the rim).
+- Where round shapes cross — two bars meeting in a T, a hole through a hole, a pin through a ball — the faces come back.
+- Rounded edges that go part way round a corner (a rounded plate's or pocket's corners) come back too.
+- The summary names them: "slanted hole Ø8", "curved edges where round faces meet".
+- Threaded parts are tidied a little quicker than before.
+
 ## v0.94 — Scale imports and parts
 
 - Importing a STEP or STL file: a Scale box and a File units choice (as in the file, mm, cm, m, inches, feet), with the

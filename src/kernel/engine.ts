@@ -7883,6 +7883,16 @@ export class GeometryEngine {
             }
             e.delete();
           }
+          // No round edge (a slanted hole between two elliptical rims): from the surface itself.
+          if (!item.radius) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const oc = getOC() as any;
+            const surf = new oc.BRepAdaptor_Surface(face.wrapped, true);
+            const cyl = surf.Cylinder();
+            item.radius = cyl.Radius();
+            cyl.delete();
+            surf.delete();
+          }
         }
         found.push({ item, shape: face });
       }

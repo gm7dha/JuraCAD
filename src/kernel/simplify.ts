@@ -13,8 +13,8 @@
  */
 import { cast, getOC, measureVolume, type Shape3D } from "replicad";
 
-import { NOTHING_TO_TIDY, planMesh, TOO_DETAILED, type MeshPlan, type PlanCurve, type PlanOptions } from "../geometry/meshSimplify";
-import { canonicalX, dot, frameOf, sub, surfaceDistance, unit, type TorusSurface, type Vec3 } from "../geometry/shapeFit";
+import { curveSamples, NOTHING_TO_TIDY, planMesh, TOO_DETAILED, type MeshPlan, type PlanCurve, type PlanOptions } from "../geometry/meshSimplify";
+import { canonicalX, dot, ellipseParam, frameOf, sub, surfaceDistance, unit, type TorusSurface, type Vec3 } from "../geometry/shapeFit";
 import { weld } from "../geometry/threeMf";
 import { SIMPLIFY_TOLERANCES, type SimplifiedFace, type SimplifyLevel, type SimplifySummary, type SimplifyTolerances } from "../model/simplify";
 import { facesOf, solidsOf } from "./topology";
@@ -155,6 +155,29 @@ function makeCurveEdge(bin: Bin, c: PlanCurve): any {
     if (!mk.IsDone()) throw new Error("line");
     return bin.keep(mk.Edge());
   }
+  if (c.kind === "spline") {
+    // A smooth spline through points lying exactly on both surfaces (a loop: round and back smoothly).
+    const pts = c.points;
+    const flat = bin.keep(new oc.NCollection_Array1_gp_Pnt(1, pts.length));
+    pts.forEach((p, i) => flat.SetValue(i + 1, pnt(bin, p)));
+    // (Held by OpenCascade's handle once given to the fit, so it isn't freed here.)
+    const arr = new oc.NCollection_HArray1_gp_Pnt(flat);
+    const fit = bin.keep(new oc.GeomAPI_Interpolate(arr, c.closed, 1e-9));
+    fit.Perform();
+    if (!fit.IsDone()) throw new Error("spline");
+    const mk = bin.keep(new oc.BRepBuilderAPI_MakeEdge(fit.Curve()));
+    if (!mk.IsDone()) throw new Error("spline");
+    return bin.keep(mk.Edge());
+  }
+  if (c.kind === "ellipse") {
+    const ax = bin.keep(new oc.gp_Ax2(pnt(bin, c.centre), dir(bin, c.normal), dir(bin, c.xdir)));
+    const el = bin.keep(new oc.gp_Elips(ax, c.major, c.minor));
+    // All the way round from `from` (where a round face's seam is), so its one corner sits there.
+    const t0 = ellipseParam(c, c.from);
+    const mk = c.full ? bin.keep(new oc.BRepBuilderAPI_MakeEdge(el, t0, t0 + 2 * Math.PI)) : bin.keep(new oc.BRepBuilderAPI_MakeEdge(el, pnt(bin, c.from), pnt(bin, c.to)));
+    if (!mk.IsDone()) throw new Error("ellipse");
+    return bin.keep(mk.Edge());
+  }
   // The circle starts at `from`, so a whole circle's one corner sits there.
   const x = unit(sub(c.from, c.centre));
   const xdir: Vec3 = Math.abs(dot(x, c.normal)) < 0.9 ? unit(sub(x, [c.normal[0] * dot(x, c.normal), c.normal[1] * dot(x, c.normal), c.normal[2] * dot(x, c.normal)])) : frameOf(c.normal)[0];
@@ -244,6 +267,75 @@ function bandOf(face: MeshPlan["faces"][number], curves: PlanCurve[]): { axis?: 
   return { v0: Math.min(...vs), v1: Math.max(...vs) };
 }
 
+/**
+ * A round face that goes all the way round its axis but isn't bounded by two
+ * circles square to it (a slanted hole: two ellipses; a pipe a branch joins:
+ * two circles and the crossing): a band of its surface reaching past all its
+ * loops, split along them, and the piece holding the face's sample kept. (A
+ * face made from such loops alone would have no seam, which OpenCascade's
+ * fixing can't add here.)
+ */
+function cutFromBand(bin: Bin, face: MeshPlan["faces"][number], curves: PlanCurve[], edges: any[]): any | string {
+  const oc = getOC() as any;
+  const s = face.surface;
+  if (s.kind !== "cylinder" && s.kind !== "cone") return "A round face couldn't be made.";
+  const k = s.kind === "cone" ? Math.hypot(1, s.slope) : 1;
+  const along = (p: Vec3) => dot(sub(p, s.origin), s.axis);
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const loop of face.loops)
+    for (const use of loop)
+      for (const p of curveSamples(curves[use.curve])) {
+        lo = Math.min(lo, along(p));
+        hi = Math.max(hi, along(p));
+      }
+  if (!(hi > lo)) return "A round face couldn't be made.";
+  // Past every loop, but (a cone) not past its point.
+  let margin = 0.05 * (hi - lo) + 0.5;
+  if (s.kind === "cone" && Math.abs(s.slope) > 1e-9) {
+    const apex = -s.radius / s.slope;
+    const room = Math.min(...[lo - apex, apex - hi].filter((d) => d > 0));
+    if (Number.isFinite(room)) margin = Math.min(margin, room / 2);
+  }
+  const surface = surfaceOf(bin, s);
+  const mk = bin.keep(new oc.BRepBuilderAPI_MakeFace(surface, 0, 2 * Math.PI, (lo - margin) * k, (hi + margin) * k, 1e-7));
+  if (!mk.IsDone()) return "A round face couldn't be made.";
+  const band = bin.keep(mk.Face());
+  const splitter = bin.keep(new oc.BRepAlgoAPI_Splitter());
+  const args = bin.keep(new oc.NCollection_List_TopoDS_Shape());
+  const tools = bin.keep(new oc.NCollection_List_TopoDS_Shape());
+  args.Append(band);
+  for (const loop of face.loops) for (const use of loop) tools.Append(edges[use.curve]);
+  splitter.SetArguments(args);
+  splitter.SetTools(tools);
+  splitter.Build();
+  if (splitter.HasErrors()) return "A round face couldn't be cut to its edges.";
+  const pieces = bin.keep(splitter.Shape());
+  const vx = bin.keep(new oc.BRepBuilderAPI_MakeVertex(pnt(bin, face.sample)));
+  const vertex = bin.keep(vx.Vertex());
+  let best: any = null;
+  let bestD = Infinity;
+  let count = 0;
+  const ex = new oc.TopExp_Explorer(pieces, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+  for (; ex.More(); ex.Next()) {
+    const f = bin.keep(oc.TopoDS.Face(ex.Current()));
+    count++;
+    const ds = new oc.BRepExtrema_DistShapeShape();
+    ds.LoadS1(vertex);
+    ds.LoadS2(f);
+    const d = ds.Perform() && ds.NbSolution() > 0 ? ds.Value() : Infinity;
+    ds.delete();
+    if (d < bestD) {
+      bestD = d;
+      best = f;
+    }
+  }
+  ex.delete();
+  // The loops must have cut the band (at least the two ends off), and the sample lie on the piece.
+  if (!best || count < 2 || bestD > 1e-3) return "A round face couldn't be cut to its edges.";
+  return best;
+}
+
 /** The solid a plan describes, or a reason it couldn't be made soundly. */
 export function solidFromPlan(plan: MeshPlan, tol: SimplifyTolerances): Shape3D | string {
   const oc = getOC() as any;
@@ -258,6 +350,13 @@ export function solidFromPlan(plan: MeshPlan, tol: SimplifyTolerances): Shape3D 
         const mk = bin.keep(new oc.BRepBuilderAPI_MakeFace(surface, 0, 2 * Math.PI, band.v0, band.v1, 1e-7));
         if (!mk.IsDone()) return "A round face couldn't be made.";
         const f = bin.keep(mk.Face());
+        sewing.Add(face.forward ? f : bin.keep(f.Reversed()));
+        continue;
+      }
+      if (face.full && (face.surface.kind === "cylinder" || face.surface.kind === "cone")) {
+        // All the way round, but not between two circles (a slanted hole, a pipe with a branch): cut out of a band.
+        const f = cutFromBand(bin, face, plan.curves, edges);
+        if (typeof f === "string") return f;
         sewing.Add(face.forward ? f : bin.keep(f.Reversed()));
         continue;
       }
@@ -330,6 +429,28 @@ export function describeFaces(shape: Shape3D, meshPoints: Vec3[] = [], tori: Tor
   const T = oc.GeomAbs_SurfaceType;
   const out: SimplifiedFace[] = [];
   const faces = facesOf(shape);
+  // Each round face's curved edges that aren't circles: ellipses (a slanted end) and spline curves (where it
+  // crosses something) — the splines by their middle, to count those two round faces share.
+  const edgeKinds = (f: { wrapped: unknown }) => {
+    const C = oc.GeomAbs_CurveType;
+    let ellipse = false;
+    const splines: string[] = [];
+    const ex = new oc.TopExp_Explorer(f.wrapped, oc.TopAbs_ShapeEnum.TopAbs_EDGE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+    for (; ex.More(); ex.Next()) {
+      const c = new oc.BRepAdaptor_Curve(oc.TopoDS.Edge(ex.Current()));
+      const t = c.GetType();
+      if (t === C.GeomAbs_Ellipse) ellipse = true;
+      else if (t === C.GeomAbs_BSplineCurve || t === C.GeomAbs_BezierCurve || t === C.GeomAbs_OtherCurve) {
+        const m = c.Value((c.FirstParameter() + c.LastParameter()) / 2);
+        splines.push([m.X(), m.Y(), m.Z()].map((x: number) => x.toFixed(3)).join(","));
+        m.delete();
+      }
+      c.delete();
+    }
+    ex.delete();
+    return { ellipse, splines: [...new Set(splines)] };
+  };
+  const roundEdges: { at: number; splines: string[] }[] = [];
   for (const f of faces) {
     const s = new oc.BRepAdaptor_Surface(f.wrapped, true);
     try {
@@ -364,6 +485,8 @@ export function describeFaces(shape: Shape3D, meshPoints: Vec3[] = [], tori: Tor
         const at: Vec3 = [p.X(), p.Y(), p.Z()];
         p.delete();
         const t = tori.find((x) => surfaceDistance(x, at) < 1e-3);
+        const edges = edgeKinds(f);
+        if (edges.splines.length) roundEdges.push({ at: out.length, splines: edges.splines });
         out.push({ kind, radius: t?.minor, full: s.LastUParameter() - s.FirstUParameter() >= 2 * Math.PI - 1e-3 });
         continue;
       }
@@ -410,12 +533,21 @@ export function describeFaces(shape: Shape3D, meshPoints: Vec3[] = [], tori: Tor
         g.delete();
       }
       [p, du, dv, n0].forEach((x) => x.delete());
-      out.push({ kind, radius, full, concave });
+      const edges = edgeKinds(f);
+      if (edges.splines.length) roundEdges.push({ at: out.length, splines: edges.splines });
+      out.push({ kind, radius, full, concave, ...(edges.ellipse ? { slanted: true } : {}) });
     } finally {
       s.delete();
     }
   }
   faces.forEach((f) => f.delete());
+  // A spline edge both of whose faces are round: where round faces meet (counted on each, so halved in the summary).
+  const uses = new Map<string, number>();
+  for (const r of roundEdges) for (const k of r.splines) uses.set(k, (uses.get(k) ?? 0) + 1);
+  for (const r of roundEdges) {
+    const n = r.splines.filter((k) => (uses.get(k) ?? 0) >= 2).length;
+    if (n) out[r.at] = { ...out[r.at], meets: n };
+  }
   return out;
 }
 

@@ -689,7 +689,7 @@
   flatness every 25%; edges are chains of mesh edges between corners, each an exact line or arc (from the surfaces where possible —
   `meetCircle`: plane ⟂ axis, sphere/plane, coaxial cylinder/cone/torus; else fitted and snapped onto the axis), corners placed
   on all their surfaces (`meetPoint`) and exactly on their arcs; whole circles start at `canonicalX` (where round faces'
-  seams are). A round face with an edge that's neither is given back as flat facets ("left as mesh"), and that repeats. The
+  seams are; a loop with no corner keeps that start). A round face with an edge that's none of these is given back as flat facets ("left as mesh"), and that repeats. The
   engine (`src/kernel/simplify.ts`) builds faces with ShapeFix_Face on each surface (always on the surface's own side: a
   reversed face's loops are walked backwards, then the face is turned round — else partial concave faces, slot ends and
   inside fillets, never close) (round bands bounded by whole circles —
@@ -702,8 +702,32 @@
   Simplify part's cache keys imports by `importKey` and leaves names out; failures are cached too. A STEP file whose triangles
   come as a skin (no solid; brought in as a surface without Simplify) becomes a solid when they close up (`solidFromFacets`). Results are cached
   (importer: by file + level, `importCacheKey`; Simplify part: `GeometryEngine.simplified`, by the features up to it).
-  Not done: ellipses (a slanted hole's rim, so slanted holes stay mesh), cylinder–cylinder crossings, partial tori, free-form
-  (B-spline) surfaces. Tests: tests/shapeFit, meshSimplify (pure; meshes from tests/support/meshShapes.ts), engineSimplify
+  Newer edges and faces: `fitChain` tries, in order, an exact `ellipse` PlanCurve (`meetEllipse`: plane across a cylinder
+  at a slant — centre on the axis, short axis r square to it in the plane, long r/|cos θ|; every chain corner on it and on
+  both surfaces; a loop starts on the cylinder's seam, `canonicalX`, and the engine makes it from that parameter,
+  `ellipseParam`), then lines/arcs as before (`fitLineOrArc`), then a `spline` where two surfaces cross (`crossingChain`:
+  each corner moved onto both by `ontoBoth` — Gauss–Newton square to both, refused where they meet at < 3° (touching, as
+  equal bars' saddle sides) — plus `CROSSING_STEPS` exact points between, ≤ `MOST_CROSSING_POINTS`; smooth, one way; a loop
+  turned to start farthest from either round face's seam) → GeomAPI_Interpolate through them (periodic for loops). Round
+  faces going all the way round that aren't two-circle bands (a slanted hole, a pipe a branch joins) are `cutFromBand`: a
+  band of the cylinder/cone past all loops, split by the loop edges (BRepAlgoAPI_Splitter), the piece nearest the face's
+  sample kept (ShapeFix can't add their seam). Partial tori: neighbouring round regions one surface fits together are
+  merged after growing (a corner's slivers of cylinders → one torus); a too-big first growth is retried with its first half,
+  quarter… (a boss's fillet ring); a flat group's facing is asked per triangle when its middle fails (a strip round a ring's
+  top); `fitTorus` is polished by Gauss–Newton on the points (`polishTorus`); the same face grown and turned down from `SAME_TURNED_DOWN` (12) seeds isn't seeded again (a printed nut's thread crest was regrown hundreds of times once tori fitted better: 13× the work; tests/engineSimplifyThread); a real flat face's own triangles never move to a
+  round face they lie on within the distance (they made a chord of a fillet's curved edge); where two round faces meet
+  smoothly in a `meetCircle` (new: a straight fillet into a corner's torus — the cylinder's axis touching the torus's middle
+  circle) whose plane parts them, triangles near the join go to their side of it and both are fitted again (cylinders,
+  cones, spheres; tori keep their fit); outlines are walked through each face's triangle fans (`nextHalf`), and a vertex
+  with more than two boundary edges round it is a corner (a face's outline passing twice). Summary: `SimplifiedFace.slanted`
+  (an ellipse edge) → "slanted hole Ø8", `meets` (spline edges shared by two round faces, halved) → "1 curved edge where
+  round faces meet". Measure reads a cylinder's radius from its surface when it has no circle edge. Not done: a chamfer or
+  fillet along a slanted rim (OCCT's surface there is no cone/torus), equal bars' T (tangent saddle), a torus whose tube
+  reaches its axis (pocket corner radius = 2 × floor fillet), fillets faceted coarser than ~12 per quarter turn round a
+  corner, free-form (B-spline) surfaces. Tests: meshSimplifyMore (pure: slanted hole, T of bars, the T as a hollow = a hole
+  through a hole, a rounded plate's corner tori), engineSimplifyMore (heavy: the same from real parts' STLs — face counts,
+  radii within 0.001, volumes within 0.5%, a fillet on a recovered ellipse rim; a rounded pocket floor; a boss's foot fillet).
+  Tests: tests/shapeFit, meshSimplify (pure; meshes from tests/support/meshShapes.ts), engineSimplify
   (heavy: a machined block's STL from the app's exporter → 10 faces, Ø5/Ø8/R2 within 0.01, volume within 0.5%, fillet on a
   recovered edge; slot ends, inside fillets and a notch; a STEP with split faces → 6 faces, same volume; a roof at 0.86° left
   alone; a mesh-like STEP skin → a solid; a lumpy ball stays sound), mcpSimplify.
