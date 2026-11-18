@@ -11,7 +11,7 @@ import { connectorFromClick, fractionAlong, planeClick, type GeomClick } from ".
 import { curveClick, curvePoint, pathClick, type CurveClick } from "../model/curveClicks";
 import { laterPathMessage, togglePathCurve } from "../model/frame";
 import { isMorePlaneMode } from "../sketch/planeTypes";
-import { loftClick } from "../model/loft";
+import { loftClick, withLoftDef } from "../model/loft";
 import { boundaryClick } from "../model/surfaceClicks";
 import { sketchLine3D } from "../model/patternRefs";
 import type { Feature } from "../model/types";
@@ -151,6 +151,12 @@ export function geomPick(manager: SceneManager | null, target: PickTarget | null
     else if (target.id !== d.id) s.setDraftField({ frame: togglePathCurve(d.frame, target.id) });
     return true;
   }
+  // Loft: a curve feature clicked while choosing the guide or path is it.
+  if (d?.type === "loft" && target?.kind === "curve" && (d.loft?.picking === "guide" || d.loft?.picking === "path")) {
+    const which = d.loft.picking;
+    s.setDraftField(withLoftDef(d, { [which]: { curve: target.id }, picking: undefined }));
+    return true;
+  }
   if (target?.kind === "curve") {
     // Nothing that takes a curve is open: select it in the list.
     if (!s.editing) s.selectFeature(target.id);
@@ -165,8 +171,10 @@ export function geomPick(manager: SceneManager | null, target: PickTarget | null
     else s.setDraftField({ planeDef: next });
     return true;
   }
-  // Loft: a flat face as a section, a corner as its start/end point, edges as the guide or path.
-  if (d?.type === "loft" && target?.kind === "part") {
+  // Loft: a face as a section, a corner as its start/end point, edges as the guide, path or a section; any line
+  // (an edge, a face's normal, a plane, a connector, a sketch line) as an end's direction.
+  const loftDir = d?.type === "loft" && (d.loft?.picking === "startDir" || d.loft?.picking === "endDir");
+  if (d?.type === "loft" && (target?.kind === "part" || (loftDir && target))) {
     const c = geomClickOf(manager, target);
     if (!c) return true;
     const next = loftClick(d, c);

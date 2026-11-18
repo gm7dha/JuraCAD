@@ -32,6 +32,10 @@ export function LoftOptions({ sketches }: { sketches: Feature[] }) {
       {label}
     </button>
   );
+  const edgePicking = picking === "newSectionEdges" || picking === "sectionEdges";
+  // Curve features (Helix, Fit spline…) above the loft can be its guide or path.
+  const at = features.findIndex((f) => f.id === draft.id);
+  const curves = features.filter((f, i) => f.type === "curve" && !f.suppressed && (at < 0 || i < at));
   const unused = sketches.filter((f) => !profiles.some((p) => "sketch" in p && p.sketch === f.id));
   const pointChoices = sketches.flatMap((f) => (f.sketch ? lonePoints(f.sketch.data).map((p, i) => ({ value: `${f.id}|${p.id}`, label: `${f.name}: point ${i + 1}` })) : []));
   const endPointOf = (which: "start" | "end") => {
@@ -86,7 +90,13 @@ export function LoftOptions({ sketches }: { sketches: Feature[] }) {
       <div className="loft-end">
         <label className="field-label">
           {which === "start" ? "How it leaves the first shape" : "How it reaches the last shape"}
-          <select className="full-select" value={cond?.kind ?? ""} onChange={(e) => set(e.target.value ? { kind: e.target.value as LoftEnd["kind"], ...(cond?.magnitude ? { magnitude: cond.magnitude } : {}) } : undefined)}>
+          <select className="full-select" value={cond?.kind ?? ""} onChange={(e) => {
+              const kind = e.target.value as LoftEnd["kind"] | "";
+              const next: LoftEnd | undefined = kind ? { kind, ...(cond?.magnitude ? { magnitude: cond.magnitude } : {}), ...(kind === "direction" && cond?.towards ? { towards: cond.towards } : {}) } : undefined;
+              // A direction to pick: clicks in the view choose it straight away.
+              const pick = kind === "direction" && !next?.towards ? { picking: (which === "start" ? "startDir" : "endDir") as Picking } : {};
+              setDef({ ...(which === "start" ? { start: next } : { end: next }), ...pick });
+            }}>
             <option value="">Free (as it comes)</option>
             {choices.map((k) => (
               <option key={k} value={k}>
@@ -95,6 +105,31 @@ export function LoftOptions({ sketches }: { sketches: Feature[] }) {
             ))}
           </select>
         </label>
+        {cond?.kind === "direction" && (
+          <label className="field-label">
+            Direction
+            <select
+              className="full-select"
+              aria-label={which === "start" ? "Start direction" : "End direction"}
+              value={cond.towards?.axis ?? (cond.towards ? "picked" : "")}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "click") setDef({ picking: which === "start" ? "startDir" : "endDir" });
+                else if (v === "x" || v === "y" || v === "z") set({ ...cond, towards: { p: [0, 0, 0], dir: v === "x" ? [1, 0, 0] : v === "y" ? [0, 1, 0] : [0, 0, 1], axis: v } });
+              }}
+            >
+              {!cond.towards && <option value="">Choose…</option>}
+              {cond.towards && !cond.towards.axis && <option value="picked">The line you clicked</option>}
+              <option value="x">Along X</option>
+              <option value="y">Along Y</option>
+              <option value="z">Along Z</option>
+              <option value="click">Click an edge, face, plane or mate connector…</option>
+            </select>
+          </label>
+        )}
+        {(picking === "startDir" || picking === "endDir") && picking === (which === "start" ? "startDir" : "endDir") && (
+          <p className="dialog-hint field-hint">Click a straight edge, a flat face (its normal), a round edge or face (its axis), a plane, a sketch line or a mate connector.</p>
+        )}
         {cond && cond.kind !== "tangent" && (
           <label className="field-label">
             How far it reaches (1 = usual)
@@ -116,19 +151,24 @@ export function LoftOptions({ sketches }: { sketches: Feature[] }) {
   };
   const curveSelect = (which: "guide" | "path", label: string) => {
     const c: LoftCurve | undefined = def[which];
-    const value = c && "sketch" in c ? c.sketch : c ? "edges" : "";
+    const value = c && "sketch" in c ? c.sketch : c && "curve" in c ? `curve:${c.curve}` : c ? "edges" : "";
     return (
       <>
         <label className="field-label">
           {label}
           <select className="full-select" aria-label={label} value={value} onChange={(e) => {
               const v = e.target.value;
-              const next: LoftCurve | undefined = v === "edges" ? (c && "edges" in c ? c : undefined) : v ? { sketch: v } : undefined;
+              const next: LoftCurve | undefined = v === "edges" ? (c && "edges" in c ? c : undefined) : v.startsWith("curve:") ? { curve: v.slice(6) } : v ? { sketch: v } : undefined;
               setDef({ ...(which === "guide" ? { guide: next } : { path: next }), picking: v === "edges" ? which : undefined });
             }}>
             <option value="">None</option>
             {sketches.map((f) => (
               <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+            {curves.map((f) => (
+              <option key={f.id} value={`curve:${f.id}`}>
                 {f.name}
               </option>
             ))}
@@ -164,10 +204,10 @@ export function LoftOptions({ sketches }: { sketches: Feature[] }) {
               <button type="button" className="icon-button" title="Take out" aria-label="Take out" onClick={() => setProfiles(profiles.filter((_, j) => j !== i))}>
                 ✕
               </button>
-              {def.matchCorners && !("point" in p) && (
+              {def.matchCorners && !("point" in p) && !("edges" in p) && (
                 <label className="inline-field">
                   {" "}Turn by corners{" "}
-                  <input type="number" step={1} value={p.turn ?? 0} style={{ width: "4em" }} onChange={(e) => setProfiles(profiles.map((q, j) => (j === i && !("point" in q) ? { ...q, turn: Math.round(Number(e.target.value)) || 0 } : q)))} />
+                  <input type="number" step={1} value={p.turn ?? 0} style={{ width: "4em" }} onChange={(e) => setProfiles(profiles.map((q, j) => (j === i && !("point" in q) && !("edges" in q) ? { ...q, turn: Math.round(Number(e.target.value)) || 0 } : q)))} />
                 </label>
               )}
               {several && "sketch" in p && (
@@ -207,7 +247,10 @@ export function LoftOptions({ sketches }: { sketches: Feature[] }) {
         </label>
       )}
       <p className="dialog-hint field-hint">
-        Each sketch needs one closed shape (or pick one of its areas). Click flat faces of parts in the view to use them too.{" "}
+        Each sketch needs one closed shape (or pick one of its areas). Click faces of parts in the view to use them too (a curved face's outline works; its ends can't be shaped).{" "}
+        <button type="button" className="link-button" aria-pressed={edgePicking} onClick={() => setDef({ picking: edgePicking ? undefined : "newSectionEdges" })}>
+          {edgePicking ? "Done picking edges" : "Add a section from part edges…"}
+        </button>{" "}
         {picking !== "profile" && (
           <button type="button" className="link-button" onClick={() => setDef({ picking: undefined })}>
             Back to clicking faces
@@ -216,6 +259,12 @@ export function LoftOptions({ sketches }: { sketches: Feature[] }) {
       </p>
       {pointSelect("start")}
       {pointSelect("end")}
+      {(picking === "newSectionEdges" || picking === "sectionEdges") && (
+        <p className="dialog-hint field-hint">
+          Click edges of a part that join end to end{draft.surface ? "" : " all the way round"}.{" "}
+          {picking === "sectionEdges" && pickButton("newSectionEdges", "Start another edge section")}
+        </p>
+      )}
       {(picking === "start" || picking === "end") && <p className="dialog-hint field-hint">Click near the corner of a part you want the loft to come to a point at.</p>}
       {!def.periodic && endSelect("start")}
       {!def.periodic && endSelect("end")}

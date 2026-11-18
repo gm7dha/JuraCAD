@@ -9,7 +9,7 @@
 import { setMirrorReference, setPatternDirection } from "../model/patternRefs";
 import { moveFaceAxisProblem, withMoveFaceAxis, withMoveFaceMode } from "../model/moveFace";
 import type { TopoPick } from "../geometry/topoRef";
-import type { BoundaryCurve, MoveFaceDef, Feature, FilletRadiusPoint, FeatureType, JuraCADDocument, LoftDef, LoftProfile, Operation } from "../model/types";
+import type { BoundaryCurve, GeomPick, MoveFaceDef, Feature, FilletRadiusPoint, FeatureType, JuraCADDocument, LoftDef, LoftProfile, Operation } from "../model/types";
 import { endChoices, loftProfiles, profilesProblem, tidyEnds, withEndPoint, withLoftDef, withProfiles } from "../model/loft";
 import { tidyRadiusPoints } from "../model/variableFillet";
 import { sameRef } from "../geometry/topoRef";
@@ -68,7 +68,7 @@ export const KIND_KEYS: Record<FeatureKind, string[]> = {
   extrude: ["sketch", "depth", "end", "up_to_face", "up_to_vertex", "up_to_part", "flip", "second_depth", "draft", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   revolve: ["sketch", "axis", "angle", "symmetric", "second_angle", "flip", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   sweep: ["sketch", "path", "path_edges", "path_part", "twist", "keep_orientation", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
-  loft: ["sections", "start_point", "end_point", "start", "end", "start_magnitude", "end_magnitude", "guide", "path", "straight", "match_corners", "turns", "closed_loop"],
+  loft: ["sections", "start_point", "end_point", "start", "end", "start_magnitude", "end_magnitude", "start_direction", "end_direction", "guide", "path", "straight", "match_corners", "turns", "closed_loop", "surface", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   hole: ["sketch", "size", "fit", "style", "end", "depth", "diameter", "counterbore_diameter", "counterbore_depth", "countersink_diameter", "countersink_angle", "flip"],
   fillet: ["part", "edges", "radius", "end_radius", "all_edges", "variable", "variable_straight"],
   chamfer: ["part", "edges", "distance", "second_distance", "angle", "flip_side", "all_edges"],
@@ -219,7 +219,28 @@ function moreSketches(f: Feature, a: Obj, ctx: SpecContext) {
   });
 }
 
-const LOFT_ENDS = { none: undefined, normal: "normal", rounded: "tangent", match_tangent: "matchTangent", match_curvature: "matchCurvature" } as const;
+const LOFT_ENDS = { none: undefined, normal: "normal", rounded: "tangent", match_tangent: "matchTangent", match_curvature: "matchCurvature", tangent_to_profile: "profileTangent", direction: "direction" } as const;
+
+/** A loft end's direction: "x"/"y"/"z", {"part", "edge"} (along a straight edge) or {"part", "face"} (a flat face's normal). */
+function loftDirection(v: unknown, where: string, ctx: SpecContext): GeomPick {
+  if (typeof v === "string" && ["x", "y", "z"].includes(v.trim().toLowerCase())) {
+    const axis = v.trim().toLowerCase() as "x" | "y" | "z";
+    return { p: [0, 0, 0], dir: axis === "x" ? [1, 0, 0] : axis === "y" ? [0, 1, 0] : [0, 0, 1], axis };
+  }
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw new InputError(`${where} must be "x", "y" or "z", {"part": "<name>", "edge": "E3"} (along a straight edge) or {"part": "<name>", "face": "F2"} (square to a flat face).`);
+  const o = v as Obj;
+  noExtras(o, ["part", "edge", "face"], where);
+  const part = ctx.session.part(ctx.parts, o.part, `${where}.part`);
+  if (has(o, "edge")) {
+    const [pick] = pickEdges(part, [o.edge], `${where}.edge`);
+    if (pick.ref.kind !== "edge" || pick.ref.curve !== "LINE") throw new InputError(`${where}.edge must be a straight edge.`);
+    const { a, b } = pick.ref;
+    return { p: a, dir: [b[0] - a[0], b[1] - a[1], b[2] - a[2]], pick };
+  }
+  const face = pickFace(part, o.face, `${where}.face`);
+  if (face.ref.surface !== "PLANE") throw new InputError(`${where}: ${face.id} isn't flat, so it has no one direction square to it.`);
+  return { p: face.ref.center, dir: face.ref.normal, pick: { partId: part.id, ref: face.ref } };
+}
 
 /**
  * Loft (Onshape's): "sections" in order — sketch names, or {"part", "face"} for a flat face — "start_point"/"end_point"
@@ -234,12 +255,17 @@ function applyLoft(f: Feature, a: Obj, ctx: SpecContext) {
     profiles = items.map((x, i): LoftProfile => {
       const where = `sections[${i}]`;
       if (typeof x === "string") return { sketch: ctx.session.feature(x, where, ["sketch"], ctx.doc).id };
-      if (!x || typeof x !== "object" || Array.isArray(x)) throw new InputError(`${where} must be a sketch's name, or {"part": "<name>", "face": "F3"} for a flat face.`);
+      if (!x || typeof x !== "object" || Array.isArray(x)) throw new InputError(`${where} must be a sketch's name, {"part": "<name>", "face": "F3"} for a face, or {"part": "<name>", "edges": ["E1", …]} for edges joined end to end.`);
       const o = x as Obj;
-      noExtras(o, ["part", "face"], where);
+      noExtras(o, ["part", "face", "edges"], where);
       const part = ctx.session.part(ctx.parts, o.part, `${where}.part`);
+      if (has(o, "edges")) {
+        const edges = pickEdges(part, list(o.edges, `${where}.edges`), `${where}.edges`).filter((p) => p.ref.kind === "edge");
+        if (!edges.length) throw new InputError(`${where}.edges: give edges (E-numbers from list_edges), not faces.`);
+        return { edges };
+      }
+      // A curved face works too (its outline; its end can't be shaped).
       const face = pickFace(part, o.face, `${where}.face`);
-      if (face.ref.surface !== "PLANE") throw new InputError(`${where}: ${face.id} isn't flat. A loft section must be a flat face.`);
       return { face: { partId: part.id, ref: face.ref } };
     });
   }
@@ -267,9 +293,17 @@ function applyLoft(f: Feature, a: Obj, ctx: SpecContext) {
     if (has(a, which)) {
       const kind = LOFT_ENDS[oneOf(a[which], Object.keys(LOFT_ENDS) as (keyof typeof LOFT_ENDS)[], which)];
       const p = which === "start" ? profiles[0] : profiles[profiles.length - 1];
-      if (kind && !endChoices(p).includes(kind)) throw new InputError(`"${which}": ${a[which]} doesn't suit that section. A point takes "rounded"; a sketch "normal"; a face "normal", "match_tangent" or "match_curvature".`);
+      if (kind && !endChoices(p).includes(kind)) throw new InputError(`"${which}": ${a[which]} doesn't suit that section. A point takes "rounded"; a sketch "normal", "tangent_to_profile" or "direction"; a face those or "match_tangent" / "match_curvature".`);
       def[which] = kind ? { kind } : undefined;
     }
+    const dk = `${which}_direction`;
+    if (has(a, dk)) {
+      const cur = def[which] ?? f.loft?.[which];
+      if (cur?.kind !== "direction") throw new InputError(`"${dk}" goes with "${which}": "direction".`);
+      def[which] = { ...cur, towards: loftDirection(a[dk], dk, ctx) };
+    } else if (def[which]?.kind === "direction" && !def[which]!.towards && !f.loft?.[which]?.towards) {
+      throw new InputError(`"${which}": "direction" needs "${dk}" ("x", "y", "z", {"part", "edge"} or {"part", "face"}).`);
+    } else if (def[which]?.kind === "direction" && !def[which]!.towards) def[which] = { ...def[which]!, towards: f.loft![which]!.towards };
     const mk = `${which}_magnitude`;
     if (has(a, mk)) {
       const m = amount(a[mk], mk, ctx.scope, { positive: true, unit: "" }).value;
@@ -281,7 +315,12 @@ function applyLoft(f: Feature, a: Obj, ctx: SpecContext) {
   }
   for (const which of ["guide", "path"] as const) {
     if (!(which in a)) continue;
-    def[which] = a[which] === null ? undefined : { sketch: ctx.session.feature(a[which], which, ["sketch"], ctx.doc).id };
+    if (a[which] === null) def[which] = undefined;
+    else {
+      // A sketch, or a curve feature (Helix, Fit spline…).
+      const c = ctx.session.feature(a[which], which, ["sketch", "curve"], ctx.doc);
+      def[which] = c.type === "curve" ? { curve: c.id } : { sketch: c.id };
+    }
   }
   if (has(a, "match_corners")) def.matchCorners = bool(a.match_corners, "match_corners") || undefined;
   if (has(a, "closed_loop")) def.periodic = bool(a.closed_loop, "closed_loop") || undefined;
@@ -289,6 +328,15 @@ function applyLoft(f: Feature, a: Obj, ctx: SpecContext) {
   Object.assign(f, withLoftDef(f, def));
   if (!f.loft) delete f.loft;
   if (!f.loftRuled) delete f.loftRuled;
+  if (has(a, "surface")) {
+    if (bool(a.surface, "surface")) {
+      if (has(a, "thin") && a.thin) throw new InputError('A loft is a surface or a thin wall, not both; leave one of "surface" and "thin" out.');
+      f.surface = true;
+      f.operation = "new";
+      delete f.thin;
+    } else delete f.surface;
+  }
+  thinWall(f, a, ctx);
 }
 
 /** A default plane by name, optionally moved along its normal. */

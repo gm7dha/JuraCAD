@@ -32,7 +32,7 @@ import { isoclineWires, offsetOnFace, trimWire } from "./curvesMore";
 import { assignCheapest } from "../geometry/assign";
 import { bridgePoints, curveKindInfo, fitSplineProblem, helixSizes, type BridgeEnd } from "../model/curves";
 import { walkPoints } from "../sketch/pathSample";
-import { buildLoft } from "./loft";
+import { buildLoft, samePlaneProblem } from "./loft";
 import { textSolid, wrappedTextSolid, wrapShapes, wrapStart, type Cylinder } from "./textSolid";
 import { offsetSolid, shellByCutting } from "./surface";
 import { boundarySurface, type BoundaryInput } from "./boundary";
@@ -2003,8 +2003,9 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
       return textSolid(t.plane, { value: t.value, bold: t.bold, flip: t.flip, size: v.size, depth: v.depth, x: v.x, y: v.y, angle: v.angle });
     }
     case "loft": {
-      if (feature.loft) {
-        // Onshape's further loft choices (faces, points, end conditions, a guide or path…): src/kernel/loft.ts.
+      if (feature.loft || (feature.thin && !feature.surface)) {
+        // Onshape's further loft choices (faces, points, end conditions, a guide or path, thin…): src/kernel/loft.ts.
+        const thin = feature.thin && !feature.surface ? { thickness: v.thickness ?? 2, thickness2: v.thickness2 ?? 0, midPlane: feature.thin.midPlane, flip: feature.thin.flip } : undefined;
         return buildLoft(feature, {
           sketch: (id) => {
             const sk = sketches.get(id);
@@ -2014,7 +2015,17 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
           face: (shape, pick) => findPickedFace(shape, pick),
           edges: (shape, picks) => findPickedEdges(shape, picks),
           name: (id) => all.find((f) => f.id === id)?.name,
-        }, notes);
+          // A curve feature (Helix, Fit spline…) as the guide or path, found as a Curve pattern's path is.
+          curve: (id, what) => {
+            const target = all.find((f) => f.id === id);
+            if (target?.type !== "curve") throw new Error(`The loft's ${what} has been deleted. Edit the loft and choose another.`);
+            if (all.indexOf(target) > all.indexOf(feature)) throw new Error(`${target.name} comes after this in the list. Move it above, or choose another ${what}.`);
+            const c = loftCurves.get(all)?.(id);
+            if (!c?.wires.length) throw new Error(target.suppressed ? `${target.name} is suppressed, so it can't be the ${what}.` : `${target.name} couldn't be made, so it can't be the ${what}.`);
+            if (c.wires.length > 1) throw new Error(`${target.name} is in ${c.wires.length} separate pieces. The ${what} must be one run: join them with a Composite curve or a Bridging curve.`);
+            return c.wires[0].clone() as Wire;
+          },
+        }, notes, thin);
       }
       const sections = (feature.sections ?? []).map((id) => {
         const sk = sketches.get(id);
@@ -2022,6 +2033,8 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
         if (!sk?.sketch?.plane) throw new Error(f ? `${f.name} can't be used (it's suppressed, comes later in the list, or has no plane).` : "One of its sketches has been deleted. Edit the loft.");
         return { plane: sk.sketch.plane, data: sk.sketch.data, name: sk.name };
       });
+      const flat = samePlaneProblem(sections.map((x) => ({ name: x.name, ...planeFrame(x.plane) })), false);
+      if (flat) throw new Error(flat);
       if (feature.surface) return loftSurface(sections);
       return loftSketches(sections, { ruled: !!feature.loftRuled });
     }
@@ -2285,6 +2298,9 @@ interface BuiltCurve {
   wires: Wire[];
   frenet?: boolean;
 }
+
+/** A build's curve features by id, for a Loft's guide or path (keyed by the features list buildSolid is given). */
+const loftCurves = new WeakMap<Feature[], (id: string) => BuiltCurve | undefined>();
 
 /**
  * The path a sweep follows when it's a curve feature or picked part edges (null for a sketch path): a fresh wire the
@@ -3468,6 +3484,7 @@ export class GeometryEngine {
         if (features === listed) features = [...listed];
         features[index] = feature;
       }
+      if (feature.type === "loft") loftCurves.set(features, (id) => this.curves.get(id));
       if (feature.suppressed) continue;
       if (lastBuilt) this.faceMakers.after(lastBuilt, this.parts, lastMoved);
       lastBuilt = feature.id;

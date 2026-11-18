@@ -14,18 +14,20 @@
  * spine with contact, so the sections are scaled to keep touching it — it
  * takes one guide only (OpenCascade has nothing for several).
  */
-import { Vertex, cast, downcast, getOC, iterTopo, isShape3D, makeBSplineApproximation, makeLine, makePolygon, makeVertex, measureDistanceBetween, assembleWire, type Edge, type Face, type Shape3D, type Wire } from "replicad";
+import { Vertex, makeFace, cast, downcast, getOC, iterTopo, isShape3D, makeBSplineApproximation, makeLine, makePolygon, makeVertex, measureDistanceBetween, assembleWire, type Edge, type Face, type Shape3D, type Wire } from "replicad";
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
-import { findChains, type Segment } from "../sketch/regions";
+import { findChains, findRegions, type Segment } from "../sketch/regions";
 import { chosenRegions } from "../sketch/areas";
 import type { SketchData } from "../sketch/types";
 import type { TopoPick } from "../geometry/topoRef";
 import type { Feature, GeomPick, LoftCurve, LoftDef, LoftEnd, LoftProfile } from "../model/types";
-import { loftProfiles, profilesProblem } from "../model/loft";
+import { END_LABELS, loftProfiles, profilesProblem } from "../model/loft";
 import { segmentsWire } from "./extrude";
 import { loopStart, pathWire } from "./sweep";
-import { asIs } from "./surface";
+import { asIs, encloseSurfaces } from "./surface";
 import { cornerOnShape } from "./corners";
+import { chainEdges, reversedWire } from "./curves";
+import { thinSketches, type ThinSides } from "../sketch/thin";
 
 type Vec3 = [number, number, number];
 const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -52,7 +54,12 @@ export interface LoftContext {
   edges(shape: Shape3D, picks: TopoPick[]): Edge[];
   /** Names features in messages. */
   name(id: string): string | undefined;
+  /** A curve feature's wire by id (a fresh copy the loft frees; throws a plain message when it can't be used). */
+  curve?(id: string, what: string): Wire | null;
 }
+
+/** A section's outline given straight (Thin's walls): its pieces in the sketch's plane, used instead of its areas. */
+type Overrides = Map<number, Segment[]>;
 
 /** A section, ready: a closed (or, for surfaces, open) wire, or a point. */
 type Section =
@@ -66,6 +73,12 @@ type Section =
       /** A face section: how its neighbouring faces carry on (outward slope across per mm out), when asked for. */
       spread?: number;
       isFace?: boolean;
+      /** Not flat (a curved face, or part edges that don't lie in one plane): `normal` is only roughly its way. */
+      curved?: boolean;
+      /** Part edges, not a sketch or face. */
+      isEdges?: boolean;
+      /** A curved face section: the face itself, to close a solid loft's end with (no flat face fits its outline). */
+      cap?: Face;
       /** For lining up corners: the sketch's pieces and frame. */
       pieces?: { segments: Segment[]; plane: SketchPlane };
       turn?: number;
@@ -77,6 +90,11 @@ const CLOSE = 0.01;
 const REACH = 0.05;
 /** A rounded tip: the angles round the quarter ellipse the neighbour is shrunk along. */
 const TIP_ANGLES = [25, 50, 70, 82];
+/** "Tangent to profile": each helper copy's distance on (share of the gap) and how much it grows (share, × magnitude). */
+const PROFILE_STEPS: [number, number][] = [
+  [0.002, 0.02],
+  [0.01, 0.06],
+];
 /** Magnitudes kept so helpers never pass halfway to the next section. */
 const MOST_MAGNITUDE = 4;
 
@@ -118,14 +136,34 @@ function pointOf(g: GeomPick, ctx: LoftContext): Vec3 {
 }
 
 /** One section, found. */
-function sectionOf(p: LoftProfile, ctx: LoftContext, surface: boolean, start: { dir?: Vec3 }): Section {
+function sectionOf(p: LoftProfile, ctx: LoftContext, surface: boolean, start: { dir?: Vec3 }, override?: Segment[]): Section {
   if ("point" in p) return { kind: "point", at: pointOf(p.point, ctx), name: "the point" };
+  if ("edges" in p) {
+    const edges: Edge[] = [];
+    for (const partId of new Set(p.edges.map((e) => e.partId))) {
+      const shape = ctx.part(partId);
+      if (!shape) throw new Error("A part with edges a loft section uses no longer exists (or comes later in the list). Edit the loft and pick them again.");
+      edges.push(...ctx.edges(shape, p.edges.filter((e) => e.partId === partId)));
+    }
+    // Joined in order (the picks can come in any order or direction).
+    const wires = chainEdges(edges);
+    if (wires.length !== 1) {
+      wires.forEach((w) => w.delete());
+      throw new Error(`A section's part edges must join end to end into one run (they make ${wires.length}). Pick edges that follow on from each other.`);
+    }
+    const wire = wires[0];
+    if (!surface && !wire.isClosed) {
+      wire.delete();
+      throw new Error("For a solid loft, a section made of part edges must go all the way round (a closed outline). Tick Surface to loft through open edges.");
+    }
+    const { normal, flat } = wireNormal(wire);
+    return { kind: "wire", wire, centre: tuple(wire.boundingBox.center), normal, name: "the picked edges", isEdges: true, ...(flat ? {} : { curved: true }) };
+  }
   if ("face" in p) {
     const shape = ctx.part(p.face.partId);
     if (!shape) throw new Error("A part with a face the loft uses no longer exists (or comes later in the list). Edit the loft and pick the face again.");
     const face = ctx.face(shape, p.face);
     try {
-      if (face.geomType !== "PLANE") throw new Error("A loft section must be a flat face; the picked one is curved now. Edit the loft.");
       const loops = face.wires;
       const holes = loops.length;
       loops.forEach((w) => w.delete());
@@ -133,7 +171,9 @@ function sectionOf(p: LoftProfile, ctx: LoftContext, surface: boolean, start: { 
       const wire = face.clone().outerWire();
       const c = tuple(face.center);
       const normal = unit(tuple(face.normalAt(c)));
-      return { kind: "wire", wire, centre: tuple(wire.boundingBox.center), normal, name: "the picked face", isFace: true, ...(p.turn !== undefined ? { turn: p.turn } : {}) };
+      // A curved face: its outline (which needn't be flat) is the section.
+      const curved = face.geomType !== "PLANE";
+      return { kind: "wire", wire, centre: tuple(wire.boundingBox.center), normal, name: "the picked face", isFace: true, ...(curved ? { curved: true, cap: face.clone() } : {}), ...(p.turn !== undefined ? { turn: p.turn } : {}) };
     } finally {
       face.delete();
     }
@@ -145,7 +185,8 @@ function sectionOf(p: LoftProfile, ctx: LoftContext, surface: boolean, start: { 
   }
   const frame = planeFrame(sk.plane);
   let segments: Segment[];
-  if (surface) {
+  if (override) segments = override;
+  else if (surface) {
     const { chains } = findChains(sk.data);
     if (chains.length !== 1) throw new Error(`${sk.name} needs exactly one run of lines or curves to loft through (it has ${chains.length}).`);
     segments = chains[0].segments;
@@ -158,6 +199,72 @@ function sectionOf(p: LoftProfile, ctx: LoftContext, surface: boolean, start: { 
   start.dir ??= loopStart(segments, frame);
   const wire = segmentsWire(segments, frame, 0, start.dir);
   return { kind: "wire", wire, centre: tuple(wire.boundingBox.center), normal: frame.n, name: sk.name, pieces: { segments, plane: sk.plane }, ...(p.turn !== undefined ? { turn: p.turn } : {}) };
+}
+
+/** A wire's plane's normal (Newell's method over samples), and whether it lies in that plane. */
+function wireNormal(w: Wire): { normal: Vec3; flat: boolean } {
+  const N = 64;
+  const pts = Array.from({ length: N }, (_, i) => tuple(w.pointAt(i / N)));
+  let n: Vec3 = [0, 0, 0];
+  for (let i = 0; i < N; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % N];
+    n = add(n, [(a[1] - b[1]) * (a[2] + b[2]), (a[2] - b[2]) * (a[0] + b[0]), (a[0] - b[0]) * (a[1] + b[1])]);
+  }
+  if (len(n) < 1e-9) {
+    // A straight run: any plane holding it.
+    const d = unit(sub(pts[N - 1], pts[0]));
+    return { normal: unit(Math.abs(d[2]) < 0.9 ? cross(d, [0, 0, 1]) : cross(d, [1, 0, 0])), flat: false };
+  }
+  const normal = unit(n);
+  const c = pts.reduce((m, q) => add(m, mul(q, 1 / N)), [0, 0, 0] as Vec3);
+  const size = Math.max(1e-6, ...pts.map((q) => len(sub(q, c))));
+  return { normal, flat: pts.every((q) => Math.abs(dot(sub(q, c), normal)) <= 1e-6 * size + 1e-7) };
+}
+
+/**
+ * Every shape on the same plane leaves nothing to loft through (OpenCascade makes a flat part of nothing), so it's
+ * refused in plain words. Only some of them on one plane (a step between two shapes on a plane, reached from another)
+ * still makes a solid, as it always has, so that's left alone. `ring`: kept for callers (a ring is no different).
+ */
+export function samePlaneProblem(list: { name: string; n: Vec3; origin: Vec3 }[], ring: boolean): string | null {
+  void ring;
+  if (list.length < 2) return null;
+  const a = list[0];
+  if (len(a.n) < 1e-12) return null;
+  const onIt = (b: { n: Vec3; origin: Vec3 }) => len(b.n) > 1e-12 && Math.abs(dot(unit(a.n), unit(b.n))) > 1 - 1e-9 && Math.abs(dot(sub(b.origin, a.origin), unit(a.n))) < 1e-6;
+  if (!list.every(onIt)) return null;
+  const b = list[1];
+  return `${a.name === b.name ? "Two of the shapes" : list.length > 2 ? "All the shapes" : `${a.name} and ${b.name}`} lie on the same plane, so there's nothing between them to loft through. Put each shape on its own plane (an offset plane, or a Plane feature).`;
+}
+
+/** Which way a "direction" end leaves: the picked line's, edge's, face's (its normal), axis's or connector's direction. */
+function dirOf(g: GeomPick, ctx: LoftContext): Vec3 {
+  if (g.axis) return g.axis === "x" ? [1, 0, 0] : g.axis === "y" ? [0, 1, 0] : [0, 0, 1];
+  if (g.pick) {
+    const shape = ctx.part(g.pick.partId);
+    if (!shape) throw new Error("The part with the loft's direction no longer exists (or comes later in the list). Pick the direction again.");
+    if (g.pick.ref.kind === "face") {
+      const face = ctx.face(shape, g.pick);
+      try {
+        // A round face: its axis, as the dialog took it; a flat one: its normal.
+        if (g.dir && face.geomType !== "PLANE") return unit(g.dir);
+        return unit(tuple(face.normalAt(tuple(face.center))));
+      } finally {
+        face.delete();
+      }
+    }
+    const [edge] = ctx.edges(shape, [g.pick]);
+    try {
+      if (edge.geomType === "LINE") return unit(sub(tuple(edge.endPoint), tuple(edge.startPoint)));
+      if (g.dir) return unit(g.dir);
+      return unit(tuple(edge.tangentAt(0.5)));
+    } finally {
+      edge.delete();
+    }
+  }
+  if (!g.dir || len(g.dir) < 1e-12) throw new Error("Pick a direction for the loft's end: a straight edge, a flat face, an axis or a mate connector.");
+  return unit(g.dir);
 }
 
 /** The same run of pieces walked the other way. */
@@ -347,7 +454,7 @@ function faceSpread(shape: Shape3D, pick: TopoPick, ctx: LoftContext, outward: V
 }
 
 /** The helper sections beyond an end (nearest the end first). */
-function helpers(end: Section, next: Section, cond: LoftEnd, which: string): (Wire | Vec3)[] {
+function helpers(end: Section, next: Section, cond: LoftEnd, which: string, ctx: LoftContext): (Wire | Vec3)[] {
   const D = len(sub(centreOf(next), centreOf(end)));
   if (D < 1e-6) throw new Error(`The ${which} section and the one next to it are in the same place, so the ${which} can't be shaped.`);
   if (end.kind === "point") {
@@ -369,6 +476,25 @@ function helpers(end: Section, next: Section, cond: LoftEnd, which: string): (Wi
       });
   }
   const m = Math.min(MOST_MAGNITUDE, Math.max(0.1, cond.magnitude ?? 1));
+  const towardsNext = dot(sub(centreOf(next), end.centre), end.normal) >= 0 ? end.normal : mul(end.normal, -1);
+  if (cond.kind === "profileTangent") {
+    // Along the shape's own plane: copies a hair further on and grown (or, towards a smaller neighbour, shrunk) a lot
+    // more, so the sides leave lying almost flat in the plane, flaring out (or in) before turning to the next shape.
+    const grows = next.kind === "wire" ? diag(next.wire) >= diag(end.wire) : false;
+    const most = diag(end.wire) / 8;
+    return PROFILE_STEPS.map(([h, g]) => movedCopy(end.wire, mul(towardsNext, h * D), (grows ? 1 : -1) * Math.min(grows ? Infinity : most, g * m * D)));
+  }
+  if (cond.kind === "direction") {
+    if (!cond.towards) throw new Error(`Pick the direction the loft leaves the ${which} shape along.`);
+    let d = dirOf(cond.towards, ctx);
+    if (dot(d, end.normal) < 0) d = mul(d, -1);
+    if (dot(d, towardsNext) < 0) d = mul(d, -1);
+    if (Math.abs(dot(d, end.normal)) < 0.05) throw new Error(`The direction picked for the ${which} lies along the shape's own plane, so the loft can't leave it that way. Pick a direction that leans out of the shape.`);
+    // Moved along the direction, so many mm further on square to the shape as the usual copies are.
+    const k = 1 / Math.abs(dot(d, end.normal));
+    const far = Math.min(0.3, Math.max(3 * CLOSE, REACH * m));
+    return [CLOSE, far].map((h) => movedCopy(end.wire, mul(d, h * D * k), 0));
+  }
   let dir: Vec3;
   let spread = 0;
   if (cond.kind === "normal") {
@@ -464,6 +590,17 @@ function curveWire(c: LoftCurve, ctx: LoftContext, what: string, near?: Vec3): W
     } catch (e) {
       throw new Error(`The ${what}: ${e instanceof Error ? e.message.replace(/^The path/, "It") : String(e)}`);
     }
+  }
+  if ("curve" in c) {
+    // A curve feature (Helix, Fit spline…): an open one walked from the end nearest the first shape.
+    const w = ctx.curve?.(c.curve, what);
+    if (!w) throw new Error(`The loft's ${what} (${ctx.name(c.curve) ?? "a curve"}) can't be used here.`);
+    if (near && !w.isClosed && len(sub(tuple(w.endPoint), near)) < len(sub(tuple(w.startPoint), near)) - 1e-9) {
+      const r = reversedWire(w);
+      w.delete();
+      return r;
+    }
+    return w;
   }
   const edges: Edge[] = [];
   for (const partId of new Set(c.edges.map((e) => e.partId))) {
@@ -583,9 +720,71 @@ const diagOf = (s: Shape3D) => {
   return Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
 };
 
+/**
+ * The end sections as OpenCascade's own loft splits them to match their neighbours (a circle next to a square cut
+ * into four arcs). Its splitting fails once helper copies of an end are added (they all need it at once), so the
+ * ends are split first, from a plain loft through the same sections: the plain loft's edges lying on each end's
+ * outline, joined. Null for an end that is a point or can't be found that way (then the wire is used as drawn).
+ */
+function compatibleEnds(seq: (Wire | Vec3)[], made: { delete(): void }[]): [Wire | null, Wire | null] {
+  const wires = seq.filter((s): s is Wire => !Array.isArray(s));
+  const counts = wires.map((w) => w.edges.length);
+  if (counts.every((c) => c === counts[0])) return [null, null];
+  let plain: Shape3D;
+  try {
+    plain = thruSections(seq, false, false, true, made);
+  } catch {
+    return [null, null];
+  }
+  made.push(plain);
+  const all = plain.edges;
+  const endWire = (w: Wire | Vec3): Wire | null => {
+    if (Array.isArray(w)) return null;
+    const tol = 1e-5 + 1e-6 * diag(w);
+    const on = all.filter((e) =>
+      [0.1, 0.5, 0.9].every((t) => {
+        const v = makeVertex(tuple(e.pointAt(t)));
+        try {
+          return measureDistanceBetween(v, w) <= tol;
+        } finally {
+          v.delete();
+        }
+      }),
+    );
+    if (!on.length) return null;
+    try {
+      const out = assembleWire(on.map((e) => e.clone()));
+      made.push(out);
+      return out.edges.length >= w.edges.length ? out : null;
+    } catch {
+      return null;
+    }
+  };
+  try {
+    return [endWire(seq[0]), endWire(seq[seq.length - 1])];
+  } finally {
+    all.forEach((e) => e.delete());
+  }
+}
+
+/** A loft's open skin closed into a solid: each end's curved face as it is, a flat one's outline filled. */
+function closedWithFaces(skin: Shape3D, ends: Section[], made: { delete(): void }[]): Shape3D {
+  made.push(skin);
+  const pieces: Shape3D[] = [skin];
+  for (const s of ends) {
+    if (s.kind !== "wire") continue;
+    // (A fresh copy of the face: one shared with the part confuses joining the loft to it.)
+    const f = s.cap ? (s.cap.clone().translate([0, 0, 0]) as Face) : makeFace(s.wire.clone());
+    made.push(f);
+    pieces.push(f as unknown as Shape3D);
+  }
+  return encloseSurfaces(pieces);
+}
+
 /** Builds a loft with further choices: a solid (or a surface when `surface`). `notes` gets anything worth telling. */
-export function buildLoft(feature: Pick<Feature, "sections" | "loft" | "loftRuled" | "surface">, ctx: LoftContext, notes?: string[]): Shape3D {
-  const def: LoftDef = feature.loft ?? {};
+export function buildLoft(feature: Pick<Feature, "sections" | "loft" | "loftRuled" | "surface">, ctx: LoftContext, notes?: string[], thin?: ThinSides, override?: Overrides): Shape3D {
+  if (thin && !feature.surface) return thinLoft(feature, ctx, notes, thin);
+  let def: LoftDef = feature.loft ?? {};
   const profiles = loftProfiles(feature);
   const problem = profilesProblem(profiles);
   if (problem) throw new Error(problem);
@@ -594,8 +793,36 @@ export function buildLoft(feature: Pick<Feature, "sections" | "loft" | "loftRule
   const made: { delete(): void }[] = [];
   try {
     const start: { dir?: Vec3 } = {};
-    const sections = profiles.map((p) => sectionOf(p, ctx, surface, start));
+    const sections = profiles.map((p, i) => sectionOf(p, ctx, surface, start, override?.get(i)));
     for (const s of sections) if (s.kind === "wire") made.push(s.wire);
+    for (const s of sections) if (s.kind === "wire" && s.cap) made.push(s.cap);
+    // A solid's end that isn't flat: closed with the picked face itself (edges that don't lie flat have none).
+    const endSecs = [sections[0], sections[sections.length - 1]];
+    const capped = !surface && endSecs.some((s) => s.kind === "wire" && s.curved);
+    if (capped) {
+      if (endSecs.some((s) => s.kind === "wire" && s.curved && !s.cap)) throw new Error("Part edges that don't lie flat can't close a solid loft's end. Tick Surface, or pick a face (or flat edges) for that end.");
+      if (def.guide || def.path || def.periodic) throw new Error("A curved face at the loft's end can't be used with a guide curve, a path or a closed ring. Put a flat shape at that end.");
+      // OpenCascade can't join a solid to a part along a curved face they share exactly.
+      const op = (feature as Partial<Feature>).operation;
+      if (op && op !== "new") throw new Error("A solid loft from a curved face can only be a new part (it can't yet be joined to or cut from parts along that face). Choose New, or tick Surface.");
+    }
+    // Every flat shape on the same plane: nothing to loft through (along a path they may well share one: a U-shaped
+    // handle's two ends).
+    const flat = def.path ? null : samePlaneProblem(
+      sections.map((s) => (s.kind === "wire" && !s.curved ? { name: s.name, n: s.normal, origin: s.centre } : { name: s.name, n: [0, 0, 0] as Vec3, origin: centreOf(s) })),
+      !!def.periodic,
+    );
+    if (flat) throw new Error(flat);
+    // Curved sections (a curved face, edges not in one plane) have no plane to be square or tangent to: their end
+    // conditions are left out, with a note.
+    for (const [which, i] of [["start", 0], ["end", sections.length - 1]] as const) {
+      const sec = sections[i];
+      if (def[which] && sec.kind === "wire" && sec.curved) {
+        notes?.push(`The ${which} shape isn't flat, so it can't be shaped there: the loft leaves it as it comes.`);
+        def = { ...def, [which]: undefined };
+      }
+    }
+    if (ruled && (def.start || def.end)) throw new Error("“Straight between shapes” has straight sides, so its ends can't be shaped. Untick it, or leave the start and end free.");
     if (def.matchCorners) {
       lineUpCorners(sections);
       made.length = 0;
@@ -653,7 +880,7 @@ export function buildLoft(feature: Pick<Feature, "sections" | "loft" | "loftRule
     const easable = (i: number, j: number, cond: LoftEnd | undefined) => {
       const x = sections[i];
       const y = sections[j];
-      return !!cond && cond.kind !== "tangent" && !def.guide && !def.path && !def.matchCorners && !ruled && x?.kind === "wire" && y?.kind === "wire" && Math.abs(dot(x.normal, y.normal)) > 0.9999 && Math.abs(dot(unit(sub(y.centre, x.centre)), x.normal)) > 0.05;
+      return !!cond && (cond.kind === "normal" || cond.kind === "matchTangent" || cond.kind === "matchCurvature") && !def.guide && !def.path && !def.matchCorners && !ruled && x?.kind === "wire" && y?.kind === "wire" && Math.abs(dot(x.normal, y.normal)) > 0.9999 && Math.abs(dot(unit(sub(y.centre, x.centre)), x.normal)) > 0.05;
     };
     const last = sections.length - 1;
     const easeStart = sections.length >= 2 && easable(0, 1, def.start);
@@ -670,94 +897,123 @@ export function buildLoft(feature: Pick<Feature, "sections" | "loft" | "loftRule
         seq.splice(g + 1, 0, ...ws);
       }
     }
-    if (sections.length >= 2) {
-      if (def.end && !easeEnd) {
-        const h = helpers(sections[sections.length - 1], sections[sections.length - 2], def.end, "end");
-        for (const w of h) if (!Array.isArray(w)) made.push(w);
-        seq.splice(seq.length - 1, 0, ...[...h].reverse());
+    // Helper copies of a shaped end go in, then the loft is made (`finish`). Ends with as many pieces as all the others
+    // are used as drawn, exactly as before; when that fails and the outlines differ, the ends are split first as a
+    // plain loft splits them and it's tried again (OpenCascade's own splitting gives up once helpers are added).
+    const shapedEnds = sections.length >= 2 && ((def.end && !easeEnd) || (def.start && !easeStart));
+    const before = [...seq];
+    const finish = (): Shape3D => {
+      if (sections.length >= 2) {
+        if (def.end && !easeEnd) {
+          const h = helpers(sections[sections.length - 1], sections[sections.length - 2], def.end, "end", ctx);
+          for (const w of h) if (!Array.isArray(w)) made.push(w);
+          seq.splice(seq.length - 1, 0, ...[...h].reverse());
+        }
+        if (def.start && !easeStart) {
+          const h = helpers(sections[0], sections[1], def.start, "start", ctx);
+          for (const w of h) if (!Array.isArray(w)) made.push(w);
+          seq.splice(1, 0, ...h);
+        }
       }
-      if (def.start && !easeStart) {
-        const h = helpers(sections[0], sections[1], def.start, "start");
-        for (const w of h) if (!Array.isArray(w)) made.push(w);
-        seq.splice(1, 0, ...h);
-      }
-    }
-    if (def.guide && def.path) throw new Error("A loft can follow a guide curve or a path, not both. Take one of them out.");
-    if (def.guide) {
-      const guide = curveWire(def.guide, ctx, "guide curve", centreOf(sections[0]));
-      made.push(guide);
-      for (const s of sections) if (s.kind === "wire" && !touches(s.wire, guide)) throw new Error(`The guide curve must touch the outline of every shape, but it misses ${s.name}.`);
-      // The loft without the guide, cut across at stations between the sections; each cut outline is then scaled about
-      // its middle until it reaches the guide, and the loft is made again through the sections and those outlines.
-      const base = thruSections(seq, false, false, !def.matchCorners, made);
-      made.push(base);
-      const first = centreOf(sections[0]);
-      const axis = unit(sub(centreOf(sections[sections.length - 1]), first));
-      const along = (p: Vec3) => dot(sub(p, first), axis);
-      const stations: { at: number; wire: Wire }[] = [];
-      for (let i = 0; i + 1 < sections.length; i++) {
-        const a = along(centreOf(sections[i]));
-        const b = along(centreOf(sections[i + 1]));
-        if (b - a < 1e-6) throw new Error("With a guide curve, the shapes must follow one another in one direction (each further on than the last).");
-        for (let k = 1; k <= STATIONS; k++) {
-          const t = a + ((b - a) * k) / (STATIONS + 1);
-          const w = guidedStation(base, guide, add(first, mul(axis, t)), axis);
-          if (w) {
-            made.push(w);
-            stations.push({ at: t, wire: w });
+      if (def.guide && def.path) throw new Error("A loft can follow a guide curve or a path, not both. Take one of them out.");
+      if (def.guide) {
+        const guide = curveWire(def.guide, ctx, "guide curve", centreOf(sections[0]));
+        made.push(guide);
+        for (const s of sections) if (s.kind === "wire" && !touches(s.wire, guide)) throw new Error(`The guide curve must touch the outline of every shape, but it misses ${s.name}.`);
+        // The loft without the guide, cut across at stations between the sections; each cut outline is then scaled about
+        // its middle until it reaches the guide, and the loft is made again through the sections and those outlines.
+        const base = thruSections(seq, false, false, !def.matchCorners, made);
+        made.push(base);
+        const first = centreOf(sections[0]);
+        const axis = unit(sub(centreOf(sections[sections.length - 1]), first));
+        const along = (p: Vec3) => dot(sub(p, first), axis);
+        const stations: { at: number; wire: Wire }[] = [];
+        for (let i = 0; i + 1 < sections.length; i++) {
+          const a = along(centreOf(sections[i]));
+          const b = along(centreOf(sections[i + 1]));
+          if (b - a < 1e-6) throw new Error("With a guide curve, the shapes must follow one another in one direction (each further on than the last).");
+          for (let k = 1; k <= STATIONS; k++) {
+            const t = a + ((b - a) * k) / (STATIONS + 1);
+            const w = guidedStation(base, guide, add(first, mul(axis, t)), axis);
+            if (w) {
+              made.push(w);
+              stations.push({ at: t, wire: w });
+            }
           }
         }
-      }
-      // Everything in order along the way: points first/last, helper and real sections and stations by how far along they are.
-      const wiresAlong = seq.filter((x): x is Wire => !Array.isArray(x)).map((w) => ({ at: along(tuple(w.boundingBox.center)), wire: w }));
-      const all = [...wiresAlong, ...stations].sort((x, y) => x.at - y.at).map((x) => x.wire as Wire | Vec3);
-      if (Array.isArray(seq[0])) all.unshift(seq[0]);
-      if (seq.length > 1 && Array.isArray(seq[seq.length - 1])) all.push(seq[seq.length - 1]);
-      try {
-        const shape = thruSections(all, !surface, false, true, made);
-        return surface ? asIs(shape) : shape;
-      } catch {
-        throw new Error("Couldn't loft along that guide curve. It must touch every shape's outline and run from the first shape to the last.");
-      }
-    }
-    if (def.path) {
-      const oc = getOC();
-      const path = pathW!;
-      const builder = new oc.BRepOffsetAPI_MakePipeShell(path.wrapped);
-      try {
-        builder.SetMode(false);
-        // Sharp corners of the path: the pieces meet in a mitre, as Onshape's.
-        builder.SetTransitionMode(oc.BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RightCorner);
-        for (const s of seq) {
-          if (Array.isArray(s)) {
-            const v = makeVertex(s);
-            made.push(v);
-            builder.Add(v.wrapped, false, false);
-          } else builder.Add(s.wrapped, false, false);
+        // Everything in order along the way: points first/last, helper and real sections and stations by how far along they are.
+        const wiresAlong = seq.filter((x): x is Wire => !Array.isArray(x)).map((w) => ({ at: along(tuple(w.boundingBox.center)), wire: w }));
+        const all = [...wiresAlong, ...stations].sort((x, y) => x.at - y.at).map((x) => x.wire as Wire | Vec3);
+        if (Array.isArray(seq[0])) all.unshift(seq[0]);
+        if (seq.length > 1 && Array.isArray(seq[seq.length - 1])) all.push(seq[seq.length - 1]);
+        try {
+          const shape = thruSections(all, !surface, false, true, made);
+          return surface ? asIs(shape) : shape;
+        } catch {
+          throw new Error("Couldn't loft along that guide curve. It must touch every shape's outline and run from the first shape to the last.");
         }
-        builder.Build();
-        if (!builder.IsDone()) throw new Error("no shape");
-        if (!surface) builder.MakeSolid();
-        const shape = cast(builder.Shape());
-        if (!isShape3D(shape)) throw new Error("no shape");
+      }
+      if (def.path) {
+        const oc = getOC();
+        const path = pathW!;
+        const builder = new oc.BRepOffsetAPI_MakePipeShell(path.wrapped);
+        try {
+          builder.SetMode(false);
+          // Sharp corners of the path: the pieces meet in a mitre, as Onshape's.
+          builder.SetTransitionMode(oc.BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RightCorner);
+          for (const s of seq) {
+            if (Array.isArray(s)) {
+              const v = makeVertex(s);
+              made.push(v);
+              builder.Add(v.wrapped, false, false);
+            } else builder.Add(s.wrapped, false, false);
+          }
+          builder.Build();
+          if (!builder.IsDone()) throw new Error("no shape");
+          if (!surface) builder.MakeSolid();
+          const shape = cast(builder.Shape());
+          if (!isShape3D(shape)) throw new Error("no shape");
+          return surface ? asIs(shape) : shape;
+        } catch {
+          throw new Error("Couldn't loft along that path. Draw the shapes across the path (each standing square to it, near where it passes).");
+        } finally {
+          builder.delete();
+        }
+      }
+      // A ring: back to the very same first outline, which OpenCascade joins up smoothly.
+      const ring = periodic ? [...seq, seq[0]] : seq;
+      try {
+        if (capped) return closedWithFaces(thruSections(ring, false, ruled, !def.matchCorners, made), endSecs, made);
+        const shape = thruSections(ring, !surface, ruled, !def.matchCorners, made);
         return surface ? asIs(shape) : shape;
       } catch {
-        throw new Error("Couldn't loft along that path. Draw the shapes across the path (each standing square to it, near where it passes).");
-      } finally {
-        builder.delete();
+        const shaped = [def.start && `how it leaves the first shape (${END_LABELS[def.start.kind]})`, def.end && `how it reaches the last shape (${END_LABELS[def.end.kind]})`].filter(Boolean);
+        throw new Error(
+          def.matchCorners
+            ? "Couldn't loft with the corners lined up that way. Try another turn for one of the shapes."
+            : shaped.length
+              ? `Couldn't shape the loft's ends that way: ${shaped.join(" and ")}. Try a smaller “How far it reaches”, or leave that end free.`
+              : "Couldn't loft between those shapes. Try outlines with the same number of sides, or add a shape between them.",
+        );
       }
-    }
-    // A ring: back to the very same first outline, which OpenCascade joins up smoothly.
-    const ring = periodic ? [...seq, seq[0]] : seq;
+    };
     try {
-      const shape = thruSections(ring, !surface, ruled, !def.matchCorners, made);
-      return surface ? asIs(shape) : shape;
-    } catch {
-      throw new Error(
-        def.matchCorners
-          ? "Couldn't loft with the corners lined up that way. Try another turn for one of the shapes."
-          : "Couldn't loft between those shapes. Try sketches on parallel planes, or outlines with the same number of sides.",
-      );
+      return finish();
+    } catch (e) {
+      if (!shapedEnds) throw e;
+      const [a, b] = compatibleEnds(before, made);
+      if (!a && !b) throw e;
+      seq.length = 0;
+      seq.push(...before);
+      const swap = (i: number, w: Wire | null) => {
+        const s = sections[i];
+        if (!w || s.kind !== "wire") return;
+        if (seq[i === 0 ? 0 : seq.length - 1] === s.wire) seq[i === 0 ? 0 : seq.length - 1] = w;
+        s.wire = w;
+      };
+      swap(0, a);
+      swap(sections.length - 1, b);
+      return finish();
     }
   } finally {
     for (const m of made) {
@@ -767,5 +1023,52 @@ export function buildLoft(feature: Pick<Feature, "sections" | "loft" | "loftRule
         // already freed
       }
     }
+  }
+}
+
+/**
+ * Thin (Onshape's): each sketch shape's wall ring (src/sketch/thin.ts, as a thin extrude makes it — the first side
+ * into the shape) gives an outer and an inner outline; the two are lofted with the same settings and the inner taken
+ * from the outer, leaving a hollow wall open at both ends.
+ */
+function thinLoft(feature: Pick<Feature, "sections" | "loft" | "loftRuled" | "surface">, ctx: LoftContext, notes: string[] | undefined, thin: ThinSides): Shape3D {
+  const def = feature.loft ?? {};
+  const profiles = loftProfiles(feature);
+  const problem = profilesProblem(profiles);
+  if (problem) throw new Error(problem);
+  if (def.guide) throw new Error("A thin loft can't follow a guide curve (the inside of the wall wouldn't touch it). Take the guide out, or untick Thin.");
+  const outer: Overrides = new Map();
+  const inner: Overrides = new Map();
+  profiles.forEach((p, i) => {
+    if ("point" in p) throw new Error("A thin loft can't come to a point: its wall would have nothing to go round there. Take the point out, or untick Thin.");
+    if (!("sketch" in p)) throw new Error("A thin loft goes through sketch shapes only. Draw the face's outline in a sketch on it, or untick Thin.");
+    const sk = ctx.sketch(p.sketch);
+    // A sketch that can't be used: the usual message, from the ordinary loft.
+    if (!sk) return;
+    let rings;
+    try {
+      rings = thinSketches(sk.data, thin, { areas: p.areas, verb: "loft through" }).flatMap((d) => findRegions(d).regions);
+    } catch (e) {
+      throw new Error(`${sk.name}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (rings.length !== 1 || rings[0].holes.length !== 1)
+      throw new Error(`${sk.name} needs exactly one closed shape (and no loose lines) for a thin loft — it makes ${rings.length} walls. Pick one of its areas.`);
+    outer.set(i, rings[0].outer.segments);
+    inner.set(i, rings[0].holes[0].segments);
+  });
+  const plain = { ...feature, thin: undefined };
+  const a = buildLoft(plain, ctx, notes, undefined, outer);
+  let b: Shape3D;
+  try {
+    b = buildLoft(plain, ctx, [], undefined, inner);
+  } catch (e) {
+    a.delete();
+    throw e;
+  }
+  try {
+    return a.cut(b);
+  } finally {
+    a.delete();
+    b.delete();
   }
 }
