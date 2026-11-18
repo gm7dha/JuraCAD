@@ -8,6 +8,15 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.96 — Loft: several guides, Connections, smooth ends on faces
+
+- A loft can follow several guide curves at once; the shape between your sections bends to pass through every one.
+- Guides also work between shapes on tilted planes and along a path.
+- Connections, as in Onshape: choose which corner on each shape joins up, to set the twist — even from a square to a hexagon.
+- Match tangent / Match curvature also work when the end shape is a sketch drawn on a part's face, so the loft blends in.
+- Existing lofts, including ones with one guide, build exactly as before.
+- Claude can use all of these.
+
 ## v0.95 — Simplify brings back more real faces from STL files
 
 - Slanted holes and slanted cut ends come back as real faces with their true sizes (you can fillet or chamfer the rim).
