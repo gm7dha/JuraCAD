@@ -248,7 +248,7 @@ export function cornerWanted(
   if (!d) return true;
   if (d.type === "loft") {
     const k = d.loft?.picking;
-    return k === "start" || k === "end";
+    return k === "start" || k === "end" || !!k?.startsWith("connection:");
   }
   if (d.type === "extrude") return d.extrude?.end === "upToVertex";
   if (d.type === "plane") {
