@@ -527,6 +527,30 @@
   BSplines that break round corners — and the pieces, which only touch end to end, are fused with `JOIN_FUZZ`. Kept facing one way,
   a closed loop is its smooth runs moved along (a smooth loop is refused: it always goes edge-on somewhere). Surfaces still refuse
   twist round corners and loops.
+  Onshape's further choices (`Feature.sweepControl` = `SweepOptions`, pure `src/model/sweepOptions.ts`; all missing = exactly as
+  before, `sweepSettings` gives the old `{twist, lockOrientation}`): Profile control None / Keep profile orientation / Lock profile
+  direction (`lockDirection`: a GeomPick — edge, face normal/axis, X/Y/Z, sketch line, connector's Z — found by the engine via
+  `PathLookup.direction` = findGeom "line"; OpenCascade's binormal SetMode(gp_Dir); refused where the path runs within 1° of it,
+  `runsAlong`); no "Lock profile faces" yet. Twist `twistBy` angle (the "twist" box) / "turns" / "pitch" (lazy params `turns`,
+  `pitch`: 360 × length / pitch, the length measured on the built path, `twistOf`) + `opposite`. Scale (`scaled` + lazy `scale` =
+  the size at the end / at the profile): `addSection` → SetLaw with a Law_Linear (its range is spread over the path BY LENGTH, the
+  section scaled about the path; RoundCorner + a law throws, so corners are stretches: `pathStretches(…, corners)` builds the
+  rounded-corner plan even untwisted, `stretchedSweep(…, size)` shares the change by length over the stretches that aren't corners,
+  each corner keeps the size it starts with (`scaledAbout`); a locked direction with corners tries RightCorner, which OpenCascade doesn't manage with a law in practice, so it's refused naming the corners, `SCALE_CORNERS_LOCKED`; likewise curve/edge paths with corners); refused
+  round closed loops. A profile part way along an open sketch path, when scaled or twisted round corners, is swept both ways
+  from it (`startOnLoop` → `splitAtPlace`, `shareHalves`: twist by length, the half walked backwards keeping its sign; size 1 at
+  the profile, the far end `scale`, the start 1 − (scale − 1)·before/after, refused ≤ 0) and the halves fused; along a curve
+  feature a scale needs the profile at an end (`midSpine`). Keep profile orientation refuses any stretch of the path lying in the
+  profile's plane (`edgeOnAlong`, open paths too — a leg there made a flat fin). Profile from a part's flat face
+  (`sweepControl.face`, `faceProfile`: outer + inner wires; `SweepProfile` is what both sketch and face profiles give the
+  sweeps — `sketchProfile`, `sweepAlongSketch`, `sweepProfileAlongSpine`); no thin / more sketches / surface with a face. Surface
+  sweeps along curve features and part edges (`sweepSurfaceAlongSpine`), with scale/direction too. Clicks: `sweepControl.picking`
+  "face"/"direction" (not saved; stripped by withoutPicking/featureForEngine) → `sweepClick` in geomPick.ts. Dependents:
+  `sweepPartsUsed`/`sweepFeaturesUsed`. Order checks in buildSolid/sweepSpine go by id (thin and extra-area sweeps pass copies).
+  UI `src/app/SweepOptions.tsx`. Claude: sweep `profile_face`, `twist_turns`/`twist_pitch`/`twist_opposite`, `lock_direction`,
+  `scale`, `surface`. Tests: tests/sweepOptions (pure), engineSweepMore (thin/extra areas along a helix, the fin refused, mid-path
+  twist round a corner and its sign, turns/pitch = angle, exact frustums, mid-path scale, corners, a helix scaled, locked
+  direction, face profiles with a hole), mcpSweepMore.
 - Loft (Onshape's): plain lofts (no `Feature.loft`) take the old `loftSketches`/`loftSurface` path untouched. `Feature.loft`
   (`LoftDef`, types.ts; pure helpers `src/model/loft.ts`, parsed by `parseLoftDef`): `profiles` (sections in order — `{sketch,
   areas?, turn?}` (one picked area), `{face}` (a flat face, its outer wire), `{point}` (a `GeomPick`: sketch point, part corner or
@@ -554,6 +578,23 @@
   Tests: tests/loft (pure; picking stripped, ends tidied), engineLoft (exact pyramid/cone, dome, off-centre tip, upright
   sides at a normal start and on a box's top face, no lip at any magnitude, into-the-part refused, holed face refused, guide
   moving one side only, arc and L paths' volumes and ends, a shape off the path refused, twist, ring), mcpLoft.
+  More (Onshape's): new lofts carry `apart` + `intersectAll` (createFeature; document.ts keeps them for lofts), so Add/Remove/
+  Intersect reach every part — old lofts the latest part as before. Sections all on one plane are refused
+  (`samePlaneProblem`, both paths; not along a path; only some on one plane builds as before). When a loft with helper copies fails,
+  the end wires are split as a plain loft splits them (`compatibleEnds`: the plain loft's edges lying on each end, joined) and it's
+  tried again — OCCT's own splitting gives up once helpers are added (a square to a slanted circle); older lofts build unchanged. Ruled + any end condition refused. Sections may be curved faces (outer wire; `curved`: ends dropped with a note; a
+  solid closes that end with the face itself, `closedWithFaces` → encloseSurfaces, New only — fusing along the shared face fails)
+  and `{edges}` (part edges, `chainEdges`; open only for surfaces; `toggleSectionEdge`, picking newSectionEdges/sectionEdges).
+  `LoftCurve` `{curve}`: a curve feature as guide/path (`LoftContext.curve`, engine via the `loftCurves` WeakMap per features list;
+  an open one walked from the end nearest the first shape). Ends `profileTangent` (copies a hair on and grown/shrunk a lot,
+  `PROFILE_STEPS`, grow towards the neighbour's size) and `direction` (`towards`: a GeomPick — axis, edge, face normal, plane,
+  connector, sketch line; `dirOf`; copies moved along it; lying in the plane refused; picking startDir/endDir, lineFromClick).
+  Thin (`Feature.thin`, lazy `thickness`/`thickness2` params, ThinOptions): `thinLoft` — each sketch section's ring from
+  `thinSketches` → outer and inner outlines (`Overrides`), both lofted with the same settings, inner cut away; points, faces,
+  edges and a guide refused. Claude: `surface`, `thin…`, guide/path a curve name, sections `{part, edges}` and curved faces, ends
+  `tangent_to_profile` / `direction` + `start_direction`/`end_direction`. Tests: loftMore (pure), engineLoftMore (two boxes
+  cut and joined exactly, same plane, slanted ends sound, fit spline path/guide, curved face and box-edge sections, flared and
+  directed ends, thin volumes exact), mcpLoftMore. Not done: curved-face sections joined to their part, thin with faces/points.
 - Thin (Onshape's "Thin" on Extrude/Revolve/Sweep, solids): `Feature.thin` (`midPlane`: the whole `thickness` centred; else
   `thickness` on the first side + `thickness2` (default 0) on the other; `flip` swaps; missing = solid, old files unchanged;
   params in group "thin", shown by `ThinOptions` in FeatureDialog.tsx, hidden by `visibleParamKeys` unless thin; draft hidden).
@@ -721,6 +762,16 @@
   drag whose dialog closed is dropped; finger taps on handles do nothing; a live move only shifts the triad's drawing.
   `transform.picking` says what a click chooses (missing = the part). Tests: tests/transformDrag.test.ts (pure), tests/transformStore.test.ts,
   tests/engineTransform.test.ts.
+  Scale uniformly (Onshape's): `mode` "scale", lazy param `factor` (> 0), about `triad.origin` (Click a point: corner/edge/face/plane,
+  or a mate connector via geomPick) else the centre / origin (`about`); `scaleOf`/`scaling` (a Rigid with r = k·I — only
+  compose/applyPoint/`invert` (Rᵀ/k² when det ≠ 1; plain moves exactly as before) take it; no triad drawn). Engine: `scaledShape`
+  (src/kernel/scaleShape.ts, gp_Trsf SetScale) instead of toAxisAngle; a resized part drops its threads and sheet; owned
+  connectors keep unit directions. Claude: add_feature "scale_part" (part, scale, about, copy). Import: lazy param `scale` + `Feature.importUnits`
+  (`ImportUnit` mm/cm/m/in/ft; missing = as in the file; an STL's mm/in stay `ImportedFile.units`) → pure src/model/importScale.ts
+  (`stepLengthUnit` reads the STEP's LENGTH_UNIT, `importScaleFactor` = scale × chosen ÷ file's own, exactly 1 when unset);
+  `importSolids(file, simplify, scale)` scales only the cached copies (file read + Simplify cached unscaled, as before), mesh keys get
+  `scaleKey`. Dialog "File units" + "Size: a × b × c" (`.import-size`); Claude's edit_feature on an import takes `scale`/`units`.
+  Tests: tests/importScale (pure), engineScale, mcpScale; the smoke test imports the STEP at Scale 2. Not done: a drag handle for the factor.
 - Manipulators (Onshape's in-view handles for feature dialogs): pure `src/model/manipulators.ts` (`MANIPULATED` types: extrude,
   revolve, fillet, chamfer, shell, thicken; `manipulatorsFor(draft, {sketch, parts})` → `Manipulator`s: an arrow (`origin` = where the
   value is 0, `dir`, handle at value × `scale`) or an arc round `axis`; Extrude blind/symmetric (two arrows, scale ½, both edit `depth`)

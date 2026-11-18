@@ -221,7 +221,12 @@ export function connectorWanted(s: { editing: { draft: Feature } | null; sketch:
   if (d.type === "mateConnector" || d.type === "plane" || d.type === "mirror") return true;
   // Text: a connector's plane, but a click on a round face wraps the text round it instead.
   if (d.type === "text") return "notOnRound";
-  return d.type === "transform" && (d.transform?.picking === "from" || d.transform?.picking === "to");
+  // A Sweep's locked direction may be a connector's Z.
+  if (d.type === "sweep") return d.sweepControl?.picking === "direction";
+  // A Loft end's direction: a connector's Z.
+  if (d.type === "loft") return d.loft?.picking === "startDir" || d.loft?.picking === "endDir";
+  // (Scale uniformly: a connector clicked is the point it grows from.)
+  return d.type === "transform" && (d.transform?.picking === "from" || d.transform?.picking === "to" || (d.transform?.picking === "triad" && d.transform.mode === "scale"));
 }
 
 

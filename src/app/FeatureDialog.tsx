@@ -21,6 +21,7 @@ import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 import { isMorePlaneMode } from "../sketch/planeTypes";
 import { MateConnectorOptions, MorePlaneFields, PlaneKindSelect } from "./PlaneMoreOptions";
 import { CurveOptions, PathChoice } from "./CurveOptions";
+import { SweepControlOptions, SweepProfileChoice } from "./SweepOptions";
 import { FrameOptions, GussetOptions, TrimFrameOptions } from "./FrameOptions";
 import { curveKindInfo } from "../model/curves";
 import type { Axis, ExtrudeEnd, Feature } from "../model/types";
@@ -39,7 +40,9 @@ import { importedSize } from "../model/importFile";
 import { SIMPLIFY_LABELS, SIMPLIFY_LEVELS } from "../model/simplify";
 import { chooseImportFile } from "./fileActions";
 import { TRANSFORM_MODES, transformMode } from "../model/transformMath";
-import type { TransformMode } from "../model/types";
+import { fileUnitOf, IMPORT_UNITS, sizeText } from "../model/importScale";
+import { partBox } from "../assembly/placed";
+import type { ImportUnit, TransformMode } from "../model/types";
 import { escapeTriadDrag, placeTriad } from "../viewport/transformTriad";
 
 const OPERATIONS: Operation[] = ["new", "add", "remove", "intersect"];
@@ -858,7 +861,9 @@ function MoreAreasNote() {
 function ThinOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const setDraftField = useStore((s) => s.setDraftField);
-  if (!draft || (draft.type !== "extrude" && draft.type !== "revolve" && draft.type !== "sweep") || draft.surface) return null;
+  if (!draft || (draft.type !== "extrude" && draft.type !== "revolve" && draft.type !== "sweep" && draft.type !== "loft") || draft.surface) return null;
+  // A sweep of a part's face has no sketch lines to make a wall from.
+  if (draft.type === "sweep" && (draft.sweepControl?.face || draft.sweepControl?.picking === "face")) return null;
   const thin = draft.thin;
   const def = FEATURE_DEFS[draft.type];
   const param = (key: string, label?: string) => {
@@ -886,9 +891,11 @@ function ThinOptions() {
               Flip wall (to the other side)
             </label>
           )}
-          <p className="dialog-hint field-hint">
+          {draft.type === "loft" ? (
+            <p className="dialog-hint field-hint">A hollow loft: each shape's outline becomes a wall of this thickness (into the shape first), and the walls are lofted together. For sketch shapes only, without a guide curve or points.</p>
+          ) : <p className="dialog-hint field-hint">
             With no areas picked it follows every line, arc and circle in the sketch{draft.type === "revolve" ? " (not the line it spins around)" : ""}; pick areas to make the wall only round them. Construction lines are left out. On a closed shape, or a line along the edge of one, the first side goes into the shape.
-          </p>
+          </p>}
         </fieldset>
       )}
     </>
@@ -1150,12 +1157,14 @@ function SweepLoftOptions() {
     </>
   );
   if (draft.type === "sweep") {
+    const faceProfile = !draft.surface && (!!draft.sweepControl?.face || draft.sweepControl?.picking === "face");
     const profile = sketches.find((f) => f.id === draft.sketchRef)?.sketch?.data;
     return (
       <fieldset className="param-group">
         <legend>Sketches</legend>
-        {select("Shape (profile)", draft.sketchRef, (v) => setDraftField({ sketchRef: v, areas: undefined, moreAreas: undefined }))}
-        {profile && !draft.surface && (
+        <SweepProfileChoice />
+        {!faceProfile && select("Shape (profile)", draft.sketchRef, (v) => setDraftField({ sketchRef: v, areas: undefined, moreAreas: undefined }))}
+        {profile && !draft.surface && !faceProfile && (
           <AreaPicker
             data={followedSketch(sketches.find((f) => f.id === draft.sketchRef), sketchLinks)?.data ?? profile}
             areas={draft.areas}
@@ -1164,19 +1173,10 @@ function SweepLoftOptions() {
             taken={areasTaken(features, draft.sketchRef!, followedSketch(sketches.find((f) => f.id === draft.sketchRef), sketchLinks)?.data ?? profile, draft.id)}
           />
         )}
-        {!draft.surface && <MoreAreasNote />}
+        {!draft.surface && !faceProfile && <MoreAreasNote />}
         <PathChoice label="Path to follow" onSketch={(v) => setDraftField(pathChange(draft, v))} />
         <p className="dialog-hint field-hint">Draw the shape on a plane across the start of the path, e.g. a circle on Front for a path drawn on Top.</p>
-        <label className="check-row" title="The shape doesn't tilt to follow the path's bends: it stays parallel to the plane it was drawn on all the way along">
-          <input
-            type="checkbox"
-            aria-label="Keep profile orientation"
-            checked={!!draft.sweepControl?.lockOrientation}
-            onChange={(e) => setDraftField({ sweepControl: e.target.checked ? { lockOrientation: true } : undefined })}
-          />
-          Keep profile orientation (don&apos;t turn with the path)
-        </label>
-        {!draft.sweepControl?.lockOrientation && <p className="dialog-hint field-hint">Twist turns the shape steadily round the path as it goes — e.g. 90° for a quarter turn by the end, up to 3600° (10 turns). Use a minus amount to turn the other way. Round a closed loop, use whole turns (360°, 720°…) so the ends meet.</p>}
+        <SweepControlOptions />
       </fieldset>
     );
   }
@@ -1290,6 +1290,28 @@ function TransformOptions() {
           </p>
         </>
       )}
+      {mode === "scale" && (
+        <>
+          <div className="transform-triad-row">
+            <span className="muted small">Grows from: {t.triad ? "the point you clicked" : t.about === "origin" ? "the origin" : "the part's centre"}</span>
+            <button type="button" className={`text-button${picking === "triad" ? " active" : ""}`} aria-pressed={picking === "triad"} onClick={() => pick("triad")} title="Click a corner, an edge, a face, a plane or a mate connector: the part grows or shrinks from there, and that spot stays put">
+              Click a point
+            </button>
+            {t.triad && (
+              <button type="button" className="text-button" onClick={() => changeDraftStep({ transform: { ...t, triad: undefined, picking: undefined } })} title="Grow from the part's centre again">
+                Reset
+              </button>
+            )}
+          </div>
+          {picking === "triad" && <p className="dialog-hint pick-hint attention">Click a corner, an edge, a flat face, a plane or a mate connector: that spot stays where it is.</p>}
+          {!t.triad && (
+            <select className="full-select" aria-label="Grow from which point" value={t.about} onChange={(e) => update({ about: e.target.value as "origin" | "centre" })}>
+              <option value="centre">from the part's centre</option>
+              <option value="origin">from the origin</option>
+            </select>
+          )}
+        </>
+      )}
       {(mode === "distance" || mode === "rotate") && (
         <ReferenceBox
           label={mode === "distance" ? "Direction" : "Axis"}
@@ -1381,23 +1403,7 @@ function ImportOptions() {
       <button type="button" className="text-button" onClick={() => chooseImportFile(true)}>
         Choose a different file…
       </button>
-      {file.format === "stl" && (
-        <>
-          <label className="field-label" htmlFor="import-units">
-            Units in the file
-          </label>
-          <select
-            id="import-units"
-            className="full-select"
-            value={file.units}
-            onChange={(e) => setDraftField({ import: { ...file, units: e.target.value === "in" ? "in" : "mm" } })}
-          >
-            <option value="mm">Millimetres</option>
-            <option value="in">Inches</option>
-          </select>
-          <p className="dialog-hint field-hint">STL files don't say what units they use. If the part looks 25 times too small, choose inches.</p>
-        </>
-      )}
+      <ImportUnitsChoice />
       <label className="check-row" title="Many downloaded files are really just triangles, so you can't pick a hole or fillet an edge. This finds the real flat and round faces in them">
         <input
           type="checkbox"
@@ -1412,6 +1418,57 @@ function ImportOptions() {
         another part.
       </p>
     </fieldset>
+  );
+}
+
+/**
+ * Import's File units (Onshape's): as in the file, or the file's numbers read as other units; and the size it comes
+ * out at. STL files carry no units: their old Millimetres / Inches choice is kept on the file (`units`), so older
+ * imports stay as they were; the other units are `importUnits`, applied as a scale after reading.
+ */
+function ImportUnitsChoice() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const parts = useStore(studioParts);
+  const unit = useLengthUnit();
+  if (!draft || draft.type !== "import" || !draft.import) return null;
+  const file = draft.import;
+  const own = fileUnitOf(file);
+  const ownName = file.format === "stl" ? "millimetres" : own ? IMPORT_UNITS.find((u) => u.unit === own)!.label.toLowerCase() : "as it says";
+  const value = draft.importUnits ?? (file.format === "stl" && file.units === "in" ? "in" : "file");
+  const choose = (v: string) => {
+    if (file.format === "stl") {
+      // Millimetres and inches as before (on the file); the rest scale the part after reading.
+      const units = v === "in" ? "in" : "mm";
+      setDraftField({ import: { ...file, units }, importUnits: v === "file" || v === "mm" || v === "in" ? undefined : (v as ImportUnit) });
+    } else setDraftField({ importUnits: v === "file" ? undefined : (v as ImportUnit) });
+  };
+  // The size it comes out at: every part this import made, as built now.
+  const made = parts.filter((p) => p.id === draft.id || p.id.startsWith(`${draft.id}~`));
+  const boxes = made.map((p) => partBox(p)).filter((b): b is NonNullable<typeof b> => !!b);
+  const lo = [0, 1, 2].map((i) => Math.min(...boxes.map((b) => b.min[i])));
+  const hi = [0, 1, 2].map((i) => Math.max(...boxes.map((b) => b.max[i])));
+  return (
+    <>
+      <label className="field-label" htmlFor="import-units">
+        File units
+      </label>
+      <select id="import-units" className="full-select" value={value} onChange={(e) => choose(e.target.value)}>
+        <option value="file">As in the file ({ownName})</option>
+        {IMPORT_UNITS.map((u) => (
+          <option key={u.unit} value={u.unit}>
+            {u.label}
+          </option>
+        ))}
+      </select>
+      <p className="dialog-hint field-hint">
+        {file.format === "stl"
+          ? "STL files don't say what units they use. If the part looks 25 times too small, choose inches."
+          : "STEP files say what units they use. Choose others only if the part comes in the wrong size."}{" "}
+        Use Scale below to make it bigger or smaller (2 = twice the size).
+      </p>
+      {boxes.length > 0 && <p className="muted small import-size">Size: {sizeText(lo, hi, (n) => lengthNumber(n, unit, unit === "in" ? 3 : 2))} {unit}</p>}
+    </>
   );
 }
 

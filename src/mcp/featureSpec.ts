@@ -9,7 +9,8 @@
 import { setMirrorReference, setPatternDirection } from "../model/patternRefs";
 import { moveFaceAxisProblem, withMoveFaceAxis, withMoveFaceMode } from "../model/moveFace";
 import type { TopoPick } from "../geometry/topoRef";
-import type { BoundaryCurve, MoveFaceDef, Feature, FilletRadiusPoint, FeatureType, JuraCADDocument, LoftDef, LoftProfile, Operation } from "../model/types";
+import type { BoundaryCurve, GeomPick, MoveFaceDef, Feature, FilletRadiusPoint, FeatureType, JuraCADDocument, LoftDef, LoftProfile, Operation } from "../model/types";
+import { tidySweepControl } from "../model/sweepOptions";
 import { endChoices, loftProfiles, profilesProblem, tidyEnds, withEndPoint, withLoftDef, withProfiles } from "../model/loft";
 import { tidyRadiusPoints } from "../model/variableFillet";
 import { sameRef } from "../geometry/topoRef";
@@ -57,6 +58,7 @@ export const FEATURE_KINDS = {
   boundary_surface: "boundary",
   face_blend: "faceBlend",
   move_face: "moveFace",
+  scale_part: "transform",
 } as const satisfies Record<string, FeatureType>;
 export type FeatureKind = keyof typeof FEATURE_KINDS;
 export const KIND_OF: Partial<Record<FeatureType, FeatureKind>> = Object.fromEntries(Object.entries(FEATURE_KINDS).map(([k, v]) => [v, k as FeatureKind]));
@@ -67,8 +69,8 @@ const OPERATIONS = ["new", "add", "remove", "intersect"] as const;
 export const KIND_KEYS: Record<FeatureKind, string[]> = {
   extrude: ["sketch", "depth", "end", "up_to_face", "up_to_vertex", "up_to_part", "flip", "second_depth", "draft", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   revolve: ["sketch", "axis", "angle", "symmetric", "second_angle", "flip", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
-  sweep: ["sketch", "path", "path_edges", "path_part", "twist", "keep_orientation", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
-  loft: ["sections", "start_point", "end_point", "start", "end", "start_magnitude", "end_magnitude", "guide", "path", "straight", "match_corners", "turns", "closed_loop"],
+  sweep: ["sketch", "profile_face", "path", "path_edges", "path_part", "twist", "twist_turns", "twist_pitch", "twist_opposite", "keep_orientation", "lock_direction", "scale", "surface", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
+  loft: ["sections", "start_point", "end_point", "start", "end", "start_magnitude", "end_magnitude", "start_direction", "end_direction", "guide", "path", "straight", "match_corners", "turns", "closed_loop", "surface", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   hole: ["sketch", "size", "fit", "style", "end", "depth", "diameter", "counterbore_diameter", "counterbore_depth", "countersink_diameter", "countersink_angle", "flip"],
   fillet: ["part", "edges", "radius", "end_radius", "all_edges", "variable", "variable_straight"],
   chamfer: ["part", "edges", "distance", "second_distance", "angle", "flip_side", "all_edges"],
@@ -92,6 +94,7 @@ export const KIND_KEYS: Record<FeatureKind, string[]> = {
   boundary_surface: ["u", "v"],
   face_blend: ["part", "faces", "part2", "faces2", "radius", "flip1", "flip2", "trim"],
   move_face: ["part", "faces", "move", "distance", "angle", "direction", "axis", "flip"],
+  scale_part: ["part", "scale", "about", "copy"],
 };
 
 /** Most copies in one direction of a pattern, and in all (bigger takes minutes to build). */
@@ -219,7 +222,108 @@ function moreSketches(f: Feature, a: Obj, ctx: SpecContext) {
   });
 }
 
-const LOFT_ENDS = { none: undefined, normal: "normal", rounded: "tangent", match_tangent: "matchTangent", match_curvature: "matchCurvature" } as const;
+const LOFT_ENDS = { none: undefined, normal: "normal", rounded: "tangent", match_tangent: "matchTangent", match_curvature: "matchCurvature", tangent_to_profile: "profileTangent", direction: "direction" } as const;
+
+/** A loft end's direction: "x"/"y"/"z", {"part", "edge"} (along a straight edge) or {"part", "face"} (a flat face's normal). */
+function loftDirection(v: unknown, where: string, ctx: SpecContext): GeomPick {
+  if (typeof v === "string" && ["x", "y", "z"].includes(v.trim().toLowerCase())) {
+    const axis = v.trim().toLowerCase() as "x" | "y" | "z";
+    return { p: [0, 0, 0], dir: axis === "x" ? [1, 0, 0] : axis === "y" ? [0, 1, 0] : [0, 0, 1], axis };
+  }
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw new InputError(`${where} must be "x", "y" or "z", {"part": "<name>", "edge": "E3"} (along a straight edge) or {"part": "<name>", "face": "F2"} (square to a flat face).`);
+  const o = v as Obj;
+  noExtras(o, ["part", "edge", "face"], where);
+  const part = ctx.session.part(ctx.parts, o.part, `${where}.part`);
+  if (has(o, "edge")) {
+    const [pick] = pickEdges(part, [o.edge], `${where}.edge`);
+    if (pick.ref.kind !== "edge" || pick.ref.curve !== "LINE") throw new InputError(`${where}.edge must be a straight edge.`);
+    const { a, b } = pick.ref;
+    return { p: a, dir: [b[0] - a[0], b[1] - a[1], b[2] - a[2]], pick };
+  }
+  const face = pickFace(part, o.face, `${where}.face`);
+  if (face.ref.surface !== "PLANE") throw new InputError(`${where}: ${face.id} isn't flat, so it has no one direction square to it.`);
+  return { p: face.ref.center, dir: face.ref.normal, pick: { partId: part.id, ref: face.ref } };
+}
+
+/** Sweep's "profile_face": {"part", "face"} — a flat face of a part as the profile, instead of a sketch. */
+function sweepProfileFace(f: Feature, a: Obj, ctx: SpecContext) {
+  if (a.profile_face === null || a.profile_face === false) {
+    f.sweepControl = tidySweepControl({ ...f.sweepControl, face: undefined });
+    return;
+  }
+  if (!a.profile_face || typeof a.profile_face !== "object" || Array.isArray(a.profile_face)) throw new InputError('profile_face must be {"part": "<name>", "face": "F3"}: a flat face of a part (see list_faces).');
+  const o = a.profile_face as Obj;
+  noExtras(o, ["part", "face"], "profile_face");
+  const part = ctx.session.part(ctx.parts, o.part, "profile_face.part");
+  const face = pickFace(part, o.face, "profile_face.face");
+  if (face.ref.surface !== "PLANE") throw new InputError(`profile_face: ${face.id} isn't flat. A sweep's profile face must be flat.`);
+  if (f.thin) throw new InputError('A thin sweep needs a sketch as its profile; leave "thin" out, or give "sketch".');
+  f.sweepControl = tidySweepControl({ ...f.sweepControl, face: { partId: part.id, ref: face.ref } });
+  delete f.sketchRef;
+  delete f.areas;
+  delete f.moreAreas;
+}
+
+/**
+ * Sweep's "lock_direction" (Onshape's Lock profile direction): "x" | "y" | "z", {"part", "edge"} (a straight edge's
+ * direction, a round edge's axis), {"part", "face"} (a flat face's normal, a round face's axis) or {"connector"} (a
+ * mate connector's Z). null / false: none.
+ */
+function sweepLockDirection(f: Feature, a: Obj, ctx: SpecContext) {
+  const d = a.lock_direction;
+  if (d === null || d === false) {
+    f.sweepControl = tidySweepControl({ ...f.sweepControl, lockDirection: undefined });
+    return;
+  }
+  const how = 'lock_direction must be "x", "y", "z", {"part", "edge": "E3"}, {"part", "face": "F2"} or {"connector": "<name>"}.';
+  let g: GeomPick;
+  if (d === "x" || d === "y" || d === "z") g = { p: [0, 0, 0], axis: d };
+  else if (d && typeof d === "object" && !Array.isArray(d)) {
+    const o = d as Obj;
+    noExtras(o, ["part", "edge", "face", "connector"], "lock_direction");
+    if (has(o, "connector")) g = { p: [0, 0, 0], connector: ctx.session.feature(o.connector, "lock_direction.connector", ["mateConnector"], ctx.doc).id };
+    else {
+      const part = ctx.session.part(ctx.parts, o.part, "lock_direction.part");
+      if (has(o, "edge")) {
+        const [pick] = pickEdges(part, [o.edge], "lock_direction.edge");
+        if (!pick || pick.ref.kind !== "edge") throw new InputError("lock_direction.edge: give an edge (E-number from list_edges).");
+        const r = pick.ref;
+        const dir = [r.b[0] - r.a[0], r.b[1] - r.a[1], r.b[2] - r.a[2]] as Vec3;
+        const l = Math.hypot(...dir) || 1;
+        g = { p: r.a, dir: [dir[0] / l, dir[1] / l, dir[2] / l], pick };
+      } else if (has(o, "face")) {
+        const face = pickFace(part, o.face, "lock_direction.face");
+        if (face.ref.kind !== "face") throw new InputError(how);
+        g = { p: face.ref.center, dir: face.ref.normal, pick: { partId: part.id, ref: face.ref } };
+      } else throw new InputError(how);
+    }
+  } else throw new InputError(how);
+  if (f.sweepControl?.lockOrientation) throw new InputError('Give "keep_orientation" or "lock_direction", not both (they are two kinds of profile control).');
+  f.sweepControl = tidySweepControl({ ...f.sweepControl, lockDirection: g });
+}
+
+/** Sweep's twist: "twist" (degrees), or "twist_turns" (whole turns) or "twist_pitch" (mm along the path per turn), and "twist_opposite". */
+function sweepTwist(f: Feature, a: Obj, ctx: SpecContext) {
+  const given = ["twist", "twist_turns", "twist_pitch"].filter((k) => has(a, k));
+  if (given.length > 1) throw new InputError(`Give the twist one way only: ${given.map((k) => `"${k}"`).join(" or ")}.`);
+  if (given.length && f.sweepControl?.lockOrientation) throw new InputError(`"${given[0]}" isn't used with "keep_orientation": true (the shape keeps facing the same way); leave one out.`);
+  if (given.length && f.sweepControl?.lockDirection) throw new InputError(`"${given[0]}" isn't used with "lock_direction" (the shape keeps its angle to that direction); leave one out.`);
+  if (has(a, "twist")) {
+    param(f, a, "twist", "twist", ctx, { unit: "°" });
+    if (f.params.twist && Math.abs(Number(f.params.twist)) > 3600) throw new InputError("twist can be at most 3600° (10 turns) either way.");
+    f.sweepControl = tidySweepControl({ ...f.sweepControl, twistBy: undefined });
+  }
+  if (has(a, "twist_turns")) {
+    param(f, a, "twist_turns", "turns", ctx, { min: 0, unit: "" });
+    if (Math.abs(Number(f.params.turns)) > 10) throw new InputError("twist_turns can be at most 10.");
+    f.sweepControl = tidySweepControl({ ...f.sweepControl, twistBy: "turns" });
+  }
+  if (has(a, "twist_pitch")) {
+    param(f, a, "twist_pitch", "pitch", ctx, { positive: true });
+    f.sweepControl = tidySweepControl({ ...f.sweepControl, twistBy: "pitch" });
+  }
+  if (has(a, "twist_opposite")) f.sweepControl = tidySweepControl({ ...f.sweepControl, opposite: bool(a.twist_opposite, "twist_opposite") || undefined });
+}
 
 /**
  * Loft (Onshape's): "sections" in order — sketch names, or {"part", "face"} for a flat face — "start_point"/"end_point"
@@ -234,12 +338,17 @@ function applyLoft(f: Feature, a: Obj, ctx: SpecContext) {
     profiles = items.map((x, i): LoftProfile => {
       const where = `sections[${i}]`;
       if (typeof x === "string") return { sketch: ctx.session.feature(x, where, ["sketch"], ctx.doc).id };
-      if (!x || typeof x !== "object" || Array.isArray(x)) throw new InputError(`${where} must be a sketch's name, or {"part": "<name>", "face": "F3"} for a flat face.`);
+      if (!x || typeof x !== "object" || Array.isArray(x)) throw new InputError(`${where} must be a sketch's name, {"part": "<name>", "face": "F3"} for a face, or {"part": "<name>", "edges": ["E1", …]} for edges joined end to end.`);
       const o = x as Obj;
-      noExtras(o, ["part", "face"], where);
+      noExtras(o, ["part", "face", "edges"], where);
       const part = ctx.session.part(ctx.parts, o.part, `${where}.part`);
+      if (has(o, "edges")) {
+        const edges = pickEdges(part, list(o.edges, `${where}.edges`), `${where}.edges`).filter((p) => p.ref.kind === "edge");
+        if (!edges.length) throw new InputError(`${where}.edges: give edges (E-numbers from list_edges), not faces.`);
+        return { edges };
+      }
+      // A curved face works too (its outline; its end can't be shaped).
       const face = pickFace(part, o.face, `${where}.face`);
-      if (face.ref.surface !== "PLANE") throw new InputError(`${where}: ${face.id} isn't flat. A loft section must be a flat face.`);
       return { face: { partId: part.id, ref: face.ref } };
     });
   }
@@ -267,9 +376,17 @@ function applyLoft(f: Feature, a: Obj, ctx: SpecContext) {
     if (has(a, which)) {
       const kind = LOFT_ENDS[oneOf(a[which], Object.keys(LOFT_ENDS) as (keyof typeof LOFT_ENDS)[], which)];
       const p = which === "start" ? profiles[0] : profiles[profiles.length - 1];
-      if (kind && !endChoices(p).includes(kind)) throw new InputError(`"${which}": ${a[which]} doesn't suit that section. A point takes "rounded"; a sketch "normal"; a face "normal", "match_tangent" or "match_curvature".`);
+      if (kind && !endChoices(p).includes(kind)) throw new InputError(`"${which}": ${a[which]} doesn't suit that section. A point takes "rounded"; a sketch "normal", "tangent_to_profile" or "direction"; a face those or "match_tangent" / "match_curvature".`);
       def[which] = kind ? { kind } : undefined;
     }
+    const dk = `${which}_direction`;
+    if (has(a, dk)) {
+      const cur = def[which] ?? f.loft?.[which];
+      if (cur?.kind !== "direction") throw new InputError(`"${dk}" goes with "${which}": "direction".`);
+      def[which] = { ...cur, towards: loftDirection(a[dk], dk, ctx) };
+    } else if (def[which]?.kind === "direction" && !def[which]!.towards && !f.loft?.[which]?.towards) {
+      throw new InputError(`"${which}": "direction" needs "${dk}" ("x", "y", "z", {"part", "edge"} or {"part", "face"}).`);
+    } else if (def[which]?.kind === "direction" && !def[which]!.towards) def[which] = { ...def[which]!, towards: f.loft![which]!.towards };
     const mk = `${which}_magnitude`;
     if (has(a, mk)) {
       const m = amount(a[mk], mk, ctx.scope, { positive: true, unit: "" }).value;
@@ -281,7 +398,12 @@ function applyLoft(f: Feature, a: Obj, ctx: SpecContext) {
   }
   for (const which of ["guide", "path"] as const) {
     if (!(which in a)) continue;
-    def[which] = a[which] === null ? undefined : { sketch: ctx.session.feature(a[which], which, ["sketch"], ctx.doc).id };
+    if (a[which] === null) def[which] = undefined;
+    else {
+      // A sketch, or a curve feature (Helix, Fit spline…).
+      const c = ctx.session.feature(a[which], which, ["sketch", "curve"], ctx.doc);
+      def[which] = c.type === "curve" ? { curve: c.id } : { sketch: c.id };
+    }
   }
   if (has(a, "match_corners")) def.matchCorners = bool(a.match_corners, "match_corners") || undefined;
   if (has(a, "closed_loop")) def.periodic = bool(a.closed_loop, "closed_loop") || undefined;
@@ -289,6 +411,15 @@ function applyLoft(f: Feature, a: Obj, ctx: SpecContext) {
   Object.assign(f, withLoftDef(f, def));
   if (!f.loft) delete f.loft;
   if (!f.loftRuled) delete f.loftRuled;
+  if (has(a, "surface")) {
+    if (bool(a.surface, "surface")) {
+      if (has(a, "thin") && a.thin) throw new InputError('A loft is a surface or a thin wall, not both; leave one of "surface" and "thin" out.');
+      f.surface = true;
+      f.operation = "new";
+      delete f.thin;
+    } else delete f.surface;
+  }
+  thinWall(f, a, ctx);
 }
 
 /** A default plane by name, optionally moved along its normal. */
@@ -516,10 +647,21 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
 
     case "sweep": {
       const oldSketch = f.sketchRef;
-      if (!ctx.editing && (!has(a, "sketch") || (!has(a, "path") && !has(a, "path_edges")))) {
-        throw new InputError('A sweep needs "sketch" (the one with the closed shape to carry) and "path" (another sketch, or a curve such as a helix) or "path_edges" (part edges joined end to end, on "path_part"). Draw the shape on a plane across the start of the path.');
+      if (!ctx.editing && ((!has(a, "sketch") && !has(a, "profile_face")) || (!has(a, "path") && !has(a, "path_edges")))) {
+        throw new InputError('A sweep needs "sketch" (the one with the closed shape to carry) or "profile_face" ({"part", "face"}: a flat face of a part), and "path" (another sketch, or a curve such as a helix) or "path_edges" (part edges joined end to end, on "path_part"). Draw the shape on a plane across the start of the path.');
       }
-      if (has(a, "sketch")) f.sketchRef = ctx.session.feature(a.sketch, "sketch", ["sketch"], ctx.doc).id;
+      if (has(a, "sketch") && has(a, "profile_face")) throw new InputError('Give "sketch" or "profile_face", not both: the profile is one or the other.');
+      if (has(a, "sketch")) {
+        f.sketchRef = ctx.session.feature(a.sketch, "sketch", ["sketch"], ctx.doc).id;
+        if (f.sweepControl?.face) f.sweepControl = tidySweepControl({ ...f.sweepControl, face: undefined });
+      }
+      if (has(a, "profile_face")) sweepProfileFace(f, a, ctx);
+      if (has(a, "surface")) {
+        if (bool(a.surface, "surface")) {
+          if (f.sweepControl?.face) throw new InputError('A surface sweep takes its outline from a sketch: give "sketch" instead of "profile_face".');
+          f.surface = true;
+        } else delete f.surface;
+      }
       if (has(a, "path")) {
         f.pathRef = ctx.session.feature(a.path, "path", ["sketch", "curve"], ctx.doc).id;
         delete f.pathEdges;
@@ -542,15 +684,26 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
         else delete f.moreAreas;
       }
       if (has(a, "keep_orientation")) {
-        if (bool(a.keep_orientation, "keep_orientation")) f.sweepControl = { lockOrientation: true };
-        else delete f.sweepControl;
+        if (bool(a.keep_orientation, "keep_orientation")) {
+          if (has(a, "lock_direction") && a.lock_direction !== null && a.lock_direction !== false) throw new InputError('Give "keep_orientation" or "lock_direction", not both (they are two kinds of profile control).');
+          f.sweepControl = tidySweepControl({ ...f.sweepControl, lockOrientation: true, lockDirection: undefined });
+        } else f.sweepControl = tidySweepControl({ ...f.sweepControl, lockOrientation: undefined });
       }
-      if (has(a, "twist") && f.sweepControl?.lockOrientation) throw new InputError('"twist" isn\'t used with "keep_orientation": true (the shape keeps facing the same way); leave one out.');
-      param(f, a, "twist", "twist", ctx, { unit: "°" });
-      if (f.params.twist && Math.abs(Number(f.params.twist)) > 3600) throw new InputError("twist can be at most 3600° (10 turns) either way.");
+      if (has(a, "lock_direction")) sweepLockDirection(f, a, ctx);
+      sweepTwist(f, a, ctx);
+      if (has(a, "scale")) {
+        if (a.scale === null || a.scale === 1 || a.scale === false) f.sweepControl = tidySweepControl({ ...f.sweepControl, scaled: undefined });
+        else {
+          const am = amount(a.scale, "scale", ctx.scope, { positive: true, unit: "" });
+          f.params = { ...f.params, scale: am.text };
+          if (!(am.value > 0) || am.value > 100) throw new InputError("scale is the size at the end of the path compared with the start: more than 0 and at most 100 (0.5 = half the size).");
+          f.sweepControl = tidySweepControl({ ...f.sweepControl, scaled: true });
+        }
+      }
       areas(f, a, ctx);
       moreSketches(f, a, ctx);
       thinWall(f, a, ctx);
+      if (f.sweepControl?.face && (f.thin || f.moreAreas?.length)) throw new InputError('A sweep of a part\'s face takes no "thin" or "more_sketches" (those need a sketch profile): leave them out, or give "sketch".');
       break;
     }
 
@@ -882,6 +1035,29 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
     case "curve":
       applyCurve(f, a, ctx);
       break;
+    case "scale_part": {
+      // Onshape's Transform › Scale uniformly (Move / copy in the app). A Move / copy made in the app that moves or turns
+      // can only be renamed or switched off here.
+      const t = { ...(f.transform ?? { axis: "z" as const, about: "centre" as const, copy: false }) };
+      const changing = ["part", "scale", "about", "copy"].some((k) => has(a, k));
+      if (ctx.editing && t.mode !== "scale" && changing) throw new InputError(`${f.name} moves or turns a part (made in the app); only "name" and "suppressed" can be changed here.`);
+      if (has(a, "part") || !ctx.editing) t.partId = ctx.session.part(ctx.parts, a.part, "part").id;
+      param(f, a, "scale", "factor", ctx, { positive: true, required: true, unit: "" });
+      if (has(a, "about")) {
+        if (a.about === "centre" || a.about === "center" || a.about === "origin") {
+          t.about = a.about === "origin" ? "origin" : "centre";
+          delete t.triad;
+        } else {
+          const p = xyz(a.about, "about", ctx.scope).map((n) => n.value) as Vec3;
+          t.triad = { origin: p, x: [1, 0, 0], z: [0, 0, 1] };
+        }
+      }
+      if (has(a, "copy")) t.copy = bool(a.copy, "copy");
+      t.mode = "scale";
+      f.transform = t;
+      f.operation = "add";
+      break;
+    }
     case "composite_part": {
       if (has(a, "parts") || !ctx.editing) {
         const ids = [...new Set(list(a.parts, "parts").map((r, i) => ctx.session.part(ctx.parts, r, `parts[${i}]`).id))];

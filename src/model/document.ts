@@ -1,4 +1,5 @@
 import { isSimplifyLevel } from "./simplify";
+import { isImportUnit } from "./importScale";
 import { parseVariableFillet } from "./variableFillet";
 import { parseNamedViews } from "./namedViews";
 import { parsePick } from "../geometry/topoRef";
@@ -21,6 +22,7 @@ import { parseAssemblies } from "../assembly/assembly";
 import { isAssemblyFeature, parseContexts, parseFeatureParts } from "../assembly/featureParse";
 import { parseDrawings } from "../drawing/drawing";
 import { newCurveDef, parseCurveDef } from "./curves";
+import { parseSweepControl, withoutSweepPicking } from "./sweepOptions";
 import { parseFrameDef, parseGusset, parseTrimFrame } from "./frame";
 import type { Assembly, BoundaryCurve, Feature, FeatureType, GeomPick, ImportedFile, LoftCurve, LoftDef, LoftEnd, LoftProfile, MateConnectorDef, Operation, JuraCADDocument, PartStudio, PlaneOptions } from "./types";
 import { MAIN_STUDIO } from "./studios";
@@ -109,7 +111,12 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
       feature.intersectAll = true;
       feature.sketchRef = sketches[sketches.length - 1]?.id;
       feature.pathRef = sketches[sketches.length - 2]?.id;
-    } else feature.sections = sketches.slice(-2).map((f) => f.id);
+    } else {
+      feature.sections = sketches.slice(-2).map((f) => f.id);
+      // As Onshape: Add/Remove/Intersect work on every part the loft reaches, separate pieces are separate parts.
+      feature.apart = true;
+      feature.intersectAll = true;
+    }
   }
   if (type === "text") {
     const hasSolid = doc.features.some((f) => f.type !== "sketch" && f.type !== "curve" && !f.suppressed);
@@ -370,6 +377,7 @@ export function withoutPicking(f: Feature): Feature {
     const { picking: _p, ...blend } = out.blend;
     out = { ...out, blend };
   }
+  if (out.sweepControl?.picking !== undefined) out = withoutSweepPicking(out);
   // A sweep's "part edges" chosen with none clicked: no path yet.
   if (out.pathEdges && !out.pathEdges.length) {
     const { pathEdges: _e, ...rest } = out;
@@ -487,7 +495,7 @@ const FEATURE_TYPES = new Set<string>(Object.keys(FEATURE_DEFS));
 const OPERATIONS = new Set<string>(["new", "add", "remove", "intersect"]);
 
 /** Check one Part Studio's features from untrusted JSON (ids must be unique across the document: `seen`). */
-const TRANSFORM_MODES = new Set(["free", "xyz", "distance", "line", "rotate", "mates"]);
+const TRANSFORM_MODES = new Set(["free", "xyz", "distance", "line", "rotate", "mates", "scale"]);
 const TRANSFORM_PICKING = new Set(["part", "triad", "along", "line", "from", "to"]);
 
 /** Three finite numbers, or null. */
@@ -544,7 +552,7 @@ function parsePlaneExtras(pd: Record<string, unknown>): Partial<PlaneOptions> {
   return out;
 }
 
-const LOFT_ENDS = new Set(["normal", "tangent", "matchTangent", "matchCurvature"]);
+const LOFT_ENDS = new Set(["normal", "tangent", "matchTangent", "matchCurvature", "profileTangent", "direction"]);
 
 function parseLoftEnd(raw: unknown): LoftEnd | null {
   if (!raw || typeof raw !== "object") return null;
@@ -552,6 +560,11 @@ function parseLoftEnd(raw: unknown): LoftEnd | null {
   if (typeof e.kind !== "string" || !LOFT_ENDS.has(e.kind)) return null;
   const out: LoftEnd = { kind: e.kind as LoftEnd["kind"] };
   if (typeof e.magnitude === "number" && Number.isFinite(e.magnitude) && e.magnitude > 0) out.magnitude = Math.min(10, e.magnitude);
+  if (out.kind === "direction") {
+    const towards = parseGeomPick(e.towards);
+    if (!towards) return null;
+    out.towards = towards;
+  }
   return out;
 }
 
@@ -559,6 +572,7 @@ function parseLoftCurve(raw: unknown): LoftCurve | null {
   if (!raw || typeof raw !== "object") return null;
   const c = raw as Record<string, unknown>;
   if (typeof c.sketch === "string") return { sketch: c.sketch };
+  if (typeof c.curve === "string") return { curve: c.curve };
   if (Array.isArray(c.edges)) {
     const edges = c.edges.map(parsePick).filter((x): x is NonNullable<ReturnType<typeof parsePick>> => !!x && x.ref.kind === "edge");
     return edges.length ? { edges } : null;
@@ -586,6 +600,9 @@ export function parseLoftDef(raw: unknown): LoftDef | null {
       } else if (p.point) {
         const point = parseGeomPick(p.point);
         if (point) profiles.push({ point });
+      } else if (Array.isArray(p.edges)) {
+        const edges = p.edges.map(parsePick).filter((x): x is NonNullable<ReturnType<typeof parsePick>> => !!x && x.ref.kind === "edge");
+        if (edges.length) profiles.push({ edges });
       }
     }
     out.profiles = profiles;
@@ -768,8 +785,8 @@ export function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | n
     if (feature.type === "sweep") {
       if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
       if (typeof f.pathRef === "string") feature.pathRef = f.pathRef;
-      const c = f.sweepControl as Record<string, unknown> | undefined;
-      if (c && typeof c === "object" && c.lockOrientation === true) feature.sweepControl = { lockOrientation: true };
+      const c = parseSweepControl(f.sweepControl, parseGeomPick, parsePick);
+      if (c) feature.sweepControl = c;
     }
     if (feature.type === "text") {
       const t = (f.text ?? {}) as Record<string, unknown>;
@@ -929,6 +946,7 @@ export function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | n
       const im = parseImportedFile(f.import);
       if (!im) return null;
       feature.import = im;
+      if (isImportUnit(f.importUnits)) feature.importUnits = f.importUnits;
     }
     if (feature.type === "draft" || feature.type === "ruled") feature.neutral = parsePlane(f.neutral) ?? { kind: "default", name: "Top" };
     if ((feature.type === "draft" || feature.type === "ruled") && f.flipSide === true) feature.flipSide = true;
@@ -942,9 +960,9 @@ export function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | n
       const areas = parseAreaPicks(f.areas);
       if (areas.length) feature.areas = areas;
     }
-    if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep" || feature.type === "hole") && f.apart === true) feature.apart = true;
-    if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") && f.intersectAll === true) feature.intersectAll = true;
-    if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep") && f.thin && typeof f.thin === "object" && f.surface !== true) {
+    if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep" || feature.type === "hole" || feature.type === "loft") && f.apart === true) feature.apart = true;
+    if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep" || feature.type === "loft") && f.intersectAll === true) feature.intersectAll = true;
+    if ((feature.type === "extrude" || feature.type === "revolve" || feature.type === "sweep" || feature.type === "loft") && f.thin && typeof f.thin === "object" && f.surface !== true) {
       const th = f.thin as Record<string, unknown>;
       feature.thin = { ...(th.midPlane === true ? { midPlane: true } : {}), ...(th.flip === true ? { flip: true } : {}) };
     }

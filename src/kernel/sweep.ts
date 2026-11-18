@@ -2,14 +2,14 @@
  * Sweep (a profile carried along a path) and loft (a smooth solid joining
  * outlines on different sketches), with OpenCascade.
  */
-import { cast, genericSweep, getOC, isShape3D, loft, makeBSplineApproximation, makeFace, measureVolume, assembleWire, Wire, type Shape3D } from "replicad";
+import { cast, genericSweep, getOC, isShape3D, loft, makeBSplineApproximation, makeFace, measureArea, measureLength, measureVolume, assembleWire, Wire, type Face, type Shape3D } from "replicad";
 
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import { findChains, findRegions, type Segment } from "../sketch/regions";
 import { chosenRegions, type AreaPick } from "../sketch/areas";
 import type { SketchData } from "../sketch/types";
 import { loopWire, release, segmentsWire } from "./extrude";
-import { hasSharpCorner, loopFrom, profilePlace, smoothRuns, twistStretches, wholeTurns, wholeTurnsMessage, type PathPlace } from "./sweepPath";
+import { hasSharpCorner, loopFrom, profilePlace, smoothRuns, scaleAlong, segmentLength, shareHalves, splitAtPlace, twistStretches, wholeTurns, wholeTurnsMessage, type PathPlace } from "./sweepPath";
 
 type Vec3 = [number, number, number];
 
@@ -73,8 +73,33 @@ export function profileAt(plane: SketchPlane, data: SketchData): Vec3 | undefine
 export interface SweepControl {
   /** Total turn about the path from start to end, in degrees (0 = none). */
   twist?: number;
+  /** A twist given as a pitch instead: mm along the path per whole turn (minus = the other way). Wins over `twist`. */
+  pitch?: number;
   /** Keep the profile facing the same way all along (it doesn't tilt to follow the path). */
   lockOrientation?: boolean;
+  /** Onshape's "Lock profile direction": the profile keeps the same angle to this direction all along (no twist). */
+  lockDirection?: Vec3;
+  /** Size at the path's end, as a share of the size at the profile (1 = the same all along). */
+  scale?: number;
+}
+
+/** The twist in degrees, a pitch worked out over the path's `length`. */
+export function twistOf(control: SweepControl, length: () => number): number {
+  if (control.lockOrientation || control.lockDirection) return 0;
+  if (control.pitch !== undefined) {
+    if (!(Math.abs(control.pitch) > 1e-9)) throw new Error("The twist's pitch (how far along the path one whole turn takes) must be more than 0.");
+    return (360 * length()) / control.pitch;
+  }
+  return control.twist ?? 0;
+}
+
+/** Is it scaled at all? */
+const scaledOf = (control: SweepControl) => control.scale !== undefined && Math.abs(control.scale - 1) > 1e-9;
+
+/** A scale must be more than 0, and at most 100 times. */
+function checkScale(control: SweepControl) {
+  if (control.scale === undefined) return;
+  if (!(control.scale > 1e-3) || control.scale > 100) throw new Error("The scale (the size at the end of the path compared with the start) must be more than 0 and at most 100.");
 }
 
 /** The biggest twist allowed, either way (10 full turns): more takes too long to build, and soon fails. */
@@ -225,17 +250,53 @@ function windGuide(pts: PathSample[], r0: Vec3, a0: number, a1: number): { guide
   }
 }
 
+/** The size along a pipe: from `f0` at its start to `f1` at its end, in step with the length (null = the same all along). */
+type SizeLaw = { f0: number; f1: number } | null;
+
+/** A size change worth a law (else the section is just added). */
+const lawOf = (f0: number, f1: number): SizeLaw => (Math.abs(f0 - 1) > 1e-9 || Math.abs(f1 - 1) > 1e-9 ? { f0, f1 } : null);
+
+/**
+ * Adds the section to a pipe-shell: plainly, or with a size law (OpenCascade's SetLaw with a Law_Linear: the law's
+ * range is spread over the path by length, and the section is scaled about the path).
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function addSection(pipe: any, wire: Wire, law: SizeLaw, correction: boolean) {
+  const oc = getOC() as any;
+  if (!law) {
+    pipe.Add(wire.wrapped, false, correction);
+    return;
+  }
+  // OpenCascade keeps the law (in a handle of its own), so it isn't deleted here.
+  const l = new oc.Law_Linear();
+  l.Set(0, law.f0, 1, law.f1);
+  pipe.SetLaw(wire.wrapped, l, false, correction);
+}
+
+/** "Lock profile direction": the pipe keeps the profile at the same angle to `dir` (OpenCascade's binormal mode). */
+function lockTo(pipe: any, dir: Vec3) {
+  const oc = getOC() as any;
+  const d = new oc.gp_Dir(...dir);
+  try {
+    pipe.SetMode(d);
+  } finally {
+    d.delete();
+  }
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 /**
  * OpenCascade's pipe-shell for one closed outline, with a twist (a guide path
- * wound round the spine) or a fixed orientation. Returns a closed solid.
+ * wound round the spine), a fixed orientation or a locked direction, and
+ * optionally a size law. Returns a closed solid.
  */
-function controlledSweep(wire: Wire, spine: Wire, control: SweepControl, guide: Wire | null, startAxis: { p: Vec3; n: Vec3; x: Vec3 } | null): Shape3D {
+function controlledSweep(wire: Wire, spine: Wire, control: SweepControl, guide: Wire | null, startAxis: { p: Vec3; n: Vec3; x: Vec3 } | null, law: SizeLaw = null, corner: "round" | "right" = "round", frenet = false): Shape3D {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const oc = getOC() as any;
   const pipe = new oc.BRepOffsetAPI_MakePipeShell(spine.wrapped);
   const made: any[] = [];
   try {
-    pipe.SetTransitionMode(oc.BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RoundCorner);
+    pipe.SetTransitionMode(corner === "round" ? oc.BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RoundCorner : oc.BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RightCorner);
     if (guide) pipe.SetMode(guide.wrapped, false, oc.BRepFill_TypeOfContact.BRepFill_NoContact);
     else if (control.lockOrientation && startAxis) {
       const p = new oc.gp_Pnt(...startAxis.p);
@@ -244,9 +305,10 @@ function controlledSweep(wire: Wire, spine: Wire, control: SweepControl, guide: 
       const ax = new oc.gp_Ax2(p, n, x);
       made.push(p, n, x, ax);
       pipe.SetMode(ax);
-    }
+    } else if (control.lockDirection) lockTo(pipe, control.lockDirection);
+    else if (frenet) pipe.SetMode(true);
     // Locked: the profile stays as drawn (no turning it square to the path).
-    pipe.Add(wire.wrapped, false, !control.lockOrientation);
+    addSection(pipe, wire, law, !control.lockOrientation);
     pipe.Build();
     if (!pipe.IsDone()) throw new Error("not built");
     if (!pipe.MakeSolid()) throw new Error("not closed");
@@ -283,6 +345,8 @@ interface Stretch {
   guide: Wire | null;
   /** Where the profile starts this stretch (it's placed there afresh each time, from the drawn profile). */
   start: PathFrame;
+  /** Its length (mm), for sharing out a change of size. */
+  length: number;
 }
 
 /** `v` turned by `angle` (radians) about the unit vector `k` (Rodrigues). */
@@ -341,16 +405,18 @@ function spineStart(spine: Wire): { p: Vec3; t: Vec3 } {
  * facing one way: just the smooth runs. Each stretch knows where the profile
  * starts it, so every one starts from the drawn profile, placed exactly.
  */
-function pathStretches(segments: Segment[], closed: boolean, frame: ReturnType<typeof planeFrame>, twistDeg: number, reach: number): Stretch[] {
+function pathStretches(segments: Segment[], closed: boolean, frame: ReturnType<typeof planeFrame>, twistDeg: number, reach: number, corners = false): Stretch[] {
   const { runs, cornerAfter } = smoothRuns(segments, closed);
   const out: Stretch[] = [];
   const spines: Wire[] = [];
   try {
-    if (Math.abs(twistDeg) < 1e-9) {
+    // Kept facing one way: just the smooth runs (the profile doesn't turn, so the corners need nothing). Turning with
+    // the path (`corners`), even untwisted, each sharp corner gets its rounded stretch as below.
+    if (Math.abs(twistDeg) < 1e-9 && !corners) {
       for (const run of runs) {
         const spine = segmentsWire(run, frame, 0);
         const first = spineStart(spine);
-        out.push({ spine, mode: "fixed", guide: null, start: { p: first.p, t: first.t, d: startReference(first.t) } });
+        out.push({ spine, mode: "fixed", guide: null, start: { p: first.p, t: first.t, d: startReference(first.t) }, length: measureLength(spine) });
       }
       return out;
     }
@@ -373,11 +439,11 @@ function pathStretches(segments: Segment[], closed: boolean, frame: ReturnType<t
       if (pts) {
         const share = twist * (lengths[i] / total);
         const wound = windGuide(pts, r, angle, angle + share);
-        out.push({ spine, mode: "twist", guide: wound.guide, start });
+        out.push({ spine, mode: "twist", guide: wound.guide, start, length: lengths[i] });
         r = wound.rEnd;
         angle += share;
       } else {
-        out.push({ spine, mode: "round", guide: null, start });
+        out.push({ spine, mode: "round", guide: null, start, length: measureLength(spine) });
         r = carryThrough(spine, r).r;
       }
     });
@@ -499,7 +565,7 @@ function placedSection(wire: Wire, from: PathFrame, to: PathFrame): Wire {
 }
 
 /** One stretch's pipe-shell from `section` (already square to the path, placed where the stretch starts): a sound solid, or null. */
-function pipeStretch(section: Wire, st: Stretch, startAxis: { p: Vec3; n: Vec3; x: Vec3 } | null): Shape3D | null {
+function pipeStretch(section: Wire, st: Stretch, startAxis: { p: Vec3; n: Vec3; x: Vec3 } | null, law: SizeLaw = null): Shape3D | null {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const oc = getOC() as any;
   const pipe = new oc.BRepOffsetAPI_MakePipeShell(st.spine.wrapped);
@@ -515,7 +581,7 @@ function pipeStretch(section: Wire, st: Stretch, startAxis: { p: Vec3; n: Vec3; 
       made.push(p, n, x, ax);
       pipe.SetMode(ax);
     }
-    pipe.Add(section.wrapped, false, false);
+    addSection(pipe, section, law, false);
     pipe.Build();
     if (!pipe.IsDone() || !pipe.MakeSolid()) return null;
     const shape = cast(pipe.Shape());
@@ -533,23 +599,40 @@ function pipeStretch(section: Wire, st: Stretch, startAxis: { p: Vec3; n: Vec3; 
   /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
+/** A wire scaled by `k` about the point `at`. */
+function scaledAbout(wire: Wire, at: Vec3, k: number): Wire {
+  if (Math.abs(k - 1) < 1e-12) return wire.clone();
+  return wire.clone().scale(k, at);
+}
+
 /**
  * One closed outline carried along the stretches in turn. Each stretch starts
  * from the drawn outline itself, moved to where that stretch begins (so no
  * error builds up from stretch to stretch); kept facing one way, it's just
  * moved along. The pieces only touch end to end, and are fused into one solid.
+ * `size`: the outline's size at the start and the end (a share of the drawn one), changing in step with the length
+ * of the stretches that can carry a change of size — every one but those rounding a corner, which keep the size they
+ * start with (OpenCascade can't round a corner while scaling).
  */
-function stretchedSweep(wire: Wire, stretches: Stretch[], startAxis: { p: Vec3; n: Vec3; x: Vec3 } | null): Shape3D {
+function stretchedSweep(wire: Wire, stretches: Stretch[], startAxis: { p: Vec3; n: Vec3; x: Vec3 } | null, size: { f0: number; f1: number } = { f0: 1, f1: 1 }): Shape3D {
   const pieces: Shape3D[] = [];
   const first = stretches[0].start;
   // Twisted: turned square to the path at its start first (as a single twisted sweep does).
   const square = startAxis ? wire.clone() : squareTo(wire, first);
+  const scaling = stretches.reduce((t, st) => t + (st.mode === "round" ? 0 : st.length), 0);
+  let along = 0;
   try {
     stretches.forEach((st, i) => {
       const to = startAxis ? { ...first, p: st.start.p } : st.start;
-      const section = i === 0 ? square.clone() : placedSection(square, first, to);
+      const placed = i === 0 ? square.clone() : placedSection(square, first, to);
+      const changes = st.mode !== "round";
+      const [f0, f1] = scaleAlong(size.f0, size.f1, scaling, along, changes ? st.length : 0);
+      if (changes) along += st.length;
+      // A rounded corner keeps its size: the section is scaled to it before it goes round.
+      const section = changes ? placed : scaledAbout(placed, to.p, f0);
+      if (!changes) placed.delete();
       try {
-        const piece = pipeStretch(section, st, startAxis);
+        const piece = pipeStretch(section, st, startAxis, changes ? lawOf(f0, f1) : null);
         if (!piece) throw new Error(`piece ${i} not made`);
         pieces.push(piece);
       } finally {
@@ -588,12 +671,10 @@ export const PROFILE_ALONG_PATH =
  * nearest the profile, so that's where it's measured; a closed loop has no
  * start, so it's measured at the place nearest the middle of the profile.
  */
-function liesAlongPath(spine: Wire, frame: ReturnType<typeof planeFrame>, outline: [number, number][]): boolean {
+function liesAlongPath(spine: Wire, n: Vec3, centre: Vec3): boolean {
   const pieces = samplePath(spine, 64);
   let at: PathSample | null = pieces[0]?.[0] ?? null;
-  if (spine.isClosed && outline.length > 0) {
-    const mid = outline.reduce((acc, p) => [acc[0] + p[0] / outline.length, acc[1] + p[1] / outline.length], [0, 0]);
-    const centre = toWorld(frame, mid[0], mid[1]);
+  if (spine.isClosed) {
     let bestD = Infinity;
     for (const piece of pieces) {
       for (const q of piece) {
@@ -605,48 +686,193 @@ function liesAlongPath(spine: Wire, frame: ReturnType<typeof planeFrame>, outlin
       }
     }
   }
-  return !!at && Math.abs(dot(at.t, frame.n as Vec3)) < Math.sin(Math.PI / 180);
+  return !!at && Math.abs(dot(at.t, n)) < Math.sin(Math.PI / 180);
 }
+
+/**
+ * A profile ready to sweep: its closed outlines (holes stay holes), where it lies, and what's needed to place and
+ * check it. Made from a sketch's closed shapes (`sketchProfile`) or a flat face of a part (`faceProfile`).
+ */
+export interface SweepProfile {
+  /** Each outline as a fresh wire (the caller frees it), its holes the same, and points round the outline (world mm). */
+  loops: { outer: () => Wire; holes: (() => Wire)[]; outline: Vec3[] }[];
+  /** Its plane's normal, a point on that plane and a direction in it (the frame "Keep profile orientation" holds). */
+  normal: Vec3;
+  origin: Vec3;
+  x: Vec3;
+  /** The middle of its first outline. */
+  centre: Vec3;
+  /** Where an open path should start from (its nearer end to this). */
+  near?: Vec3;
+  /** Its area, holes taken out. */
+  area: number;
+  /** Frees anything it holds. */
+  dispose?: () => void;
+}
+
+/** A sketch's closed shapes (or just the picked areas) as a sweep's profile. */
+export function sketchProfile(plane: SketchPlane, data: SketchData, areas?: AreaPick[]): SweepProfile {
+  const { regions, problems } = chosenRegions(data, areas, "sweep");
+  if (regions.length === 0) throw new Error(`The profile sketch has no closed shapes.${problems.length ? ` ${problems.join(" ")}` : ""}`);
+  const frame = planeFrame(plane);
+  const w = (p: [number, number]) => toWorld(frame, p[0], p[1]) as Vec3;
+  const outline = regions[0].outer.polygon;
+  const mid = outline.reduce((acc, p) => [acc[0] + p[0] / outline.length, acc[1] + p[1] / outline.length], [0, 0]);
+  return {
+    loops: regions.map((r) => ({ outer: () => loopWire(r.outer, frame, 0), holes: r.holes.map((h) => () => loopWire(h, frame, 0)), outline: r.outer.polygon.map(w) })),
+    normal: frame.n as Vec3,
+    origin: frame.origin as Vec3,
+    x: frame.u as Vec3,
+    centre: w(mid as [number, number]),
+    near: profileAt(plane, data),
+    area: regions.reduce((t, r) => t + loopArea(r.outer.polygon) - r.holes.reduce((h, x) => h + loopArea(x.polygon), 0), 0),
+  };
+}
+
+/** Points along a wire's edges (world mm). */
+function wirePoints(wire: Wire, per = 12): Vec3[] {
+  const out: Vec3[] = [];
+  for (const e of wire.edges) {
+    for (let k = 0; k < per; k++) {
+      const v = e.pointAt(k / per);
+      out.push([v.x, v.y, v.z]);
+      v.delete();
+    }
+    e.delete();
+  }
+  return out;
+}
+
+/** A flat face of a part (its outline, and any holes in it) as a sweep's profile. The face is left as it was. */
+export function faceProfile(face: Face): SweepProfile {
+  if (face.geomType !== "PLANE") throw new Error("A sweep's profile face must be flat, and the picked one is curved. Pick a flat face, or draw the shape in a sketch.");
+  const outer = face.clone().outerWire();
+  const holes = face.clone().innerWires();
+  const c = face.center;
+  const centre: Vec3 = [c.x, c.y, c.z];
+  c.delete();
+  const nv = face.normalAt(centre);
+  const normal = unit([nv.x, nv.y, nv.z]);
+  nv.delete();
+  return {
+    loops: [{ outer: () => outer.clone(), holes: holes.map((h) => () => h.clone()), outline: wirePoints(outer) }],
+    normal,
+    origin: centre,
+    x: startReference(normal),
+    centre,
+    near: centre,
+    area: measureArea(face),
+    dispose: () => release(outer, ...holes),
+  };
+}
+
+/** Kept facing one way, does the path run along the profile's own plane for a stretch (not just at a point)? */
+function edgeOnAlong(spine: Wire, n: Vec3): boolean {
+  let total = 0;
+  let flat = 0;
+  for (const piece of samplePath(spine, 64)) {
+    for (let i = 1; i < piece.length; i++) {
+      const ds = Math.hypot(...sub(piece[i].p, piece[i - 1].p));
+      total += ds;
+      if (Math.abs(dot(piece[i].t, n)) < 1e-4 && Math.abs(dot(piece[i - 1].t, n)) < 1e-4) flat += ds;
+    }
+  }
+  return flat > Math.max(1e-3, 1e-4 * total);
+}
+
+/** Does the path anywhere run (within 1°) along the direction a "Lock profile direction" holds? */
+function runsAlong(spine: Wire, d: Vec3): boolean {
+  for (const piece of samplePath(spine, 32)) {
+    for (const q of piece) if (Math.hypot(...cross(q.t, d)) < Math.sin(Math.PI / 180)) return true;
+  }
+  return false;
+}
+
+/** What to say when the path runs along the locked direction. */
+const ALONG_LOCKED =
+  'The path runs along the direction the profile is locked to (somewhere along it), so there\'s no telling which way the profile should face there. Pick a direction that crosses the path everywhere — e.g. square to the plane the path is drawn on — or choose "None" for the profile control.';
+
+/** What to say when a locked direction and a scale can't go round a sketch path's sharp corners together. */
+const SCALE_CORNERS_LOCKED =
+  'Couldn\'t change the profile\'s size round the path\'s sharp corners with its direction locked. Round the corners with a sketch fillet, set the scale to 1, or choose "None" for the profile control (a scale goes round sharp corners then).';
+
+/** What to say when a scale can't be used on a closed loop. */
+const SCALE_LOOP = "A sweep that changes size needs a path with two ends (round a closed loop it would meet itself at a different size). Set the scale to 1, or open the path.";
 
 /** Carry each closed shape of the profile sketch along the path (holes stay holes), optionally twisting or keeping its orientation. */
 export function sweepSketch(profilePlane: SketchPlane, profile: SketchData, pathPlane: SketchPlane, path: SketchData, areas?: AreaPick[], control: SweepControl = {}): Shape3D {
-  const { regions, problems } = chosenRegions(profile, areas, "sweep");
-  if (regions.length === 0) throw new Error(`The profile sketch has no closed shapes.${problems.length ? ` ${problems.join(" ")}` : ""}`);
-  const chain = pathChain(pathPlane, path, profileAt(profilePlane, profile));
+  return sweepAlongSketch(sketchProfile(profilePlane, profile, areas), pathPlane, path, control);
+}
+
+/** One piece of the path swept on its own (the whole path, or one of the halves either side of a profile part way along). */
+interface Half {
+  segments: Segment[];
+  twist: number;
+  /** The size at its far end, a share of the profile's (1 at the profile). */
+  scale: number;
+  /** Built stretch by stretch. */
+  stretches: Stretch[] | null;
+  /** Else built in one go: its path, and a twist's guide. */
+  spine?: Wire;
+  guide?: Wire | null;
+}
+
+function releaseHalf(h: Half) {
+  if (h.stretches) releaseStretches(h.stretches);
+  if (h.spine) release(h.spine);
+  if (h.guide) release(h.guide);
+}
+
+/** Carry the profile's closed outlines along the path drawn in a sketch (holes stay holes), twisting, scaling or holding it as asked. */
+export function sweepAlongSketch(prof: SweepProfile, pathPlane: SketchPlane, path: SketchData, control: SweepControl = {}): Shape3D {
+  checkScale(control);
+  const chain = pathChain(pathPlane, path, prof.near);
   const pathFrame = planeFrame(pathPlane);
-  const frame = planeFrame(profilePlane);
+  const whole = () => segmentsWire(chain.segments, pathFrame, 0);
   {
     // A profile lying along the path (the path runs in its plane where they meet) can't be swept: say so first.
-    const spine = segmentsWire(chain.segments, pathFrame, 0);
-    const along = liesAlongPath(spine, frame, regions[0].outer.polygon);
+    const spine = whole();
+    const along = liesAlongPath(spine, prof.normal, prof.centre);
     release(spine);
     if (along) throw new Error(PROFILE_ALONG_PATH);
   }
-  const twist = control.lockOrientation ? 0 : control.twist ?? 0;
-  const plain = Math.abs(twist) < 1e-9 && !control.lockOrientation;
-  // Twisted round sharp corners, or twisted / kept facing one way round a closed loop: built stretch by stretch.
-  const stretched = !plain && (chain.closed || (Math.abs(twist) >= 1e-9 && hasSharpCorner(chain.segments, false)));
-  let stretches: Stretch[] | null = null;
-  let spine: Wire | null = null;
-  let guide: Wire | null = null;
-  if (stretched) {
-    checkTwistSize(twist);
-    let segments = chain.segments;
-    if (chain.closed) {
+  const lock = !!control.lockOrientation;
+  const dir = lock ? undefined : control.lockDirection;
+  const twist = twistOf(control, () => {
+    const sp = whole();
+    try {
+      return measureLength(sp);
+    } finally {
+      release(sp);
+    }
+  });
+  const scaled = scaledOf(control);
+  const scale = scaled ? control.scale! : 1;
+  if (scaled && chain.closed) throw new Error(SCALE_LOOP);
+  const plain = Math.abs(twist) < 1e-9 && !lock && !dir && !scaled;
+  const startAxis = lock ? { p: prof.origin, n: prof.normal, x: prof.x } : null;
+  const reachFrom = (segments: Segment[]) => profileReach(prof, toWorld(pathFrame, ...startOf(segments)));
+  // Twisted (or changing size) round sharp corners, or twisted / kept facing one way round a closed loop: built stretch by stretch.
+  const needsStretches = (segments: Segment[], tw: number) => !dir && hasSharpCorner(segments, false) && (Math.abs(tw) >= 1e-9 || scaled);
+  const halves: Half[] = [];
+  try {
+    if (!plain) checkTwistSize(twist);
+    if (!plain && chain.closed) {
+      let segments = chain.segments;
       if (Math.abs(twist) >= 1e-9 && !wholeTurns(twist)) throw new Error(wholeTurnsMessage(twist));
-      if (control.lockOrientation && !hasSharpCorner(segments, true)) {
+      if (lock && !hasSharpCorner(segments, true)) {
         throw new Error(
           "A profile kept facing one way can't go round a smooth closed loop: somewhere the path would run along the profile's own plane, flattening it. Turn off \"Keep profile orientation\", or use a loop with straight sides.",
         );
       }
-      if (control.lockOrientation) {
+      if (lock) {
         // A straight side running along the profile's own plane would flatten it there.
         const edgeOn = segments.some((sg) => {
           if (sg.kind !== "line") return false;
           const a = toWorld(pathFrame, ...sg.from);
           const b = toWorld(pathFrame, ...sg.to);
           const t = unit(sub(b, a));
-          return Math.abs(dot(t, frame.n as Vec3)) < 1e-6;
+          return Math.abs(dot(t, prof.normal)) < 1e-6;
         });
         if (edgeOn) {
           throw new Error(
@@ -654,46 +880,128 @@ export function sweepSketch(profilePlane: SketchPlane, profile: SketchData, path
           );
         }
       }
-      segments = loopFrom(segments, startOnLoop(segments, pathFrame, frame, regions[0].outer.polygon));
+      if (!dir) {
+        segments = loopFrom(segments, startOnLoop(segments, pathFrame, prof));
+        halves.push({ segments, twist, scale: 1, stretches: pathStretches(segments, true, pathFrame, twist, reachFrom(segments), !lock) });
+      } else halves.push({ segments, twist, scale: 1, stretches: null });
+    } else if (!plain && (scaled || needsStretches(chain.segments, twist)) && !dir) {
+      // A profile part way along the path: swept both ways from it, the twist shared by length and the size 1 there.
+      const [before, after] = splitAtPlace(chain.segments, startOnLoop(chain.segments, pathFrame, prof));
+      const lb = before.reduce((t, sg) => t + segmentLength(sg), 0);
+      const la = after.reduce((t, sg) => t + segmentLength(sg), 0);
+      const parts: { segments: Segment[]; twist: number; scale: number }[] = [];
+      if (lb > 1e-6 * (la + lb) + 1e-6 && after.length) {
+        const share = shareHalves(lb, la, twist, scale);
+        if (!(share.before.scale > 1e-3)) {
+          throw new Error(
+            `With the profile part way along the path, a scale of ${Number(scale.toFixed(4))} at the end would shrink it to nothing before it reaches the start. Use a smaller scale, or put the profile at the start of the path.`,
+          );
+        }
+        parts.push({ segments: reversed(before), ...share.before }, { segments: after, ...share.after });
+      } else parts.push({ segments: chain.segments, twist, scale });
+      for (const h of parts) halves.push({ ...h, stretches: needsStretches(h.segments, h.twist) ? pathStretches(h.segments, false, pathFrame, h.twist, reachFrom(h.segments), !lock) : null });
+    } else halves.push({ segments: chain.segments, twist, scale, stretches: null });
+    // The rest are made in one go: their paths, and the guides a twist winds round them.
+    for (const h of halves) {
+      if (h.stretches) continue;
+      h.spine = segmentsWire(h.segments, pathFrame, 0);
+      if (!plain && Math.abs(h.twist) >= 1e-9) h.guide = twistGuide(h.spine, h.twist);
     }
-    stretches = pathStretches(segments, chain.closed, pathFrame, twist, profileReach(regions, frame, toWorld(pathFrame, ...startOf(segments))));
-  } else {
-    spine = segmentsWire(chain.segments, pathFrame, 0);
-    if (!plain && Math.abs(twist) >= 1e-9) {
-      try {
-        guide = twistGuide(spine, twist);
-      } catch (e) {
-        release(spine);
-        throw e;
-      }
+    // Kept facing one way, a stretch of the path running along the profile's plane flattens it: refused first.
+    if (lock) {
+      const sp = whole();
+      const flat = edgeOnAlong(sp, prof.normal);
+      release(sp);
+      if (flat) throw new Error(EDGE_ON_LOCKED);
     }
+    if (dir) {
+      const sp = whole();
+      const bad = runsAlong(sp, dir);
+      release(sp);
+      if (bad) throw new Error(ALONG_LOCKED);
+    }
+  } catch (e) {
+    halves.forEach(releaseHalf);
+    throw e;
   }
-  const startAxis = control.lockOrientation ? { p: frame.origin as Vec3, n: frame.n as Vec3, x: frame.u as Vec3 } : null;
-  const sweepOne = (wire: Wire): Shape3D => {
+  const stretched = halves.some((h) => h.stretches);
+  const sharp = hasSharpCorner(chain.segments, chain.closed);
+  const buildHalf = (h: Half, wire: Wire): Shape3D => {
+    if (h.stretches) return stretchedSweep(wire, h.stretches, startAxis, { f0: 1, f1: h.scale });
+    const spine = h.spine!;
+    if (plain) return genericSweep(wire, spine, { transitionMode: "round", forceProfileSpineOthogonality: false });
+    const law = lawOf(1, h.scale);
     try {
-      if (stretches) return stretchedSweep(wire, stretches, startAxis);
-      if (plain) return genericSweep(wire, spine!, { transitionMode: "round", forceProfileSpineOthogonality: false });
-      return controlledSweep(wire, spine!, control, guide, startAxis);
+      return controlledSweep(wire, spine, control, h.guide ?? null, startAxis, law);
+    } catch (e) {
+      // OpenCascade can't round a corner while changing size: a mitred corner instead (a locked direction).
+      if (!law || !sharp) throw e;
+      return controlledSweep(wire, spine, control, h.guide ?? null, startAxis, law, "right");
+    }
+  };
+  const sweepOne = (make: () => Wire): Shape3D => {
+    const pieces: Shape3D[] = [];
+    try {
+      for (const h of halves) {
+        const wire = make();
+        try {
+          pieces.push(buildHalf(h, wire));
+        } finally {
+          release(wire);
+        }
+      }
+      return pieces.length === 1 ? pieces.pop()! : fuseInto(pieces);
     } catch {
       throw new Error(
         plain
           ? "Couldn't sweep the profile along that path. Check the profile sits at the start of the path and is small enough for its bends."
           : Math.abs(twist) >= 1e-9
-            ? stretches && hasSharpCorner(chain.segments, chain.closed)
+            ? stretched && sharp
               ? "Couldn't twist the profile round that path's sharp corners. Try a different twist or a smaller profile, or round the corners with a sketch fillet."
               : "Couldn't twist the profile along that path. Try a smaller twist, a smaller profile, or a smoother path."
-            : "Couldn't sweep the profile along that path while keeping it facing the same way. Try without \"Keep profile orientation\", or a gentler path.",
+            : lock
+              ? "Couldn't sweep the profile along that path while keeping it facing the same way. Try without \"Keep profile orientation\", or a gentler path."
+              : dir
+                ? scaled && sharp
+                  ? SCALE_CORNERS_LOCKED
+                  : "Couldn't sweep the profile along that path with its direction locked. Try another direction, or \"None\" for the profile control."
+                : "Couldn't sweep the profile along that path while changing its size. Try a scale nearer 1, a smaller profile, or round the path's corners with a sketch fillet.",
       );
     } finally {
-      release(wire);
+      release(...pieces);
     }
   };
   try {
-    let result: Shape3D | null = null;
-    for (const region of regions) {
-      let solid = sweepOne(loopWire(region.outer, frame, 0));
-      for (const hole of region.holes) {
-        const cutter = sweepOne(loopWire(hole, frame, 0));
+    const result = sweepLoops(prof, sweepOne);
+    if (lock) {
+      // A profile that went edge-on somewhere comes out flattened: refused instead of kept.
+      const sp = whole();
+      try {
+        refuseFlattened(result, prof.area, prof.normal, sp);
+      } finally {
+        release(sp);
+      }
+    }
+    return result;
+  } finally {
+    halves.forEach(releaseHalf);
+  }
+}
+
+/** Every outline of the profile swept by `sweepOne`, its holes cut out, all put together. */
+function sweepLoops(prof: SweepProfile, sweepOne: (make: () => Wire) => Shape3D): Shape3D {
+  let result: Shape3D | null = null;
+  try {
+    for (const loop of prof.loops) {
+      let solid = sweepOne(loop.outer);
+      for (const hole of loop.holes) {
+        let cutter: Shape3D;
+        try {
+          cutter = sweepOne(hole);
+        } catch (e) {
+          release(solid);
+          throw e;
+        }
         const next = solid.cut(cutter);
         release(solid, cutter);
         solid = next;
@@ -705,21 +1013,11 @@ export function sweepSketch(profilePlane: SketchPlane, profile: SketchData, path
         result = merged;
       }
     }
-    if (control.lockOrientation) {
-      // A profile that went edge-on somewhere comes out flattened: refused instead of kept.
-      const whole = segmentsWire(chain.segments, pathFrame, 0);
-      try {
-        refuseFlattened(result!, regions, frame.n as Vec3, whole);
-      } finally {
-        release(whole);
-      }
-    }
-    return result!;
-  } finally {
-    if (spine) release(spine);
-    if (guide) release(guide);
-    if (stretches) releaseStretches(stretches);
+  } catch (e) {
+    if (result) release(result);
+    throw e;
   }
+  return result!;
 }
 
 /** The first point of a run of segments. */
@@ -729,23 +1027,19 @@ const startOf = (segments: Segment[]): [number, number] => {
 };
 
 /** How far the profile reaches from the path (measured from where the path starts, at the profile). */
-function profileReach(regions: { outer: { polygon: [number, number][] } }[], frame: ReturnType<typeof planeFrame>, at: Vec3): number {
+function profileReach(prof: SweepProfile, at: Vec3): number {
   let reach = 0;
-  for (const r of regions) {
-    for (const [x, y] of r.outer.polygon) {
-      const w = toWorld(frame, x, y);
-      reach = Math.max(reach, Math.hypot(w[0] - at[0], w[1] - at[1], w[2] - at[2]));
-    }
+  for (const loop of prof.loops) {
+    for (const w of loop.outline) reach = Math.max(reach, Math.hypot(w[0] - at[0], w[1] - at[1], w[2] - at[2]));
   }
   return reach;
 }
 
-/** Where on a closed path the profile sits: where its plane crosses the loop, nearest the middle of its outline. */
-function startOnLoop(segments: Segment[], pathFrame: ReturnType<typeof planeFrame>, profileFrame: ReturnType<typeof planeFrame>, outline: [number, number][]): PathPlace {
-  const mid = outline.reduce((acc, p) => [acc[0] + p[0] / outline.length, acc[1] + p[1] / outline.length], [0, 0]);
-  const centre = toWorld(profileFrame, mid[0], mid[1]);
-  const n = profileFrame.n;
-  const o = profileFrame.origin;
+/** Where on the path the profile sits: where its plane crosses the path, nearest the middle of its outline. */
+function startOnLoop(segments: Segment[], pathFrame: ReturnType<typeof planeFrame>, prof: SweepProfile): PathPlace {
+  const centre = prof.centre;
+  const n = prof.normal;
+  const o = prof.origin;
   return profilePlace(
     segments,
     (p) => {
@@ -800,13 +1094,44 @@ export function loftSketches(sections: { plane: SketchPlane; data: SketchData; n
  * bending (best for a helix: the profile keeps its place round the axis); otherwise the profile turns as little as it can.
  */
 export function sweepAlongSpine(profilePlane: SketchPlane, profile: SketchData, spine: Wire, areas: AreaPick[] | undefined, control: SweepControl = {}, frenet = false): Shape3D {
-  const { regions, problems } = chosenRegions(profile, areas, "sweep");
-  if (regions.length === 0) throw new Error(`The profile sketch has no closed shapes.${problems.length ? ` ${problems.join(" ")}` : ""}`);
-  const frame = planeFrame(profilePlane);
-  if (liesAlongPath(spine, frame, regions[0].outer.polygon)) throw new Error(PROFILE_ALONG_PATH);
-  const twist = control.lockOrientation ? 0 : control.twist ?? 0;
-  const plain = Math.abs(twist) < 1e-9 && !control.lockOrientation;
+  return sweepProfileAlongSpine(sketchProfile(profilePlane, profile, areas), spine, control, frenet);
+}
+
+/** Is the profile part way along the path (the path passes nearer its middle somewhere than at its start)? */
+function midSpine(spine: Wire, centre: Vec3): boolean {
+  const pieces = samplePath(spine, 32);
+  const start = pieces[0]?.[0];
+  if (!start) return false;
+  const d0 = Math.hypot(...sub(start.p, centre));
+  let best = d0;
+  let length = 0;
+  for (const piece of pieces) {
+    for (let i = 1; i < piece.length; i++) {
+      length += Math.hypot(...sub(piece[i].p, piece[i - 1].p));
+      best = Math.min(best, Math.hypot(...sub(piece[i].p, centre)));
+    }
+  }
+  return d0 - best > 1e-3 * length + 1e-6;
+}
+
+/** The profile's closed outlines carried along a ready-made path (`sweepAlongSpine`'s work, for a sketch's shapes or a face). */
+export function sweepProfileAlongSpine(prof: SweepProfile, spine: Wire, control: SweepControl = {}, frenet = false): Shape3D {
+  checkScale(control);
+  if (liesAlongPath(spine, prof.normal, prof.centre)) throw new Error(PROFILE_ALONG_PATH);
+  const lock = !!control.lockOrientation;
+  const dir = lock ? undefined : control.lockDirection;
+  const twist = twistOf(control, () => measureLength(spine));
+  const scaled = scaledOf(control);
+  const plain = Math.abs(twist) < 1e-9 && !lock && !dir && !scaled;
   let guide: Wire | null = null;
+  if (scaled) {
+    if (spine.isClosed) throw new Error(SCALE_LOOP);
+    if (midSpine(spine, prof.centre)) {
+      throw new Error("To change size along a curve or part edges, the profile must sit at one end of the path. Move it there, or draw the path in a sketch (then the profile can sit part way along).");
+    }
+  }
+  if (lock && edgeOnAlong(spine, prof.normal)) throw new Error(EDGE_ON_LOCKED);
+  if (dir && runsAlong(spine, dir)) throw new Error(ALONG_LOCKED);
   if (!plain && Math.abs(twist) >= 1e-9) {
     checkTwistSize(twist);
     if (spineHasCorner(spine)) {
@@ -816,37 +1141,37 @@ export function sweepAlongSpine(profilePlane: SketchPlane, profile: SketchData, 
     }
     guide = twistGuide(spine, twist);
   }
-  const startAxis = control.lockOrientation ? { p: frame.origin as Vec3, n: frame.n as Vec3, x: frame.u as Vec3 } : null;
-  const sweepOne = (wire: Wire): Shape3D => {
+  const startAxis = lock ? { p: prof.origin, n: prof.normal, x: prof.x } : null;
+  const law = lawOf(1, scaled ? control.scale! : 1);
+  const sweepOne = (make: () => Wire): Shape3D => {
+    const wire = make();
     try {
       if (plain) return genericSweep(wire, spine, { frenet, transitionMode: "round", forceProfileSpineOthogonality: false });
-      return controlledSweep(wire, spine, control, guide, startAxis);
+      // Only a scale alone follows a helix's own bending (as a plain sweep does).
+      const own = frenet && !guide && !lock && !dir;
+      try {
+        return controlledSweep(wire, spine, control, guide, startAxis, law, "round", own);
+      } catch (e) {
+        if (!law) throw e;
+        return controlledSweep(wire, spine, control, guide, startAxis, law, "right", own);
+      }
     } catch {
-      throw new Error("Couldn't sweep the profile along that path. Check the profile sits at the start of the path and is small enough for its bends.");
+      throw new Error(
+        scaled
+          ? spineHasCorner(spine)
+            ? "Couldn't change the profile's size round the sharp corners of that curve or those part edges. Draw the path in a sketch instead (a scale goes round a sketch's sharp corners), or set the scale to 1."
+            : "Couldn't sweep the profile along that path while changing its size. Try a scale nearer 1, a smaller profile, or a smoother path."
+          : "Couldn't sweep the profile along that path. Check the profile sits at the start of the path and is small enough for its bends.",
+      );
     } finally {
       release(wire);
     }
   };
   try {
-    let result: Shape3D | null = null;
-    for (const region of regions) {
-      let solid = sweepOne(loopWire(region.outer, frame, 0));
-      for (const hole of region.holes) {
-        const cutter = sweepOne(loopWire(hole, frame, 0));
-        const next = solid.cut(cutter);
-        release(solid, cutter);
-        solid = next;
-      }
-      if (!result) result = solid;
-      else {
-        const merged: Shape3D = result.fuse(solid);
-        release(result, solid);
-        result = merged;
-      }
-    }
+    const result = sweepLoops(prof, sweepOne);
     // Kept facing one way, a profile that went edge-on somewhere comes out flattened: refused instead of kept.
-    if (control.lockOrientation) refuseFlattened(result!, regions, frame.n as Vec3, spine);
-    return result!;
+    if (lock) refuseFlattened(result, prof.area, prof.normal, spine);
+    return result;
   } finally {
     if (guide) release(guide);
   }
@@ -898,8 +1223,7 @@ export function pathCrossing(spine: Wire, n: Vec3): number {
  * times how far the path carries it out of its plane: the profile went edge-on somewhere and OpenCascade made a
  * flattened, broken solid. Refused in plain words (the shape is freed).
  */
-function refuseFlattened(shape: Shape3D, regions: { outer: { polygon: [number, number][] }; holes: { polygon: [number, number][] }[] }[], n: Vec3, spine: Wire): void {
-  const area = regions.reduce((t, r) => t + loopArea(r.outer.polygon) - r.holes.reduce((h, x) => h + loopArea(x.polygon), 0), 0);
+function refuseFlattened(shape: Shape3D, area: number, n: Vec3, spine: Wire): void {
   let volume = 0;
   try {
     volume = measureVolume(shape);

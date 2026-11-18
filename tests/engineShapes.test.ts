@@ -1164,10 +1164,10 @@ describe("sweep twist and keep orientation", () => {
     expect(b.max[0]).toBeCloseTo(60, 3);
     expect(b.max[1]).toBeCloseTo(34, 3);
     expect(b.min[2]).toBeCloseTo(-2, 3);
-    // Round a sharp corner it would end edge-on (flat): explained instead.
+    // Round a sharp corner it would end edge-on (flat): explained instead (the second leg runs in the profile's plane).
     const corner = sketchFeature({ kind: "default", name: "Top" }, addLine(lineSketch(0, 0, 40, 0), { x: 40, y: 0 }, { x: 40, y: 40 }).sketch);
     const bad = build([corner, prof, { ...locked, pathRef: corner.id }]);
-    expect(Object.values(bad.featureErrors)[0]).toMatch(/facing the same way/);
+    expect(Object.values(bad.featureErrors)[0]).toMatch(/Kept facing one way, the profile would turn edge-on/);
     // Round a closed loop with straight sides it can: a 4 × 4 square standing at 45° carried round a 40 mm square.
     // Each side sweeps 16 × 40 × cos 45°; at the two corners where the motion turns back across the profile's plane the
     // sides overlap by 16 mm³ each (worked out by hand).

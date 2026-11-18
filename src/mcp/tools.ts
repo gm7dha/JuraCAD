@@ -23,7 +23,7 @@ import { evaluate } from "../model/expr";
 import { analyzeSketch } from "../sketch/solver";
 import { DIMENSION_TYPES } from "../sketch/types";
 import type { FollowedFrame, PartMesh } from "../kernel/protocol";
-import { bool, InputError, list, MAX_LENGTH, noExtras, object, oneOf, text, type Obj } from "./args";
+import { amount, bool, InputError, list, MAX_LENGTH, noExtras, object, oneOf, text, tidy, type Obj } from "./args";
 import { deleteFeatures, deletePlan, listNames, outsideLines } from "../model/dependents";
 import { firstStudioId } from "../model/studios";
 import { followedSketch } from "../sketch/areaClicks";
@@ -145,9 +145,10 @@ export function summarize(f: Feature, doc: JuraCADDocument, built?: Record<strin
       return `sweep ${nameOf(f.sketchRef)}${more.length ? ` (with areas of ${more.join(", ")} too)` : ""} along ${f.pathEdges?.length ? `${f.pathEdges.length} part edge(s)` : nameOf(f.pathRef)}${twist}${thinText(f)}, ${op}`;
     }
     case "loft": {
-      const secs = loftProfiles(f).map((x) => ("sketch" in x ? nameOf(x.sketch) : "face" in x ? `a face of ${nameOf(x.face.partId)}` : "a point"));
-      const extra = [f.loft?.start && `start ${f.loft.start.kind}`, f.loft?.end && `end ${f.loft.end.kind}`, f.loft?.guide && "with a guide curve", f.loft?.path && "along a path", f.loft?.periodic && "closed loop", f.loftRuled && "straight sides"].filter(Boolean);
-      return `${f.surface ? "surface " : ""}loft through ${secs.join(", ")}${extra.length ? ` (${extra.join(", ")})` : ""}, ${op}`;
+      const secs = loftProfiles(f).map((x) => ("sketch" in x ? nameOf(x.sketch) : "face" in x ? `a face of ${nameOf(x.face.partId)}` : "edges" in x ? `${x.edges.length} edge(s) of ${nameOf(x.edges[0].partId)}` : "a point"));
+      const curveName = (c: NonNullable<NonNullable<Feature["loft"]>["guide"]>) => ("sketch" in c ? nameOf(c.sketch) : "curve" in c ? nameOf(c.curve) : `${c.edges.length} part edge(s)`);
+      const extra = [f.loft?.start && `start ${f.loft.start.kind}`, f.loft?.end && `end ${f.loft.end.kind}`, f.loft?.guide && `with guide ${curveName(f.loft.guide)}`, f.loft?.path && `along ${curveName(f.loft.path)}`, f.loft?.periodic && "closed loop", f.loftRuled && "straight sides"].filter(Boolean);
+      return `${f.surface ? "surface " : f.thin ? "thin " : ""}loft through ${secs.join(", ")}${extra.length ? ` (${extra.join(", ")})` : ""}, ${op}`;
     }
     case "hole": {
       const h = f.hole!;
@@ -209,6 +210,16 @@ export function summarize(f: Feature, doc: JuraCADDocument, built?: Record<strin
     case "plane":
     case "mateConnector":
       return describeMore(f, (id) => doc.features.find((x) => x.id === id)?.name, built?.[f.id]);
+    case "transform": {
+      const t = f.transform;
+      if (t?.mode !== "scale") return `${f.type} (made in the app)`;
+      const about = t.triad ? `about (${t.triad.origin.map((n) => tidy(n)).join(", ")})` : t.about === "origin" ? "about the origin" : "about its centre";
+      return `scale ${t.partId ?? "(no part)"} by ${p.factor ?? "1"} ${about}${t.copy ? " (a copy)" : ""}`;
+    }
+    case "import": {
+      const units = f.importUnits ? `, its numbers read as ${f.importUnits}` : "";
+      return `import of ${f.import?.fileName ?? "a file"} (made in the app), scale ${p.scale ?? "1"}${units}`;
+    }
     default:
       return `${f.type} (made in the app)`;
   }
@@ -401,8 +412,8 @@ const SHAPES_SCHEMA = {
 const KIND_HELP: Record<FeatureKind, string> = {
   extrude: 'extrude: sketch (name; default the latest), depth, end ("blind" default | "symmetric" | "through_all" (right through, both ways) | "up_to_face" with up_to_face, up_to_part | "up_to_vertex" with up_to_vertex: [x, y, z], a corner of up_to_part (default the latest part), followed as the part changes), flip (a "remove" cut on a face sketch goes into the part unless flip is given), second_depth (also extrude the other way), draft (°), areas ([[x,y],…] points inside the sketch areas to use; default every closed shape), more_sketches ([{"sketch": name, "areas": [[x,y],…]}, …]: areas of other sketches made with the same settings, as clicking them in the app does; null or [] for none), thin (a wall this thick along the sketch lines/arcs/circles — open or closed — instead of filling closed shapes; null to turn off), thin_other_side (thickness on the other side too, default 0), thin_centred (true: the thickness shared both sides), thin_flip (swap the sides; on a closed shape the first side is inside), operation',
   revolve: 'revolve: sketch, axis ("vertical" | "horizontal" — the sketch\'s axes through its origin — or {"from":[x,y],"to":[x,y]} naming a line drawn in the sketch), angle (° default 360), symmetric, second_angle (° the other way from the sketch too; angle + second_angle ≤ 360; 0 to turn off), flip, areas, more_sketches (spun round the same axis, which must lie in their planes), thin, thin_other_side, thin_centred, thin_flip (as extrude; the axis line is left out of the wall), operation',
-  sweep: 'sweep: sketch (the closed shape, drawn on a plane across the start of the path), path (another sketch: the lines/arcs to follow — or a curve feature, e.g. a helix for a spring), or path_edges (part edges joined end to end, E-numbers) on path_part, twist (° turned along the whole path, default 0; whole turns — 360, 720… — on a closed loop), keep_orientation (true: the shape doesn\'t turn with the path; no twist then), areas, more_sketches (more shapes swept along the same path), thin, thin_other_side, thin_centred, thin_flip (as extrude: the profile curves made into a wall, then swept), operation',
-  loft: 'loft (a smooth solid joining shapes on different planes, as Onshape\'s Loft): sections (in order: sketch names — each with one closed shape — or {"part": name, "face": "F3"} for a flat face of a part), start_point / end_point ([x, y, z] mm: come to a point there — a cone or pyramid tip; null to take it off), start / end ("none" | "normal" — leave square to the shape | "rounded" — a point\'s tip made round, like a nose | "match_tangent" / "match_curvature" — carry on smoothly from the faces round a face section), start_magnitude / end_magnitude (how far that reaches, default 1, at most 4), guide (a sketch with one curve that touches every shape\'s outline: the loft is pulled out or in to follow it), path (a sketch with the curve the loft runs along), straight (true: straight sides between shapes), match_corners (true: line corners up by "turns" — one whole number per section, how many corners on its start is turned — when a loft twists), closed_loop (true: back round to the first shape, a ring), operation',
+  sweep: 'sweep: sketch (the closed shape, drawn on a plane across the start of the path), path (another sketch: the lines/arcs to follow — or a curve feature, e.g. a helix for a spring), or path_edges (part edges joined end to end, E-numbers) on path_part, twist (° turned along the whole path, default 0; whole turns — 360, 720… — on a closed loop), twist_turns (whole turns instead, e.g. 2) or twist_pitch (mm along the path per turn) — one of the three —, twist_opposite (true: the other way), keep_orientation (true: the shape doesn\'t turn with the path; no twist then), lock_direction (Onshape\'s Lock profile direction: the shape keeps the same angle to "x"/"y"/"z", {"part", "edge"}, {"part", "face"} — its normal — or {"connector"}; no twist then; the path mustn\'t run along it), scale (the size at the end of the path compared with the shape, e.g. 0.5; 1 at the shape, so a shape part way along a sketch path grows behind it), profile_face ({"part", "face"}: a flat face of a part as the shape instead of "sketch", holes and all), surface (true: a skin from the sketch\'s outlines, open ones too), areas, more_sketches (more shapes swept along the same path), thin, thin_other_side, thin_centred, thin_flip (as extrude: the profile curves made into a wall, then swept), operation',
+  loft: 'loft (a smooth solid joining shapes on different planes, as Onshape\'s Loft): sections (in order: sketch names — each with one closed shape — or {"part": name, "face": "F3"} for a face of a part (a curved one too), or {"part": name, "edges": ["E1", …]} for part edges joined end to end), start_point / end_point ([x, y, z] mm: come to a point there — a cone or pyramid tip; null to take it off), start / end ("none" | "normal" — leave square to the shape | "tangent_to_profile" — flare out (or in) along the shape\'s own plane | "direction" — leave along start_direction / end_direction: "x" | "y" | "z" | {"part", "edge"} | {"part", "face"} | "rounded" — a point\'s tip made round, like a nose | "match_tangent" / "match_curvature" — carry on smoothly from the faces round a face section), start_magnitude / end_magnitude (how far that reaches, default 1, at most 4), guide (a sketch with one curve, or a curve feature such as a fit spline, that touches every shape\'s outline: the loft is pulled out or in to follow it), path (a sketch with the curve the loft runs along, or a curve feature such as a helix), surface (true: a skin with no inside; sections may then be open part edges), thin / thin_other_side / thin_centred / thin_flip (a hollow wall of that thickness round each sketch shape, open at both ends), straight (true: straight sides between shapes), match_corners (true: line corners up by "turns" — one whole number per section, how many corners on its start is turned — when a loft twists), closed_loop (true: back round to the first shape, a ring), operation',
   hole: 'hole: sketch (whose points and circle centres mark the holes — draw it on the face the holes start from, with add_sketch "on_face"), size ("M2"…"M12") with fit ("clearance" default | "tapped"), or diameter for a custom hole; style ("simple" | "counterbore" | "countersink"), end ("through_all" default | "blind" with depth), flip. Custom holes may set counterbore_diameter/counterbore_depth/countersink_diameter/countersink_angle',
   fillet: "fillet: edges (see edge choices), radius, end_radius (optional, a radius growing along the edge), all_edges (true: every edge of the part, no edges needed), part (default the latest), variable (Onshape's Variable fillet: radius points on the picked edges, [{edge: E3, at: start | end | 0…1 (share of its length), radius: 2}]; ends without a point use radius; false or [] turns it off), variable_straight (true: straight between the points, else smooth). Fillets always follow on along edges that carry on smoothly (tangent); conic, curvature-continuous and part-way fillets aren't available",
   chamfer: "chamfer: edges, distance, and optionally second_distance or angle (°), flip_side, all_edges (equal chamfers only), part",
@@ -411,6 +422,7 @@ const KIND_HELP: Record<FeatureKind, string> = {
   circular_pattern: 'circular_pattern: features, parts or faces (+ part) as for linear_pattern; axis ("x"|"y"|"z", default "z"), count, angle (° spread over, default 360), center ([x,y,z] a point on the axis), skip',
   mirror: 'mirror: features (to copy across), part (a whole part), or faces (face choices of "part": a boss, pocket or hole mirrored onto the same part); plane ("Top"|"Front"|"Right"), offset (moves the plane along its normal), join (whole part only: join the copy on)',
   boolean: 'boolean: op ("union"|"subtract"|"intersect"), parts, tools (subtract: the cutters), keep_tools',
+  scale_part: 'scale_part (Onshape\'s Transform › Scale uniformly): part, scale (how many times bigger: 2 = twice the size, 0.5 = half; more than 0), about ("centre" default — the part\'s middle stays put | "origin" | [x, y, z] a point that stays put), copy (true: a scaled copy, the original kept). Works on any part, imported ones too (its holes scale with it)',
   composite_part: "composite_part: parts (two or more) grouped into one composite part — it acts as one part (picked, coloured, exported, put in assemblies as one) while they stay separate solids inside",
   box: "box: width (X), depth (Y), height (Z), x, y, z (its corner), operation",
   cylinder: "cylinder: diameter, height (Z), x, y, z (centre of its base), operation",
@@ -552,7 +564,7 @@ export const TOOLS: ToolDef[] = [
     name: "edit_feature",
     title: "Change a feature",
     description:
-      'Change settings of an existing feature, given by "feature" (its name or id). Pass only what changes, using the same settings as add_feature (or, for a sketch, add_sketch: a new "shapes" list replaces the drawing; "plane"/"on_face" move it). Also "name" to rename it and "suppressed": true/false to switch it off/on. Faces and edges are chosen on the part as it is just before this feature. If the change would break the design, nothing changes and the reason is given.',
+      'Change settings of an existing feature, given by "feature" (its name or id). Pass only what changes, using the same settings as add_feature (or, for a sketch, add_sketch: a new "shapes" list replaces the drawing; "plane"/"on_face" move it). Also "name" to rename it and "suppressed": true/false to switch it off/on. An import made in the app takes \"scale\" (2 = twice the size) and \"units\" (\"file\" = as the file says, or \"mm\" | \"cm\" | \"m\" | \"in\" | \"ft\": what the numbers in the file are taken to be). Faces and edges are chosen on the part as it is just before this feature. If the change would break the design, nothing changes and the reason is given.',
     inputSchema: {
       type: "object",
       properties: { feature: { type: "string", description: "Name or id, e.g. \"Extrude 1\"." }, name: { type: "string" }, suppressed: { type: "boolean" } },
@@ -570,7 +582,18 @@ export const TOOLS: ToolDef[] = [
         if (a.suppressed !== undefined) f.suppressed = !!a.suppressed;
       } else {
         const kind = KIND_OF[f.type];
-        if (!kind) {
+        if (f.type === "import") {
+          // An import (made in the app): its Scale and File units can be changed here.
+          noExtras(a, ["feature", "name", "suppressed", "scale", "units"], `edit_feature (${old.name} is an import, made in the app; only these can be changed here)`);
+          if (a.name !== undefined) f.name = text(a.name, "name").slice(0, 80);
+          if (a.suppressed !== undefined) f.suppressed = !!a.suppressed;
+          if (a.scale !== undefined) f.params = { ...f.params, scale: amount(a.scale, "scale", s.scope(), { positive: true, unit: "" }).text };
+          if (a.units !== undefined) {
+            const u = oneOf(a.units, ["file", "mm", "cm", "m", "in", "ft"] as const, "units");
+            if (u === "file") delete f.importUnits;
+            else f.importUnits = u;
+          }
+        } else if (!kind) {
           const allowed = ["feature", "name", "suppressed"];
           noExtras(a, allowed, `edit_feature (${old.name} is a ${old.type}, made in the app; only these can be changed here)`);
           if (a.name !== undefined) f.name = text(a.name, "name").slice(0, 80);

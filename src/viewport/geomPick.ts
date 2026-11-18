@@ -11,8 +11,9 @@ import { connectorFromClick, fractionAlong, planeClick, type GeomClick } from ".
 import { curveClick, curvePoint, pathClick, type CurveClick } from "../model/curveClicks";
 import { laterPathMessage, togglePathCurve } from "../model/frame";
 import { isMorePlaneMode } from "../sketch/planeTypes";
-import { loftClick } from "../model/loft";
+import { loftClick, withLoftDef } from "../model/loft";
 import { boundaryClick } from "../model/surfaceClicks";
+import { sweepClick } from "../model/sweepOptions";
 import { sketchLine3D } from "../model/patternRefs";
 import type { Feature } from "../model/types";
 import type { PartMesh } from "../kernel/protocol";
@@ -118,6 +119,14 @@ export function geomPick(manager: SceneManager | null, target: PickTarget | null
     else s.setDraftField(next);
     return true;
   }
+  // A Sweep picking its profile face or the direction its profile is locked to.
+  if (d?.type === "sweep" && d.sweepControl?.picking) {
+    const c = geomClickOf(manager, target);
+    const next = sweepClick(d, c && (c.kind === "corner" ? { kind: "corner" } : c));
+    if (typeof next === "string") s.showToast(next);
+    else if (next) s.setDraftField(next);
+    return true;
+  }
   if ((d?.type === "sweep" || d?.type === "curvePattern") && (target?.kind === "curve" || d.pathEdges)) {
     const c = curveTarget();
     const next = c ? pathClick(d, c) : null;
@@ -151,6 +160,12 @@ export function geomPick(manager: SceneManager | null, target: PickTarget | null
     else if (target.id !== d.id) s.setDraftField({ frame: togglePathCurve(d.frame, target.id) });
     return true;
   }
+  // Loft: a curve feature clicked while choosing the guide or path is it.
+  if (d?.type === "loft" && target?.kind === "curve" && (d.loft?.picking === "guide" || d.loft?.picking === "path")) {
+    const which = d.loft.picking;
+    s.setDraftField(withLoftDef(d, { [which]: { curve: target.id }, picking: undefined }));
+    return true;
+  }
   if (target?.kind === "curve") {
     // Nothing that takes a curve is open: select it in the list.
     if (!s.editing) s.selectFeature(target.id);
@@ -165,8 +180,10 @@ export function geomPick(manager: SceneManager | null, target: PickTarget | null
     else s.setDraftField({ planeDef: next });
     return true;
   }
-  // Loft: a flat face as a section, a corner as its start/end point, edges as the guide or path.
-  if (d?.type === "loft" && target?.kind === "part") {
+  // Loft: a face as a section, a corner as its start/end point, edges as the guide, path or a section; any line
+  // (an edge, a face's normal, a plane, a connector, a sketch line) as an end's direction.
+  const loftDir = d?.type === "loft" && (d.loft?.picking === "startDir" || d.loft?.picking === "endDir");
+  if (d?.type === "loft" && (target?.kind === "part" || (loftDir && target))) {
     const c = geomClickOf(manager, target);
     if (!c) return true;
     const next = loftClick(d, c);
@@ -190,6 +207,12 @@ export function geomPick(manager: SceneManager | null, target: PickTarget | null
   if (target?.kind !== "connector") return false;
   // A mate connector clicked for Move / copy's "Transform by mate connectors".
   const t = transformDraft();
+  if (t && t.transform.picking === "triad" && t.transform.mode === "scale") {
+    // Scale uniformly: the part grows from the connector's middle (kept as clicked).
+    const fr = connectorFrames(activeFeatures(s), s.parts, s.builtFrames).get(target.key);
+    if (fr) s.changeDraftStep({ transform: { ...t.transform, triad: { origin: fr.origin, x: fr.x, z: fr.z }, picking: undefined } });
+    return true;
+  }
   if (t && (t.transform.picking === "from" || t.transform.picking === "to")) {
     const fr = connectorFrames(activeFeatures(s), s.parts, s.builtFrames).get(target.key);
     if (!fr) return true;
