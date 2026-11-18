@@ -223,6 +223,8 @@ export function connectorWanted(s: { editing: { draft: Feature } | null; sketch:
   if (d.type === "text") return "notOnRound";
   // A Sweep's locked direction may be a connector's Z.
   if (d.type === "sweep") return d.sweepControl?.picking === "direction";
+  // A Loft end's direction: a connector's Z.
+  if (d.type === "loft") return d.loft?.picking === "startDir" || d.loft?.picking === "endDir";
   return d.type === "transform" && (d.transform?.picking === "from" || d.transform?.picking === "to");
 }
 

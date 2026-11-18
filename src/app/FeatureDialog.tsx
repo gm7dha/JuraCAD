@@ -859,7 +859,7 @@ function MoreAreasNote() {
 function ThinOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const setDraftField = useStore((s) => s.setDraftField);
-  if (!draft || (draft.type !== "extrude" && draft.type !== "revolve" && draft.type !== "sweep") || draft.surface) return null;
+  if (!draft || (draft.type !== "extrude" && draft.type !== "revolve" && draft.type !== "sweep" && draft.type !== "loft") || draft.surface) return null;
   // A sweep of a part's face has no sketch lines to make a wall from.
   if (draft.type === "sweep" && (draft.sweepControl?.face || draft.sweepControl?.picking === "face")) return null;
   const thin = draft.thin;
@@ -889,9 +889,11 @@ function ThinOptions() {
               Flip wall (to the other side)
             </label>
           )}
-          <p className="dialog-hint field-hint">
+          {draft.type === "loft" ? (
+            <p className="dialog-hint field-hint">A hollow loft: each shape's outline becomes a wall of this thickness (into the shape first), and the walls are lofted together. For sketch shapes only, without a guide curve or points.</p>
+          ) : <p className="dialog-hint field-hint">
             With no areas picked it follows every line, arc and circle in the sketch{draft.type === "revolve" ? " (not the line it spins around)" : ""}; pick areas to make the wall only round them. Construction lines are left out. On a closed shape, or a line along the edge of one, the first side goes into the shape.
-          </p>
+          </p>}
         </fieldset>
       )}
     </>

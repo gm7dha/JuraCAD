@@ -8,6 +8,16 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.92 — Loft: fixes and Onshape's options
+
+- An Add, Remove or Intersect loft now works on every part it reaches, not only the newest one.
+- Hollow (Thin) lofts, with the wall's thickness on one side, both sides or centred.
+- A curve (helix, fit spline…) can be a loft's guide or path; curved faces and part edges can be shapes to loft between.
+- New end choices: flared out along the shape's own plane, or along a direction you pick.
+- Square ends between tilted shapes now work, and lofts that can't be made say which end or setting is the problem.
+- Shapes all on one plane are refused plainly instead of making a flat, empty part.
+- Claude can use all of these.
+
 ## v0.91 — Corners in assemblies, lofts and sketches
 
 - While making a mate, click a part's corner: a Fasten between two corners puts the parts corner to corner (without
