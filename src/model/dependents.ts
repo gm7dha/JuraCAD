@@ -30,6 +30,7 @@ import { partCopiesPlan } from "../assembly/assembly";
 import { studiosOf } from "./studios";
 import { isPatternFeature, isSolidFeature } from "./features";
 import type { Drawing, Feature, JuraCADDocument } from "./types";
+import { sweepFeaturesUsed, sweepPartsUsed } from "./sweepOptions";
 
 /** The feature that made a part, from the part's id. */
 export const partMaker = (partId: string): string => partId.split(/[~@]/)[0];
@@ -145,6 +146,9 @@ function usesOf(f: Feature): Uses {
     if (c.curveList) lists.push({ what: "curve it joins", many: "curves it joins", features: c.curveList, ...(f.picks?.length ? { least: 0 } : {}) });
   }
   for (const e of f.pathEdges ?? []) needPart(e.partId);
+  // A sweep's profile face and its locked direction (a part's edge or face, a sketch line, a connector…).
+  sweepPartsUsed(f).forEach(needPart);
+  sweepFeaturesUsed(f).forEach(need);
   // A Boundary surface needs every curve it goes through (the outline changes without one).
   for (const c of [...(f.boundary?.u ?? []), ...(f.boundary?.v ?? [])]) {
     needPart(c.edge?.partId);

@@ -13,6 +13,7 @@ import { laterPathMessage, togglePathCurve } from "../model/frame";
 import { isMorePlaneMode } from "../sketch/planeTypes";
 import { loftClick, withLoftDef } from "../model/loft";
 import { boundaryClick } from "../model/surfaceClicks";
+import { sweepClick } from "../model/sweepOptions";
 import { sketchLine3D } from "../model/patternRefs";
 import type { Feature } from "../model/types";
 import type { PartMesh } from "../kernel/protocol";
@@ -116,6 +117,14 @@ export function geomPick(manager: SceneManager | null, target: PickTarget | null
     const next = curveClick(d, c);
     if (typeof next === "string") s.showToast(next);
     else s.setDraftField(next);
+    return true;
+  }
+  // A Sweep picking its profile face or the direction its profile is locked to.
+  if (d?.type === "sweep" && d.sweepControl?.picking) {
+    const c = geomClickOf(manager, target);
+    const next = sweepClick(d, c && (c.kind === "corner" ? { kind: "corner" } : c));
+    if (typeof next === "string") s.showToast(next);
+    else if (next) s.setDraftField(next);
     return true;
   }
   if ((d?.type === "sweep" || d?.type === "curvePattern") && (target?.kind === "curve" || d.pathEdges)) {

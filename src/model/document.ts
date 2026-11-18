@@ -21,6 +21,7 @@ import { parseAssemblies } from "../assembly/assembly";
 import { isAssemblyFeature, parseContexts, parseFeatureParts } from "../assembly/featureParse";
 import { parseDrawings } from "../drawing/drawing";
 import { newCurveDef, parseCurveDef } from "./curves";
+import { parseSweepControl, withoutSweepPicking } from "./sweepOptions";
 import { parseFrameDef, parseGusset, parseTrimFrame } from "./frame";
 import type { Assembly, BoundaryCurve, Feature, FeatureType, GeomPick, ImportedFile, LoftCurve, LoftDef, LoftEnd, LoftProfile, MateConnectorDef, Operation, JuraCADDocument, PartStudio, PlaneOptions } from "./types";
 import { MAIN_STUDIO } from "./studios";
@@ -375,6 +376,7 @@ export function withoutPicking(f: Feature): Feature {
     const { picking: _p, ...blend } = out.blend;
     out = { ...out, blend };
   }
+  if (out.sweepControl?.picking !== undefined) out = withoutSweepPicking(out);
   // A sweep's "part edges" chosen with none clicked: no path yet.
   if (out.pathEdges && !out.pathEdges.length) {
     const { pathEdges: _e, ...rest } = out;
@@ -782,8 +784,8 @@ export function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | n
     if (feature.type === "sweep") {
       if (typeof f.sketchRef === "string") feature.sketchRef = f.sketchRef;
       if (typeof f.pathRef === "string") feature.pathRef = f.pathRef;
-      const c = f.sweepControl as Record<string, unknown> | undefined;
-      if (c && typeof c === "object" && c.lockOrientation === true) feature.sweepControl = { lockOrientation: true };
+      const c = parseSweepControl(f.sweepControl, parseGeomPick, parsePick);
+      if (c) feature.sweepControl = c;
     }
     if (feature.type === "text") {
       const t = (f.text ?? {}) as Record<string, unknown>;

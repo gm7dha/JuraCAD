@@ -77,6 +77,27 @@ export interface GeomPick {
 }
 
 /**
+ * Sweep's further choices, as Onshape's Sweep (see model/sweepOptions.ts). All missing = as before: the profile turns
+ * with the path, twisted by the "twist" box (degrees).
+ */
+export interface SweepOptions {
+  /** Profile control "Keep profile orientation": the profile faces the same way all along (no twist). */
+  lockOrientation?: boolean;
+  /** Profile control "Lock profile direction": the profile keeps the same angle to this direction (a line, edge, axis, flat face or mate connector). */
+  lockDirection?: GeomPick;
+  /** How the twist is given: missing = an angle (the "twist" box), "turns" (the "turns" box), "pitch" (the "pitch" box: mm per turn). */
+  twistBy?: "turns" | "pitch";
+  /** The twist turns the other way. */
+  opposite?: boolean;
+  /** Changes size along the path: the "scale" box is the size at the path's end compared with the profile's. */
+  scaled?: boolean;
+  /** A flat face of a part as the profile, instead of a sketch's shapes. */
+  face?: TopoPick;
+  /** What a click in the view chooses while the dialog is open (not saved). */
+  picking?: "face" | "direction";
+}
+
+/**
  * A loft's further choices, as Onshape's Loft. `profiles` is the sections in order when any isn't a whole sketch (a
  * picked area of a sketch, a flat face of a part, a point as the first or last); `sections` then still lists the
  * sketches among them, so code that only reads `sections` sees every sketch used. Missing = each of `sections`.
@@ -377,7 +398,7 @@ export interface Feature {
    * twist is ignored). Missing: it turns to follow the path, as before.
    * (The twist itself is the "twist" box, in degrees.)
    */
-  sweepControl?: { lockOrientation?: boolean };
+  sweepControl?: SweepOptions;
   /** Loft: the sketches to pass through, in order. */
   sections?: string[];
   /**

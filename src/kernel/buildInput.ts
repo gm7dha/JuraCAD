@@ -16,7 +16,7 @@ import { contextInputs } from "../assembly/featureParse";
 
 /** One feature without the parts the engine doesn't need (the same object when there are none). */
 export function featureForEngine<T extends Feature | null>(f: T): T {
-  if (!f || (f.folder === undefined && f.visible === undefined && !f.sketch?.data.images && f.loft?.picking === undefined && f.boundary?.picking === undefined && f.blend?.picking === undefined && f.trimFrame?.picking === undefined && f.moveFace?.picking === undefined)) return f;
+  if (!f || (f.folder === undefined && f.visible === undefined && !f.sketch?.data.images && f.loft?.picking === undefined && f.boundary?.picking === undefined && f.blend?.picking === undefined && f.trimFrame?.picking === undefined && f.moveFace?.picking === undefined && f.sweepControl?.picking === undefined)) return f;
   const { folder: _f, visible: _v, ...rest } = f;
   // What a click in the view chooses while the Loft dialog is open isn't geometry.
   if (rest.loft?.picking !== undefined) {
@@ -42,6 +42,12 @@ export function featureForEngine<T extends Feature | null>(f: T): T {
   if (rest.moveFace?.picking !== undefined) {
     const { picking: _m, ...mv } = rest.moveFace;
     rest.moveFace = mv;
+  }
+  // Nor a Sweep's "a click picks the profile face / the locked direction".
+  if (rest.sweepControl?.picking !== undefined) {
+    const { picking: _s, ...sc } = rest.sweepControl;
+    if (Object.keys(sc).length) rest.sweepControl = sc;
+    else delete rest.sweepControl;
   }
   if (!rest.sketch?.data.images) return rest as T;
   const { images: _i, ...data } = rest.sketch.data;

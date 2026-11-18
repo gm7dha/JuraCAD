@@ -5,14 +5,14 @@
  * surface part can be thickened into a solid, or several can be closed up
  * into one (Enclose). All with OpenCascade.
  */
-import { basicFaceExtrusion, cast, getOC, loft, makeBSplineApproximation, makeCompound, makePolygon, measureShapeVolumeProperties, measureVolume, makeNonPlanarFace, makeSolid, revolution, Vector, type Edge, type Face, type Shape3D, type Wire, assembleWire, makeFace } from "replicad";
+import { basicFaceExtrusion, cast, getOC, loft, makeBSplineApproximation, makeCompound, makePolygon, measureShapeVolumeProperties, measureVolume, makeNonPlanarFace, makeSolid, measureLength, revolution, Vector, type Edge, type Face, type Shape3D, type Wire, assembleWire, makeFace } from "replicad";
 
 import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import { findChains, type Chain } from "../sketch/regions";
 import { axisInSketch, type RevolveAxis } from "../sketch/axis";
 import type { SketchData } from "../sketch/types";
 import { release, segmentsWire } from "./extrude";
-import { loopStart, pathWire, profileAt, twistGuide, type SweepControl } from "./sweep";
+import { loopStart, pathWire, profileAt, twistGuide, twistOf, type SweepControl } from "./sweep";
 import { edgesOf, facesOf, solidsOf } from "./topology";
 
 type Vec3 = [number, number, number];
@@ -104,20 +104,50 @@ export function revolveSurface(plane: SketchPlane, data: SketchData, opts: { axi
 /** Each run of the profile's curves carried along the path: a skin. */
 export function sweepSurface(profilePlane: SketchPlane, profile: SketchData, pathPlane: SketchPlane, path: SketchData, control: SweepControl = {}): Shape3D {
   const { wires } = sketchWires(profilePlane, profile, "sweep");
-  const spine = pathWire(pathPlane, path, profileAt(profilePlane, profile));
-  const twist = control.lockOrientation ? 0 : control.twist ?? 0;
+  let spine: Wire;
+  try {
+    spine = pathWire(pathPlane, path, profileAt(profilePlane, profile));
+  } catch (e) {
+    release(...wires);
+    throw e;
+  }
+  try {
+    return surfaceAlong(profilePlane, wires, spine, control, false, false);
+  } finally {
+    release(spine);
+  }
+}
+
+/** A sketch's outlines (open or closed) carried along a ready-made path (a curve feature or part edges) as a skin. The spine is the caller's. */
+export function sweepSurfaceAlongSpine(profilePlane: SketchPlane, profile: SketchData, spine: Wire, control: SweepControl = {}, frenet = false): Shape3D {
+  const { wires } = sketchWires(profilePlane, profile, "sweep");
+  return surfaceAlong(profilePlane, wires, spine, control, frenet, true);
+}
+
+/** The outlines (freed here) carried along `spine` as one skin, twisted, scaled or held as asked. */
+function surfaceAlong(profilePlane: SketchPlane, wires: Wire[], spine: Wire, control: SweepControl, frenet: boolean, readyMade: boolean): Shape3D {
+  let twist = 0;
   let guide: Wire | null = null;
-  if (Math.abs(twist) >= 1e-9) {
-    try {
+  const scale = control.scale ?? 1;
+  const scaled = Math.abs(scale - 1) > 1e-9;
+  try {
+    if (scaled && !(scale > 1e-3 && scale <= 100)) throw new Error("The scale (the size at the end of the path compared with the start) must be more than 0 and at most 100.");
+    if (scaled && spine.isClosed) throw new Error("A sweep that changes size needs a path with two ends (round a closed loop it would meet itself at a different size). Set the scale to 1, or open the path.");
+    twist = twistOf(control, () => measureLength(spine));
+    if (Math.abs(twist) >= 1e-9) {
       if (spine.isClosed) throw new Error("A twisted surface sweep needs a path with two ends (solid sweeps can twist round a closed loop, surfaces can't yet). Set the twist to 0, or open the path.");
       guide = twistGuide(spine, twist);
-    } catch (e) {
-      release(spine, ...wires);
-      if (e instanceof Error && /sharp corners/.test(e.message)) {
-        throw new Error("A twisted surface sweep needs a smooth path with no sharp corners (solid sweeps can twist round corners, surfaces can't yet). Round the corners with a sketch fillet, or set the twist to 0.");
-      }
-      throw e;
     }
+  } catch (e) {
+    release(...wires);
+    if (e instanceof Error && /sharp corners/.test(e.message)) {
+      throw new Error(
+        readyMade
+          ? "A twisted surface sweep needs a smooth path with no sharp corners. Round the corners, or set the twist to 0."
+          : "A twisted surface sweep needs a smooth path with no sharp corners (solid sweeps can twist round corners, surfaces can't yet). Round the corners with a sketch fillet, or set the twist to 0.",
+      );
+    }
+    throw e;
   }
   const frame = planeFrame(profilePlane);
   /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -147,9 +177,18 @@ export function sweepSurface(profilePlane: SketchPlane, profile: SketchData, pat
             const ax = new oc.gp_Ax2(p, n, x);
             pipe.SetMode(ax);
             [p, n, x, ax].forEach((o) => o.delete());
-          }
+          } else if (control.lockDirection) {
+            const d = new oc.gp_Dir(...control.lockDirection);
+            pipe.SetMode(d);
+            d.delete();
+          } else if (frenet) pipe.SetMode(true);
           // No correction: a single line has no plane to turn square to the path.
-          pipe.Add(w.wrapped, false, false);
+          if (scaled) {
+            // OpenCascade keeps the law (in a handle of its own), so it isn't deleted here.
+            const law = new oc.Law_Linear();
+            law.Set(0, 1, 1, scale);
+            pipe.SetLaw(w.wrapped, law, false, false);
+          } else pipe.Add(w.wrapped, false, false);
           pipe.Build();
           if (!pipe.IsDone()) throw new Error("the path and outline don't go together");
           return cast(pipe.Shape()) as Shape3D;
@@ -157,7 +196,9 @@ export function sweepSurface(profilePlane: SketchPlane, profile: SketchData, pat
           throw new Error(
             guide
               ? `Couldn't twist the outline along that path (${why(e)}). Try a smaller twist or a smoother path.`
-              : `Couldn't sweep the outline along that path (${why(e)}). Check it sits at the start of the path and is small enough for its bends.`,
+              : scaled
+                ? `Couldn't sweep the outline along that path while changing its size (${why(e)}). Try a scale nearer 1, or round the path's corners.`
+                : `Couldn't sweep the outline along that path (${why(e)}). Check it sits at the start of the path and is small enough for its bends.`,
           );
         } finally {
           pipe.delete();
@@ -165,7 +206,7 @@ export function sweepSurface(profilePlane: SketchPlane, profile: SketchData, pat
       }),
     );
   } finally {
-    release(spine, ...wires);
+    release(...wires);
     if (guide) release(guide);
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */

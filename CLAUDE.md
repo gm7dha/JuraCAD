@@ -527,6 +527,30 @@
   BSplines that break round corners — and the pieces, which only touch end to end, are fused with `JOIN_FUZZ`. Kept facing one way,
   a closed loop is its smooth runs moved along (a smooth loop is refused: it always goes edge-on somewhere). Surfaces still refuse
   twist round corners and loops.
+  Onshape's further choices (`Feature.sweepControl` = `SweepOptions`, pure `src/model/sweepOptions.ts`; all missing = exactly as
+  before, `sweepSettings` gives the old `{twist, lockOrientation}`): Profile control None / Keep profile orientation / Lock profile
+  direction (`lockDirection`: a GeomPick — edge, face normal/axis, X/Y/Z, sketch line, connector's Z — found by the engine via
+  `PathLookup.direction` = findGeom "line"; OpenCascade's binormal SetMode(gp_Dir); refused where the path runs within 1° of it,
+  `runsAlong`); no "Lock profile faces" yet. Twist `twistBy` angle (the "twist" box) / "turns" / "pitch" (lazy params `turns`,
+  `pitch`: 360 × length / pitch, the length measured on the built path, `twistOf`) + `opposite`. Scale (`scaled` + lazy `scale` =
+  the size at the end / at the profile): `addSection` → SetLaw with a Law_Linear (its range is spread over the path BY LENGTH, the
+  section scaled about the path; RoundCorner + a law throws, so corners are stretches: `pathStretches(…, corners)` builds the
+  rounded-corner plan even untwisted, `stretchedSweep(…, size)` shares the change by length over the stretches that aren't corners,
+  each corner keeps the size it starts with (`scaledAbout`); a locked direction with corners tries RightCorner, which OpenCascade doesn't manage with a law in practice, so it's refused naming the corners, `SCALE_CORNERS_LOCKED`; likewise curve/edge paths with corners); refused
+  round closed loops. A profile part way along an open sketch path, when scaled or twisted round corners, is swept both ways
+  from it (`startOnLoop` → `splitAtPlace`, `shareHalves`: twist by length, the half walked backwards keeping its sign; size 1 at
+  the profile, the far end `scale`, the start 1 − (scale − 1)·before/after, refused ≤ 0) and the halves fused; along a curve
+  feature a scale needs the profile at an end (`midSpine`). Keep profile orientation refuses any stretch of the path lying in the
+  profile's plane (`edgeOnAlong`, open paths too — a leg there made a flat fin). Profile from a part's flat face
+  (`sweepControl.face`, `faceProfile`: outer + inner wires; `SweepProfile` is what both sketch and face profiles give the
+  sweeps — `sketchProfile`, `sweepAlongSketch`, `sweepProfileAlongSpine`); no thin / more sketches / surface with a face. Surface
+  sweeps along curve features and part edges (`sweepSurfaceAlongSpine`), with scale/direction too. Clicks: `sweepControl.picking`
+  "face"/"direction" (not saved; stripped by withoutPicking/featureForEngine) → `sweepClick` in geomPick.ts. Dependents:
+  `sweepPartsUsed`/`sweepFeaturesUsed`. Order checks in buildSolid/sweepSpine go by id (thin and extra-area sweeps pass copies).
+  UI `src/app/SweepOptions.tsx`. Claude: sweep `profile_face`, `twist_turns`/`twist_pitch`/`twist_opposite`, `lock_direction`,
+  `scale`, `surface`. Tests: tests/sweepOptions (pure), engineSweepMore (thin/extra areas along a helix, the fin refused, mid-path
+  twist round a corner and its sign, turns/pitch = angle, exact frustums, mid-path scale, corners, a helix scaled, locked
+  direction, face profiles with a hole), mcpSweepMore.
 - Loft (Onshape's): plain lofts (no `Feature.loft`) take the old `loftSketches`/`loftSurface` path untouched. `Feature.loft`
   (`LoftDef`, types.ts; pure helpers `src/model/loft.ts`, parsed by `parseLoftDef`): `profiles` (sections in order — `{sketch,
   areas?, turn?}` (one picked area), `{face}` (a flat face, its outer wire), `{point}` (a `GeomPick`: sketch point, part corner or

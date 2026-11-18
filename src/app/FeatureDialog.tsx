@@ -21,6 +21,7 @@ import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 import { isMorePlaneMode } from "../sketch/planeTypes";
 import { MateConnectorOptions, MorePlaneFields, PlaneKindSelect } from "./PlaneMoreOptions";
 import { CurveOptions, PathChoice } from "./CurveOptions";
+import { SweepControlOptions, SweepProfileChoice } from "./SweepOptions";
 import { FrameOptions, GussetOptions, TrimFrameOptions } from "./FrameOptions";
 import { curveKindInfo } from "../model/curves";
 import type { Axis, ExtrudeEnd, Feature } from "../model/types";
@@ -859,6 +860,8 @@ function ThinOptions() {
   const draft = useStore((s) => s.editing?.draft);
   const setDraftField = useStore((s) => s.setDraftField);
   if (!draft || (draft.type !== "extrude" && draft.type !== "revolve" && draft.type !== "sweep" && draft.type !== "loft") || draft.surface) return null;
+  // A sweep of a part's face has no sketch lines to make a wall from.
+  if (draft.type === "sweep" && (draft.sweepControl?.face || draft.sweepControl?.picking === "face")) return null;
   const thin = draft.thin;
   const def = FEATURE_DEFS[draft.type];
   const param = (key: string, label?: string) => {
@@ -1152,12 +1155,14 @@ function SweepLoftOptions() {
     </>
   );
   if (draft.type === "sweep") {
+    const faceProfile = !draft.surface && (!!draft.sweepControl?.face || draft.sweepControl?.picking === "face");
     const profile = sketches.find((f) => f.id === draft.sketchRef)?.sketch?.data;
     return (
       <fieldset className="param-group">
         <legend>Sketches</legend>
-        {select("Shape (profile)", draft.sketchRef, (v) => setDraftField({ sketchRef: v, areas: undefined, moreAreas: undefined }))}
-        {profile && !draft.surface && (
+        <SweepProfileChoice />
+        {!faceProfile && select("Shape (profile)", draft.sketchRef, (v) => setDraftField({ sketchRef: v, areas: undefined, moreAreas: undefined }))}
+        {profile && !draft.surface && !faceProfile && (
           <AreaPicker
             data={followedSketch(sketches.find((f) => f.id === draft.sketchRef), sketchLinks)?.data ?? profile}
             areas={draft.areas}
@@ -1166,19 +1171,10 @@ function SweepLoftOptions() {
             taken={areasTaken(features, draft.sketchRef!, followedSketch(sketches.find((f) => f.id === draft.sketchRef), sketchLinks)?.data ?? profile, draft.id)}
           />
         )}
-        {!draft.surface && <MoreAreasNote />}
+        {!draft.surface && !faceProfile && <MoreAreasNote />}
         <PathChoice label="Path to follow" onSketch={(v) => setDraftField(pathChange(draft, v))} />
         <p className="dialog-hint field-hint">Draw the shape on a plane across the start of the path, e.g. a circle on Front for a path drawn on Top.</p>
-        <label className="check-row" title="The shape doesn't tilt to follow the path's bends: it stays parallel to the plane it was drawn on all the way along">
-          <input
-            type="checkbox"
-            aria-label="Keep profile orientation"
-            checked={!!draft.sweepControl?.lockOrientation}
-            onChange={(e) => setDraftField({ sweepControl: e.target.checked ? { lockOrientation: true } : undefined })}
-          />
-          Keep profile orientation (don&apos;t turn with the path)
-        </label>
-        {!draft.sweepControl?.lockOrientation && <p className="dialog-hint field-hint">Twist turns the shape steadily round the path as it goes — e.g. 90° for a quarter turn by the end, up to 3600° (10 turns). Use a minus amount to turn the other way. Round a closed loop, use whole turns (360°, 720°…) so the ends meet.</p>}
+        <SweepControlOptions />
       </fieldset>
     );
   }
