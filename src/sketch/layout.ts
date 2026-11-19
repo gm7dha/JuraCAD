@@ -108,7 +108,8 @@ export function dimensionLayout(s: SketchData, c: SketchConstraint): DimensionLa
         const [a, b] = linePts(s, curveById(s, c.refs[1]) as SketchLine);
         const d = unit(sub(b, a));
         const foot = add(a, scale(d, dotp(sub(p, a), d)));
-        return linear(p, foot, offset);
+        // Measured as a diameter about the centreline: across to where the point's mirror image would be.
+        return linear(p, c.doubled ? sub(scale(foot, 2), p) : foot, offset);
       }
       case "radius":
       case "diameter": {

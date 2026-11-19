@@ -11,6 +11,10 @@ import { isAngleDimension, isDimension, type SketchConstraint, type SketchData }
 import { sketchStatus, viewportApi } from "../viewport/Viewport";
 import { resolveVariables, type Variable } from "../model/variables";
 import { completeWith, suggestionsAt } from "../model/varComplete";
+import { expressionText, tiedIds } from "../sketch/sketchView";
+import { canSwitchRound } from "../sketch/dimensionKinds";
+import { setSketchLit, useSketchView } from "./sketchViewState";
+import { switchSketchRoundDimension } from "./sketchMenuActions";
 
 const RELATION_NAMES: Partial<Record<SketchConstraint["type"], string>> = {
   coincident: "Coincident",
@@ -33,7 +37,13 @@ const RELATION_NAMES: Partial<Record<SketchConstraint["type"], string>> = {
 };
 
 /** Text shown on a dimension label. A reference (driven) dimension shows the size as it is now, in brackets. */
-function dimensionText(c: SketchConstraint, unit: LengthUnit, data?: SketchData): string {
+function dimensionText(c: SketchConstraint, unit: LengthUnit, data?: SketchData, expressions = false): string {
+  // Show expressions: what was typed (a variable or a sum) rather than its number.
+  const typed = expressions ? expressionText(c) : null;
+  if (typed !== null) {
+    const shown = c.type === "diameter" || c.doubled ? `⌀${typed}` : c.type === "radius" ? `R${typed}` : isAngleDimension(c) ? `${typed}°` : c.type === "arcLength" ? `⌒${typed}` : typed;
+    return shown;
+  }
   let value: number | null = null;
   if (c.driven && data) {
     try {
@@ -47,7 +57,7 @@ function dimensionText(c: SketchConstraint, unit: LengthUnit, data?: SketchData)
   }
   const shown = value === null ? c.value ?? "?" : isAngleDimension(c) ? String(Math.round(value * 100) / 100) : lengthNumber(value, unit);
   // An arc's length gets the arc sign (⌒) in front, like a drawing.
-  const text = c.type === "diameter" ? `⌀${shown}` : c.type === "radius" ? `R${shown}` : isAngleDimension(c) ? `${shown}°` : c.type === "arcLength" ? `⌒${shown}` : shown;
+  const text = c.type === "diameter" || c.doubled ? `⌀${shown}` : c.type === "radius" ? `R${shown}` : isAngleDimension(c) ? `${shown}°` : c.type === "arcLength" ? `⌒${shown}` : shown;
   return c.driven ? `(${text})` : text;
 }
 
@@ -75,6 +85,9 @@ export function SketchOverlay() {
   // Move / copy's handles are drawn on the picked shapes: the labels let presses through to them (the ring runs
   // right past a small shape's size labels).
   const handlesOn = useStore((s) => s.sketch?.tool === "sketchTransform" && (s.sketch?.selection.length ?? 0) > 0);
+  const view = useSketchView();
+  // Nothing stays lit once the sketch closes.
+  useEffect(() => () => setSketchLit(null), []);
   const elements = useRef(new Map<string, HTMLElement>());
   const placements = useRef<Placement[]>([]);
   // What's being inferred while drawing (H, V, ∥, ⊥, T…), shown by the pointer: read from the sketch tools each frame.
@@ -130,7 +143,9 @@ export function SketchOverlay() {
 
   return (
     <div className={`sketch-overlay${handlesOn ? " handles-on" : ""}`} aria-label="Sketch dimensions and constraints">
-      {layout.dims.map(({ constraint: c, placement }) => (
+      {layout.dims.map(({ constraint: c, placement }) =>
+        // Show dimensions off: hidden, except one that's picked or being typed into.
+        !view.dimensions && !selection.includes(c.id) && editingDimension !== c.id ? null : (
         <DimensionLabel
           key={c.id}
           c={c}
@@ -138,9 +153,12 @@ export function SketchOverlay() {
           selected={selection.includes(c.id)}
           failing={failing.has(c.id)}
           editing={editingDimension === c.id}
+          expressions={view.expressions}
+          data={data}
         />
       ))}
-      {layout.badges.map(({ constraint: c, placement }) => (
+      {layout.badges.map(({ constraint: c, placement }) =>
+        !view.constraints && !selection.includes(c.id) ? null : (
         <button
           key={placement.id}
           ref={ref(placement.id)}
@@ -148,6 +166,8 @@ export function SketchOverlay() {
           title={`${RELATION_NAMES[c.type] ?? c.type} — click to select, then Delete to remove`}
           aria-label={RELATION_NAMES[c.type] ?? c.type}
           onPointerDown={(e) => e.stopPropagation()}
+          onPointerEnter={() => setSketchLit(tiedIds(data, c.id))}
+          onPointerLeave={() => setSketchLit(null)}
           onClick={(e) => toggleSelect(c.id, additive(e))}
         >
           {RELATION_SYMBOLS[c.type]}
@@ -195,12 +215,18 @@ function DimensionLabel({
   selected,
   failing,
   editing,
+  expressions,
+  data: sketch,
 }: {
   c: SketchConstraint;
   refCb: (el: HTMLElement | null) => void;
   selected: boolean;
   failing: boolean;
   editing: boolean;
+  /** Show what was typed (variables, sums) instead of the number. */
+  expressions: boolean;
+  /** The sketch it's in (for what it ties, to light up on hover). */
+  data: SketchData;
 }) {
   const unit = useLengthUnit();
   // A reference dimension shows the size the sketch has now.
@@ -347,6 +373,20 @@ function DimensionLabel({
           }}
         />
         <span className="unit">{isAngleDimension(c) ? "°" : unit}</span>
+        {canSwitchRound(sketch, c) && (
+          <button
+            type="button"
+            className="dimension-switch"
+            title={c.type === "diameter" ? "Show it as a radius instead (the circle stays the same size)" : "Show it as a diameter instead (the circle stays the same size)"}
+            aria-label={c.type === "diameter" ? "Show as a radius" : "Show as a diameter"}
+            // Keep the focus in the box (a blur would apply what's typed so far).
+            onPointerDown={(e) => e.preventDefault()}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => switchSketchRoundDimension(c.id)}
+          >
+            {c.type === "diameter" ? "R" : "⌀"}
+          </button>
+        )}
         {error && <div className="dimension-error">{error}</div>}
         {!error && hints.names.length > 0 && (
           <div className="dimension-suggest" role="listbox" aria-label="Variables">
@@ -413,6 +453,8 @@ function DimensionLabel({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerEnter={() => setSketchLit(tiedIds(sketch, c.id))}
+      onPointerLeave={() => setSketchLit(null)}
       onDoubleClick={(e) => {
         e.stopPropagation();
         if (c.driven) {
@@ -422,7 +464,7 @@ function DimensionLabel({
         useStore.getState().setEditingDimension(c.id);
       }}
     >
-      {dimensionText(c, unit, data ?? undefined)}
+      {dimensionText(c, unit, data ?? undefined, expressions)}
     </div>
   );
 }

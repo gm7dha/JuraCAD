@@ -13,6 +13,9 @@ import { lostLinkIds, lostLinksMessage } from "../sketch/links";
 import { isDimension } from "../sketch/types";
 import { setConicRho } from "../sketch/tools";
 import { SketchExtrasPanel } from "./SketchExtrasPanel";
+import { setSketchView, useSketchView } from "./sketchViewState";
+import { setSketchCentreline } from "./sketchMenuActions";
+import { canBeCentreline } from "../sketch/dimensionKinds";
 import { SecondDirectionFields, SketchEditOptions } from "./SketchEditOptions";
 
 /** Tools that place points by clicking (Shift places them without snapping). */
@@ -74,6 +77,7 @@ export function SketchPanel() {
   const commitDraft = useStore((s) => s.commitDraft);
   const cancelDraft = useStore((s) => s.cancelDraft);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const view = useSketchView();
 
   const data = draft?.sketch?.data ?? null;
   const plane = draft?.sketch?.plane ?? null;
@@ -304,6 +308,16 @@ export function SketchPanel() {
               >
                 {dim.driven ? "Let it set the size" : "Just show the size"}
               </button>
+              {canBeCentreline(data, dim) && (
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => setSketchCentreline(dim.id, !dim.doubled)}
+                  title="For a shape you'll revolve round this line: measure the point across the line, so the number is the diameter the turned part comes out (Onshape's centreline dimension)"
+                >
+                  {dim.doubled ? "Measure to the centreline" : "Measure as a diameter (across the centreline)"}
+                </button>
+              )}
               {(() => {
                 // Between circles/arcs (or one and a line): measure to centres or edges, like Onshape's min/max.
                 const to = measureToOf(data, dim);
@@ -327,6 +341,13 @@ export function SketchPanel() {
             </div>
           );
         })()}
+        {view.hideConstruction && (
+          <div className="tool-option">
+            <button type="button" className="text-button" onClick={() => setSketchView({ hideConstruction: false })} title="Shift+P hides or shows construction geometry">
+              Show construction geometry again (Shift+P)
+            </button>
+          </div>
+        )}
         {confirmCancel && (
           <div className="dialog-error" role="alert">
             Discard your changes to this sketch? Click ✕ again to discard, or keep sketching.

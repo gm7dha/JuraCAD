@@ -104,6 +104,7 @@ export function parseSketchData(raw: unknown): SketchData | null {
     const lo = c.labelOffset as Record<string, unknown> | undefined;
     if (lo && num(lo.x) && num(lo.y)) out.labelOffset = { x: lo.x, y: lo.y };
     if (c.driven === true && DIMENSION_TYPES.has(out.type)) out.driven = true;
+    if (c.doubled === true && out.type === "pointLineDistance") out.doubled = true;
     constraints.push(out);
   }
   const out: SketchData = { points, curves, constraints };

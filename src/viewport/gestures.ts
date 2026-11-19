@@ -72,8 +72,10 @@ export function reachFor(kind: string): number {
  * whose drag must move the handle however long the finger rested first (a long press there would hand the drag to
  * "held" moves, which turn the view).
  */
-export function longPressWanted(o: { dragEnabled: boolean; selectOther: boolean; sketching: boolean; onTriad: boolean }): boolean {
-  return (o.dragEnabled || o.selectOther) && !o.sketching && !o.onTriad;
+export function longPressWanted(o: { dragEnabled: boolean; selectOther: boolean; sketching: boolean; onTriad: boolean; sketchMenu?: boolean }): boolean {
+  // In a sketch only for its right-click menu (with the Select tool and nothing half drawn: there a held finger must draw).
+  if (o.sketching) return !!o.sketchMenu && !o.onTriad;
+  return (o.dragEnabled || o.selectOther) && !o.onTriad;
 }
 
 /** The usual settings for this kind of pointer; `longPress`: false = none, a number = after that many ms (else 500). */

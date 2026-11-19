@@ -68,3 +68,8 @@ export function duplicateSketchSelection(): boolean {
 export function hasCopiedSketch(): boolean {
   return keptClip() !== null;
 }
+
+/** Is there something copied to paste (the right-click menu offers Paste then)? */
+export function canPasteSketch(): boolean {
+  return !!keptClip();
+}

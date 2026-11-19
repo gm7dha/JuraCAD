@@ -2,6 +2,9 @@ import { copySketchSelection, duplicateSketchSelection, pasteIntoSketch } from "
 import { startLink } from "./juraLinkApp";
 import { startFeatureClipboard } from "./featureClipboardApp";
 import { PasteDialog, SelectOtherMenu } from "./ViewTools";
+import { SketchContextMenu } from "./SketchContextMenu";
+import { closeSketchMenu, runSketchKey, sketchMenuNow } from "./sketchMenuActions";
+import { sketchKeyFor } from "../sketch/sketchView";
 import { useEffect } from "react";
 
 import { connectKernel } from "../kernel/connect";
@@ -117,6 +120,14 @@ function sketchShortcut(e: KeyboardEvent): boolean {
     return true;
   }
   if (e.key === "Delete" || e.key === "Backspace") return deleteSketchSelection() || true;
+  // Onshape's relation keys (I, E, B, Shift+L…), X for Extend, Shift+P to hide construction geometry: sketch/sketchView.ts.
+  const more = s.editing?.draft.sketch?.plane ? sketchKeyFor(e.code, e.shiftKey, e.key) : null;
+  if (more) {
+    // (A key pressed with the right-click menu open: the menu goes, its choices would be out of date.)
+    if (sketchMenuNow()) closeSketchMenu();
+    runSketchKey(more);
+    return true;
+  }
   // Shift+A while drawing lines: carry on with an arc from the last end (and back), as in Onshape.
   if (e.shiftKey) return e.key.toLowerCase() === "a" && !!viewportApi.sketch?.toggleLineArc();
   const tools: Record<string, Parameters<typeof setSketchTool>[0]> = {
@@ -427,6 +438,7 @@ export function App() {
       {deleteAsk && <DeleteDialog />}
       <PasteDialog />
       <SelectOtherMenu />
+      <SketchContextMenu />
       {libraryOpen && <LibraryDialog />}
       {mountainOpen && (puzzleKind === "island" ? <IslandPuzzleDialog /> : <MountainPuzzleDialog />)}
       <ToastView />

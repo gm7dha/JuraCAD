@@ -625,7 +625,7 @@ function buildSystem(sketch: SketchData): System {
             const u = p(x), s = m(x), e = n(x);
             const dx = e[0] - s[0], dy = e[1] - s[1];
             const cross = (dx * (u[1] - s[1]) - dy * (u[0] - s[0])) / (Math.hypot(dx, dy) || 1);
-            out.push(signed ? cross : Math.abs(cross) - value);
+            out.push(signed ? cross : Math.abs(cross) - (con.doubled ? value / 2 : value));
           },
         };
       }

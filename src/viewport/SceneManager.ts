@@ -218,6 +218,13 @@ export interface SceneCallbacks {
    * everything under the pointer at (x, y) in the view, nearest first; `at` = the place in the window (CSS px).
    */
   onSelectOther?: (hits: OtherHit[], at: { x: number; y: number }) => void;
+  /**
+   * A right-click that didn't turn the view, or a long press, in an open sketch: its menu at window position `at`, with the
+   * sketch point under the pointer and how near (mm) counts as "under it". False = nothing opened.
+   */
+  onSketchMenu?: (at: { x: number; y: number }, p: { x: number; y: number } | null, tol: number) => boolean;
+  /** Whether a long press in the sketch should open its menu now (the Select tool, nothing half drawn). */
+  sketchMenuOnHold?: () => boolean;
   /** The press that opened Select other moved on (the view turns): close the list. */
   onSelectOtherCancel?: () => void;
   /**
@@ -1590,6 +1597,11 @@ export class SceneManager {
   setSketchScene(others: { plane: SketchPlane; data: SketchData }[], active: ActiveSketch | null): void {
     this.sketchLayer.setOthers(others);
     this.sketchLayer.setActive(active);
+  }
+
+  /** Light up these ids of the open sketch (a relation badge or dimension under the pointer). */
+  setSketchLit(ids: readonly string[]): void {
+    this.sketchLayer.setLit(ids);
   }
 
   setSketchTransient(t: SketchTransient | null): void {
@@ -2983,6 +2995,8 @@ export class SceneManager {
       this.pointerDown = null;
       const { x, y } = this.localPoint(e);
       if (down?.button === 2 && Math.hypot(x - down.x, y - down.y) <= CLICK_SLOP && !this.sketchController && !this.dragEnabled && !this.viewCube.contains(x, y, this.width)) this.openSelectOther(x, y);
+      // …in a sketch: the sketch's own menu (relations that fit, construction, copy…).
+      else if (down?.button === 2 && Math.hypot(x - down.x, y - down.y) <= CLICK_SLOP && this.sketchController && !this.viewCube.contains(x, y, this.width)) this.openSketchMenu(x, y, 1);
       return;
     }
     // A manipulator pressed and let go without moving (its id): a second such click soon after types its size.
@@ -3100,7 +3114,8 @@ export class SceneManager {
       // A long press only where it does something: picking up a part in an assembly. (Elsewhere a still press
       // then a drag just turns the view, and in a sketch it must still draw.)
       const onTriad = !this.sketchController && !this.viewCube.contains(x, y, this.width) && !!this.triadHandleAt(x, y, reachFor(e.pointerType));
-      const wanted = longPressWanted({ dragEnabled: this.dragEnabled, selectOther: !!this.callbacks.onSelectOther, sketching: !!this.sketchController, onTriad });
+      const sketchMenu = !!this.sketchController && !!this.callbacks.onSketchMenu && !this.viewCube.contains(x, y, this.width) && (this.callbacks.sketchMenuOnHold?.() ?? false);
+      const wanted = longPressWanted({ dragEnabled: this.dragEnabled, selectOther: !!this.callbacks.onSelectOther, sketching: !!this.sketchController, onTriad, sketchMenu });
       const longPress = wanted && this.touchTiming.longPressMs;
       this.gestures.options = { ...gestureOptions(e.pointerType, longPress), doubleTapMs: this.touchTiming.doubleTapMs };
       this.animation = null;
@@ -3233,6 +3248,14 @@ export class SceneManager {
         break;
       }
       case "longPress": {
+        // In a sketch: its menu (nothing was sent to the sketch tools yet, so nothing is drawn or moved).
+        if (st?.sketch && !st.sent) {
+          if (this.openSketchMenu(g.x, g.y, reachFor(this.touchKind))) {
+            st.menu = true;
+            ctl?.pointerLeave();
+          }
+          break;
+        }
         if (!st || st.sketch || st.cube) break;
         // A Part Studio: a long press opens Select other (a drag after it still turns the view).
         if (!this.dragEnabled) {
@@ -3348,6 +3371,17 @@ export class SceneManager {
   private cancelHold(): void {
     if (this.holdTimer) clearTimeout(this.holdTimer);
     this.holdTimer = null;
+  }
+
+  /** Ask for the sketch's menu at (x, y) in the view (`reach` widens what counts as under it, for fingers). */
+  private openSketchMenu(x: number, y: number, reach: number): boolean {
+    const cb = this.callbacks.onSketchMenu;
+    if (!cb || !this.sketchController) return false;
+    const p = this.unprojectToSketch(x, y);
+    const q = this.unprojectToSketch(x + 8 * reach, y);
+    const tol = p && q ? Math.hypot(q.x - p.x, q.y - p.y) : 0;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    return cb({ x: rect.left + x, y: rect.top + y }, p, tol);
   }
 
   /** Ask for the Select other list at (x, y) in the view; false when there's nothing there. */

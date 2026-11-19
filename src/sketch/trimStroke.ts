@@ -49,8 +49,9 @@ export function strokeCrossings(s: SketchData, path: P2[]): { curveId: string; a
  * trim (a trimmed curve's id may now be one of two), and places on a piece
  * already cut away are skipped. Nothing crossed = an error to show.
  */
-export function trimAlong(s: SketchData, path: P2[]): EditResult & { trimmed: number } {
-  const hits = strokeCrossings(s, path);
+export function trimAlong(s: SketchData, path: P2[], skip?: ReadonlySet<string>): EditResult & { trimmed: number } {
+  // (`skip`: curves not to trim — construction hidden with Shift+P.)
+  const hits = strokeCrossings(s, path).filter((h) => !skip?.has(h.curveId));
   if (!hits.length) return { sketch: s, trimmed: 0, error: "Drag across the lines and curves you want to trim away." };
   let d = s;
   let trimmed = 0;
