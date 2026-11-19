@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.97 — Merge scope: choose which parts a feature changes
+
+- Add, Remove, Intersect and Hole (and patterns and mirrors of them) can now change only the parts you choose: untick
+  "Merge with all" and click the parts in the view or the Parts list, as in Onshape.
+- A piece added away from the chosen parts becomes a part of its own; parts not chosen are left alone by cuts.
+- The choice follows a part when an earlier feature joins it into another.
+- Claude can do it too.
+
 ## v0.96 — Loft: several guides, Connections, smooth ends on faces
 
 - A loft can follow several guide curves at once; the shape between your sections bends to pass through every one.
