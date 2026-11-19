@@ -81,10 +81,10 @@
   no parallel through the start) or, starting on an arc's end, `tangent`/`normal` to it) → `LineOptions.relation` in addLine.
   Its badge is `SketchTransient.inference` (H V ∥ ⊥ T N), drawn by SketchOverlay's `.inference-badge` from `controller.current`
   each frame. Mouse press–drag–release in a DRAG_DRAWN tool: `press` (set only by the press that started a shape) + `lastEvent`
-  → a release > `RELEASE_PX` away is the next click (a dragged line ends the chain); touch keeps touchLiftClicks. Spline: a click
+  → a release > `RELEASE_PX` (10) away is the next click (a dragged line ends the chain); touch keeps touchLiftClicks. Spline: a click
   on the last point (double-click) finishes it open. Line → tangent arc: `arcMode` (next click = addTangentArc from the chain's
   end, then lines again) by Shift+A (`toggleLineArc`, App's sketchShortcut) or the pointer back onto the last end and away
-  (`followReturn`, `returning` fresh/away/back). Midpoint line tool "midpointLine" (`addMidpointLine` in ops.ts: other end
+  (`followReturn`, `returning` fresh/away/back; to an arc only when leaving onwards, so sweeping back past the end for a sharp V stays a line). Midpoint line tool "midpointLine" (`addMidpointLine` in ops.ts: other end
   mirrored, `midpoint` relation on the first point, kept `standalone`), in the toolbar's "line" family. Tests: tests/sketchFeelStore.
   Tangent lines (`src/sketch/tangents.ts`): the line tool offers lines touching two circles/arcs (outer + crossing) or
   from a point to one (`tangentLineAt`), made by `addTangentLine` (ends `pointOnCircle`, plus `tangent` to each).

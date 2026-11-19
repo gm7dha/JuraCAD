@@ -144,8 +144,11 @@ const pickMm = (e: SketchPointer) => e.mmPerPx * (e.reach ?? 1);
 const DRAG_DRAWN = new Set<string>(["line", "midpointLine", "rectangle", "centreRectangle", "alignedRectangle", "circle", "circle3", "centreArc", "arc", "tangentArc", "slot", "polygon", "ellipse", "conic"]);
 const CURVE_PX = 6;
 const DRAG_PX = 3;
-/** With the mouse, letting go this far (px) from where a drawing tool's first press went down counts as the next click (Onshape's drag to draw). */
-const RELEASE_PX = 5;
+/**
+ * With the mouse, letting go this far (px) from where a drawing tool's first press went down counts as the next
+ * click (Onshape's drag to draw). Well past a hand's wobble during an ordinary click, so a click never makes two points.
+ */
+const RELEASE_PX = 10;
 /** How near (degrees) a line being drawn must point to a woken line's direction (or an arc's, where it starts) for it to be inferred. */
 const RELATION_DEGREES = 4;
 /** At most this many lines are kept "woken up" (hovered while drawing) for parallel / perpendicular inference. */
@@ -1348,7 +1351,13 @@ export class SketchController {
     const away = Math.hypot(e.x - start.x, e.y - start.y);
     const tol = POINT_PX * pickMm(e);
     if (away > 2 * tol) {
-      if (this.returning === "back" && tangentAt(this.data!, id)) this.setArcMode(!this.arcMode);
+      if (this.returning === "back") {
+        // An arc only when leaving onwards (the way the chain was heading): sweeping back past the end to draw a
+        // sharp V is just passing by, and would loop the arc round.
+        const t = tangentAt(this.data!, id);
+        const onwards = !!t && t.dir[0] * (e.x - start.x) + t.dir[1] * (e.y - start.y) > 0;
+        if (t && (this.arcMode || onwards)) this.setArcMode(!this.arcMode);
+      }
       this.returning = "away";
     } else if (away <= tol && this.returning === "away") this.returning = "back";
   }

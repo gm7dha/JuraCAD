@@ -71,6 +71,15 @@ describe("drawing lines", () => {
     expect(lines()).toHaveLength(1);
   });
 
+  it("a sloppy click that slides 8 px is still one click (no tiny line)", () => {
+    s().setSketchTool("line");
+    const c = new SketchController();
+    c.pointerDown(m(0, 0));
+    c.pointerMove(m(0.6, 0.5), true);
+    c.pointerUp();
+    expect(lines()).toHaveLength(0);
+  });
+
   it("infers parallel to a line the pointer passed over", () => {
     const l = addLine(d(), { x: 0, y: 0 }, { x: 10, y: 5 });
     s().updateSketch(l.sketch, { record: true });
@@ -183,6 +192,20 @@ describe("line → tangent arc", () => {
     c.pointerMove(m(25, 5), false); // away again: an arc
     click(c, 30, 10);
     expect(d().curves.filter((k) => k.type === "arc")).toHaveLength(1);
+  });
+
+  it("sweeping back past the last end to draw a sharp V stays a line", () => {
+    s().setSketchTool("line");
+    const c = new SketchController();
+    click(c, 0, 0);
+    click(c, 20, 0);
+    s().discardOfferedDimensions();
+    c.pointerMove(m(23, 0.5), false); // overshoots onwards
+    c.pointerMove(m(20.3, 0.2), false); // passes over the end
+    c.pointerMove(m(15, 3), false); // and on back the other way
+    click(c, 5, 6);
+    expect(d().curves.filter((k) => k.type === "arc")).toHaveLength(0);
+    expect(lines()).toHaveLength(2);
   });
 
   it("isn't offered outside the Line tool", () => {
