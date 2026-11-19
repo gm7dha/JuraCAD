@@ -1,5 +1,6 @@
 import { BoundaryOptions, FaceBlendOptions } from "./BoundaryBlendOptions";
 import { FinalToggle } from "./FinalToggle";
+import { MergeScopeField } from "./MergeScopeField";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { evaluate } from "../model/expr";
@@ -2653,6 +2654,7 @@ export function FeatureDialog() {
             Surface (a skin with no inside)
           </label>
         )}
+        <MergeScopeField />
         <ThinOptions />
         <PlaneDefOptions />
         <MateConnectorOptions />

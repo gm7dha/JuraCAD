@@ -208,6 +208,8 @@ function usesOf(f: Feature): Uses {
   if (f.deleteParts?.length) lists.push({ what: "part it deletes", many: "parts it deletes", parts: f.deleteParts });
   if (f.simplifyParts?.length) lists.push({ what: "part it tidies", many: "parts it tidies", parts: f.simplifyParts });
   if (f.compositeParts?.length) lists.push({ what: "part it groups", many: "parts it groups", parts: f.compositeParts, least: 2 });
+  // Merge scope: losing some of its parts leaves the rest; losing all of them, it goes (it would change other parts).
+  if (f.mergeScope?.length) lists.push({ what: "part it merges with or cuts", many: "parts it merges with or cuts", parts: f.mergeScope });
   if (f.frame || f.trimFrame || f.gusset) {
     // Frames: the path's sketches (a list), the profile's sketch; Trim frame's members (a list) and target; a gusset's two members.
     const fu = frameUses(f);
@@ -266,6 +268,7 @@ function makesSolidPart(f: Feature, makers: Set<string>): boolean {
 function usesLatestPart(f: Feature): boolean {
   if (f.suppressed || isSurfaceFeature(f) || f.operation === "new" || !LATEST_USERS.has(f.type)) return false;
   if (f.apart && (f.operation === "add" || f.operation === "remove")) return false;
+  if (f.mergeScope) return false;
   if (f.intersectAll && f.operation === "intersect") return false;
   return true;
 }
@@ -366,6 +369,7 @@ export function withoutGone(f: Feature, gone: Set<string>): Feature {
   if (f.simplifyParts?.some(partGone)) set({ simplifyParts: f.simplifyParts.filter((p) => !partGone(p)) });
   if (f.pattern?.parts?.some(partGone)) set({ pattern: { ...out.pattern!, parts: f.pattern.parts.filter((p) => !partGone(p)) } });
   if (f.compositeParts?.some(partGone)) set({ compositeParts: f.compositeParts.filter((p) => !partGone(p)) });
+  if (f.mergeScope?.some(partGone)) set({ mergeScope: f.mergeScope.filter((p) => !partGone(p)) });
   if (f.frame?.paths.some((p) => featureGone(p.sketch))) set({ frame: { ...f.frame, paths: f.frame.paths.filter((p) => !featureGone(p.sketch)) } });
   if (out.frame?.curves?.some(featureGone)) {
     const curves = out.frame.curves.filter((c) => !featureGone(c));

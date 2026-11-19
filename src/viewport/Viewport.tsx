@@ -261,6 +261,11 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   if (activeAssembly(s)) return handleAssemblyPick(target, additive);
   // Onshape's other Plane types, a Mate connector being placed, or a mate connector clicked.
   if (geomPick(viewportApi.current, target)) return;
+  // The merge-scope box taking clicks (Onshape's Merge scope): a part clicked is put in, or taken out again.
+  if (s.editing?.draft.mergeScopePicking) {
+    if (target?.kind === "part" && !isContextPartId(target.item.partId)) s.toggleDraftPart(target.item.partId);
+    return;
+  }
   // An area of the sketch an Extrude, Revolve or Sweep uses: pick it, or leave it out again (as the 2D map does).
   // Another sketch's area: that sketch becomes the feature's sketch. With nothing open: select it for the next feature.
   if (target?.kind === "sketchArea") {
