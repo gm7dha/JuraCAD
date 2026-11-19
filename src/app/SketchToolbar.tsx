@@ -10,6 +10,8 @@ import { detectPlatform, shortcut } from "./platform";
 import { copySketchSelection, pasteIntoSketch } from "./sketchClipboardApp";
 import { finishSketchInto } from "./sketchMenuActions";
 import { relationKey } from "../sketch/sketchView";
+import { setSketchView, useSketchView } from "./sketchViewState";
+import { toggleSketchConstructionShown } from "./sketchMenuActions";
 import { applySketchRelation, deleteSketchSelection, insertImageFile, pickFile, setSketchTool, toggleSketchConstruction } from "./sketchActions";
 
 const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hint: string }[] = [
@@ -54,6 +56,7 @@ export function SketchToolbar() {
   const sketchUndo = useStore((s) => s.sketchUndo);
   const sketchRedo = useStore((s) => s.sketchRedo);
   const platform = detectPlatform();
+  const view = useSketchView();
 
   return (
     <div className="toolbar sketch-toolbar" role="toolbar" aria-label="Sketch tools">
@@ -169,6 +172,49 @@ export function SketchToolbar() {
             disabled: !hasPlane,
             onClick: () => applySketchRelation(r),
           }))}
+        />
+      </div>
+      <div className="tool-divider" />
+      <div className="tool-group">
+        <ToolGroupButton
+          id="sketch-show"
+          name="what the sketch shows"
+          compact
+          items={[
+            {
+              key: "constraints",
+              label: view.constraints ? "Hide constraints" : "Show constraints",
+              icon: <Icons.Eye />,
+              title: "Show or hide the relation marks (parallel, equal…) beside the shapes. Hidden ones still hold. Remembered in this browser.",
+              active: view.constraints,
+              onClick: () => setSketchView({ constraints: !view.constraints }),
+            },
+            {
+              key: "dimensions",
+              label: view.dimensions ? "Hide dimensions" : "Show dimensions",
+              icon: <Icons.Dimension />,
+              title: "Show or hide the dimensions. Hidden ones still set the sizes. Remembered in this browser.",
+              active: view.dimensions,
+              onClick: () => setSketchView({ dimensions: !view.dimensions }),
+            },
+            {
+              key: "expressions",
+              label: view.expressions ? "Show numbers on dimensions" : "Show expressions",
+              icon: <span className="relation-symbol">x</span>,
+              title: "Dimensions typed as a variable or a sum show what was typed (like width / 2) instead of the number. Remembered in this browser.",
+              active: view.expressions,
+              onClick: () => setSketchView({ expressions: !view.expressions }),
+            },
+            {
+              key: "construction",
+              label: view.hideConstruction ? "Show construction geometry" : "Hide construction geometry",
+              icon: <Icons.Construction />,
+              title: "Hide or show the dashed construction geometry (Shift+P)",
+              shortcut: "Shift+P",
+              active: !view.hideConstruction,
+              onClick: toggleSketchConstructionShown,
+            },
+          ]}
         />
       </div>
       <div className="toolbar-spacer" />

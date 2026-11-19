@@ -202,7 +202,7 @@
   diameter ↔ radius / centreline, Copy/Paste/Delete, Show/Hide constraints/dimensions, Select other via `sketchHitsAt`) →
   `SketchContextMenu.tsx` (PlacedPopup). View settings: pure `src/sketch/sketchView.ts` (`readSketchView`/`writeSketchView`,
   localStorage `juracad.sketchView`: constraints, dimensions, expressions — `expressionText`), app store `sketchViewState.ts`
-  (+ `hideConstruction`, Shift+P, session only; `lit` = `tiedIds` of the badge/dimension under the pointer) → SketchOverlay (hidden
+  (+ `hideConstruction`, Shift+P, session only; `lit` = `tiedIds` of the badge/dimension under the pointer; the toggles are the sketch toolbar's "sketch-show" group — not the panel, whose height the smoke test's clicks need) → SketchOverlay (hidden
   labels/badges unless picked or being typed) and `ActiveSketch.hideConstruction/hideDimensions/lit` in SketchLayer (drawing only —
   hidden construction can still be clicked). Keys `SKETCH_KEYS` (by `e.code`: I E B X, Shift+L/O/M/Q/J/U/G/S/P; Shift+A left free;
   tooltips via `relationKey`), run in App's sketchShortcut before its Shift check. Dimensions: pure `src/sketch/dimensionKinds.ts`

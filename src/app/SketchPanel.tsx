@@ -338,25 +338,13 @@ export function SketchPanel() {
             </div>
           );
         })()}
-        <div className="sketch-view-toggles" role="group" aria-label="What the sketch shows">
-          <label className="check-row" title="Show the relation marks (parallel, equal…) beside the shapes. Hidden ones still hold.">
-            <input type="checkbox" checked={view.constraints} onChange={(e) => setSketchView({ constraints: e.target.checked })} />
-            Show constraints
-          </label>
-          <label className="check-row" title="Show the dimensions. Hidden ones still set the sizes.">
-            <input type="checkbox" checked={view.dimensions} onChange={(e) => setSketchView({ dimensions: e.target.checked })} />
-            Show dimensions
-          </label>
-          <label className="check-row" title="Dimensions typed as a variable or a sum show what was typed (like width / 2) instead of the number">
-            <input type="checkbox" checked={view.expressions} onChange={(e) => setSketchView({ expressions: e.target.checked })} />
-            Show expressions
-          </label>
-          {view.hideConstruction && (
+        {view.hideConstruction && (
+          <div className="tool-option">
             <button type="button" className="text-button" onClick={() => setSketchView({ hideConstruction: false })} title="Shift+P hides or shows construction geometry">
               Show construction geometry again (Shift+P)
             </button>
-          )}
-        </div>
+          </div>
+        )}
         {confirmCancel && (
           <div className="dialog-error" role="alert">
             Discard your changes to this sketch? Click ✕ again to discard, or keep sketching.

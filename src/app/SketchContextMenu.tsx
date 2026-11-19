@@ -1,6 +1,8 @@
 import { useStore } from "../model/store";
 import { additive } from "../viewport/touchKeys";
-import { closeSketchMenu, pickSketchOther, runSketchMenu, useSketchMenu } from "./sketchMenuActions";
+import { useEffect } from "react";
+
+import { closeSketchMenu, pickSketchOther, runSketchMenu, sketchMenuNow, useSketchMenu } from "./sketchMenuActions";
 import { PlacedPopup } from "./PlacedPopup";
 import { setSketchLit } from "./sketchViewState";
 
@@ -11,6 +13,10 @@ import { setSketchLit } from "./sketchViewState";
 export function SketchContextMenu() {
   const open = useSketchMenu();
   const sketchOpen = useStore((s) => !!s.sketch);
+  // The sketch closed with the menu open: it goes (it mustn't come back with the next sketch).
+  useEffect(() => {
+    if (!sketchOpen && sketchMenuNow()) closeSketchMenu();
+  }, [sketchOpen]);
   if (!open || !sketchOpen) return null;
   const anchor = () => ({ left: open.at.x, right: open.at.x, top: open.at.y, bottom: open.at.y });
   if (open.other) {
