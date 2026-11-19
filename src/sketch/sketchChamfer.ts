@@ -113,7 +113,10 @@ export function chamferCorner(original: SketchData, pointId: string, opts: Chamf
     k.type === "length" && (k.refs[0] === L1.id || k.refs[0] === L2.id) ? { ...k, type: "distance", refs: [pointId, far(k.refs[0] === L1.id ? L1 : L2)] } : k,
   );
   constraints.push(con("pointOnLine", [pointId, L1.id]), con("pointOnLine", [pointId, L2.id]));
-  const earlier = opts.mode === "equal" && opts.equalTo && curveById(s, opts.equalTo)?.type === "line" ? opts.equalTo : undefined;
+  // Kept Equal only while the earlier chamfer is still that size (its dimension may have been changed since).
+  const before = opts.mode === "equal" && opts.equalTo ? curveById(s, opts.equalTo) : undefined;
+  const earlier =
+    before?.type === "line" && Math.abs(len(sub(pointPos(s, before.p2), pointPos(s, before.p1))) - d1.value) <= 1e-6 * Math.max(1, d1.value) ? before.id : undefined;
   if (opts.mode === "equal") {
     constraints.push(earlier ? con("equal", [earlier, ids.c1]) : con("length", [ids.c1], opts.distance), con("equal", [ids.c1, ids.c2]));
   } else if (opts.mode === "two") {

@@ -5,7 +5,8 @@
  * Split leave — running anticlockwise from start to end the short way round
  * from the start.
  */
-import { placePoint, settle, sketchId, type EditResult, type Placed } from "./ops";
+import { placePoint, sketchId, type EditResult, type Placed } from "./ops";
+import { solveSketch } from "./solver";
 import { ellipseAt, type EllipseGeom } from "./ellipse";
 import type { SketchData, SketchEllipse } from "./types";
 
@@ -65,12 +66,18 @@ export function addEllipticalArc(s: SketchData, centre: Placed, major: Placed, s
   const [a, b] = sweep > 0 ? [shape.t0, shape.t0 + sweep] : [shape.t0 + sweep, shape.t0];
   const pa = ellipseAt(g, a) as P2;
   const pb = ellipseAt(g, b) as P2;
-  const ids = { minor: sketchId("p"), start: sketchId("p"), end: sketchId("p"), arc: sketchId("el") };
-  const ellipse: SketchEllipse = { id: ids.arc, type: "ellipse", center: c.id, major: m.id, minor: ids.minor, start: ids.start, end: ids.end, construction };
-  const r = settle({
-    ...sk,
-    points: [...sk.points, { id: ids.minor, x: minor[0], y: minor[1] }, { id: ids.start, x: pa[0], y: pa[1] }, { id: ids.end, x: pb[0], y: pb[1] }],
-    curves: [...sk.curves, ellipse],
-  });
-  return { ...r, ellipseId: ids.arc };
+  // The arc's ends keep what their clicks snapped to (a line's end, a curve…), so it joins up with them.
+  // (The ellipse's own start is the end click when it runs clockwise from the start click.)
+  const [clickA, clickB] = sweep > 0 ? [start, end] : [end, start];
+  const ids = { minor: sketchId("p"), arc: sketchId("el") };
+  sk = { ...sk, points: [...sk.points, { id: ids.minor, x: minor[0], y: minor[1] }] };
+  const ea = placePoint(sk, { ...clickA, x: pa[0], y: pa[1] });
+  sk = ea.sketch;
+  const eb = placePoint(sk, { ...clickB, x: pb[0], y: pb[1] });
+  sk = eb.sketch;
+  if (ea.id === eb.id || ea.id === c.id || eb.id === c.id || ea.id === m.id || eb.id === m.id) return fail("Click the arc's start and end at different places, away from the centre and the axis' end.");
+  const ellipse: SketchEllipse = { id: ids.arc, type: "ellipse", center: c.id, major: m.id, minor: ids.minor, start: ea.id, end: eb.id, construction };
+  const solved = solveSketch({ ...sk, curves: [...sk.curves, ellipse] });
+  if (!solved.ok) return fail("That elliptical arc would conflict with the sketch's other constraints.");
+  return { sketch: solved.sketch, ellipseId: ids.arc };
 }

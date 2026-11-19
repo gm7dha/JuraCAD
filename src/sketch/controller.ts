@@ -1374,17 +1374,20 @@ export class SketchController {
     const d = this.data;
     this.emit({ preview: [], hover: null });
     if (!d) return;
-    if (!st.moved) {
-      const [x, y] = st.path[0];
+    const [x, y] = st.path[0];
+    const clickTrim = (): boolean => {
       const hit = hitTest(d, x, y, POINT_PX * st.mm, CURVE_PX * st.mm);
-      if (hit?.kind !== "curve") {
-        this.state.setSketchMessage("Click the part of a line, arc, circle, spline or ellipse you want to cut away — or drag across several.", "info");
-        return;
-      }
+      if (hit?.kind !== "curve") return false;
       this.commit(trimAt(d, hit.id, { x, y }), []);
+      return true;
+    };
+    if (!st.moved) {
+      if (!clickTrim()) this.state.setSketchMessage("Click the part of a line, arc, circle, spline or ellipse you want to cut away — or drag across several.", "info");
       return;
     }
     const r = trimAlong(d, st.path);
+    // A press on a curve that wobbled a little without crossing anything is still a click there.
+    if (!r.trimmed && clickTrim()) return;
     if (this.commit(r, [])) this.state.setSketchMessage(`Trimmed ${r.trimmed === 1 ? "1 piece" : `${r.trimmed} pieces`}.`, "info");
   }
 

@@ -123,3 +123,32 @@ describe("the sketch's newer editing tools, clicked", () => {
     expect(d.constraints.find((k) => k.type === "offset")?.value).toBe("3");
   });
 });
+
+describe("Trim on button-up", () => {
+  it("a press on a line that wobbles a little without crossing anything still trims there", () => {
+    let d = addLine(draftData(), { x: 0, y: 0 }, { x: 30, y: 0 }).sketch;
+    d = addLine(d, { x: 10, y: -10 }, { x: 10, y: 10 }).sketch;
+    put(d);
+    s().setSketchTool("trim");
+    const c = new SketchController();
+    const past = s().sketch!.past.length;
+    c.pointerDown(mouse(5, 0.2));
+    c.pointerMove(mouse(5.5, 0.3), true);
+    c.pointerUp();
+    expect(s().sketch!.past.length).toBe(past + 1);
+    // The left stretch of the long line went: it now starts at the upright.
+    const long = draftData().curves.find((k): k is SketchLine => k.type === "line" && Math.abs(pointPos(draftData(), k.p1)[1]) < 1e-9 && Math.abs(pointPos(draftData(), k.p2)[1]) < 1e-9)!;
+    expect(Math.min(pointPos(draftData(), long.p1)[0], pointPos(draftData(), long.p2)[0])).toBeCloseTo(10, 6);
+  });
+
+  it("a drag on empty space crossing nothing changes nothing", () => {
+    put(addLine(draftData(), { x: 0, y: 0 }, { x: 30, y: 0 }).sketch);
+    s().setSketchTool("trim");
+    const c = new SketchController();
+    const before = draftData();
+    c.pointerDown(mouse(5, 5));
+    c.pointerMove(mouse(8, 6), true);
+    c.pointerUp();
+    expect(draftData()).toBe(before);
+  });
+});

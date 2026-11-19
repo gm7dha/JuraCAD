@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { addArc, addCircle, addDimension, addLine, addRectangle, pointPos, radiusOf, setDimensionValue } from "../src/sketch/ops";
-import { findRegions } from "../src/sketch/regions";
+import { findChains, findRegions } from "../src/sketch/regions";
 import { analyzeSketch, solveSketch } from "../src/sketch/solver";
 import { filletCorner } from "../src/sketch/tools";
 import { chamferCorner, cornerOfLines } from "../src/sketch/sketchChamfer";
@@ -244,5 +244,41 @@ describe("slot along a spline", () => {
     expect(r.error).toBeUndefined();
     expect(r.curveIds).toHaveLength(4);
     expect(findRegions(r.sketch).regions).toHaveLength(1);
+  });
+});
+
+describe("elliptical arc joins what its ends snap to", () => {
+  it("start and end on existing line ends: one closed-off run, ends shared", () => {
+    let s = addLine(emptySketch(), at(-10, 10), at(0, 10)).sketch;
+    s = addLine(s, at(17, 5.5), at(30, 5.5)).sketch;
+    const [l1, l2] = s.curves as SketchLine[];
+    const r = addEllipticalArc(s, at(0, 0), at(20, 0), { x: 0, y: 10, snap: { kind: "point", id: l1.p2 } }, { x: 17, y: 5.5, snap: { kind: "point", id: l2.p1 } });
+    expect(r.error).toBeUndefined();
+    const el = r.sketch.curves.find((c) => c.id === r.ellipseId) as SketchEllipse;
+    expect([el.start, el.end].sort()).toEqual([l1.p2, l2.p1].sort());
+    const path = curveParam(r.sketch, el);
+    for (const id of [l1.p2, l2.p1]) {
+      const p = pointPos(r.sketch, id);
+      const ends = [path.at(path.lo), path.at(path.hi)];
+      expect(Math.min(...ends.map((q) => Math.hypot(q[0] - p[0], q[1] - p[1])))).toBeLessThan(1e-6);
+    }
+    expect(findChains(r.sketch).chains).toHaveLength(1);
+  });
+});
+
+describe("Equal to the first only while it's that size", () => {
+  it("a round whose earlier one was resized gets its own dimension", () => {
+    const { s, ids } = definedRectangle();
+    const corners = ids.map((id) => (s.curves.find((c) => c.id === id) as SketchLine).p2);
+    const one = filletCorner(s, corners[0], "3");
+    const dim = one.sketch.constraints.find((c) => c.type === "radius")!;
+    const resized = setDimensionValue(one.sketch, dim.id, "5").sketch;
+    const two = filletCorner(resized, corners[1], "3", one.arcId);
+    expect(two.sketch.constraints.filter((c) => c.type === "radius")).toHaveLength(2);
+    expect(radiusOf(two.sketch, two.sketch.curves.find((c) => c.id === two.arcId) as SketchArc)).toBeCloseTo(3, 6);
+    const c1 = chamferCorner(s, corners[0], { mode: "equal", distance: "4" });
+    const cdim = c1.sketch.constraints.find((c) => c.type === "length" && c.refs[0] === c1.sizeLineId)!;
+    const c2 = chamferCorner(setDimensionValue(c1.sketch, cdim.id, "6").sketch, corners[1], { mode: "equal", distance: "4", equalTo: c1.sizeLineId });
+    expect(lineLength(c2.sketch, c2.sizeLineId)).toBeCloseTo(4, 6);
   });
 });

@@ -196,7 +196,10 @@ export function filletCorner(original: SketchData, pointId: string, radiusText: 
  */
 export function sizeOfRound(s: SketchData, arcId: string, radiusText: string, equalTo?: string): SketchConstraint {
   const earlier = equalTo ? curveById(s, equalTo) : undefined;
-  return earlier?.type === "arc" ? con("equal", [equalTo!, arcId]) : con("radius", [arcId], radiusText);
+  // Only while the earlier round is still that size (its dimension may have been changed since).
+  const r = evaluate(radiusText);
+  const same = earlier?.type === "arc" && r.ok && Math.abs(radiusOf(s, earlier) - r.value) <= 1e-6 * Math.max(1, r.value);
+  return same ? con("equal", [equalTo!, arcId]) : con("radius", [arcId], radiusText);
 }
 
 /**

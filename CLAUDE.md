@@ -170,17 +170,17 @@
   side of its click moved to the touch point, length/arcLength/arcAngle dims on them dropped, unused ends tidied). Done again
   with the same size while the tool stays on (controller `lastEdge`, reset on tool change), a round is `equal` to the first
   (`sizeOfRound` / `equalTo` in filletCorner) and an Equal chamfer's size line `equal` to the first's — one dimension sizes
-  them all. Slot on a curve (tool "slotAlong", `src/sketch/slotAlong.ts`): offsetCurves/offsetWavy both sides at
+  them all (only while the first is still that size). Slot on a curve (tool "slotAlong", `src/sketch/slotAlong.ts`): offsetCurves/offsetWavy both sides at
   `halfWidthText`, the two offset constraints merged into ONE (its id returned), round end caps centred on the run's end points
   with `tangent` to each copy (open runs only), the source made construction. Drag-trim: in Trim a press starts
-  `trimStroke`; let go unmoved = the old click trim, dragged = `trimAlong` (`src/sketch/trimStroke.ts`: the path as a
+  `trimStroke`; let go unmoved = the old click trim, dragged = `trimAlong` (crossing nothing from a press on a curve = still the click trim) (`src/sketch/trimStroke.ts`: the path as a
   CurveParam, `crossings` with every curve in path order, each place's curve found again after each trim) — one undo step;
   touch: `touchDragStarts` is true for trim, the lift's press just ends the path. Elliptical arc (tool "ellipticalArc",
-  `src/sketch/ellipticalArc.ts`: centre, axis end, start — sets the width —, end; an ellipse with start/end, short way round).
+  `src/sketch/ellipticalArc.ts`: centre, axis end, start — sets the width —, end; an ellipse with start/end, short way round; its ends keep their clicks' snaps via placePoint).
   Linear pattern's second direction (rows × columns; `src/sketch/patternGrid.ts` `patternGrid` = patternCurves, then all of
   it again along the second; previewed). Settings in `src/sketch/editToolOptions.ts` (own zustand store, session only; panel
   `src/app/SketchEditOptions.tsx`, which also has the tools' icons). Not done: editing a pattern's count after it's made;
-  chamfers next to arcs; rounds with circles. Tests: tests/sketchEditTools, sketchPatternGrid (pure), sketchEditToolsStore.
+  chamfers next to arcs; rounds with circles. Tests: tests/sketchEditTools, sketchPatternGrid (pure), sketchEditToolsStore, engineSketchEditTools (outlines extruded).
   Move / copy handles (Onshape's sketch Transform): pure `src/sketch/transformSelection.ts` — `transformSelection(s, ids,
   {dx, dy, angle, scale}, about?)` (about = `selectionCentre`: the box middle of the picked shapes as drawn — `curveOutline`: arcs
   by their curve, circles' full size, splines' paths; a centre or axis point counts only when picked itself): points
