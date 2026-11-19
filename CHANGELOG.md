@@ -8,6 +8,17 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.99 — Sketch: drawing feels like Onshape
+
+- Lines pick up Parallel or Perpendicular to a line you've just pointed at, and Tangent (or square) when you start
+  from the end of an arc; a small badge shows what it will add. Shift still turns it off.
+- Shift+A switches between a line and a tangent arc while drawing a chain; bringing the pointer back onto the last end
+  and carrying on does the same.
+- New Midpoint line tool: click the middle, then one end.
+- Drawing with the mouse by press–drag–release now works.
+- Fixed: a nearly level line could lose its Horizontal when its end lined up with another point; a double-click on a
+  spline now finishes it.
+
 ## v0.98 — Sweep: Lock profile faces; Loft: guides that blend into faces
 
 - Sweep's Profile control has "Lock profile faces", as in Onshape: along a part's edges, the shape keeps the same angle
