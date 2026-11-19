@@ -8,6 +8,15 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.101 — Sketch: right-click menus, view options and quicker steps
+
+- **Right-click menu in sketches**, as in Onshape: the relations that fit what's picked, Construction, Delete, Select other, Finish. On a tablet, hold a finger still.
+- **Extrude and Revolve buttons in the sketch toolbar**: the sketch is accepted and the feature opens on it.
+- **View options**: show or hide dimensions, relations and construction (Shift+P hides construction, which then can't be clicked either).
+- **Centreline (diameter) dimensions** for revolve profiles: dimension to the axis and it measures the full width. Switch diameter ↔ radius without the shape moving.
+- **Hover lighting**: what a dimension or relation badge controls lights up.
+- **Relation keys work on any keyboard layout.**
+
 ## v0.100 — Sketch: chamfer, slots, elliptical arcs and grid patterns
 
 - **Sketch chamfer**: cut a corner between two lines at an equal distance, two distances, or a distance and an angle.
