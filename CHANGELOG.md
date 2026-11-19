@@ -8,6 +8,15 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.98 — Sweep: Lock profile faces; Loft: guides that blend into faces
+
+- Sweep's Profile control has "Lock profile faces", as in Onshape: along a part's edges, the shape keeps the same angle
+  to the faces you click — a lip round a box's top edges stays square to its sides, round the corners too, and on round
+  faces as well.
+- A loft guide that's a part's edge can be set to "Match tangent", so the loft blends into the face beside it with no
+  crease ("Use the other face" picks the face on the other side).
+- Claude can use both.
+
 ## v0.97 — Merge scope: choose which parts a feature changes
 
 - Add, Remove, Intersect and Hole (and patterns and mirrors of them) can now change only the parts you choose: untick

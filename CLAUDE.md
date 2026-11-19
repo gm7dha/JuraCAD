@@ -532,7 +532,7 @@
   before, `sweepSettings` gives the old `{twist, lockOrientation}`): Profile control None / Keep profile orientation / Lock profile
   direction (`lockDirection`: a GeomPick — edge, face normal/axis, X/Y/Z, sketch line, connector's Z — found by the engine via
   `PathLookup.direction` = findGeom "line"; OpenCascade's binormal SetMode(gp_Dir); refused where the path runs within 1° of it,
-  `runsAlong`); no "Lock profile faces" yet. Twist `twistBy` angle (the "twist" box) / "turns" / "pitch" (lazy params `turns`,
+  `runsAlong`); Lock profile faces below. Twist `twistBy` angle (the "twist" box) / "turns" / "pitch" (lazy params `turns`,
   `pitch`: 360 × length / pitch, the length measured on the built path, `twistOf`) + `opposite`. Scale (`scaled` + lazy `scale` =
   the size at the end / at the profile): `addSection` → SetLaw with a Law_Linear (its range is spread over the path BY LENGTH, the
   section scaled about the path; RoundCorner + a law throws, so corners are stretches: `pathStretches(…, corners)` builds the
@@ -552,6 +552,21 @@
   `scale`, `surface`. Tests: tests/sweepOptions (pure), engineSweepMore (thin/extra areas along a helix, the fin refused, mid-path
   twist round a corner and its sign, turns/pitch = angle, exact frustums, mid-path scale, corners, a helix scaled, locked
   direction, face profiles with a hole), mcpSweepMore.
+  Lock profile faces (Onshape's): `sweepControl.lockFaces` (TopoPicks of one part's faces; picking "lockFaces" toggles them,
+  `sweepClick`; Profile control "faces"; dependents via `sweepPartsUsed`) — only along `pathEdges` that are edges of those faces
+  (sketch/curve paths refused, `LOCK_FACES_PATH`); no twist, no scale. `src/kernel/sweepFaces.ts` `sweepLockedToFaces`: the path's
+  edges walked in order (`walkedEdges`; a reversed edge's ends read as it's turned), cut into runs at > 1° turns and where the
+  path passes onto another locked face (a loop starts at one; a smooth change of face needs the faces to meet within 2°,
+  `FACES_TURN`), so each run lies on ONE face; each run a pipe-shell
+  from the drawn profile placed by frames whose reference is the face's normal (`frameOn`, `placedSection`): a flat face = fixed
+  binormal SetMode(gp_Dir) (the support mode throws "Adaptor3d_CurveOnSurface:EvalDN" on some planes' edges), a curved one
+  SetMode(its own face — a compound of several fails on a fillet's arc between flat sides); each sharp corner a plain RoundCorner pipe
+  over two short legs (≤ the profile's reach, ≤ half each run), refused when the faces don't turn with the path there
+  (`CORNER_TWIST`); all fused (`fuseInto`). The profile anywhere on the path (`profilePlace`; open paths fall back to the start). Claude: sweep
+  `lock_faces` (face choices of path_part, or {"part", "faces"}). Tests: tests/sweepLockFaces (pure), engineSweepLockFaces
+  (a 2 × 2 lip round a 40 × 30 box's top edges = 2·((42·32 − 38·28) − 4(1 − π/4)) exactly, sound; a lip round a slanted cut's
+  ellipse kept on the cylinder (r ≥ 10) where a plain sweep tips 1 mm in; refusals; a lopsided profile stays the way up drawn;
+  a filleted box's top and a cylinder's rim = Pappus; a profile part way along an open path), mcpSweepMore.
 - Loft (Onshape's): plain lofts (no `Feature.loft`) take the old `loftSketches`/`loftSurface` path untouched. `Feature.loft`
   (`LoftDef`, types.ts; pure helpers `src/model/loft.ts`, parsed by `parseLoftDef`): `profiles` (sections in order — `{sketch,
   areas?, turn?}` (one picked area), `{face}` (a flat face, its outer wire), `{point}` (a `GeomPick`: sketch point, part corner or
@@ -626,6 +641,18 @@
   the face's own result, found without the pick, refused off any face), mcpLoftGuides. Not done: clicking sketch points in
   the 3D view for connections (chosen in the dialog's lists), connections on circles (no corner to pick), anchors that follow a
   guide by its own touch point rather than the ray from the middle (very lopsided shapes).
+  Guide continuity (Onshape's): a part-edge guide may carry `continuity: "matchTangent"` (+ `otherFace`; `LoftCurve` edges
+  variant, parsed in document.ts, kept by `toggleEdge`; `GUIDE_CONTINUITY`/`guideContinuityOf`/`withGuideContinuity` in
+  model/loft.ts; a "Continuity" select under each edge guide in LoftOptions). Any such guide sends the loft through `guidedLoft`
+  (no continuity = the old paths exactly); `facesBeside` gives its first edge's two faces; in `warpedStation`, after the warp,
+  pure `src/geometry/guideTangent.ts` `tangentBend` turns the outline near the guide point (cosine fade over `BEND_REACH` 0.35 ×
+  its size) so it leaves along the face carried on past the edge (`awayFromFace`: the face's normal × the station's, away from
+  the face): at a corner of the outline only the branch nearer that way, on a smooth stretch both; a face a branch already
+  runs into (the loft sits on it) is skipped, so the other is matched; `otherFace` prefers the second. The user's sections stay
+  as drawn (matched between them only). Claude: guide/guides items {"part", "edges", "continuity": "match_tangent",
+  "other_face"} (`loftGuideOf`). Tests: loftGuideTangent (pure), engineLoftGuideTangent (a leaning triangle on a box's top edge:
+  the loft's side within 4° of the front face at x 12…28, ~20.6° without), mcpLoftGuides. Not done: Match curvature, Normal to
+  guide / Tangent to guide (sketch and curve guides).
 - Thin (Onshape's "Thin" on Extrude/Revolve/Sweep, solids): `Feature.thin` (`midPlane`: the whole `thickness` centred; else
   `thickness` on the first side + `thickness2` (default 0) on the other; `flip` swaps; missing = solid, old files unchanged;
   params in group "thin", shown by `ThinOptions` in FeatureDialog.tsx, hidden by `visibleParamKeys` unless thin; draft hidden).

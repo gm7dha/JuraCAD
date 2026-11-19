@@ -23,6 +23,7 @@ import type { TopoPick } from "../geometry/topoRef";
 import type { Feature, GeomPick, LoftCurve, LoftDef, LoftEnd, LoftProfile } from "../model/types";
 import { END_LABELS, loftGuides, loftProfiles, profilesProblem } from "../model/loft";
 import { crossedOver, fitWarp, rayHit, type P2 } from "../geometry/warp2d";
+import { tangentBend } from "../geometry/guideTangent";
 import { segmentsWire } from "./extrude";
 import { loopStart, pathWire } from "./sweep";
 import { asIs, encloseSurfaces } from "./surface";
@@ -624,6 +625,31 @@ function curveWire(c: LoftCurve, ctx: LoftContext, what: string, near?: Vec3): W
   }
 }
 
+/**
+ * The faces beside a guide's edges (the first edge's two faces on its part), for a guide matching tangent; throws a
+ * plain message when there are none.
+ */
+function facesBeside(edges: TopoPick[], ctx: LoftContext, name: string): Face[] {
+  const first = edges[0];
+  const shape = first ? ctx.part(first.partId) : null;
+  if (!shape) throw new Error(`The part with ${name}'s edges no longer exists. Edit the loft and pick them again.`);
+  const [edge] = ctx.edges(shape, [first]);
+  const out: Face[] = [];
+  try {
+    for (const f of shape.faces) {
+      const mine = f.edges;
+      const has = mine.some((e) => e.isSame(edge));
+      mine.forEach((e) => e.delete());
+      if (has && out.length < 2) out.push(f);
+      else f.delete();
+    }
+  } finally {
+    edge.delete();
+  }
+  if (!out.length) throw new Error(`${name[0].toUpperCase()}${name.slice(1)} isn't an edge of a face, so it can't match a face's tangent. Set its continuity to None.`);
+  return out;
+}
+
 /** Is a wire (nearly) touching a guide? */
 function touches(wire: Wire, guide: Wire): boolean {
   const tol = Math.max(0.01, 1e-3 * diag(wire));
@@ -844,8 +870,11 @@ function planeAxes(n: Vec3): { u: Vec3; v: Vec3 } {
   return { u, v: cross(n, u) };
 }
 
-/** A guide curve, found, with the name messages use. */
-type GuideWire = { wire: Wire; name: string };
+/**
+ * A guide curve, found, with the name messages use; `faces` = the part faces beside its edges when it matches tangent
+ * (Onshape's guide continuity), `otherFace` = match the second one.
+ */
+type GuideWire = { wire: Wire; name: string; faces?: Face[]; otherFace?: boolean };
 
 /**
  * One station of a loft with several guides (or guides with a path or connections): the unguided loft cut by the
@@ -895,9 +924,32 @@ function warpedStation(base: Shape3D, guides: GuideWire[], at: Vec3, n: Vec3, be
   // One guide: stretched along the guide's way only, from the outline's far side (which stays put), as a lone guide
   // between two parallel shapes always is (guidedStation); two or more: bent through them all.
   const warp = anchors.length === 1 ? stretchTowards(poly, c, anchors[0], targets[0]) : fitWarp(anchors, targets);
-  const map = (q: Vec3): Vec3 => add(from2(warp.map(to2(q))), mul(n, dot(sub(q, at), n)));
+  // Guides matching tangent: the warped outline turned, near each such guide, to carry on the face beside its edges.
+  let bent = (p: P2): P2 => warp.map(p);
+  let affine = warp.affine;
+  guides.forEach((g, k) => {
+    if (!g.faces?.length) return;
+    const across: P2[] = [];
+    const which: number[] = [];
+    g.faces.forEach((f, j) => {
+      const d = awayFromFace(f, hits[k], n, size);
+      if (d) {
+        across.push([dot(d, u), dot(d, v)]);
+        which.push(j);
+      }
+    });
+    if (!across.length) return;
+    const before = bent;
+    const shaped = poly.map((p) => before(p));
+    const prefer = Math.max(0, which.indexOf(g.otherFace ? 1 : 0));
+    const bend = tangentBend(shaped, targets[k], across, prefer);
+    if (!bend) return;
+    bent = (p: P2) => bend.map(before(p));
+    affine = false;
+  });
+  const map = (q: Vec3): Vec3 => add(from2(bent(to2(q))), mul(n, dot(sub(q, at), n)));
   const edges = wire.edges.map((e) => {
-    if (warp.affine && e.geomType === "LINE") return makeLine(map(tuple(e.startPoint)), map(tuple(e.endPoint)));
+    if (affine && e.geomType === "LINE") return makeLine(map(tuple(e.startPoint)), map(tuple(e.endPoint)));
     const pts = Array.from({ length: 33 }, (_, i) => map(tuple(e.pointAt(i / 32))));
     return makeBSplineApproximation(pts, { tolerance: 1e-5, degMax: 5, degMin: 3 });
   });
@@ -909,6 +961,32 @@ function warpedStation(base: Shape3D, guides: GuideWire[], at: Vec3, n: Vec3, be
   } finally {
     edges.forEach((e) => e.delete());
   }
+}
+
+/**
+ * The way the face `f` carries on past the guide at `h`, in the station's plane (normal `n`): along the face, square to
+ * the guide, away from the face. Null when the face lies across the station plane there.
+ */
+function awayFromFace(f: Face, h: Vec3, n: Vec3, size: number): Vec3 | null {
+  let nf: Vec3;
+  try {
+    nf = unit(tuple(f.normalAt(h)));
+  } catch {
+    return null;
+  }
+  const line = cross(nf, n);
+  if (len(line) < 1e-6) return null;
+  const d = unit(line);
+  const eps = Math.min(0.05, 1e-3 * size);
+  const gap = (p: Vec3) => {
+    const vx = makeVertex(p);
+    try {
+      return measureDistanceBetween(vx, f);
+    } finally {
+      vx.delete();
+    }
+  };
+  return gap(add(h, mul(d, eps))) >= gap(sub(h, mul(d, eps))) ? d : mul(d, -1);
 }
 
 /**
@@ -1432,13 +1510,17 @@ export function buildLoft(feature: Pick<Feature, "sections" | "loft" | "loftRule
       }
       // Several guides, guides along a path or guides with connections: stations bent to every guide. One guide alone
       // (parallel shapes or not) keeps the older way below exactly, so lofts made before build just as they did.
-      if (guideCurves.length && (guideCurves.length > 1 || def.path || def.connections?.length)) {
+      const matching = guideCurves.some((c) => "edges" in c && c.continuity === "matchTangent");
+      if (guideCurves.length && (guideCurves.length > 1 || def.path || def.connections?.length || matching)) {
         const many = guideCurves.length > 1;
         const guides: GuideWire[] = guideCurves.map((c, i) => {
           const name = many ? `guide curve ${i + 1}` : "the guide curve";
           const wire = curveWire(c, ctx, many ? `guide curve ${i + 1}` : "guide curve", centreOf(sections[0]));
           made.push(wire);
-          return { wire, name };
+          if (!("edges" in c) || c.continuity !== "matchTangent") return { wire, name };
+          const faces = facesBeside(c.edges, ctx, name);
+          made.push(...faces);
+          return { wire, name, faces, ...(c.otherFace ? { otherFace: true } : {}) };
         });
         for (const g of guides)
           for (const x of sections) if (x.kind === "wire" && !touches(x.wire, g.wire)) throw new Error(`${g.name[0].toUpperCase()}${g.name.slice(1)} must touch the outline of every shape, but it misses ${x.name}.`);

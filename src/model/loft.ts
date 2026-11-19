@@ -230,7 +230,31 @@ export function toggleEdge(curve: LoftCurve | undefined, edge: TopoPick): LoftCu
   const edges = curve && "edges" in curve ? curve.edges : [];
   const has = edges.some((e) => samePick(e, edge));
   const next = has ? edges.filter((e) => !samePick(e, edge)) : [...edges, stripAt(edge)];
-  return next.length ? { edges: next } : undefined;
+  if (!next.length) return undefined;
+  // A guide's continuity choices stay with its edges.
+  const kept = curve && "edges" in curve ? { ...(curve.continuity ? { continuity: curve.continuity } : {}), ...(curve.otherFace ? { otherFace: true } : {}) } : {};
+  return { edges: next, ...kept };
+}
+
+/** How a guide meets the face beside its edges (Onshape's guide continuity): "none" = it only passes through. */
+export type GuideContinuity = "none" | "matchTangent";
+
+export const GUIDE_CONTINUITY: { id: GuideContinuity; label: string; hint: string }[] = [
+  { id: "none", label: "None", hint: "The loft just passes through the guide." },
+  { id: "matchTangent", label: "Match tangent", hint: "The loft leaves the guide carrying on smoothly from the part's face beside those edges, with no crease." },
+];
+
+/** A guide's continuity now ("none" for sketch and curve guides, which only pass through). */
+export function guideContinuityOf(c: LoftCurve | undefined): GuideContinuity {
+  return c && "edges" in c && c.continuity ? c.continuity : "none";
+}
+
+/** The guide with another continuity (only part-edge guides take one; switching to none drops `otherFace` too). */
+export function withGuideContinuity(c: LoftCurve, choice: GuideContinuity, otherFace?: boolean): LoftCurve {
+  if (!("edges" in c)) return c;
+  const { continuity: _c, otherFace: _o, ...rest } = c;
+  if (choice === "none") return rest;
+  return { ...rest, continuity: choice, ...(otherFace ? { otherFace: true } : {}) };
 }
 
 /**

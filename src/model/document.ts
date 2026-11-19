@@ -580,7 +580,8 @@ function parseLoftCurve(raw: unknown): LoftCurve | null {
   if (typeof c.curve === "string") return { curve: c.curve };
   if (Array.isArray(c.edges)) {
     const edges = c.edges.map(parsePick).filter((x): x is NonNullable<ReturnType<typeof parsePick>> => !!x && x.ref.kind === "edge");
-    return edges.length ? { edges } : null;
+    if (!edges.length) return null;
+    return { edges, ...(c.continuity === "matchTangent" ? { continuity: "matchTangent" as const } : {}), ...(c.otherFace === true ? { otherFace: true } : {}) };
   }
   return null;
 }

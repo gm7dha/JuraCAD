@@ -331,7 +331,7 @@ function controlledSweep(wire: Wire, spine: Wire, control: SweepControl, guide: 
 }
 
 /** Where a stretch starts: a point on the path, the path's direction there, and the profile's reference direction square to it. */
-interface PathFrame {
+export interface PathFrame {
   p: Vec3;
   t: Vec3;
   d: Vec3;
@@ -465,7 +465,7 @@ function releaseStretches(stretches: Stretch[]) {
 }
 
 /** Is it one sound solid with something inside? */
-function soundSolid(shape: Shape3D): boolean {
+export function soundSolid(shape: Shape3D): boolean {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const oc = getOC() as any;
   const check = new oc.BRepCheck_Analyzer(shape.wrapped, true, false, false);
@@ -483,7 +483,7 @@ function soundSolid(shape: Shape3D): boolean {
 const JOIN_FUZZ = 1e-5;
 
 /** All the pieces fused into one solid (faces lying on the same surface merged), or an error. */
-function fuseInto(pieces: Shape3D[]): Shape3D {
+export function fuseInto(pieces: Shape3D[]): Shape3D {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const oc = getOC() as any;
   const args = new oc.NCollection_List_TopoDS_Shape();
@@ -533,7 +533,7 @@ function fuseInto(pieces: Shape3D[]): Shape3D {
 }
 
 /** The drawn profile moved rigidly from where it starts the sweep to where it starts another stretch. */
-function placedSection(wire: Wire, from: PathFrame, to: PathFrame): Wire {
+export function placedSection(wire: Wire, from: PathFrame, to: PathFrame): Wire {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const oc = getOC() as any;
   const made: any[] = [];
@@ -647,7 +647,7 @@ function stretchedSweep(wire: Wire, stretches: Stretch[], startAxis: { p: Vec3; 
 }
 
 /** The outline turned (the least amount, about the path's start) so it lies square to the path there. */
-function squareTo(wire: Wire, at: PathFrame): Wire {
+export function squareTo(wire: Wire, at: PathFrame): Wire {
   const face = makeFace(wire);
   const nv = face.normalAt();
   const n: Vec3 = [nv.x, nv.y, nv.z];
@@ -671,7 +671,7 @@ export const PROFILE_ALONG_PATH =
  * nearest the profile, so that's where it's measured; a closed loop has no
  * start, so it's measured at the place nearest the middle of the profile.
  */
-function liesAlongPath(spine: Wire, n: Vec3, centre: Vec3): boolean {
+export function liesAlongPath(spine: Wire, n: Vec3, centre: Vec3): boolean {
   const pieces = samplePath(spine, 64);
   let at: PathSample | null = pieces[0]?.[0] ?? null;
   if (spine.isClosed) {
@@ -989,7 +989,7 @@ export function sweepAlongSketch(prof: SweepProfile, pathPlane: SketchPlane, pat
 }
 
 /** Every outline of the profile swept by `sweepOne`, its holes cut out, all put together. */
-function sweepLoops(prof: SweepProfile, sweepOne: (make: () => Wire) => Shape3D): Shape3D {
+export function sweepLoops(prof: SweepProfile, sweepOne: (make: () => Wire) => Shape3D): Shape3D {
   let result: Shape3D | null = null;
   try {
     for (const loop of prof.loops) {
