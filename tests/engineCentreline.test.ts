@@ -35,7 +35,7 @@ describe("a centreline dimension on a revolve profile", () => {
     const rev: Feature = { ...feature("revolve", { angle: 360 }), sketchRef: sk.id, revolve: { axis: axis.lineId, flip: false } };
     engine = new GeometryEngine();
     const r = engine.rebuild([sk, rev]);
-    expect(r.errors ?? {}).toEqual({});
+    expect(r.featureErrors).toEqual({});
     const v = r.parts[0].vertices;
     let most = 0;
     for (let i = 0; i < v.length; i += 3) most = Math.max(most, Math.hypot(v[i], v[i + 1]));
