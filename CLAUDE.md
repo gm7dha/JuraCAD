@@ -75,6 +75,17 @@
   `source.later` (never snapped to; clicking one says why, `laterMessage`). The controller offers only sketches shown in the view (`sketchVisible`) and
   parts not hidden; clicks prefer the sketch's own geometry, then text/pictures, then outside refs, and the face's own corners win
   ties (`preferFace`). Faint dots near the pointer: `SketchTransient.nearby`.
+  Drawing feel (Onshape's, controller.ts): `linePlan` decides a line's end + inferred relation (Shift: none; a point/curve snap:
+  just that; an "align" snap still gets H or V — whichever the lining up doesn't give —; else H/V within 4°; else `lineRelation`:
+  parallel/perpendicular to a "woken" line (`woken`: own lines hovered while drawing + the chain's last line, ≤ `WOKEN_MAX`;
+  no parallel through the start) or, starting on an arc's end, `tangent`/`normal` to it) → `LineOptions.relation` in addLine.
+  Its badge is `SketchTransient.inference` (H V ∥ ⊥ T N), drawn by SketchOverlay's `.inference-badge` from `controller.current`
+  each frame. Mouse press–drag–release in a DRAG_DRAWN tool: `press` (set only by the press that started a shape) + `lastEvent`
+  → a release > `RELEASE_PX` away is the next click (a dragged line ends the chain); touch keeps touchLiftClicks. Spline: a click
+  on the last point (double-click) finishes it open. Line → tangent arc: `arcMode` (next click = addTangentArc from the chain's
+  end, then lines again) by Shift+A (`toggleLineArc`, App's sketchShortcut) or the pointer back onto the last end and away
+  (`followReturn`, `returning` fresh/away/back). Midpoint line tool "midpointLine" (`addMidpointLine` in ops.ts: other end
+  mirrored, `midpoint` relation on the first point, kept `standalone`), in the toolbar's "line" family. Tests: tests/sketchFeelStore.
   Tangent lines (`src/sketch/tangents.ts`): the line tool offers lines touching two circles/arcs (outer + crossing) or
   from a point to one (`tangentLineAt`), made by `addTangentLine` (ends `pointOnCircle`, plus `tangent` to each).
   Circular sketch patterns round a point add `patternCopy` constraints (+ `equal` with extra [1] for

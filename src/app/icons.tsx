@@ -560,6 +560,14 @@ export const Icons = {
       <circle cx="19" cy="5" r="1.6" fill="currentColor" />
     </Svg>
   ),
+  MidpointLine: (p: IconProps) => (
+    <Svg {...p}>
+      <path d="M5 19 19 5" />
+      <circle cx="5" cy="19" r="1.6" fill="currentColor" />
+      <circle cx="19" cy="5" r="1.6" fill="currentColor" />
+      <path d="M9.5 9.5l5 5" />
+    </Svg>
+  ),
   Rectangle: (p: IconProps) => (
     <Svg {...p}>
       <rect x="4" y="6" width="16" height="12" />

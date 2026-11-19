@@ -178,6 +178,8 @@ export type DrawingTool = "select" | "crop" | "cropShape" | "dimension" | "basel
 export type SketchTool =
   | "select"
   | "line"
+  /** Onshape's Midpoint line: click the middle, then one end. */
+  | "midpointLine"
   | "rectangle"
   | "centreRectangle"
   | "alignedRectangle"
