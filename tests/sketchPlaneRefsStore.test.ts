@@ -70,6 +70,35 @@ describe("the origin's axes in a sketch on Top", () => {
     const [a, b] = [pointPos(r.sketch, line.p1), pointPos(r.sketch, line.p2)];
     expect(a[0]).toBeCloseTo(b[0], 6);
   });
+
+  it("clicking along an axis and then elsewhere leaves no copy behind, and no undo step", () => {
+    const l = addLine(d(), { x: 10, y: 5, snap: null }, { x: 12, y: 9, snap: null });
+    s().updateSketch(l.sketch, { record: true });
+    s().setSketchTool("select");
+    const steps = s().sketch!.past.length;
+    const c = new SketchController();
+    // On the X axis (Front's line): it's picked, as Onshape picks the plane.
+    click(c, 30, 0.1);
+    expect(linked()).toHaveLength(1);
+    expect(s().sketch!.selection).toEqual([linked()[0].id]);
+    // Empty space: nothing picked, and the copy goes again.
+    click(c, 30, 40);
+    expect(s().sketch!.selection).toEqual([]);
+    expect(linked()).toHaveLength(0);
+    // Picking the axis and then the line instead: the copy goes too.
+    click(c, 30, 0.1);
+    click(c, 11, 7);
+    expect(s().sketch!.selection).toEqual([l.lineId]);
+    expect(linked()).toHaveLength(0);
+    expect(s().sketch!.past.length).toBe(steps);
+    // Used by a relation, it stays when it's no longer picked.
+    click(c, 0.1, 30);
+    const axis = s().sketch!.selection[0];
+    const r = applyRelation(d(), "parallel", [l.lineId, axis]);
+    s().updateSketch(r.sketch, { record: true });
+    click(c, 30, 40);
+    expect(linked().map((k) => k.id)).toEqual([axis]);
+  });
 });
 
 describe("a Plane feature's line", () => {

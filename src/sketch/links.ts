@@ -862,13 +862,15 @@ export function linkProblem(info: SketchLinkInfo | undefined, s?: SketchData): s
  * circles and arcs following an edge or another sketch, and points following
  * something) that nothing uses: no other line, arc or circle shares their
  * points and no constraint or dimension refers to them, apart from those
- * holding them in place. Returns the same sketch when there's nothing to drop.
+ * holding them in place. Returns the same sketch when there's nothing to drop. With `only`, just the curves it
+ * picks are looked at (and only their own points go with them).
  */
-export function pruneReferences(s: SketchData): SketchData {
+export function pruneReferences(s: SketchData, only?: (c: SketchCurve) => boolean): SketchData {
   const gone = new Set<string>();
   for (const c of s.curves) {
     // Intersect's curves were asked for, so they stay.
     if (!("link" in c) || !c.link || !c.construction || (isPartLink(c.link) && c.link.cut)) continue;
+    if (only && !only(c)) continue;
     const own = new Set<string>(curvePointsOf(c));
     // A circle's rim point holds its size: it's its own.
     for (const k of s.constraints) if (k.type === "pointOnCircle" && k.refs[1] === c.id && k.refs.length === 2) own.add(k.refs[0]);
@@ -879,7 +881,7 @@ export function pruneReferences(s: SketchData): SketchData {
   }
   // Points brought in on their own: kept when a curve, a constraint (besides their own fix) or a text uses them, or they were placed as points.
   const goneLonePoints = new Set<string>();
-  for (const p of s.points) {
+  for (const p of only ? [] : s.points) {
     if (!p.link || p.standalone) continue;
     const onCurve = s.curves.some((c) => curvePointsOf(c).includes(p.id));
     const usedByConstraint = s.constraints.some((k) => !(k.type === "fix" && k.refs[0] === p.id) && k.refs.includes(p.id));
@@ -887,6 +889,15 @@ export function pruneReferences(s: SketchData): SketchData {
     if (!onCurve && !usedByConstraint && !anchors) goneLonePoints.add(p.id);
   }
   if (!gone.size && !goneLonePoints.size) return s;
+  // (Only some curves looked at: their own points go with them, nothing else.)
+  if (only) {
+    const curves = s.curves.filter((c) => !gone.has(c.id));
+    const kept = new Set(curves.flatMap(curvePointsOf));
+    const dropped = new Set(s.curves.filter((c) => gone.has(c.id)).flatMap(curvePointsOf).filter((p) => !kept.has(p)));
+    const points = s.points.filter((p) => !dropped.has(p.id));
+    const alive = new Set(["origin", ...points.map((p) => p.id), ...curves.map((c) => c.id)]);
+    return { ...s, points, curves, constraints: s.constraints.filter((k) => k.refs.every((r) => alive.has(r))) };
+  }
   const curves = s.curves.filter((c) => !gone.has(c.id));
   const kept = new Set(curves.flatMap(curvePointsOf));
   const points = gone.size

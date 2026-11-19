@@ -152,3 +152,34 @@ describe("using them in a sketch", () => {
     expect(linkEdge(emptySketch(), p2, true).error).toMatch(/comes after this sketch/);
   });
 });
+
+describe("planes as references elsewhere in the design", () => {
+  it("a sloping Plane feature crosses a sketch on Top along the line where it meets z = 0", () => {
+    // A plane through (10, 0, 0), tipped 45° about Y: n = (1, 0, 1)/√2 — it meets Top along x = 10.
+    const k = Math.SQRT1_2;
+    const sloped: PlaneFrame = { origin: [10, 0, 0], u: [k, 0, -k], v: [0, 1, 0], n: [k, 0, k] };
+    const line = planeCrossing(TOP, sloped)!;
+    expect(r6(line.mid)).toEqual([10, 0]);
+    expect(r6(line.a)[0]).toBe(10);
+    expect(r6(line.b)[0]).toBe(10);
+  });
+
+  it("Delete with dependents on a Plane feature keeps a sketch using its line, the line no longer following", async () => {
+    const { findDependents, withoutGone } = await import("../src/model/dependents");
+    const plane = { id: "pl1", name: "Plane 1", type: "plane", operation: "new", suppressed: false, params: { distance: "15" }, planeDef: { mode: "offset", ref: { kind: "default", name: "Top" }, axis: "u" } } as unknown as Feature;
+    const frame: PlaneFrame = { ...TOP, origin: [0, 0, 15] };
+    const line = planeRefs(FRONT, [{ id: "pl1", name: "Plane 1", frame }]).find((e) => e.source?.sketch === "pl1")!;
+    const used = linkEdge(emptySketch(), line, true);
+    const sk = { id: "sk1", name: "Sketch 1", type: "sketch", operation: "new", suppressed: false, params: {}, sketch: { plane: { kind: "default", name: "Front" }, data: used.sketch } } as unknown as Feature;
+    const deps = findDependents([plane, sk], ["pl1"]);
+    expect(deps.dependents).toEqual([]);
+    expect(deps.partial.map((p) => p.id)).toEqual(["sk1"]);
+    const kept = withoutGone(sk, new Set(["pl1"]));
+    const copy = curveById(kept.sketch!.data, used.curveId) as SketchLine;
+    expect(copy).toBeTruthy();
+    expect(copy.link).toBeUndefined();
+    // Top, Front and Right are never features, so nothing "uses" them.
+    const onTop = { ...sk, sketch: { plane: { kind: "default", name: "Top" }, data: linkEdge(emptySketch(), planeRefs(TOP)[0], true).sketch } } as unknown as Feature;
+    expect(findDependents([plane, onTop], ["pl1"]).partial).toEqual([]);
+  });
+});
