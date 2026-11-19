@@ -1,3 +1,5 @@
+import { useSketchView } from "../app/sketchViewState";
+import { openSketchMenu } from "../app/sketchMenuActions";
 import { bedSize } from "../model/printBed";
 import { blendClick, boundaryClick } from "../model/surfaceClicks";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -965,6 +967,8 @@ export function Viewport() {
         onBoxSelect: boxSelect,
         onBoxSelectItems: boxSelectItems,
         onSelectOther: openSelectOther,
+        onSketchMenu: openSketchMenu,
+        sketchMenuOnHold: () => useStore.getState().sketch?.tool === "select" && !viewportApi.sketch?.busy(),
         onSelectOtherCancel: () => {
           viewportApi.current?.previewPick(null);
           setSelectOther(null);
@@ -1435,6 +1439,7 @@ export function Viewport() {
     [features, draft?.id, selectedFeatureId, inAssembly, refDraft?.id, sketchLinks, hoveredSketch],
   );
   const refEdges = draft ? sketchLinks[draft.id]?.edges : undefined;
+  const sketchView = useSketchView();
   useEffect(() => {
     const manager = viewportApi.current;
     if (!manager) return;
@@ -1443,9 +1448,19 @@ export function Viewport() {
       return;
     }
     const { analysis, failing } = sketchStatus(sketchData);
-    manager.setSketchScene(others, { plane, data: sketchData, analysis, failing, selection: new Set(sketchSelection ?? []), refs: refEdges });
+    manager.setSketchScene(others, {
+      plane,
+      data: sketchData,
+      analysis,
+      failing,
+      selection: new Set(sketchSelection ?? []),
+      refs: refEdges,
+      hideConstruction: sketchView.hideConstruction,
+      hideDimensions: !sketchView.dimensions,
+      lit: new Set(sketchView.lit),
+    });
     // The theme changes the sketch colours, so redraw when it changes.
-  }, [others, plane, sketchData, sketchSelection, theme, refEdges]);
+  }, [others, plane, sketchData, sketchSelection, theme, refEdges, sketchView]);
 
   return (
     <>

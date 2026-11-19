@@ -8,6 +8,8 @@ import { ToolGroupButton } from "./ToolGroupButton";
 import { MAIN_RELATIONS, MORE_RELATIONS, SKETCH_FAMILIES as FAMILIES, SKETCH_INSERT_TOOLS } from "./toolbarLayout";
 import { detectPlatform, shortcut } from "./platform";
 import { copySketchSelection, pasteIntoSketch } from "./sketchClipboardApp";
+import { finishSketchInto } from "./sketchMenuActions";
+import { relationKey } from "../sketch/sketchView";
 import { applySketchRelation, deleteSketchSelection, insertImageFile, pickFile, setSketchTool, toggleSketchConstruction } from "./sketchActions";
 
 const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hint: string }[] = [
@@ -26,10 +28,10 @@ const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hi
   { tool: "ellipse", label: "Ellipse", key: "", icon: <Icons.Ellipse />, hint: "Click the centre, then the end of its length, then how wide it is" },
   { tool: "slot", label: "Slot", key: "S", icon: <Icons.Slot />, hint: "Click both end centres, then move out to set the width" },
   { tool: "polygon", label: "Polygon", key: "G", icon: <Icons.Polygon />, hint: "Click the centre, then a corner (set the number of sides in the sketch panel)" },
-  { tool: "point", label: "Point", key: "P", icon: <Icons.Point />, hint: "Click to place a point" },
+  { tool: "point", label: "Point", key: "P or Shift+S", icon: <Icons.Point />, hint: "Click to place a point" },
   { tool: "dimension", label: "Dimension", key: "D", icon: <Icons.Dimension />, hint: "Click a line or circle (or two things), then where the value goes — where you put it picks across, up or straight" },
   { tool: "sketchFillet", label: "Round", key: "", icon: <Icons.CornerRound />, hint: "Click a corner where two lines or arcs meet to round it (set the radius in the sketch panel)" },
-  { tool: "extend", label: "Extend", key: "", icon: <Icons.Extend />, hint: "Click near the end of a line, arc, spline or part of an ellipse to lengthen it up to the next curve it meets" },
+  { tool: "extend", label: "Extend", key: "X", icon: <Icons.Extend />, hint: "Click near the end of a line, arc, spline or part of an ellipse to lengthen it up to the next curve it meets" },
   { tool: "split", label: "Split", key: "", icon: <Icons.SplitLine />, hint: "Click a line, arc, spline or part of an ellipse where you want to break it into two (the pieces keep exactly the same shape)" },
   { tool: "trim", label: "Trim", key: "T", icon: <Icons.Trim />, hint: "Click a piece of a line, arc, circle, spline or ellipse to cut it away up to where other curves cross it" },
   { tool: "offset", label: "Offset", key: "O", icon: <Icons.Offset />, hint: "Click a shape's edge on the side to offset towards — a copy that far away that follows the original (set the distance in the sketch panel). Splines and ellipses too" },
@@ -137,7 +139,7 @@ export function SketchToolbar() {
           active={construction}
           disabled={!hasPlane}
           onClick={toggleSketchConstruction}
-          title="Construction (Q) — dashed helper geometry that isn't extruded. Toggles the selection, or new shapes if nothing is selected."
+          title="Construction (Q) — dashed helper geometry that isn't extruded. Toggles the selection, or new shapes if nothing is selected. Shift+P hides or shows it all."
         />
       </div>
       <div className="tool-divider" />
@@ -148,7 +150,7 @@ export function SketchToolbar() {
             className="relation-button"
             disabled={!hasPlane}
             onClick={() => applySketchRelation(r)}
-            title={`${RELATION_LABELS[r]} — ${RELATION_HINTS[r]}`}
+            title={relationTitle(r)}
             aria-label={RELATION_LABELS[r]}
           >
             <span className="relation-symbol">{relationSymbol(r)}</span>
@@ -163,13 +165,30 @@ export function SketchToolbar() {
             key: r,
             label: RELATION_LABELS[r],
             icon: <span className="relation-symbol">{relationSymbol(r)}</span>,
-            title: `${RELATION_LABELS[r]} — ${RELATION_HINTS[r]}`,
+            title: relationTitle(r),
             disabled: !hasPlane,
             onClick: () => applySketchRelation(r),
           }))}
         />
       </div>
       <div className="toolbar-spacer" />
+      <div className="tool-group">
+        <ToolBtn
+          label="Extrude"
+          icon={<Icons.Extrude />}
+          onClick={() => finishSketchInto("extrude")}
+          disabled={!hasPlane}
+          title="Extrude — finish the sketch and extrude its closed shapes (as Onshape's sketch toolbar does)"
+        />
+        <ToolBtn
+          label="Revolve"
+          icon={<Icons.Revolve />}
+          onClick={() => finishSketchInto("revolve")}
+          disabled={!hasPlane}
+          title="Revolve — finish the sketch and turn its closed shapes round a line"
+        />
+      </div>
+      <div className="tool-divider" />
       <div className="tool-group">
         <ToolBtn
           label="Copy"
@@ -183,6 +202,12 @@ export function SketchToolbar() {
       </div>
     </div>
   );
+}
+
+/** A relation button's tooltip: its name, its key (if it has one) and what to select. */
+function relationTitle(r: RelationTool): string {
+  const key = relationKey(r);
+  return `${RELATION_LABELS[r]}${key ? ` (${key})` : ""} — ${RELATION_HINTS[r]}`;
 }
 
 function relationSymbol(r: RelationTool): string {

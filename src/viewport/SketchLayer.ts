@@ -55,6 +55,12 @@ export interface ActiveSketch {
   selection: Set<string>;
   /** Edges of the part face it's on, shown faintly to snap to and use. */
   refs?: RefEdge[];
+  /** Construction geometry hidden (Shift+P). */
+  hideConstruction?: boolean;
+  /** Dimension lines hidden (Show dimensions off). */
+  hideDimensions?: boolean;
+  /** Lit up as if hovered: what the relation badge or dimension under the pointer ties. */
+  lit?: ReadonlySet<string>;
 }
 
 type Pt = [number, number];
@@ -276,7 +282,7 @@ export class SketchLayer {
     const t = this.transient;
     const a = this.active!;
     if (a.selection.has(id) || t?.pending.includes(id)) return SKETCH_COLOURS.selected;
-    if (t?.hover?.id === id) return SKETCH_COLOURS.hover;
+    if (t?.hover?.id === id || a.lit?.has(id)) return SKETCH_COLOURS.hover;
     return defined ? SKETCH_COLOURS.defined : SKETCH_COLOURS.free;
   }
 
@@ -323,6 +329,8 @@ export class SketchLayer {
       } catch {
         continue;
       }
+      // Shift+P: construction geometry hidden (unless it's picked, so a selection never vanishes).
+      if (c.construction && a.hideConstruction && !a.selection.has(c.id)) continue;
       const colour = conflicted.has(c.id) ? SKETCH_COLOURS.conflict : this.colourFor(c.id, a.analysis.definedCurves.has(c.id));
       for (const seg of segs) {
         (c.construction ? consSegs : solidSegs).push(seg);
@@ -379,7 +387,7 @@ export class SketchLayer {
     const dimSegs: [Pt, Pt][] = [];
     const dimCols: THREE.Color[] = [];
     for (const c of data.constraints) {
-      if (!isDimension(c)) continue;
+      if (!isDimension(c) || (a.hideDimensions && !a.selection.has(c.id))) continue;
       const layout = dimensionLayout(data, c);
       if (!layout) continue;
       const colour = a.failing.has(c.id) ? SKETCH_COLOURS.conflict : a.selection.has(c.id) ? SKETCH_COLOURS.selected : SKETCH_COLOURS.dimension;

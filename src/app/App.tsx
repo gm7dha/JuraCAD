@@ -2,6 +2,9 @@ import { copySketchSelection, duplicateSketchSelection, pasteIntoSketch } from "
 import { startLink } from "./juraLinkApp";
 import { startFeatureClipboard } from "./featureClipboardApp";
 import { PasteDialog, SelectOtherMenu } from "./ViewTools";
+import { SketchContextMenu } from "./SketchContextMenu";
+import { runSketchKey } from "./sketchMenuActions";
+import { sketchKeyFor } from "../sketch/sketchView";
 import { useEffect } from "react";
 
 import { connectKernel } from "../kernel/connect";
@@ -117,6 +120,12 @@ function sketchShortcut(e: KeyboardEvent): boolean {
     return true;
   }
   if (e.key === "Delete" || e.key === "Backspace") return deleteSketchSelection() || true;
+  // Onshape's relation keys (I, E, B, Shift+L…), X for Extend, Shift+P to hide construction geometry: sketch/sketchView.ts.
+  const more = s.editing?.draft.sketch?.plane ? sketchKeyFor(e.code, e.shiftKey) : null;
+  if (more) {
+    runSketchKey(more);
+    return true;
+  }
   if (e.shiftKey) return false;
   const tools: Record<string, Parameters<typeof setSketchTool>[0]> = {
     l: "line",
@@ -426,6 +435,7 @@ export function App() {
       {deleteAsk && <DeleteDialog />}
       <PasteDialog />
       <SelectOtherMenu />
+      <SketchContextMenu />
       {libraryOpen && <LibraryDialog />}
       {mountainOpen && (puzzleKind === "island" ? <IslandPuzzleDialog /> : <MountainPuzzleDialog />)}
       <ToastView />

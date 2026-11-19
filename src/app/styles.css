@@ -4859,3 +4859,34 @@ kbd {
     height: 20px;
   }
 }
+
+/* ------------------------------------------------------------------ sketch right-click menu */
+
+.sketch-menu .menu-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.sketch-menu .menu-key {
+  color: var(--ink-3);
+  font-size: 0.85em;
+}
+
+.dimension-editor .dimension-switch {
+  margin-left: 4px;
+  min-width: 22px;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.sketch-view-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 0;
+}

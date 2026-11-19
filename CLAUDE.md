@@ -194,6 +194,24 @@
   top), sketchTransformStore (controller: ring, middle snap, scale + copy, touch, tool change and undo mid-drag, zoom, paste
   snapping, Tab); the smoke test types a rectangle's sizes with Tab and turns it a quarter turn by the ring's knob (checking
   the canvas, not a label, is under it).
+  Ease of use (Onshape's): right-click menu — SceneManager's right-click that didn't orbit (or, on touch, a long press with the
+  Select tool and nothing half drawn: `longPressWanted(…, sketchMenu)`, `sketchMenuOnHold`; the stroke is never sent to the
+  controller) → `onSketchMenu(at, p, tol)` → `src/app/sketchMenuActions.ts` `openSketchMenu` (the nearest thing under the pointer
+  joins the selection) → pure `src/sketch/sketchMenu.ts` `sketchMenuItems` (Finish while `controller.busy()`, the relations
+  `relationsFor` (ops.ts: `relationConstraints` gives constraints, Pierce = a point + a linked curve) says fit, Construction,
+  diameter ↔ radius / centreline, Copy/Paste/Delete, Show/Hide constraints/dimensions, Select other via `sketchHitsAt`) →
+  `SketchContextMenu.tsx` (PlacedPopup). View settings: pure `src/sketch/sketchView.ts` (`readSketchView`/`writeSketchView`,
+  localStorage `juracad.sketchView`: constraints, dimensions, expressions — `expressionText`), app store `sketchViewState.ts`
+  (+ `hideConstruction`, Shift+P, session only; `lit` = `tiedIds` of the badge/dimension under the pointer) → SketchOverlay (hidden
+  labels/badges unless picked or being typed) and `ActiveSketch.hideConstruction/hideDimensions/lit` in SketchLayer (drawing only —
+  hidden construction can still be clicked). Keys `SKETCH_KEYS` (by `e.code`: I E B X, Shift+L/O/M/Q/J/U/G/S/P; Shift+A left free;
+  tooltips via `relationKey`), run in App's sketchShortcut before its Shift check. Dimensions: pure `src/sketch/dimensionKinds.ts`
+  `switchRoundDimension` (value halved/doubled, `scaledValue`; also the ⌀/R button in the value box) and `setCentrelineDimension`
+  (`SketchConstraint.doubled` on a pointLineDistance to a construction line: solver uses value/2, `measure` ×2, layout runs to the
+  mirror point, ⌀ label, validate keeps it; `measureToOf` null). Sketch toolbar Extrude / Revolve → `finishSketchInto` (commit, then
+  startCreate on the sketch just finished; no closed shape = refused, sketch stays open). Tests: sketchMenu (pure), sketchMenuStore.
+  Not done: the Dimension tool making centreline dimensions by where the number is put (use the menu/panel), hiding construction
+  from clicks.
 - Visibility (the eye in the feature list): `src/model/visibility.ts`. Sketches and Plane features have `Feature.visible`
   (missing = automatic: planes shown; a sketch shown until an unsuppressed feature uses it, `usedSketches` — as Onshape
   hides consumed sketches). The Origin and Top/Front/Right hidden per Part Studio: `doc.hiddenDatums` (first studio) /

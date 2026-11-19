@@ -248,6 +248,11 @@ export interface SketchConstraint {
    * is, in brackets, and never changes the sketch; its value follows the geometry.
    */
   driven?: boolean;
+  /**
+   * pointLineDistance only: measured as a diameter about a centreline (Onshape's revolve-profile dimension) — the value is
+   * twice the point's distance from the line. Missing = the plain distance.
+   */
+  doubled?: boolean;
 }
 
 /**

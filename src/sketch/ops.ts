@@ -146,7 +146,7 @@ export function measure(s: SketchData, c: SketchConstraint): number {
       const l = curveById(s, b) as SketchLine;
       const [ax, ay] = pointPos(s, l.p1);
       const [dx, dy] = lineDir(s, l);
-      return Math.abs(dx * (py - ay) - dy * (px - ax)) / (Math.hypot(dx, dy) || 1);
+      return ((c.doubled ? 2 : 1) * Math.abs(dx * (py - ay) - dy * (px - ax))) / (Math.hypot(dx, dy) || 1);
     }
     case "offset": {
       // The first pair: how far the copy is from the original.
@@ -232,6 +232,7 @@ function roundsMeasured(s: SketchData, c: SketchConstraint): { a: SketchCircle |
 
 /** Whether a dimension can be measured to centres or edges, and which it is now (null: it can't). */
 export function measureToOf(s: SketchData, c: SketchConstraint): MeasureTo | null {
+  if (c.doubled) return null;
   try {
     return roundsMeasured(s, c)?.now ?? null;
   } catch {
@@ -805,6 +806,31 @@ function relationConstraints(s: SketchData, tool: RelationTool, sel: string[]): 
     }
   }
   return RELATION_HINTS[tool] + ".";
+}
+
+/** Every relation, in the order the right-click menu lists them. */
+export const ALL_RELATIONS: readonly RelationTool[] = ["coincident", "horizontal", "vertical", "parallel", "perpendicular", "equal", "tangent", "concentric", "midpoint", "symmetric", "normal", "curvature", "pierce", "fix"];
+
+/**
+ * The relations that fit what's selected (the sketch's right-click menu offers just these, as Onshape's does).
+ * Pierce needs things from outside the sketch, so it's offered for a point and one curve brought in from elsewhere.
+ * Only checks what's picked — whether the solver can then meet it is found out when it's applied.
+ */
+export function relationsFor(s: SketchData, selection: string[]): RelationTool[] {
+  const sel = [...new Set(selection)].filter((id) => !s.constraints.some((c) => c.id === id));
+  if (!sel.length) return [];
+  return ALL_RELATIONS.filter((tool) => {
+    if (tool === "pierce") {
+      const pts = sel.filter((id) => isPointId(s, id));
+      const crv = sel.map((id) => curveById(s, id)).filter((c): c is SketchCurve => !!c);
+      return sel.length === 2 && pts.length === 1 && crv.length === 1 && !!crv[0].link;
+    }
+    try {
+      return Array.isArray(relationConstraints(s, tool, sel));
+    } catch {
+      return false;
+    }
+  });
 }
 
 /**

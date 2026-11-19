@@ -1355,6 +1355,11 @@ export class SketchController {
     this.emit({ preview: [], inference: null, snap: null, hints: [], hover: null, ...(s ? { pending: s.pending } : {}) });
   }
 
+  /** A shape is half drawn, or a paste follows the pointer (the right-click menu offers Finish). */
+  busy(): boolean {
+    return this.placed.length > 0 || !!this.pasting;
+  }
+
   /** Esc: abandon a half-drawn shape. Returns true if there was one. */
   cancel(): boolean {
     if (this.dropGizmoDrag()) return true;
