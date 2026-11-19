@@ -154,6 +154,7 @@ export function toolsIn(layout: readonly ToolbarEntry[]): string[] {
 
 /** Sketch tools shown as one ▾ button (the first until another is used), like Onshape's sketch toolbar. */
 export const SKETCH_FAMILIES: readonly { name: string; tools: readonly SketchTool[] }[] = [
+  { name: "line", tools: ["line", "midpointLine"] },
   { name: "rectangle", tools: ["rectangle", "centreRectangle", "alignedRectangle", "slot", "polygon"] },
   { name: "circle", tools: ["circle", "circle3", "ellipse"] },
   { name: "arc", tools: ["arc", "centreArc", "tangentArc"] },

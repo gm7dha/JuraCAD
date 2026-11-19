@@ -445,6 +445,15 @@ export interface LineOptions {
   construction?: boolean;
   /** Add an automatic horizontal or vertical constraint (inferred while drawing). */
   orientation?: "horizontal" | "vertical" | null;
+  /** A relation to another curve inferred while drawing: parallel or perpendicular to a line, tangent or normal to an arc. */
+  relation?: LineRelation | null;
+}
+
+/** A relation from a new line to another curve, inferred while drawing (Onshape's inference). */
+export interface LineRelation {
+  type: "parallel" | "perpendicular" | "tangent" | "normal";
+  /** The other curve's id. */
+  ref: string;
 }
 
 export function addLine(s: SketchData, a: Placed, b: Placed, opts: LineOptions = {}): EditResult & { lineId: string; endId: string } {
@@ -455,8 +464,28 @@ export function addLine(s: SketchData, a: Placed, b: Placed, opts: LineOptions =
   const line: SketchLine = { id, type: "line", p1: pa.id, p2: pb.id, construction: !!opts.construction };
   const constraints = [...pb.sketch.constraints];
   if (opts.orientation) constraints.push({ id: sketchId("c"), type: opts.orientation, refs: [id] });
+  if (opts.relation && curveById(pb.sketch, opts.relation.ref)) constraints.push({ id: sketchId("c"), type: opts.relation.type, refs: [id, opts.relation.ref] });
   const result = settle({ ...pb.sketch, curves: [...pb.sketch.curves, line], constraints });
   return { ...result, lineId: id, endId: pb.id };
+}
+
+/**
+ * Onshape's Midpoint line: a line drawn from its middle (`mid`) out to one end (`end`); the other end goes as
+ * far the other way, and the middle point is held at the line's middle (a Midpoint relation).
+ */
+export function addMidpointLine(s: SketchData, mid: Placed, end: Placed, opts: LineOptions = {}): EditResult & { lineId: string; midId: string } {
+  const m = placePoint(s, mid);
+  const [mx, my] = pointPos(m.sketch, m.id);
+  if (Math.hypot(end.x - mx, end.y - my) < 1e-6) return { sketch: s, lineId: "", midId: "", error: "Move away from the middle to give the line a length." };
+  const other: Placed = { x: 2 * mx - end.x, y: 2 * my - end.y, snap: null };
+  const l = addLine(m.sketch, other, end, opts);
+  if (l.error) return { sketch: s, lineId: "", midId: "", error: l.error };
+  // A middle point of its own is kept as a point (as the Point tool's), so it isn't tidied away with no curve of its own.
+  const fresh = !s.points.some((q) => q.id === m.id);
+  const k = l.sketch;
+  const points = fresh ? k.points.map((q) => (q.id === m.id ? { ...q, standalone: true } : q)) : k.points;
+  const result = settle({ ...k, points, constraints: [...k.constraints, { id: sketchId("c"), type: "midpoint", refs: [m.id, l.lineId] }] });
+  return { ...result, lineId: l.lineId, midId: m.id };
 }
 
 /** Rectangle from two opposite corners, with horizontal and vertical sides. */

@@ -15,7 +15,7 @@ import { setConicRho } from "../sketch/tools";
 import { SketchExtrasPanel } from "./SketchExtrasPanel";
 
 /** Tools that place points by clicking (Shift places them without snapping). */
-const DRAWING_TOOLS = new Set<string>(["line", "rectangle", "centreRectangle", "alignedRectangle", "circle", "circle3", "arc", "centreArc", "tangentArc", "spline", "conic", "ellipse", "slot", "polygon", "point", "text"]);
+const DRAWING_TOOLS = new Set<string>(["line", "midpointLine", "rectangle", "centreRectangle", "alignedRectangle", "circle", "circle3", "arc", "centreArc", "tangentArc", "spline", "conic", "ellipse", "slot", "polygon", "point", "text"]);
 
 /** A conic's fullness: a slider from flat to full, and the number (0.5 = a parabola). */
 function ConicFullness({ value, onChange }: { value: number; onChange: (v: number) => void }) {

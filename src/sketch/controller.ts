@@ -13,6 +13,7 @@ import {
   addCircle,
   addDimension,
   addLine,
+  addMidpointLine,
   addPoint,
   addRectangle,
   circleThrough,
@@ -31,6 +32,7 @@ import {
   radiusOf,
   setSplineHandle,
   splineHandleEnds,
+  type LineRelation,
   type Placed,
   type SplineHandleEnd,
 } from "./ops";
@@ -139,9 +141,27 @@ const NO_REFS: RefEdge[] = [];
 /** Millimetres per "pixel" of the snapping and picking distances below: wider for fingers and the pen. */
 const pickMm = (e: SketchPointer) => e.mmPerPx * (e.reach ?? 1);
 /** Tools whose first click only marks where the shape starts: on a touch screen a drag draws them (lift = the next click). */
-const DRAG_DRAWN = new Set<string>(["line", "rectangle", "centreRectangle", "alignedRectangle", "circle", "circle3", "centreArc", "arc", "tangentArc", "slot", "polygon", "ellipse", "conic"]);
+const DRAG_DRAWN = new Set<string>(["line", "midpointLine", "rectangle", "centreRectangle", "alignedRectangle", "circle", "circle3", "centreArc", "arc", "tangentArc", "slot", "polygon", "ellipse", "conic"]);
 const CURVE_PX = 6;
 const DRAG_PX = 3;
+/**
+ * With the mouse, letting go this far (px) from where a drawing tool's first press went down counts as the next
+ * click (Onshape's drag to draw). Well past a hand's wobble during an ordinary click, so a click never makes two points.
+ */
+const RELEASE_PX = 10;
+/** How near (degrees) a line being drawn must point to a woken line's direction (or an arc's, where it starts) for it to be inferred. */
+const RELATION_DEGREES = 4;
+/** At most this many lines are kept "woken up" (hovered while drawing) for parallel / perpendicular inference. */
+const WOKEN_MAX = 3;
+
+/** Where a line being drawn ends and what's inferred about it (horizontal / vertical, or a relation to another curve). */
+interface LinePlan {
+  end: Placed;
+  orientation: "horizontal" | "vertical" | null;
+  relation: LineRelation | null;
+  /** The relation's badge shown by the pointer ("H", "∥", "T"…), or null. */
+  badge: string | null;
+}
 /** How close (px) a dragged point must come to another to snap onto it. */
 const SNAP_PX = 14;
 
@@ -200,6 +220,21 @@ export class SketchController {
   private lastPointer: [number, number] | null = null;
   private lastMmPerPx = 0.1;
   private gizmoDrag: GizmoDrag | null = null;
+  /** Lines the pointer has passed over while drawing, most recent first ("woken up", as Onshape says): new lines may be parallel or perpendicular to them. */
+  private woken: string[] = [];
+  /** Line tool: the next click makes an arc carrying on smoothly from the last end (Shift+A, or back to the end and away again). */
+  private arcMode = false;
+  /** The pointer coming back to a line chain's last end and leaving again switches to (or from) an arc: where it is in that. */
+  private returning: "fresh" | "away" | "back" = "fresh";
+  /** With the mouse: where the press that started a shape went down (letting go far from it is the next click). */
+  private press: SketchPointer | null = null;
+  /** The last pointer move (for a release, and for redrawing after Shift+A). */
+  private lastEvent: SketchPointer | null = null;
+
+  /** What's drawn and said right now (the view's labels read the inferred relation's badge each frame). */
+  get current(): SketchTransient {
+    return this.transient;
+  }
 
   /**
    * Start placing a copy (Ctrl/⌘ + V, or Duplicate): it follows the pointer, a click puts it down, Esc stops.
@@ -441,6 +476,9 @@ export class SketchController {
       this.gizmoDrag = null;
       if (g?.moved && !g.copy) this.state.updateSketch(g.start, { record: false });
       this.acquired = [];
+      this.woken = [];
+      this.arcMode = false;
+      this.press = null;
       this.transient = { ...this.transient, preview: [], inference: null, pending: [] };
     }
     return tool;
@@ -770,6 +808,9 @@ export class SketchController {
     const d = this.data;
     if (!d) return;
     const tool = this.tool;
+    this.press = null;
+    // (The pointer is here now: a release with no move since is a plain click.)
+    this.lastEvent = e;
     if (this.pasting) return this.pasteAt(e);
     if (tool === "select") return this.selectDown(e);
     if (tool === "dimension") return this.dimensionClick(e);
@@ -828,6 +869,8 @@ export class SketchController {
       return;
     }
     const construction = this.state.sketch?.construction ?? false;
+    // (A shape started by this press: with the mouse, letting go elsewhere is its next click.)
+    if (this.placed.length === 0 && DRAG_DRAWN.has(tool)) this.press = e;
 
     switch (tool) {
       case "point": {
@@ -849,31 +892,48 @@ export class SketchController {
       case "line": {
         if (this.placed.length === 0) {
           this.placed = [p];
+          this.returning = "fresh";
           return;
         }
         const start = this.placed[0];
+        if (this.arcMode) return this.lineArcClick(start, p);
         const tangent = e.shift ? null : this.tangentFor(start, p, e);
         if (tangent) {
           const t = addTangentLine(d, start, tangent, construction);
           if (!this.commit(t)) return;
           if (!construction) this.offerDimensions([[t.lineId]]);
           this.placed = [{ x: tangent.end[0], y: tangent.end[1], snap: { kind: "point", id: t.endId } }];
+          this.returning = "fresh";
           this.emit({ preview: [], inference: null });
           return;
         }
-        let end = p;
-        let orientation: "horizontal" | "vertical" | null = null;
-        if (!p.snap && !e.shift) {
-          const inf = inferOrientation(start.x, start.y, p.x, p.y);
-          end = { x: inf.x, y: inf.y, snap: null };
-          orientation = inf.orientation;
-        }
-        const r = addLine(d, start, end, { construction, orientation });
+        const plan = this.linePlan(start, p, e);
+        const end = plan.end;
+        const r = addLine(d, start, end, { construction, orientation: plan.orientation, relation: plan.relation });
         if (!this.commit(r)) return;
         if (!construction) this.offerDimensions([[r.lineId]]);
         // Keep drawing from the new end, unless we just closed the shape (or ended on a corner of the face).
         const closed = p.snap?.kind === "point" || p.snap?.kind === "origin" || (p.snap?.kind === "ref" && p.snap.at !== "on" && p.snap.at !== "mid");
         this.placed = closed ? [] : [{ ...end, snap: { kind: "point", id: r.endId } }];
+        // The line just drawn is woken up: the next one may be square to it.
+        this.wake(r.lineId);
+        this.returning = "fresh";
+        this.emit({ preview: [], inference: null });
+        return;
+      }
+      case "midpointLine": {
+        if (this.placed.length === 0) {
+          this.placed = [p];
+          this.state.setSketchMessage("Now click where one end goes — the other end goes as far the other way.", "info");
+          return;
+        }
+        const mid = this.placed[0];
+        const plan = this.linePlan(mid, p, e, false);
+        const r = addMidpointLine(d, mid, plan.end, { construction, orientation: plan.orientation, relation: plan.relation });
+        if (!this.commit(r, [r.lineId])) return;
+        this.placed = [];
+        if (!construction) this.offerDimensions([[r.lineId]]);
+        this.wake(r.lineId);
         this.emit({ preview: [], inference: null });
         return;
       }
@@ -929,6 +989,15 @@ export class SketchController {
         // Each click adds a point; clicking the first point again closes it, Esc finishes an open one.
         const first = this.placed[0];
         const closing = !e.shift && this.placed.length >= 3 && !!first && Math.hypot(p.x - first.x, p.y - first.y) < POINT_PX * pickMm(e);
+        // Clicking the last point again (a double-click) finishes an open curve, as in Onshape.
+        const last = this.placed[this.placed.length - 1];
+        if (!closing && last && Math.hypot(p.x - last.x, p.y - last.y) < POINT_PX * pickMm(e)) {
+          if (this.placed.length < 2) return;
+          const r = addSpline(d, this.placed, false, construction);
+          if (this.commit(r, [r.splineId])) this.placed = [];
+          this.emit({ preview: [] });
+          return;
+        }
         if (!closing) {
           this.placed = [...this.placed, p];
           if (this.placed.length === 1) this.state.setSketchMessage("Click more points for the curve to pass through. Click the first point to close it, or Esc to finish.", "info");
@@ -1067,6 +1136,7 @@ export class SketchController {
     const tool = this.tool;
     this.lastPointer = [e.x, e.y];
     this.lastMmPerPx = e.mmPerPx;
+    this.lastEvent = e;
     if (this.pasting) {
       const at = this.pasteSnap(e);
       this.emit({ preview: this.pastePreview([at.x, at.y]), hover: null, snap: at.snap ? [at.x, at.y] : null, inference: null, hints: at.hints });
@@ -1108,6 +1178,9 @@ export class SketchController {
     const overCurve = over?.kind === "curve" ? curveById(d, over.id) : undefined;
     const pickedUp = over?.kind === "point" ? over.id : overCurve && (overCurve.type === "circle" || overCurve.type === "arc" || overCurve.type === "ellipse") ? overCurve.center : null;
     if (pickedUp && !e.shift && this.acquired[0] !== pickedUp) this.acquired = [pickedUp, ...this.acquired.filter((x) => x !== pickedUp)].slice(0, 4);
+    // Passing over a line wakes it up: a line being drawn may then be inferred parallel or perpendicular to it.
+    if (overCurve?.type === "line" && !e.shift && (tool === "line" || tool === "midpointLine")) this.wake(overCurve.id);
+    if (tool === "line") this.followReturn(e);
     const snapped = this.snapAt(e, tool === "tangentArc" && this.placed.length === 0);
     const p = snapped.placed;
     const preview: PreviewShape[] = [];
@@ -1117,22 +1190,23 @@ export class SketchController {
     let inference: SketchTransient["inference"] = null;
     let snap = this.snapMarker(p);
     const first = this.placed[0];
-    const tangent = tool === "line" && first && !e.shift ? this.tangentFor(first, p, e) : null;
-    if (tangent) {
+    const arcing = tool === "line" && !!first && this.arcMode;
+    const tangent = tool === "line" && first && !e.shift && !arcing ? this.tangentFor(first, p, e) : null;
+    if (arcing) {
+      preview.push(...tangentArcPreview(d, first, p));
+    } else if (tangent) {
       preview.push({ kind: "line", a: tangent.start, b: tangent.end });
       snap = tangent.end;
       inference = { at: tangent.end, text: "Tangent" };
-    } else if (tool === "line" && first) {
-      let end: [number, number] = [p.x, p.y];
-      if (!p.snap && !e.shift) {
-        const inf = inferOrientation(first.x, first.y, p.x, p.y);
-        end = [inf.x, inf.y];
-        if (inf.orientation) {
-          inference = { at: end, text: inf.orientation === "horizontal" ? "H" : "V" };
-          snap = end;
-        }
+    } else if ((tool === "line" || tool === "midpointLine") && first) {
+      const plan = this.linePlan(first, p, e, tool === "line");
+      const end: [number, number] = [plan.end.x, plan.end.y];
+      if (plan.badge) {
+        inference = { at: end, text: plan.badge };
+        snap = end;
       }
-      preview.push({ kind: "line", a: [first.x, first.y], b: end });
+      const a: [number, number] = tool === "midpointLine" ? [2 * first.x - end[0], 2 * first.y - end[1]] : [first.x, first.y];
+      preview.push({ kind: "line", a, b: end });
     } else if (tool === "spline" && first) {
       const pts = splinePolyline([...this.placed.map((q): [number, number] => [q.x, q.y]), [p.x, p.y]], false);
       for (let i = 0; i + 1 < pts.length; i++) preview.push({ kind: "line", a: pts[i], b: pts[i + 1] });
@@ -1149,15 +1223,7 @@ export class SketchController {
       const dd: [number, number] = [a[0], c[1]];
       preview.push({ kind: "line", a, b }, { kind: "line", a: b, b: c }, { kind: "line", a: c, b: dd }, { kind: "line", a: dd, b: a }, { kind: "guide", a, b: c });
     } else if (tool === "tangentArc" && first) {
-      const startId = (first.snap as { id: string }).id;
-      const t = tangentAt(d, startId);
-      const centre = t ? tangentArcCentre([first.x, first.y], t.dir, [p.x, p.y]) : null;
-      if (t && centre) {
-        const r = Math.hypot(first.x - centre[0], first.y - centre[1]);
-        const left = t.dir[0] * (p.y - first.y) - t.dir[1] * (p.x - first.x) > 0;
-        const [from, to] = left ? [[first.x, first.y], [p.x, p.y]] : [[p.x, p.y], [first.x, first.y]];
-        preview.push({ kind: "arc", c: centre, r, a0: Math.atan2(from[1] - centre[1], from[0] - centre[0]), a1: Math.atan2(to[1] - centre[1], to[0] - centre[0]) });
-      } else preview.push({ kind: "line", a: [first.x, first.y], b: [p.x, p.y] });
+      preview.push(...tangentArcPreview(d, first, p));
     } else if (tool === "circle3" && first) {
       const second = this.placed[1];
       if (!second) preview.push({ kind: "line", a: [first.x, first.y], b: [p.x, p.y] });
@@ -1264,8 +1330,160 @@ export class SketchController {
     return tangentLineAt(this.data!, first, e.x, e.y, TANGENT_PX * pickMm(e), this.refs, this.skipRef);
   }
 
+  /** Remember a line the pointer passed over while drawing (most recent first). */
+  private wake(id: string): void {
+    if (this.woken[0] !== id) this.woken = [id, ...this.woken.filter((x) => x !== id)].slice(0, WOKEN_MAX);
+  }
+
+  /** The sketch point a line being drawn starts from (null for a fresh point or the origin). */
+  private startPointId(start: Placed | undefined): string | null {
+    return start?.snap?.kind === "point" && start.snap.id !== ORIGIN_ID ? start.snap.id : null;
+  }
+
+  /**
+   * Onshape's line → tangent arc gesture: with a chain going, bringing the pointer back onto its last end and
+   * away again switches to an arc carrying on smoothly from it (and the same again switches back).
+   */
+  private followReturn(e: SketchPointer): void {
+    const start = this.placed[0];
+    const id = this.startPointId(start);
+    if (!start || !id || e.shift) return;
+    const away = Math.hypot(e.x - start.x, e.y - start.y);
+    const tol = POINT_PX * pickMm(e);
+    if (away > 2 * tol) {
+      if (this.returning === "back") {
+        // An arc only when leaving onwards (the way the chain was heading): sweeping back past the end to draw a
+        // sharp V is just passing by, and would loop the arc round.
+        const t = tangentAt(this.data!, id);
+        const onwards = !!t && t.dir[0] * (e.x - start.x) + t.dir[1] * (e.y - start.y) > 0;
+        if (t && (this.arcMode || onwards)) this.setArcMode(!this.arcMode);
+      }
+      this.returning = "away";
+    } else if (away <= tol && this.returning === "away") this.returning = "back";
+  }
+
+  private setArcMode(on: boolean): void {
+    this.arcMode = on;
+    this.state.setSketchMessage(on ? "Drawing an arc that carries on smoothly — click where it ends (Shift+A for a line again)." : null, "info");
+  }
+
+  /**
+   * Shift+A while drawing a line chain: switch to an arc carrying on smoothly from the last end, or back to
+   * lines. False when the Line tool isn't in use (the key then does nothing here).
+   */
+  toggleLineArc(): boolean {
+    const d = this.data;
+    if (!d || this.tool !== "line") return false;
+    const id = this.startPointId(this.placed[0]);
+    if (!id || !tangentAt(d, id)) {
+      this.state.setSketchMessage("Draw a line first: Shift+A then carries on from its end with an arc.", "info");
+      return true;
+    }
+    this.setArcMode(!this.arcMode);
+    this.returning = "fresh";
+    if (this.lastEvent) this.pointerMove(this.lastEvent, false);
+    return true;
+  }
+
+  /** The line tool in arc mode: an arc carrying on smoothly from the chain's last end, then back to lines. */
+  private lineArcClick(start: Placed, p: Placed): void {
+    const d = this.data!;
+    const startId = this.startPointId(start);
+    if (!startId) return;
+    const r = addTangentArc(d, startId, p, this.state.sketch?.construction ?? false);
+    if (!this.commit(r, [r.arcId])) return;
+    const arc = r.sketch.curves.find((c) => c.id === r.arcId);
+    const endId = arc?.type === "arc" ? (arc.start === startId ? arc.end : arc.start) : null;
+    const closed = p.snap?.kind === "point" || p.snap?.kind === "origin";
+    this.arcMode = false;
+    this.returning = "fresh";
+    this.placed = endId && !closed ? [{ ...p, snap: { kind: "point", id: endId } }] : [];
+    this.emit({ preview: [], inference: null });
+  }
+
+  /**
+   * Where a line from `start` towards `p` ends, and what's inferred (as Onshape): horizontal or vertical when
+   * nearly so — also when the end lines up with a point passed over (whichever the lining up doesn't give
+   * already) —, else parallel or perpendicular to a woken-up line, or (from an arc's end, `fromArc`) tangent
+   * or square to the arc. Shift: nothing. Snapped onto a point or curve: just that.
+   */
+  private linePlan(start: Placed, p: Placed, e: SketchPointer, fromArc = true): LinePlan {
+    const none: LinePlan = { end: p, orientation: null, relation: null, badge: null };
+    if (e.shift) return none;
+    const sn = p.snap;
+    const inf = inferOrientation(start.x, start.y, p.x, p.y, RELATION_DEGREES);
+    const badgeOf = (o: "horizontal" | "vertical") => (o === "horizontal" ? "H" : "V");
+    if (sn?.kind === "align") {
+      const startId = this.startPointId(start);
+      if (inf.orientation === "horizontal" && !sn.y && sn.x !== startId) return { end: { x: p.x, y: start.y, snap: sn }, orientation: "horizontal", relation: null, badge: "H" };
+      if (inf.orientation === "vertical" && !sn.x && sn.y !== startId) return { end: { x: start.x, y: p.y, snap: sn }, orientation: "vertical", relation: null, badge: "V" };
+      return none;
+    }
+    if (sn) return none;
+    if (inf.orientation) return { end: { x: inf.x, y: inf.y, snap: null }, orientation: inf.orientation, relation: null, badge: badgeOf(inf.orientation) };
+    const rel = this.lineRelation(start, p, fromArc);
+    return rel ? { end: rel.end, orientation: null, relation: rel.relation, badge: rel.badge } : none;
+  }
+
+  /** A relation for a line from `start` towards `p`: the nearest direction (within RELATION_DEGREES) of the woken lines and the arc it starts on. */
+  private lineRelation(start: Placed, p: Placed, fromArc: boolean): { end: Placed; relation: LineRelation; badge: string } | null {
+    const d = this.data!;
+    const v: [number, number] = [p.x - start.x, p.y - start.y];
+    const len = Math.hypot(v[0], v[1]);
+    if (len < 1e-9) return null;
+    const startId = this.startPointId(start);
+    const limit = (RELATION_DEGREES * Math.PI) / 180;
+    let best: { u: [number, number]; relation: LineRelation; badge: string; off: number } | null = null;
+    const offer = (u: [number, number], relation: LineRelation, badge: string) => {
+      const n = Math.hypot(u[0], u[1]);
+      if (n < 1e-12) return;
+      const w: [number, number] = [u[0] / n, u[1] / n];
+      const off = Math.acos(Math.min(1, Math.abs(v[0] * w[0] + v[1] * w[1]) / len));
+      if (off < limit && (!best || off < best.off)) best = { u: w, relation, badge, off };
+    };
+    if (fromArc && startId) {
+      for (const c of d.curves) {
+        if (c.type !== "arc" || (c.start !== startId && c.end !== startId)) continue;
+        const [cx, cy] = pointPos(d, c.center);
+        const r: [number, number] = [start.x - cx, start.y - cy];
+        offer([-r[1], r[0]], { type: "tangent", ref: c.id }, "T");
+        offer(r, { type: "normal", ref: c.id }, "N");
+      }
+    }
+    for (const id of this.woken) {
+      const c = curveById(d, id);
+      if (c?.type !== "line") continue;
+      const [a, b] = [pointPos(d, c.p1), pointPos(d, c.p2)];
+      const u: [number, number] = [b[0] - a[0], b[1] - a[1]];
+      // (Parallel through a point the line already passes through would lie on top of it.)
+      if (c.p1 !== startId && c.p2 !== startId) offer(u, { type: "parallel", ref: c.id }, "∥");
+      offer([-u[1], u[0]], { type: "perpendicular", ref: c.id }, "⊥");
+    }
+    const found = best as { u: [number, number]; relation: LineRelation; badge: string; off: number } | null;
+    if (!found) return null;
+    const t = v[0] * found.u[0] + v[1] * found.u[1];
+    return { end: { x: start.x + t * found.u[0], y: start.y + t * found.u[1], snap: null }, relation: found.relation, badge: found.badge };
+  }
+
   pointerUp(): void {
     if (this.gizmoDrag) return this.gizmoUp();
+    const press = this.press;
+    this.press = null;
+    if (press && this.tool !== "select") {
+      // Pressed, dragged and let go (the mouse): where it's let go is the next click, as in Onshape — a line
+      // dragged out is one line (no chain after it).
+      const at = this.lastEvent;
+      const tool = this.tool;
+      if (at && this.placed.length && Math.hypot(at.x - press.x, at.y - press.y) > RELEASE_PX * pickMm(press)) {
+        this.pointerDown(at);
+        this.press = null;
+        if (tool === "line" && !this.arcMode) {
+          this.placed = [];
+          this.emit({ preview: [], inference: null });
+        }
+      }
+      return;
+    }
     if (this.tool !== "select" || !this.drag) return;
     const drag = this.drag;
     this.drag = null;
@@ -1349,6 +1567,7 @@ export class SketchController {
     const s = this.stroke;
     this.stroke = null;
     this.dropGizmoDrag();
+    this.press = null;
     if (this.drag?.moved && this.drag.kind !== "none") this.state.updateSketch(this.drag.start, { record: false });
     this.drag = null;
     if (s) this.placed = s.placed;
@@ -1374,6 +1593,8 @@ export class SketchController {
     }
     const had = this.placed.length > 0 || this.transient.pending.length > 0 || this.drag !== null;
     if (this.drag?.moved) this.state.updateSketch(this.drag.start, { record: false });
+    if (this.arcMode) this.setArcMode(false);
+    this.press = null;
     this.placed = [];
     this.drag = null;
     this.emit({ preview: [], inference: null, pending: [], snap: null, hints: [] });
@@ -1622,6 +1843,18 @@ function curvesPreview(d: SketchData, sources: readonly SketchCurve[], move: (p:
     }
   }
   return out;
+}
+
+/** The arc a tangent arc from `first` (a line's or arc's end) to `p` would make (a plain line where there's none). */
+function tangentArcPreview(d: SketchData, first: Placed, p: Placed): PreviewShape[] {
+  const startId = first.snap?.kind === "point" ? first.snap.id : null;
+  const t = startId ? tangentAt(d, startId) : null;
+  const centre = t ? tangentArcCentre([first.x, first.y], t.dir, [p.x, p.y]) : null;
+  if (!t || !centre) return [{ kind: "line", a: [first.x, first.y], b: [p.x, p.y] }];
+  const r = Math.hypot(first.x - centre[0], first.y - centre[1]);
+  const left = t.dir[0] * (p.y - first.y) - t.dir[1] * (p.x - first.x) > 0;
+  const [from, to] = left ? [[first.x, first.y], [p.x, p.y]] : [[p.x, p.y], [first.x, first.y]];
+  return [{ kind: "arc", c: centre, r, a0: Math.atan2(from[1] - centre[1], from[0] - centre[0]), a1: Math.atan2(to[1] - centre[1], to[0] - centre[0]) }];
 }
 
 /** Half the slot's width: how far the third click is from the line through the two centres. */

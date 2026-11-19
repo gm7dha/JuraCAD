@@ -77,6 +77,8 @@ export function SketchOverlay() {
   const handlesOn = useStore((s) => s.sketch?.tool === "sketchTransform" && (s.sketch?.selection.length ?? 0) > 0);
   const elements = useRef(new Map<string, HTMLElement>());
   const placements = useRef<Placement[]>([]);
+  // What's being inferred while drawing (H, V, ∥, ⊥, T…), shown by the pointer: read from the sketch tools each frame.
+  const inferenceEl = useRef<HTMLSpanElement | null>(null);
 
   const layout = useMemo(() => (data ? computePlacements(data) : { dims: [], badges: [] }), [data]);
   placements.current = [...layout.dims.map((d) => d.placement), ...layout.badges.map((b) => b.placement)];
@@ -98,6 +100,17 @@ export function SketchOverlay() {
           const s = manager.projectSketchPoint(p.at[0], p.at[1]);
           if (!s) continue;
           el.style.transform = `translate(${Math.round(s.x + p.dx)}px, ${Math.round(s.y + p.dy)}px) translate(-50%, -50%)`;
+        }
+        const badge = inferenceEl.current;
+        if (badge) {
+          const inf = viewportApi.sketch?.current.inference ?? null;
+          const at = inf ? manager.projectSketchPoint(inf.at[0], inf.at[1]) : null;
+          if (!inf || !at) badge.style.display = "none";
+          else {
+            if (badge.textContent !== inf.text) badge.textContent = inf.text;
+            badge.style.display = "";
+            badge.style.transform = `translate(${Math.round(at.x + 16)}px, ${Math.round(at.y + 16)}px) translate(-50%, -50%)`;
+          }
         }
       });
     };
@@ -140,6 +153,7 @@ export function SketchOverlay() {
           {RELATION_SYMBOLS[c.type]}
         </button>
       ))}
+      <span ref={inferenceEl} className="constraint-badge inference-badge" style={{ display: "none" }} aria-hidden="true" />
     </div>
   );
 }

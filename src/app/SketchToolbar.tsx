@@ -12,7 +12,8 @@ import { applySketchRelation, deleteSketchSelection, insertImageFile, pickFile, 
 
 const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hint: string }[] = [
   { tool: "select", label: "Select", key: "Esc", icon: <Icons.Select />, hint: "Click to select, drag to move" },
-  { tool: "line", label: "Line", key: "L", icon: <Icons.Line />, hint: "Click to start, keep clicking to chain lines, Esc to stop" },
+  { tool: "line", label: "Line", key: "L", icon: <Icons.Line />, hint: "Click to start, keep clicking to chain lines (or drag out one line), Esc to stop. Shift+A — or back onto the last end and away — carries on with an arc" },
+  { tool: "midpointLine", label: "Midpoint line", key: "", icon: <Icons.MidpointLine />, hint: "Click the middle of the line, then one end — the other end goes as far the other way" },
   { tool: "rectangle", label: "Rectangle", key: "R", icon: <Icons.Rectangle />, hint: "Click two opposite corners" },
   { tool: "centreRectangle", label: "Centre rect", key: "", icon: <Icons.CentreRectangle />, hint: "Click the centre, then a corner" },
   { tool: "alignedRectangle", label: "Aligned rect", key: "", icon: <Icons.AlignedRectangle />, hint: "Click two corners along one side (at any angle), then move out to set the width" },
