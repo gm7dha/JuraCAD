@@ -5,6 +5,7 @@ import { RELATION_HINTS, RELATION_LABELS, type RelationTool } from "../sketch/op
 import { RELATION_SYMBOLS } from "../sketch/layout";
 import { Icons } from "./icons";
 import { ToolGroupButton } from "./ToolGroupButton";
+import { EditToolIcons } from "./SketchEditOptions";
 import { MAIN_RELATIONS, MORE_RELATIONS, SKETCH_FAMILIES as FAMILIES, SKETCH_INSERT_TOOLS } from "./toolbarLayout";
 import { detectPlatform, shortcut } from "./platform";
 import { copySketchSelection, pasteIntoSketch } from "./sketchClipboardApp";
@@ -44,6 +45,9 @@ const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hi
   { tool: "useEdge", label: "Use", key: "U", icon: <Icons.UseEdge />, hint: "Click edges of a part (or a face, for its whole outline), or another sketch's lines and curves, to copy them into the sketch (they follow the original if it changes)" },
   { tool: "intersect", label: "Intersect", key: "", icon: <Icons.Intersect />, hint: "Click a face of a part the sketch passes through: where the sketch cuts it comes in as dashed lines that follow the part" },
   { tool: "text", label: "Text", key: "", icon: <Icons.Text />, hint: "Type the words in the sketch panel, then click where they go. Their letters are shapes you can extrude" },
+  { tool: "sketchChamfer", label: "Chamfer", key: "", icon: <EditToolIcons.Chamfer />, hint: "Click a corner where two lines meet, or two lines, to cut the corner off straight (set Equal, Two distances or Distance + angle in the sketch panel)" },
+  { tool: "slotAlong", label: "Slot on a curve", key: "", icon: <EditToolIcons.SlotAlong />, hint: "Click a line, arc, circle, spline or ellipse to draw a slot along it that follows it (set the width in the sketch panel)" },
+  { tool: "ellipticalArc", label: "Elliptical arc", key: "", icon: <EditToolIcons.EllipticalArc />, hint: "Click the centre, the end of the long axis, where the arc starts (this sets how wide it is), then where it ends" },
 ];
 
 /** Replaces the main toolbar while a sketch is open, like Onshape's sketch toolbar. */

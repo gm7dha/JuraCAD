@@ -63,6 +63,13 @@ import {
 } from "./tools";
 import { ORIGIN_ID, type SketchCurve, type SketchData } from "./types";
 import { placedByOffset } from "./solver";
+import { chamferCorner, cornerOfLines } from "./sketchChamfer";
+import { filletBetween } from "./filletCurves";
+import { slotAlong } from "./slotAlong";
+import { trimAlong } from "./trimStroke";
+import { addEllipticalArc, ellipticalArcPath, ellipticalArcShape } from "./ellipticalArc";
+import { useEditToolOptions } from "./editToolOptions";
+import { readSecondDirection } from "./patternGrid";
 import { addText, imageAt, imageById, readTextSettings, textAt, textById } from "./sketchText";
 import { isRefId, laterMessage, linkEdge, parseRefId, refSketch, type RefEdge } from "./links";
 import { addTangentLine, tangentLineAt, type TangentLine } from "./tangents";
@@ -220,6 +227,12 @@ export class SketchController {
   private lastPointer: [number, number] | null = null;
   private lastMmPerPx = 0.1;
   private gizmoDrag: GizmoDrag | null = null;
+  /** Round / Chamfer between two picked curves: the first one picked and where it was clicked. */
+  private firstCurve: { id: string; at: [number, number] } | null = null;
+  /** The last round or chamfer made while the tool stayed on, so the next one of the same size is kept Equal to it. */
+  private lastEdge: { tool: string; size: string; id: string } | null = null;
+  /** Trim: the pointer's path while dragging across curves (trimmed when let go). */
+  private trimStroke: { path: [number, number][]; moved: boolean; mm: number } | null = null;
   /** Lines the pointer has passed over while drawing, most recent first ("woken up", as Onshape says): new lines may be parallel or perpendicular to them. */
   private woken: string[] = [];
   /** Line tool: the next click makes an arc carrying on smoothly from the last end (Shift+A, or back to the end and away again). */
@@ -476,6 +489,9 @@ export class SketchController {
       this.gizmoDrag = null;
       if (g?.moved && !g.copy) this.state.updateSketch(g.start, { record: false });
       this.acquired = [];
+      this.firstCurve = null;
+      this.lastEdge = null;
+      this.trimStroke = null;
       this.woken = [];
       this.arcMode = false;
       this.press = null;
@@ -611,6 +627,16 @@ export class SketchController {
     const opts = readPatternSettings(d, session);
     if (typeof opts === "string" || !(opts.count >= 2 && opts.count <= 200)) return [];
     const moves = Array.from({ length: Math.round(opts.count) - 1 }, (_, i) => patternTransform(opts, i + 1));
+    // A second direction (rows × columns): every one of the row moved along it too.
+    const second = opts.kind === "linear" ? readSecondDirection(useEditToolOptions.getState()) : null;
+    if (second && typeof second !== "string" && second.count >= 2 && second.count <= 200) {
+      const row = [(p: [number, number]) => p, ...moves];
+      const along = { kind: "linear" as const, count: second.count, spacing: second.spacing, angle: second.angle };
+      for (let j = 1; j < Math.round(second.count); j++) {
+        const step = patternTransform(along, j);
+        for (const m of row) moves.push((p) => step(m(p)));
+      }
+    }
     return moves.flatMap((move) => curvesPreview(d, sources, move));
   }
 
@@ -838,13 +864,13 @@ export class SketchController {
       return;
     }
     if (tool === "trim") {
-      const hit = this.hitAt(e);
-      if (hit?.kind !== "curve") {
-        this.state.setSketchMessage("Click the part of a line, arc, circle, spline or ellipse you want to cut away.", "info");
+      // A press starts a stroke: let go without moving = a click (trims what's under it), drag = trim all it crosses.
+      // (A finger's lift arrives as a press while its stroke is on: it just ends the path there.)
+      if (this.trimStroke?.moved) {
+        this.trimStroke.path.push([e.x, e.y]);
         return;
       }
-      this.commit(trimAt(d, hit.id, { x: e.x, y: e.y }), []);
-      this.emit({ hover: null });
+      this.trimStroke = { path: [[e.x, e.y]], moved: false, mm: pickMm(e) };
       return;
     }
     if (tool === "offset") {
@@ -862,14 +888,16 @@ export class SketchController {
     if (tool === "mirror") return this.mirrorClick(e);
     if (tool === "sketchTransform" && this.gizmoDown(e)) return;
     if (tool === "sketchPattern" || tool === "sketchTransform") return this.patternClick(e);
-    if (tool === "sketchFillet") {
+    if (tool === "sketchFillet" || tool === "sketchChamfer") return this.cornerClick(e, tool);
+    if (tool === "slotAlong") {
       const hit = this.hitAt(e);
-      if (hit?.kind !== "point" || hit.id === ORIGIN_ID) {
-        this.state.setSketchMessage("Click the corner point where two lines or arcs meet.", "info");
+      if (hit?.kind !== "curve") {
+        this.state.setSketchMessage("Click a line, arc, circle, spline or ellipse to put a slot along it (set the width in the sketch panel).", "info");
         return;
       }
-      const r = filletCorner(d, hit.id, this.state.sketch?.filletRadius ?? "2");
-      this.commit(r, r.arcId ? [r.arcId] : []);
+      const r = slotAlong(d, hit.id, useEditToolOptions.getState().slotWidth);
+      this.commit(r, r.curveIds);
+      this.emit({ hover: null });
       return;
     }
 
@@ -1127,6 +1155,24 @@ export class SketchController {
         this.emit({ preview: [] });
         return;
       }
+      case "ellipticalArc": {
+        if (this.placed.length < 3) {
+          this.placed = [...this.placed, p];
+          this.state.setSketchMessage(
+            this.placed.length === 1 ? "Click the end of the ellipse's long axis." : this.placed.length === 2 ? "Click where the arc starts (this also sets how wide the ellipse is)." : "Click where the arc ends.",
+            "info",
+          );
+          return;
+        }
+        const [c, m, st] = this.placed;
+        const r = addEllipticalArc(d, c, m, st, p, construction);
+        if (this.commit(r, [r.ellipseId])) {
+          this.placed = [];
+          this.state.setSketchMessage(null);
+        }
+        this.emit({ preview: [] });
+        return;
+      }
       case "arc": {
         if (this.placed.length < 2) {
           this.placed = [...this.placed, p];
@@ -1178,6 +1224,23 @@ export class SketchController {
       const hover = this.pickAt(e);
       if (this.transient.pending.length) this.emit({ hover, snap: null, hints: [], nearby: this.nearbyPoints(e), ...this.dimensionPreview(e) });
       else this.emit({ hover, snap: null, preview: this.refOutline(hover), hints: this.hintsFor(hover), nearby: this.nearbyPoints(e) });
+      return;
+    }
+    if (tool === "trim" && this.trimStroke) {
+      const st = this.trimStroke;
+      const [x0, y0] = st.path[0];
+      if (dragging && (st.moved || Math.hypot(e.x - x0, e.y - y0) >= DRAG_PX * pickMm(e))) {
+        st.moved = true;
+        st.path.push([e.x, e.y]);
+        const preview = st.path.slice(1).map((q, i): PreviewShape => ({ kind: "guide", a: st.path[i], b: q }));
+        this.emit({ hover: null, snap: null, preview, hints: [] });
+        return;
+      }
+      if (!dragging) this.trimStroke = null;
+    }
+    if (tool === "sketchChamfer" || tool === "slotAlong") {
+      const hit = this.hitAt(e);
+      this.emit({ hover: tool === "slotAlong" && hit?.kind !== "curve" ? null : hit, snap: null, preview: [], hints: [] });
       return;
     }
     if (tool === "trim" || tool === "extend" || tool === "split" || tool === "sketchFillet" || tool === "offset" || tool === "mirror") {
@@ -1327,6 +1390,7 @@ export class SketchController {
         } else preview.push({ kind: "line", a: [first.x, first.y], b: [second.x, second.y] });
       }
     }
+    if (tool === "ellipticalArc" && first) preview.push(...ellipticalArcPreview(this.placed, [p.x, p.y]));
     preview.push(...this.refOutline(snapped.hover));
     this.emit({ hover: snapped.hover?.kind === "curve" ? snapped.hover : null, preview, snap, inference, hints: snapped.hints, nearby: this.nearbyPoints(e) });
   }
@@ -1480,6 +1544,7 @@ export class SketchController {
 
   pointerUp(): void {
     if (this.gizmoDrag) return this.gizmoUp();
+    if (this.trimStroke) return this.trimUp();
     const press = this.press;
     this.press = null;
     if (press && this.tool !== "select") {
@@ -1533,6 +1598,81 @@ export class SketchController {
     else this.state.setSketchSelection(sel.length === 1 && sel[0] === id ? [] : [id]);
   }
 
+  /** Trim let go: a click trims the piece under it (as before), a drag trims every piece the path crossed — one undo step. */
+  private trimUp(): void {
+    const st = this.trimStroke!;
+    this.trimStroke = null;
+    const d = this.data;
+    this.emit({ preview: [], hover: null });
+    if (!d) return;
+    const [x, y] = st.path[0];
+    const clickTrim = (): boolean => {
+      const hit = hitTest(d, x, y, POINT_PX * st.mm, CURVE_PX * st.mm, { ignore: this.notHidden() });
+      if (hit?.kind !== "curve") return false;
+      this.commit(trimAt(d, hit.id, { x, y }), []);
+      return true;
+    };
+    if (!st.moved) {
+      if (!clickTrim()) this.state.setSketchMessage("Click the part of a line, arc, circle, spline or ellipse you want to cut away — or drag across several.", "info");
+      return;
+    }
+    const r = trimAlong(d, st.path, this.hidden);
+    // A press on a curve that wobbled a little without crossing anything is still a click there.
+    if (!r.trimmed && clickTrim()) return;
+    if (this.commit(r, [])) this.state.setSketchMessage(`Trimmed ${r.trimmed === 1 ? "1 piece" : `${r.trimmed} pieces`}.`, "info");
+  }
+
+  /**
+   * Round and Chamfer: a click on a corner point does it there; a click on a line (or arc, for Round), then
+   * another, does it between the two — they're trimmed or carried on to meet it. Done again with the same
+   * size while the tool stays on, the new one is kept Equal to the first (Onshape's), so one dimension sizes them all.
+   */
+  private cornerClick(e: SketchPointer, tool: "sketchFillet" | "sketchChamfer"): void {
+    const d = this.data!;
+    const hit = this.hitAt(e);
+    const round = tool === "sketchFillet";
+    const opts = useEditToolOptions.getState();
+    const size = round ? this.state.sketch?.filletRadius ?? "2" : `${opts.chamferMode}:${opts.chamferDistance}`;
+    const last = this.lastEdge?.tool === tool && this.lastEdge.size === size && d.curves.some((c) => c.id === this.lastEdge!.id) ? this.lastEdge.id : undefined;
+    const chamfer = { mode: opts.chamferMode, distance: opts.chamferDistance, distance2: opts.chamferDistance2, angle: opts.chamferAngle, equalTo: last };
+    const done = (r: { sketch: SketchData; error?: string }, keep: string, select: string) => {
+      this.firstCurve = null;
+      this.emit({ pending: [] });
+      if (this.commit(r, select ? [select] : [])) this.lastEdge = { tool, size, id: keep };
+    };
+    if (hit?.kind === "point" && hit.id !== ORIGIN_ID && !this.firstCurve) {
+      if (round) {
+        const r = filletCorner(d, hit.id, size, last);
+        return done(r, r.arcId, r.arcId);
+      }
+      const r = chamferCorner(d, hit.id, chamfer);
+      return done(r, r.sizeLineId, r.lineId);
+    }
+    const curve = hit?.kind === "curve" ? curveById(d, hit.id) : undefined;
+    if (!curve || !(curve.type === "line" || (round && curve.type === "arc"))) {
+      this.state.setSketchMessage(
+        round ? "Click a corner where two lines or arcs meet, or two lines or arcs to round between." : "Click a corner where two lines meet, or two lines to chamfer between.",
+        "info",
+      );
+      return;
+    }
+    const first = this.firstCurve;
+    if (!first || first.id === curve.id) {
+      this.firstCurve = { id: curve.id, at: [e.x, e.y] };
+      this.emit({ pending: [curve.id] });
+      this.state.setSketchMessage(`Now click the other ${round ? "line or arc" : "line"} (on the part to keep). Esc to start again.`, "info");
+      return;
+    }
+    if (round) {
+      const r = filletBetween(d, first.id, first.at, curve.id, [e.x, e.y], size, last);
+      return done(r, r.arcId, r.arcId);
+    }
+    const corner = cornerOfLines(d, first.id, first.at, curve.id, [e.x, e.y]);
+    if (corner.error) return done(corner, "", "");
+    const r = chamferCorner(corner.sketch, corner.pointId, chamfer, first.id);
+    return done(r.error ? { sketch: d, error: r.error } : r, r.sizeLineId, r.lineId);
+  }
+
   pointerLeave(): void {
     this.emit({ hover: null, snap: null, inference: null, hints: [], nearby: [] });
   }
@@ -1552,7 +1692,7 @@ export class SketchController {
       const centre = d ? selectionCentre(d, this.state.sketch?.selection ?? []) : null;
       if (centre && gizmoPartAt({ centre, mmPerPx: e.mmPerPx }, e.x, e.y, e.reach ?? 1)) return true;
     }
-    if (this.tool === "select") return true;
+    if (this.tool === "select" || this.tool === "trim") return true;
     return DRAG_DRAWN.has(this.tool) && this.placed.length === 0;
   }
 
@@ -1583,6 +1723,7 @@ export class SketchController {
     this.press = null;
     if (this.drag?.moved && this.drag.kind !== "none") this.state.updateSketch(this.drag.start, { record: false });
     this.drag = null;
+    this.trimStroke = null;
     if (s) this.placed = s.placed;
     this.emit({ preview: [], inference: null, snap: null, hints: [], hover: null, ...(s ? { pending: s.pending } : {}) });
   }
@@ -1609,7 +1750,9 @@ export class SketchController {
       this.commit(r, r.splineId ? [r.splineId] : []);
       return true;
     }
-    const had = this.placed.length > 0 || this.transient.pending.length > 0 || this.drag !== null;
+    const had = this.placed.length > 0 || this.transient.pending.length > 0 || this.drag !== null || this.firstCurve !== null || this.trimStroke !== null;
+    this.firstCurve = null;
+    this.trimStroke = null;
     if (this.drag?.moved) this.state.updateSketch(this.drag.start, { record: false });
     if (this.arcMode) this.setArcMode(false);
     this.press = null;
@@ -1876,6 +2019,25 @@ function tangentArcPreview(d: SketchData, first: Placed, p: Placed): PreviewShap
 }
 
 /** Half the slot's width: how far the third click is from the line through the two centres. */
+/** The elliptical arc tool's preview: the long axis, then the whole ellipse through the start, then the arc. */
+function ellipticalArcPreview(placed: Placed[], p: [number, number]): PreviewShape[] {
+  const [c, m, st] = placed;
+  const C: [number, number] = [c.x, c.y];
+  if (!m) return [{ kind: "line", a: C, b: p }, { kind: "circle", c: C, r: Math.hypot(p[0] - C[0], p[1] - C[1]) }];
+  const M: [number, number] = [m.x, m.y];
+  const shape = ellipticalArcShape(C, M, st ? [st.x, st.y] : p, st ? p : null);
+  if (!shape) return [{ kind: "guide", a: C, b: M }];
+  const out: PreviewShape[] = [{ kind: "guide", a: C, b: M }];
+  if (!st) {
+    const pts = ellipsePolyline(shape.g);
+    for (let i = 0; i + 1 < pts.length; i++) out.push({ kind: "guide", a: pts[i], b: pts[i + 1] });
+    return out;
+  }
+  const pts = ellipticalArcPath(shape);
+  for (let i = 0; i + 1 < pts.length; i++) out.push({ kind: "line", a: pts[i], b: pts[i + 1] });
+  return out;
+}
+
 function slotRadius(a: { x: number; y: number }, b: { x: number; y: number }, p: { x: number; y: number }): number {
   const dx = b.x - a.x, dy = b.y - a.y;
   return Math.abs(dx * (p.y - a.y) - dy * (p.x - a.x)) / (Math.hypot(dx, dy) || 1);

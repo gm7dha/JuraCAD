@@ -155,11 +155,11 @@ export function toolsIn(layout: readonly ToolbarEntry[]): string[] {
 /** Sketch tools shown as one ▾ button (the first until another is used), like Onshape's sketch toolbar. */
 export const SKETCH_FAMILIES: readonly { name: string; tools: readonly SketchTool[] }[] = [
   { name: "line", tools: ["line", "midpointLine"] },
-  { name: "rectangle", tools: ["rectangle", "centreRectangle", "alignedRectangle", "slot", "polygon"] },
+  { name: "rectangle", tools: ["rectangle", "centreRectangle", "alignedRectangle", "slot", "polygon", "slotAlong"] },
   { name: "circle", tools: ["circle", "circle3", "ellipse"] },
-  { name: "arc", tools: ["arc", "centreArc", "tangentArc"] },
+  { name: "arc", tools: ["arc", "centreArc", "tangentArc", "ellipticalArc"] },
   { name: "spline", tools: ["spline", "conic"] },
-  { name: "trim", tools: ["trim", "extend", "split", "offset", "sketchFillet"] },
+  { name: "trim", tools: ["trim", "extend", "split", "offset", "sketchFillet", "sketchChamfer"] },
   { name: "copy", tools: ["mirror", "sketchPattern", "sketchTransform"] },
   { name: "use", tools: ["useEdge", "intersect"] },
 ];

@@ -205,7 +205,10 @@ export type SketchTool =
   | "sketchTransform"
   | "useEdge"
   | "text"
-  | "intersect";
+  | "intersect"
+  | "sketchChamfer"
+  | "slotAlong"
+  | "ellipticalArc";
 
 /** State while a sketch is open for editing. */
 export interface SketchSession {

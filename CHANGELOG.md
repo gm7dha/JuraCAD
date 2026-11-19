@@ -8,6 +8,16 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.100 — Sketch: chamfer, slots, elliptical arcs and grid patterns
+
+- **Sketch chamfer**: cut a corner between two lines at an equal distance, two distances, or a distance and an angle.
+  The rest of the sketch stays fully defined.
+- **Round between lines that don't touch**, and "Equal to the first" for rounds and chamfers made one after another.
+- **Slot on a curve**: draw a slot along any line, arc or spline. One dimension sets its width.
+- **Elliptical arc** tool, whose ends join the lines you start and finish on.
+- **Grid pattern**: sketch linear patterns can now go in rows × columns.
+- **Drag to trim**: hold the button and sweep across the bits you want gone. One undo step for the lot.
+
 ## v0.99 — Sketch: drawing feels like Onshape
 
 - Lines pick up Parallel or Perpendicular to a line you've just pointed at, and Tangent (or square) when you start
