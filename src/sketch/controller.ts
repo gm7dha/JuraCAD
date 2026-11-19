@@ -806,6 +806,8 @@ export class SketchController {
     if (!d) return;
     const tool = this.tool;
     this.press = null;
+    // (The pointer is here now: a release with no move since is a plain click.)
+    this.lastEvent = e;
     if (this.pasting) return this.pasteAt(e);
     if (tool === "select") return this.selectDown(e);
     if (tool === "dimension") return this.dimensionClick(e);
@@ -1556,6 +1558,7 @@ export class SketchController {
     const s = this.stroke;
     this.stroke = null;
     this.dropGizmoDrag();
+    this.press = null;
     if (this.drag?.moved && this.drag.kind !== "none") this.state.updateSketch(this.drag.start, { record: false });
     this.drag = null;
     if (s) this.placed = s.placed;
