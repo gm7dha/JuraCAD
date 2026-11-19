@@ -261,7 +261,7 @@ export function sweepLockedToFaces(prof: SweepProfile, spine: Wire, faces: Face[
     let reach = 0;
     for (const loop of prof.loops) for (const q of loop.outline) reach = Math.max(reach, dist(q, own.p));
     const starts = runs.map((run, i) => frameOn(runFaces[i]!, run[0].a, run[0].ta));
-    const ends = runs.map((run, i) => {
+    const ends = runs.map((run) => {
       const last = run[run.length - 1];
       return frameOn(faceOf(last.edge, faces)!, last.b, last.tb);
     });

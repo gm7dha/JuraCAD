@@ -7,8 +7,9 @@ import { AreaPicker } from "./AreaPicker";
 import { followedSketch } from "../sketch/areaClicks";
 import { findRegions } from "../sketch/regions";
 import { activeFeatures, useStore } from "../model/store";
-import { END_LABELS, cornerPoints, endChoices, lonePoints, loftGuides, loftProfiles, moveProfile, pickingIndex, profileLabel, setConnectionSketchPoint, tidyEnds, withEndPoint, withGuide, withLoftDef, withoutConnection, withProfiles } from "../model/loft";
+import { END_LABELS, GUIDE_CONTINUITY, cornerPoints, guideContinuityOf, withGuideContinuity, endChoices, lonePoints, loftGuides, loftProfiles, moveProfile, pickingIndex, profileLabel, setConnectionSketchPoint, tidyEnds, withEndPoint, withGuide, withLoftDef, withoutConnection, withProfiles } from "../model/loft";
 import type { Feature, LoftCurve, LoftDef, LoftEnd, LoftProfile } from "../model/types";
+import type { GuideContinuity } from "../model/loft";
 
 type Picking = NonNullable<LoftDef["picking"]>;
 
@@ -193,6 +194,35 @@ export function LoftOptions({ sketches }: { sketches: Feature[] }) {
       </>
     );
   };
+  // A part-edge guide may meet the face beside its edges smoothly (Onshape's guide continuity).
+  const guideContinuityRow = (i: number, c: LoftCurve) => {
+    const choice = guideContinuityOf(c);
+    const other = "edges" in c && !!c.otherFace;
+    const set = (next: GuideContinuity, otherFace = other) => setDef(withGuide(def, i, withGuideContinuity(c, next, otherFace)));
+    return (
+      <>
+        <label className="field-label">
+          Continuity
+          <select className="full-select" aria-label={`Guide curve ${i + 1} continuity`} value={choice} title={GUIDE_CONTINUITY.find((g) => g.id === choice)?.hint} onChange={(e) => set(e.target.value as GuideContinuity)}>
+            {GUIDE_CONTINUITY.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {choice !== "none" && (
+          <>
+            <p className="dialog-hint field-hint">{GUIDE_CONTINUITY.find((g) => g.id === choice)?.hint} It uses the face the loft doesn&apos;t sit on.</p>
+            <label className="check-row">
+              <input type="checkbox" aria-label="Use the other face" checked={other} onChange={(e) => set(choice, e.target.checked)} />
+              Use the other face beside the edge
+            </label>
+          </>
+        )}
+      </>
+    );
+  };
   const guideList = () => {
     const guides = loftGuides(def);
     // One more slot while the last guide is being picked from edges (it has none yet).
@@ -203,6 +233,7 @@ export function LoftOptions({ sketches }: { sketches: Feature[] }) {
         {Array.from({ length: count }, (_, i) => (
           <div key={i} className="loft-guide">
             {curveSelect(i, i === 0 ? (count > 1 ? "Guide curve 1 (the shapes' outlines touch it)" : "Guide curve (the shapes' outlines touch it)") : `Guide curve ${i + 1}`)}
+            {guides[i] && "edges" in guides[i] && guideContinuityRow(i, guides[i])}
             {i > 0 && guides[i] && (
               <button type="button" className="link-button" onClick={() => setDef({ ...withGuide(def, i, undefined), picking: undefined })}>
                 Take guide curve {i + 1} out

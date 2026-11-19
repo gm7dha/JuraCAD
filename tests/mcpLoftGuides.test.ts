@@ -88,3 +88,20 @@ describe("loft guides and connections from Claude", () => {
     expect(await fails(s, "add_feature", { type: "loft", sections: ["Low", "Cap"], start: "match_tangent" })).toMatch(/doesn't suit/);
   });
 });
+
+describe("a guide matching tangent, from Claude", () => {
+  it("takes part edges as a guide with continuity, and refuses ones it hasn't got", async () => {
+    const s = newSession();
+    await ok(s, "new_design", { name: "Blend" });
+    await ok(s, "add_feature", { type: "box", width: 40, depth: 30, height: 10 });
+    const tri = { type: "outline", points: [[0, 10], [8, 10], [3, 18]], closed: true };
+    await ok(s, "add_sketch", { name: "A", plane: "Right", offset: 5, shapes: [tri] });
+    await ok(s, "add_sketch", { name: "B", plane: "Right", offset: 35, shapes: [tri] });
+    const edge = { part: "Part 1", edges: [{ near: [20, 0, 10] }] };
+    expect(await fails(s, "add_feature", { type: "loft", sections: ["A", "B"], guide: { ...edge, continuity: "match_curvature" }, operation: "new" })).toMatch(/aren't available/);
+    await ok(s, "add_feature", { type: "loft", sections: ["A", "B"], guide: { ...edge, continuity: "match_tangent" }, operation: "new" });
+    const lo = s.doc.features.find((f) => f.type === "loft")!;
+    expect(lo.loft?.guide && "edges" in lo.loft.guide && lo.loft.guide.continuity).toBe("matchTangent");
+    expect(volumes(s).length).toBe(2);
+  });
+});

@@ -246,6 +246,27 @@ function loftDirection(v: unknown, where: string, ctx: SpecContext): GeomPick {
   return { p: face.ref.center, dir: face.ref.normal, pick: { partId: part.id, ref: face.ref } };
 }
 
+/**
+ * A loft guide: a sketch or curve feature by name, or {"part", "edges": [...], "continuity"?: "none" | "match_tangent",
+ * "other_face"?: true} — part edges, which may meet the face beside them smoothly (Onshape's guide continuity).
+ */
+function loftGuideOf(g: unknown, where: string, ctx: SpecContext): LoftCurve {
+  if (g && typeof g === "object" && !Array.isArray(g)) {
+    const o = g as Obj;
+    noExtras(o, ["part", "edges", "continuity", "other_face"], where);
+    const part = ctx.session.part(ctx.parts, o.part, `${where}.part`);
+    const edges = pickEdges(part, list(o.edges, `${where}.edges`), `${where}.edges`).filter((p) => p.ref.kind === "edge");
+    if (!edges.length) throw new InputError(`${where}.edges: give edges (E-numbers from list_edges).`);
+    const cont = o.continuity;
+    if (cont !== undefined && cont !== null && cont !== "none" && cont !== "match_tangent") throw new InputError(`${where}.continuity must be "none" or "match_tangent" (match curvature, normal to guide and tangent to guide aren't available).`);
+    const other = has(o, "other_face") ? bool(o.other_face, `${where}.other_face`) : false;
+    if (other && cont !== "match_tangent") throw new InputError(`${where}.other_face only goes with "continuity": "match_tangent".`);
+    return { edges, ...(cont === "match_tangent" ? { continuity: "matchTangent" as const } : {}), ...(other ? { otherFace: true } : {}) };
+  }
+  const c = ctx.session.feature(g, where, ["sketch", "curve"], ctx.doc);
+  return c.type === "curve" ? { curve: c.id } : { sketch: c.id };
+}
+
 /** Sweep's "profile_face": {"part", "face"} — a flat face of a part as the profile, instead of a sketch. */
 function sweepProfileFace(f: Feature, a: Obj, ctx: SpecContext) {
   if (a.profile_face === null || a.profile_face === false) {
@@ -436,17 +457,13 @@ function applyLoft(f: Feature, a: Obj, ctx: SpecContext) {
     if (!(which in a)) continue;
     if (a[which] === null) def[which] = undefined;
     else {
-      // A sketch, or a curve feature (Helix, Fit spline…).
-      const c = ctx.session.feature(a[which], which, ["sketch", "curve"], ctx.doc);
-      def[which] = c.type === "curve" ? { curve: c.id } : { sketch: c.id };
+      // A sketch, or a curve feature (Helix, Fit spline…) — a guide may also be part edges.
+      def[which] = which === "guide" ? loftGuideOf(a[which], which, ctx) : ((c) => (c.type === "curve" ? { curve: c.id } : { sketch: c.id }))(ctx.session.feature(a[which], which, ["sketch", "curve"], ctx.doc));
     }
   }
   if ("guides" in a && a.guides !== undefined) {
     if (has(a, "guide")) throw new InputError('Give either "guide" (one) or "guides" (a list), not both.');
-    const curves = a.guides === null ? [] : list(a.guides, "guides").map((g, i): LoftCurve => {
-      const c = ctx.session.feature(g, `guides[${i}]`, ["sketch", "curve"], ctx.doc);
-      return c.type === "curve" ? { curve: c.id } : { sketch: c.id };
-    });
+    const curves = a.guides === null ? [] : list(a.guides, "guides").map((g, i): LoftCurve => loftGuideOf(g, `guides[${i}]`, ctx));
     def.guide = curves[0];
     def.moreGuides = curves.length > 1 ? curves.slice(1) : undefined;
   } else if (has(a, "guide")) def.moreGuides = undefined;

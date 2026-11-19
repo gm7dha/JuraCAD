@@ -156,7 +156,16 @@ export interface LoftEnd {
 }
 
 /** A guide or path: one run of curves in a sketch, or edges of parts. */
-export type LoftCurve = { sketch: string } | { edges: TopoPick[] } | { curve: string };
+export type LoftCurve =
+  | { sketch: string }
+  | {
+      edges: TopoPick[];
+      /** A guide's continuity (Onshape's): "matchTangent" = the loft leaves the guide carrying on the face beside these edges. Missing = it only passes through. */
+      continuity?: "matchTangent";
+      /** Match the edges' other face (a solid's edge has two; missing = the one the loft doesn't sit on, else the first). */
+      otherFace?: boolean;
+    }
+  | { curve: string };
 
 /** Where a Part Studio mate connector sits and which part it belongs to (Onshape's Mate connector feature). */
 export interface MateConnectorDef {
