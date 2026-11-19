@@ -75,6 +75,19 @@
   `source.later` (never snapped to; clicking one says why, `laterMessage`). The controller offers only sketches shown in the view (`sketchVisible`) and
   parts not hidden; clicks prefer the sketch's own geometry, then text/pictures, then outside refs, and the face's own corners win
   ties (`preferFace`). Faint dots near the pointer: `SketchTransient.nearby`.
+  Planes as references (Onshape's): pure `src/sketch/planeRefs.ts` — where Top/Front/Right ("@Top"…) and Plane features cross
+  the sketch (`planeCrossing`: edge-on only, a line ±`PLANE_LINE_HALF` (100) about the foot of the plane's origin, running +x/+y)
+  and the origin seen square-on ("@origin", only when it isn't the sketch's own) are `RefEdge`s with `source` {sketch: <plane id>,
+  item: `PLANE_ITEM` "@plane"} — so they're brought in like other sketches' curves (a construction line linked
+  `{sketch, item: "@plane"}`; Delete with dependents counts a Plane feature's as a reference brought in). Not from the engine's
+  candidates (its lists are unchanged): the controller (and sketchActions' `sketchRefs`) append `sketchPlaneRefs`
+  (planeRefsFor.ts: `framesOf` + `builtFrames`; Plane features after the sketch = `source.later`). No ends/middle (ids q0/q1);
+  drawing snaps ONTO them (snapAt step 7, as Onshape infers onto the origin's axes), and onto a default plane's line that is the
+  sketch's own X/Y axis that's just `horizontal`/`vertical` with the origin (ops.ts `ownAxis`, nothing brought in). Select,
+  dimension, relations, mirror line take them as any reference (bringIn). skipRef: Plane features' lines while their eye is on;
+  default planes and the origin always. Engine `followSketch` re-finds them with `seePlaneLink` from `planeFrames` (Plane
+  features placed so far this build, reset per build) — later/deleted/suppressed/now parallel = lost (`fromPlanesNote`).
+  Tests: sketchPlaneRefs (pure), sketchPlaneRefsStore, sketchPlaneRefsEngine.
   Drawing feel (Onshape's, controller.ts): `linePlan` decides a line's end + inferred relation (Shift: none; a point/curve snap:
   just that; an "align" snap still gets H or V — whichever the lining up doesn't give —; else H/V within 4°; else `lineRelation`:
   parallel/perpendicular to a "woken" line (`woken`: own lines hovered while drawing + the chain's last line, ≤ `WOKEN_MAX`;

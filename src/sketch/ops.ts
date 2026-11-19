@@ -11,6 +11,7 @@ import { curvatureAt, curveParam, ellipseSpan, nearestParam } from "./curves";
 import { startingLength } from "../model/units";
 import { analyzeSketch, solveSketch } from "./solver";
 import { isFaceEdge, linkEdge, linkPoint, type RefEdge } from "./links";
+import { isDefaultPlaneId, isPlaneRef } from "./planeRefs";
 import {
   isAngleDimension,
   isDimension,
@@ -395,11 +396,26 @@ export function onCurveType(c: SketchCurve): "pointOnLine" | "pointOnCircle" | "
   return c.type === "line" ? "pointOnLine" : c.type === "circle" || c.type === "arc" ? "pointOnCircle" : "pointOnCurve";
 }
 
+/** A default plane's line lying on the sketch's own X axis ("horizontal" with the origin) or Y axis ("vertical"). */
+function ownAxis(e: RefEdge): "horizontal" | "vertical" | null {
+  if (!isPlaneRef(e) || !isDefaultPlaneId(e.source!.sketch) || e.kind !== "line") return null;
+  if (e.a[1] === 0 && e.b[1] === 0) return "horizontal";
+  if (e.a[0] === 0 && e.b[0] === 0) return "vertical";
+  return null;
+}
+
 export function placePoint(s: SketchData, p: Placed): { sketch: SketchData; id: string } {
   if (p.snap?.kind === "point" && isPointId(s, p.snap.id) && p.snap.id !== ORIGIN_ID) return { sketch: s, id: p.snap.id };
   if (p.snap?.kind === "ref") {
     // Bring the part edge in (as a reference), then attach to it.
     const at = p.snap.at;
+    // Onto Top's, Front's or Right's line where it is the sketch's own X or Y axis (a sketch on a default plane): held
+    // level with or straight above the origin, as Onshape's Coincident to an origin axis — nothing to bring in.
+    const axis = at === "on" ? ownAxis(p.snap.edge) : null;
+    if (axis) {
+      const id = sketchId("p");
+      return { sketch: { ...s, points: [...s.points, { id, x: axis === "horizontal" ? p.x : 0, y: axis === "horizontal" ? 0 : p.y }], constraints: [...s.constraints, { id: sketchId("c"), type: axis, refs: [id, ORIGIN_ID] }] }, id };
+    }
     // Another sketch's point, or a part's corner or centre off the face: just that point, following it.
     if (!isFaceEdge(p.snap.edge) && at !== "on") {
       const lp = linkPoint(s, p.snap.edge, at);

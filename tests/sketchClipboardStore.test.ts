@@ -65,7 +65,8 @@ describe("pasting in the sketch tool", () => {
     const c = new SketchController();
     c.startPaste(copySketchItems(before, [circle.circleId])!);
     expect(c.cancel()).toBe(true);
-    c.pointerDown(mouse(20, 0));
+    // (Off the X axis, which can be clicked — Front's line.)
+    c.pointerDown(mouse(20, 7));
     c.pointerUp();
     expect(draftData().curves).toHaveLength(before.curves.length);
   });

@@ -71,6 +71,8 @@ import { addEllipticalArc, ellipticalArcPath, ellipticalArcShape } from "./ellip
 import { useEditToolOptions } from "./editToolOptions";
 import { readSecondDirection } from "./patternGrid";
 import { addText, imageAt, imageById, readTextSettings, textAt, textById } from "./sketchText";
+import { DEFAULT_PLANE_REFS } from "./planeRefs";
+import { sketchPlaneRefs } from "./planeRefsFor";
 import { isRefId, laterMessage, linkEdge, parseRefId, refSketch, type RefEdge } from "./links";
 import { addTangentLine, tangentLineAt, type TangentLine } from "./tangents";
 import { attachPoint, bringIn, hintFor, nearRefs, pickAt, sketchCurveAt, snapAt, type SnapResult } from "./snaps";
@@ -345,7 +347,7 @@ export class SketchController {
   }
 
   /** The part face's edges and everything else the sketch can snap to, put together once per answer from the engine. */
-  private refsCache: { edges: RefEdge[]; candidates: RefEdge[]; list: RefEdge[] } | null = null;
+  private refsCache: { edges: RefEdge[]; candidates: RefEdge[]; planes: RefEdge[]; list: RefEdge[] } | null = null;
 
   /**
    * Edges of the part face the sketch is on (first, so their "ref:<n>" ids
@@ -359,10 +361,13 @@ export class SketchController {
     const id = st.editing?.draft.id;
     const edges = (id && st.sketchLinks?.[id]?.edges) || NO_REFS;
     const candidates = id && st.sketchCandidates?.id === id ? st.sketchCandidates.list : NO_REFS;
+    // Then the lines where Top, Front, Right and Plane features cross the sketch, and the origin (planeRefs.ts).
+    const plane = (id && st.sketchLinks?.[id]?.plane) || st.editing?.draft.sketch?.plane;
+    const planes = id && plane ? sketchPlaneRefs(plane, activeFeatures(st), id, st.builtFrames) : NO_REFS;
     const c = this.refsCache;
-    if (c && c.edges === edges && c.candidates === candidates) return c.list;
-    const list = candidates.length ? [...edges, ...candidates] : edges;
-    this.refsCache = { edges, candidates, list };
+    if (c && c.edges === edges && c.candidates === candidates && c.planes === planes) return c.list;
+    const list = candidates.length || planes.length ? [...edges, ...candidates, ...planes] : edges;
+    this.refsCache = { edges, candidates, planes, list };
     return list;
   }
 
@@ -376,7 +381,9 @@ export class SketchController {
     if (c && c.hidden === hidden && c.features === features) return c.skip;
     const used = usedSketches(features);
     // (Curve features, which sketches can use too, are shown unless their eye is off.)
-    const shown = new Set(features.filter((f) => (f.type === "sketch" && sketchVisible(f, used)) || (f.type === "curve" && planeVisible(f))).map((f) => f.id));
+    // (So are Plane features' lines; Top, Front, Right and the origin always are, as Onshape always offers the origin's axes.)
+    const shown = new Set(features.filter((f) => (f.type === "sketch" && sketchVisible(f, used)) || ((f.type === "curve" || f.type === "plane") && planeVisible(f))).map((f) => f.id));
+    for (const id of DEFAULT_PLANE_REFS) shown.add(id);
     const hiddenSet = new Set(hidden);
     const skip = (e: RefEdge) => (e.project && e.pick ? hiddenSet.has(e.pick.partId) : !!e.source && !shown.has(e.source.sketch));
     this.skipCache = { hidden, features, skip };

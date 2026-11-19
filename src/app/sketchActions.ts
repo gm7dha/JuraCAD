@@ -1,7 +1,8 @@
 /** Actions used by both the sketch toolbar and keyboard shortcuts. */
 import { patternGrid, readSecondDirection } from "../sketch/patternGrid";
 import { useEditToolOptions } from "../sketch/editToolOptions";
-import { useStore, type SketchTool } from "../model/store";
+import { activeFeatures, useStore, type SketchTool } from "../model/store";
+import { sketchPlaneRefs } from "../sketch/planeRefsFor";
 import { applyRelation, relationMayTakeAWhile, RELATION_LABELS, setDimensionDriven, setMeasureTo, toggleConstruction, type MeasureTo, type RelationTool } from "../sketch/ops";
 import { patternCurves, readPatternSettings, readTransformSettings } from "../sketch/tools";
 import { readScale, transformCopy, transformSelection } from "../sketch/transformSelection";
@@ -96,7 +97,9 @@ function sketchRefs(): RefEdge[] {
   const id = st.editing?.draft.id;
   const edges = (id && st.sketchLinks?.[id]?.edges) || [];
   const candidates = id && st.sketchCandidates?.id === id ? st.sketchCandidates.list : [];
-  return [...edges, ...candidates];
+  const plane = (id && st.sketchLinks?.[id]?.plane) || st.editing?.draft.sketch?.plane;
+  const planes = id && plane ? sketchPlaneRefs(plane, activeFeatures(st), id, st.builtFrames) : [];
+  return [...edges, ...candidates, ...planes];
 }
 
 export function applySketchRelation(tool: RelationTool) {

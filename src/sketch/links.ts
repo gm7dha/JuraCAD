@@ -27,6 +27,7 @@ import { SAME_CORNER, type VertexPick } from "../geometry/vertexRef";
 import { joinPoints, pointPos, settle, sketchId, type EditResult } from "./ops";
 import { toSketch, type PlaneFrame, type SketchPlane } from "./planes";
 import { splineThrough } from "./curves";
+import { isPlaneLink, PLANE_ITEM } from "./planeRefs";
 import { isPartLink, type CurveLink, type PointLink, type SketchArc, type SketchCircle, type SketchConstraint, type SketchCurve, type SketchData, type SketchEllipse, type SketchLine, type SketchPoint, type SketchSpline } from "./types";
 
 type P2 = [number, number];
@@ -187,7 +188,8 @@ export function refSketchOf(edges: RefEdge[], indices: number[]): SketchData {
       return `${id}:${suffix}`;
     };
     if (e.kind === "point") pt("a", e.a);
-    else if (e.kind === "line") curves.push({ id, type: "line", p1: pt("a", e.a), p2: pt("b", e.b), construction: false });
+    // A plane's line (planeRefs.ts) has no real ends to snap to: only the line itself.
+    else if (e.kind === "line") curves.push({ id, type: "line", p1: pt(e.source?.item === PLANE_ITEM ? "q0" : "a", e.a), p2: pt(e.source?.item === PLANE_ITEM ? "q1" : "b", e.b), construction: false });
     else if (e.kind === "circle") curves.push({ id, type: "circle", center: pt("c", e.centre!), radius: e.radius!, construction: false });
     else if (e.kind === "arc") {
       const startIsA = dist(e.start!, e.a) < 1e-9;
@@ -774,9 +776,10 @@ export function followLinks(s: SketchData, links: Record<string, RefEdge | null 
 }
 
 /** How many references can't be found, by where they come from: parts (edges and their points), other sketches, and Pierce points (which say why their own way). */
-function lostCounts(s: SketchData | undefined, info: SketchLinkInfo): { part: number; sketch: number; pierce: number; corner: number } {
-  let part = 0, sketch = 0, pierce = 0, corner = 0;
+function lostCounts(s: SketchData | undefined, info: SketchLinkInfo): { part: number; sketch: number; pierce: number; corner: number; plane: number } {
+  let part = 0, sketch = 0, pierce = 0, corner = 0, plane = 0;
   const fromSketch = new Set<string>();
+  const fromPlane = new Set<string>();
   const piercing = new Set<string>();
   const corners = new Set<string>();
   if (s) {
@@ -784,16 +787,23 @@ function lostCounts(s: SketchData | undefined, info: SketchLinkInfo): { part: nu
     for (const p of s.points) if (p.link && !("partId" in p.link)) fromSketch.add(p.id);
     for (const p of s.points) if (p.link?.end === "pierce") piercing.add(p.id);
     for (const p of s.points) if (p.link?.end === "corner") corners.add(p.id);
+    for (const c of s.curves) if ("link" in c && c.link && !isPartLink(c.link) && isPlaneLink(c.link)) fromPlane.add(c.id);
+    for (const p of s.points) if (p.link && !("partId" in p.link) && isPlaneLink(p.link)) fromPlane.add(p.id);
   }
   for (const [id, e] of [...Object.entries(info.links), ...Object.entries(info.pointLinks ?? {})]) {
     if (e !== null) continue;
     if (piercing.has(id)) pierce++;
     else if (corners.has(id)) corner++;
+    else if (fromPlane.has(id)) plane++;
     else if (fromSketch.has(id)) sketch++;
     else part++;
   }
-  return { part, sketch, pierce, corner };
+  return { part, sketch, pierce, corner, plane };
 }
+
+/** About lines taken from planes that can't be found. */
+const fromPlanesNote = (n: number) =>
+  `${n === 1 ? "A line" : `${n} lines`} this sketch takes from a plane can't be found any more (the plane was deleted or turned off, moved below this sketch in the feature list, or now lies flat to the sketch), so ${n === 1 ? "its copy stays" : "their copies stay"} where ${n === 1 ? "it was" : "they were"}.`;
 
 /** About points following a part's corner (Use on a corner) that can't be found. */
 const cornerNote = (n: number) =>
@@ -816,6 +826,7 @@ export function lostLinksMessage(s: SketchData, info: SketchLinkInfo | undefined
     parts.push(
       `${lost.part === 1 ? "1 edge" : `${lost.part} edges`} this sketch uses ${lost.part === 1 ? "has" : "have"} gone from the part, so ${lost.part === 1 ? "it stays" : "they stay"} where ${lost.part === 1 ? "it was" : "they were"}. Delete ${lost.part === 1 ? "it" : "them"}, or use another edge.`,
     );
+  if (lost.plane) parts.push(`${fromPlanesNote(lost.plane)} Delete ${lost.plane === 1 ? "it" : "them"}, or move that plane back above this one.`);
   if (lost.sketch) parts.push(`${fromSketchesNote(lost.sketch)} Delete ${lost.sketch === 1 ? "it" : "them"}, or move that sketch back above this one.`);
   if (lost.pierce) parts.push(`${pierceNote(lost.pierce)} Delete ${lost.pierce === 1 ? "it" : "them"}, or pierce with an edge or curve that goes through the sketch.`);
   if (lost.corner) parts.push(`${cornerNote(lost.corner)} Delete ${lost.corner === 1 ? "it" : "them"}, or use another corner.`);
@@ -839,6 +850,7 @@ export function linkProblem(info: SketchLinkInfo | undefined, s?: SketchData): s
     return "The face this sketch was on can't be found any more (the part has changed too much), so the sketch stays where it was. Edit the sketch and click Pick the face again.";
   if (lost.part)
     return `${lost.part === 1 ? "A part edge" : `${lost.part} part edges`} this sketch uses can't be found any more, so ${lost.part === 1 ? "its copy stays" : "their copies stay"} where ${lost.part === 1 ? "it was" : "they were"}. Edit the sketch and delete ${lost.part === 1 ? "it" : "them"} (shown in the sketch panel), or use other edges.`;
+  if (lost.plane) return `${fromPlanesNote(lost.plane)} Edit the sketch and delete ${lost.plane === 1 ? "it" : "them"} (shown in the sketch panel), or move that plane back above this one.`;
   if (lost.sketch) return `${fromSketchesNote(lost.sketch)} Edit the sketch and delete ${lost.sketch === 1 ? "it" : "them"} (shown in the sketch panel), or move that sketch back above this one.`;
   if (lost.pierce) return `${pierceNote(lost.pierce)} Edit the sketch and delete ${lost.pierce === 1 ? "it" : "them"} (shown in the sketch panel), or pierce with an edge or curve that goes through the sketch.`;
   if (lost.corner) return `${cornerNote(lost.corner)} Edit the sketch and delete ${lost.corner === 1 ? "it" : "them"} (shown in the sketch panel), or use another corner.`;
