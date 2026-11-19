@@ -390,6 +390,16 @@ export interface Feature {
    */
   intersectAll?: boolean;
   /**
+   * Onshape's "Merge scope" (src/model/mergeScope.ts): the parts (ids) an Add
+   * may join, or a Remove / Intersect / Hole may cut — the rest are left
+   * alone (a piece touching none of them is a new part). Followed through
+   * merges. Patterns and mirrors of features: the parts their copies change.
+   * Missing = "Merge with all" (the usual rules, exactly as before).
+   */
+  mergeScope?: string[];
+  /** The dialog's merge-scope box is taking clicks (never saved; not sent to the engine). */
+  mergeScopePicking?: boolean;
+  /**
    * Extrude, revolve and sweep (solids): areas from other sketches as well as
    * `sketchRef`'s (as Onshape lets one feature use regions of several
    * sketches). Each is made from its own sketch with the same settings: an

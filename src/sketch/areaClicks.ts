@@ -136,9 +136,10 @@ export function clickAreaAt(sketch: SketchData, frame: PlaneFrame, point: Vec3, 
  * only clicks that miss every part reach the areas; "off" — no areas to click
  * (not an extrude, revolve or sweep, a surface, or no sketch chosen yet).
  */
-export function areaClickMode(draft: (Pick<Feature, "type" | "sketchRef" | "surface" | "extrude"> & Partial<Pick<Feature, "sweepControl">>) | null | undefined): "off" | "first" | "afterParts" {
+export function areaClickMode(draft: (Pick<Feature, "type" | "sketchRef" | "surface" | "extrude"> & Partial<Pick<Feature, "sweepControl" | "mergeScopePicking">>) | null | undefined): "off" | "first" | "afterParts" {
   // No sketch chosen yet is fine: clicking an area of any sketch chooses it (as in Onshape).
-  if (!draft || draft.surface) return "off";
+  // (While the merge-scope box picks parts, clicks are for parts only.)
+  if (!draft || draft.surface || draft.mergeScopePicking) return "off";
   // A sweep of a part's face has no areas; one picking its face or its locked direction wants faces and edges first.
   if (draft.type === "sweep" && draft.sweepControl?.picking) return "afterParts";
   if (draft.type === "sweep" && draft.sweepControl?.face) return "off";

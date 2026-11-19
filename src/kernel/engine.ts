@@ -91,6 +91,7 @@ import { findCorner, shapeCorners } from "./corners";
 import { matchVertex, type VertexPick } from "../geometry/vertexRef";
 import { radiusPointPick, VariableFilletError } from "../model/variableFillet";
 import { variableFillet, type EdgeRadiusPoint } from "./variableFillet";
+import { resolveScope, scopeMessage } from "../model/mergeScope";
 import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
 
 /** Id of the first Part Studio (matches MAIN_STUDIO in model/studios.ts). */
@@ -3613,7 +3614,8 @@ export class GeometryEngine {
       if (feature.type === "thicken") {
         const r = this.applyThicken(feature, partCounter + 1);
         if (r.error) featureErrors[feature.id] = r.error;
-        if (r.newPart) partCounter++;
+        // (A merge scope's Add can make several new parts.)
+        partCounter += r.newParts ?? (r.newPart ? 1 : 0);
         continue;
       }
       if (feature.type === "sheetMetal") {
@@ -3663,7 +3665,7 @@ export class GeometryEngine {
         continue;
       }
       if (feature.type === "rib") {
-        const err = this.applyRib(feature, sketches);
+        const err = this.applyRib(feature, sketches, partCounter, (n) => (partCounter += n));
         if (err) featureErrors[feature.id] = err;
         continue;
       }
@@ -3770,6 +3772,20 @@ export class GeometryEngine {
         !wrapOn &&
         this.parts.filter((p) => !p.surface).length > 1 &&
         ((!!feature.apart && feature.operation === "remove") || (!!feature.intersectAll && feature.operation === "intersect"));
+      // Merge scope (Onshape's): only the chosen parts are joined, cut or intersected.
+      const scoped = !wrapOn && feature.mergeScope !== undefined && (feature.operation === "add" || feature.operation === "remove" || feature.operation === "intersect");
+      let scopeParts: BuiltPart[] | undefined;
+      const scopeNotes: string[] = [];
+      if (scoped) {
+        const sc = this.scopeOf(feature);
+        if ("error" in sc) {
+          featureErrors[feature.id] = sc.error;
+          continue;
+        }
+        scopeParts = sc.parts;
+        if (sc.warning) scopeNotes.push(sc.warning);
+        target = scopeParts[scopeParts.length - 1];
+      }
       if (feature.operation !== "new" && !target) {
         featureErrors[feature.id] =
           feature.type === "hole"
@@ -3787,7 +3803,7 @@ export class GeometryEngine {
         feature.hole?.modelThread &&
         target &&
         // Sheet metal cuts are also traced for the flat pattern, so they're always done afresh.
-        !(cutsAll ? this.parts.some((p) => p.sheet && !p.surface) : target.sheet) &&
+        !(cutsAll || scoped ? (scopeParts ?? this.parts).some((p) => p.sheet && !p.surface) : target.sheet) &&
         !features.slice(0, at).some((f) => f.type === "derived")
           ? JSON.stringify([getCurrentScope(), features.slice(0, at + 1)])
           : null;
@@ -3807,9 +3823,11 @@ export class GeometryEngine {
       }
 
       let tool: Shape3D;
-      const notes: string[] = [];
+      const notes: string[] = [...scopeNotes];
       try {
-        tool = feature.type === "derived" ? this.derivedSolid(feature, values) : buildSolid(feature, values, sketches, features, this.parts, this.threadedHoles, notes, this.pathLookup(features, sketches));
+        // (A scoped hole measures its depth in the chosen parts only.)
+        const partsFor = feature.type === "hole" && scopeParts ? scopeParts : this.parts;
+        tool = feature.type === "derived" ? this.derivedSolid(feature, values) : buildSolid(feature, values, sketches, features, partsFor, this.threadedHoles, notes, this.pathLookup(features, sketches));
       } catch (e) {
         featureErrors[feature.id] = describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`);
         continue;
@@ -3852,6 +3870,13 @@ export class GeometryEngine {
         continue;
       }
 
+      if (scoped && scopeParts) {
+        const error = this.applyScoped(feature, tool, scopeParts, partCounter, features, threadKey, () => buildSolid({ ...feature, hole: feature.hole && { ...feature.hole, modelThread: undefined } }, values, sketches, features, scopeParts!));
+        if (typeof error === "number") partCounter += error;
+        else if (error) featureErrors[feature.id] = error;
+        tool.delete();
+        continue;
+      }
       if (cutsAll) {
         const hits = this.partsReached(tool);
         if (hits.length === 1) target = hits[0];
@@ -3966,6 +3991,46 @@ export class GeometryEngine {
   private faceMakers = new FaceMakers();
 
   /**
+   * A feature's merge scope as the parts are now: each picked part followed
+   * through the parts it was merged into; some gone = left out with a warning,
+   * all gone (or none picked) = an error.
+   */
+  private scopeOf(feature: Feature, scope = feature.mergeScope ?? []): { parts: BuiltPart[]; warning?: string } | { error: string } {
+    const solid = (id: string) => this.parts.some((p) => p.id === id && !p.surface);
+    const { ids, lost } = resolveScope(scope, solid, this.mergedInto);
+    const msg = scopeMessage(feature, scope.length, ids.length ? lost.length : scope.length);
+    if (msg.error) return { error: msg.error };
+    // Oldest first, as the parts list is.
+    const parts = this.parts.filter((p) => ids.includes(p.id));
+    return { parts, ...(msg.warning ? { warning: msg.warning } : {}) };
+  }
+
+  /**
+   * Add / Remove / Intersect / Hole with a merge scope: Add joins only the
+   * scope's parts it touches (else it's a new part); Remove and Intersect cut
+   * only the scope's parts it reaches. Returns how many new parts (Add), or
+   * an error message.
+   */
+  private applyScoped(feature: Feature, tool: Shape3D, scope: BuiltPart[], partCounter: number, features: Feature[], threadKey: string | null, plainHole: () => Shape3D): number | string | undefined {
+    const last = scope[scope.length - 1];
+    if (feature.operation === "add") {
+      try {
+        return this.addApart(feature, tool, last, partCounter, scope);
+      } catch (e) {
+        return describeError(e, "Couldn't merge this into the parts.");
+      }
+    }
+    const hits = this.partsReached(tool).filter((p) => scope.includes(p));
+    if (hits.length) return this.cutParts(feature, tool, hits, plainHole, threadKey);
+    // Reaching none of them: nothing changes (a pattern of it may still reach them).
+    this.tools.set(feature.id, { shape: tool.clone(), operation: feature.operation, partId: last.id });
+    const names = scope.map((p) => p.name).join(", ");
+    if (feature.operation === "intersect") return `This doesn't overlap any of the parts chosen to intersect with (${names}), so nothing would be left. Check its direction (Flip), depth and where the sketch is, or the parts chosen.`;
+    const patterned = features.some((f) => (f.pattern?.sources ?? f.mirror?.sources ?? []).includes(feature.id));
+    return patterned ? undefined : `This doesn't reach any of the parts chosen to cut (${names}), so it cuts nothing. Check the direction (Flip), the depth and where the sketch is, or the parts chosen.`;
+  }
+
+  /**
    * Add, as in Onshape: each separate piece of the new solid joins the parts
    * it touches (every one of them, merged into the oldest); a piece that
    * touches no part becomes a part of its own. All or nothing: the parts are
@@ -3973,11 +4038,12 @@ export class GeometryEngine {
    * made. A single piece touching only the latest part is fused exactly as an
    * older Add is.
    */
-  private addApart(feature: Feature, tool: Shape3D, target: BuiltPart, partCounter: number): number {
+  private addApart(feature: Feature, tool: Shape3D, target: BuiltPart, partCounter: number, only?: BuiltPart[]): number {
     const all = solidsOf(tool);
     const pieces = all.length > 1 ? all : [tool];
     if (all.length <= 1) all.forEach((p) => p.delete());
-    const order = [target, ...[...this.parts].reverse().filter((p) => p !== target && !p.surface)];
+    // (A merge scope: only its parts are joined.)
+    const order = [target, ...[...(only ?? this.parts)].reverse().filter((p) => p !== target && !p.surface)];
     const plan = { working: new Map<string, Shape3D>(), removed: new Map<string, string>(), created: [] as Shape3D[] };
     try {
       this.joinApart(pieces, order, plan);
@@ -5111,7 +5177,7 @@ export class GeometryEngine {
     return { newPart: true };
   }
 
-  private applyThicken(feature: Feature, nextPartNumber: number): { error?: string; newPart?: boolean } {
+  private applyThicken(feature: Feature, nextPartNumber: number): { error?: string; newPart?: boolean; newParts?: number } {
     const { values, errors } = resolveParams(feature);
     if (errors.thickness) return { error: `Thickness: ${errors.thickness}` };
     const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "face");
@@ -5141,6 +5207,7 @@ export class GeometryEngine {
           this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [...part.featureIds, feature.id], shape: solid });
           return { newPart: true };
         }
+        if (feature.mergeScope !== undefined) return this.thickenScoped(feature, solid, nextPartNumber);
         const onto = [...this.parts].reverse().find((p) => !p.surface);
         if (!onto) return { error: "There's no solid part to add this to yet. Use New to make one from the surface." };
         const result = feature.operation === "add" ? onto.shape.fuse(solid) : feature.operation === "intersect" ? (onto.shape.intersect(solid) as Shape3D) : onto.shape.cut(solid);
@@ -5188,6 +5255,7 @@ export class GeometryEngine {
       this.parts.push({ id: feature.id, name: `Part ${nextPartNumber}`, featureIds: [feature.id], shape: solid });
       return { newPart: true };
     }
+    if (feature.mergeScope !== undefined) return this.thickenScoped(feature, solid, nextPartNumber);
     try {
       const result =
         feature.operation === "add" ? part.shape.fuse(solid) : feature.operation === "intersect" ? (part.shape.intersect(solid) as Shape3D) : part.shape.cut(solid);
@@ -5204,6 +5272,20 @@ export class GeometryEngine {
       return {};
     } catch (e) {
       return { error: describeError(e, "Couldn't combine the thickened faces with the part.") };
+    } finally {
+      solid.delete();
+    }
+  }
+
+  /** Thicken with a merge scope: joined with / cut from only the chosen parts (the solid is used up). */
+  private thickenScoped(feature: Feature, solid: Shape3D, nextPartNumber: number): { error?: string; newParts?: number } {
+    try {
+      const sc = this.scopeOf(feature);
+      if ("error" in sc) return { error: sc.error };
+      if (sc.warning) this.warnings[feature.id] = sc.warning;
+      const r = this.applyScoped(feature, solid, sc.parts, nextPartNumber - 1, [], null, () => solid.clone());
+      if (typeof r === "string") return { error: r };
+      return typeof r === "number" && r > 0 ? { newParts: r } : {};
     } finally {
       solid.delete();
     }
@@ -5564,13 +5646,17 @@ export class GeometryEngine {
    * each line, the one that adds less material is filled (the corner a gusset
    * braces); Flip picks the other.
    */
-  private applyRib(feature: Feature, sketches: SketchMap): string | null {
+  private applyRib(feature: Feature, sketches: SketchMap, partCounter = 0, made: (n: number) => void = () => {}): string | null {
     const { values, errors } = resolveParams(feature);
     if (errors.thickness) return `Thickness: ${errors.thickness}`;
     if (!feature.sketchRef) return "Choose the sketch with the rib's lines.";
     const sketch = sketches.get(feature.sketchRef);
     if (!sketch?.sketch?.plane) return "The sketch it uses can't be found (deleted or suppressed).";
-    const part = [...this.parts].reverse().find((p) => !p.surface);
+    // With a merge scope, the rib goes on the newest of the chosen parts (and joins only those).
+    const sc = feature.mergeScope !== undefined ? this.scopeOf(feature) : null;
+    if (sc && "error" in sc) return sc.error;
+    if (sc?.warning) this.warnings[feature.id] = sc.warning;
+    const part = sc ? sc.parts[sc.parts.length - 1] : [...this.parts].reverse().find((p) => !p.surface);
     if (!part) return "There's no part to add a rib to yet.";
     const frame = planeFrame(sketch.sketch.plane);
     const data = sketch.sketch.data;
@@ -5631,6 +5717,11 @@ export class GeometryEngine {
         }
       }
       if (!rib) return "Draw the rib as straight lines (not construction) in the sketch.";
+      if (sc) {
+        const r = this.applyScoped({ ...feature, operation: "add" }, rib, sc.parts, partCounter, [], null, () => rib!.clone());
+        if (typeof r === "number") made(r);
+        return typeof r === "string" ? r : null;
+      }
       const result = part.shape.fuse(rib);
       part.shape.delete();
       part.shape = result;
@@ -6001,14 +6092,26 @@ export class GeometryEngine {
           release();
           return { error: `The part ${source.name} belonged to no longer exists.` };
         }
-        if (source.apart && !part.surface) {
+        // A merge scope (the pattern's own, else the feature's): its copies change only those parts.
+        const scopeIds = feature.mergeScope ?? source.mergeScope;
+        let only: BuiltPart[] | undefined;
+        if (scopeIds !== undefined && !part.surface && tool.operation !== "new") {
+          const sc = this.scopeOf(feature.mergeScope ? feature : source, scopeIds);
+          if ("error" in sc) {
+            release();
+            return { error: feature.mergeScope ? sc.error : `${source.name}: ${sc.error}` };
+          }
+          if (sc.warning) this.warnings[feature.id] = sc.warning;
+          only = sc.parts;
+        }
+        if ((source.apart || only) && !part.surface) {
           const copies = placements.map((place) => place(tool.shape.clone()));
           try {
             if (tool.operation === "remove") {
               // Each copy cuts every solid part it reaches.
               for (const copy of copies) {
                 const box = boundsOf(copy);
-                for (const p of this.parts) {
+                for (const p of only ?? this.parts) {
                   if (p.surface || plan.removed.has(p.id)) continue;
                   const now = working.get(p.id) ?? p.shape;
                   if (!boxesOverlap(boundsOf(now), box)) continue;
@@ -6035,7 +6138,8 @@ export class GeometryEngine {
               }
             } else {
               // Copies of an Add join what they touch, or are parts of their own (as the feature itself does).
-              const order = [part, ...[...this.parts].reverse().filter((p) => p !== part && !p.surface)];
+              const home = only && !only.includes(part) ? only[only.length - 1] : part;
+              const order = [home, ...[...(only ?? this.parts)].reverse().filter((p) => p !== home && !p.surface)];
               const split = copies.map((c) => solidsOf(c));
               const pieces = copies.flatMap((c, i) => (split[i].length > 1 ? split[i] : [c]));
               try {

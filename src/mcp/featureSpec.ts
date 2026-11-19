@@ -102,6 +102,22 @@ export const KIND_KEYS: Record<FeatureKind, string[]> = {
 export const MAX_PATTERN = 100;
 export const MAX_PATTERN_TOTAL = 400;
 
+/** Kinds that take "merge_with" (Onshape's Merge scope). */
+const MERGE_KINDS: FeatureKind[] = ["extrude", "revolve", "sweep", "loft", "hole", "linear_pattern", "circular_pattern", "mirror"];
+
+/** "merge_with": the only parts an Add joins / a Remove or Intersect cuts; "all" (or [] / null) = every part it reaches. */
+function mergeWith(f: Feature, a: Obj, ctx: SpecContext) {
+  if (!has(a, "merge_with") && a.merge_with !== null) return;
+  const v = a.merge_with;
+  if (v === null || v === "all" || (Array.isArray(v) && v.length === 0)) {
+    delete f.mergeScope;
+    return;
+  }
+  if (f.operation === "new" && f.type !== "hole" && !["linearPattern", "circularPattern", "mirror"].includes(f.type))
+    throw new InputError('"merge_with" is for Add, Remove and Intersect (a New feature makes parts of its own). Give "operation" too, or leave "merge_with" out.');
+  f.mergeScope = [...new Set(list(v, "merge_with").map((r, i) => ctx.session.part(ctx.parts, r, `merge_with[${i}]`).id))];
+}
+
 /** Which kinds have New / Add / Remove / Intersect. */
 const HAS_OPERATION: FeatureKind[] = ["extrude", "revolve", "sweep", "loft", "box", "cylinder", "sphere"];
 
@@ -536,7 +552,7 @@ const END_OF = { blind: "blind", symmetric: "symmetric", through_all: "throughAl
 /** Set up (or change) any other feature from Claude's settings. */
 export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecContext): void {
   const common = ctx.editing ? ["feature", "name", "suppressed"] : ["type", "name"];
-  noExtras(a, [...common, ...(HAS_OPERATION.includes(kind) ? ["operation"] : []), ...KIND_KEYS[kind]], `${kind}`);
+  noExtras(a, [...common, ...(HAS_OPERATION.includes(kind) ? ["operation"] : []), ...(MERGE_KINDS.includes(kind) ? ["merge_with"] : []), ...KIND_KEYS[kind]], `${kind}`);
   if (has(a, "operation")) f.operation = oneOf(a.operation, OPERATIONS, "operation") as Operation;
 
   switch (kind) {
@@ -1103,6 +1119,7 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
       break;
     }
   }
+  if (MERGE_KINDS.includes(kind)) mergeWith(f, a, ctx);
   if (has(a, "name")) f.name = text(a.name, "name").slice(0, 80);
   if (ctx.editing && has(a, "suppressed")) f.suppressed = bool(a.suppressed, "suppressed");
 }

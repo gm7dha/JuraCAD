@@ -765,7 +765,7 @@ function PartsList({
     }
     // A Composite part or a part pattern open: the part is added to it (or taken off).
     const open = st().editing?.draft;
-    if (open && (open.type === "composite" || open.pattern?.of === "part")) {
+    if (open && (open.type === "composite" || open.pattern?.of === "part" || open.mergeScopePicking)) {
       st().toggleDraftPart(id);
       return;
     }
