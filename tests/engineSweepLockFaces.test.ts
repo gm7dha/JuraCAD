@@ -9,6 +9,7 @@ import type { Feature, SweepOptions } from "../src/model/types";
 import { addCircle } from "../src/sketch/ops";
 import { emptySketch } from "../src/sketch/types";
 import { loadOpenCascade, feature, sketchFeature, rectSketch, extrudeFeature } from "./support/engineHelpers";
+import { polySketch } from "./support/frameSketch";
 
 beforeAll(loadOpenCascade);
 
@@ -110,5 +111,79 @@ describe("Lock profile faces", () => {
     const some = sides.filter((f) => Math.abs(f.ref.kind === "face" ? f.ref.normal![0] : 0) > 0.5);
     const off = sweep(prof.id, top, { lockFaces: some });
     expect(build([box, prof, off]).featureErrors[off.id]).toMatch(/edges of those faces/);
+  });
+});
+
+describe("Lock profile faces: placing and following (review)", () => {
+  const boxTop = () => {
+    const box = feature("box", { width: 40, depth: 30, height: 10 });
+    const part = build([box]).parts[0];
+    const top = part.edgeRefs.filter((e: EdgeRef) => Math.abs(e.a[2] - 10) < 1e-6 && Math.abs(e.b[2] - 10) < 1e-6).map((ref) => ({ partId: box.id, ref }));
+    const sides = part.faceRefs.filter((f: FaceRef) => Math.abs(f.center[2] - 5) < 1e-6).map((ref) => ({ partId: box.id, ref }));
+    return { box, top, sides };
+  };
+  const zRange = (r: { parts: { id: string; vertices: Float32Array }[] }, id: string) => {
+    const v = r.parts.find((p) => p.id === id)!.vertices;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let k = 2; k < v.length; k += 3) [lo, hi] = [Math.min(lo, v[k]), Math.max(hi, v[k])];
+    return [lo, hi];
+  };
+
+  it("keeps a lopsided profile the way up it's drawn, round a box's corners", () => {
+    const { box, top, sides } = boxTop();
+    // A 2 × 2 square standing on the y = 0 top edge, turned 0.4 rad: wholly above the top.
+    const c = Math.cos(0.4);
+    const s = Math.sin(0.4);
+    const sq = [[0, 0], [2, 0], [2, 2], [0, 2]].map(([x, y]) => [x * c - y * s, 10 + x * s + y * c] as [number, number]);
+    const prof = sketchFeature({ kind: "face", origin: [20, 0, 0], u: [0, 1, 0], v: [0, 0, 1], label: "x = 20" }, polySketch(sq));
+    const locked = sweep(prof.id, top, { lockFaces: sides });
+    const r = build([box, prof, locked]);
+    expect(r.featureErrors).toEqual({});
+    expect(volOf(locked.id).geometryValid).toBe(true);
+    const [lo, hi] = zRange(r, locked.id);
+    expect(lo).toBeGreaterThan(10 - 1e-3);
+    expect(hi).toBeCloseTo(10 + 2 * s + 2 * c, 2);
+  });
+
+  it("goes round a filleted box's top, across flat and round faces", () => {
+    const box = feature("box", { width: 40, depth: 30, height: 10 });
+    const p0 = build([box]).parts[0];
+    const upright = p0.edgeRefs.filter((e: EdgeRef) => Math.abs(e.a[2] - e.b[2]) > 5).map((ref) => ({ partId: box.id, ref }));
+    const fillet: Feature = { ...feature("fillet", { radius: 5 }, "add"), picks: upright };
+    const part = build([box, fillet]).parts[0];
+    const top = part.edgeRefs.filter((e: EdgeRef) => Math.abs(e.mid[2] - 10) < 1e-6).map((ref) => ({ partId: box.id, ref }));
+    const sides = part.faceRefs.filter((f: FaceRef) => Math.abs(f.center[2] - 5) < 1e-3).map((ref) => ({ partId: box.id, ref }));
+    expect(sides.length).toBe(8);
+    const prof = sketchFeature({ kind: "face", origin: [20, 0, 0], u: [0, 1, 0], v: [0, 0, 1], label: "x = 20" }, rectSketch(-1, 9, 2, 2));
+    const locked = sweep(prof.id, top, { lockFaces: sides });
+    expect(build([box, fillet, prof, locked]).featureErrors).toEqual({});
+    const v = volOf(locked.id);
+    expect(v.geometryValid).toBe(true);
+    // Pappus: the square's middle runs round the rounded rectangle.
+    expect(Math.abs(v.exactVolume! - 4 * (2 * (40 + 30) - 8 * 5 + 2 * Math.PI * 5))).toBeLessThan(2e-3);
+  });
+
+  it("runs a groove round a cylinder's rim exactly, and starts part way along an open path", () => {
+    const base = sketchFeature({ kind: "default", name: "Top" }, addCircle(emptySketch(), { x: 0, y: 0 }, 10).sketch);
+    const rod = extrudeFeature(base.id, 30);
+    const part = build([base, rod]).parts[0];
+    const rim = part.edgeRefs.filter((e: EdgeRef) => e.curve !== "LINE" && e.mid[2] > 29).map((ref) => ({ partId: rod.id, ref }));
+    const round = part.faceRefs.filter((f: FaceRef) => f.surface !== "PLANE").map((ref) => ({ partId: rod.id, ref }));
+    // Its plane crosses the rim right where the circle starts.
+    const prof = sketchFeature({ kind: "face", origin: [0, 0, 0], u: [1, 0, 0], v: [0, 0, 1], label: "xz" }, rectSketch(9, 29, 2, 2));
+    const locked = sweep(prof.id, rim, { lockFaces: round });
+    expect(build([base, rod, prof, locked]).featureErrors).toEqual({});
+    expect(Math.abs(volOf(locked.id).exactVolume! - 4 * 2 * Math.PI * 10)).toBeLessThan(2e-3);
+    // An L of two top edges of a box, the profile halfway along the first.
+    const { box, top, sides } = boxTop();
+    const ell = top.filter((e) => e.ref.kind === "edge" && (Math.abs(e.ref.mid[1]) < 1e-6 || Math.abs(e.ref.mid[0] - 40) < 1e-6));
+    const mid = sketchFeature({ kind: "face", origin: [20, 0, 0], u: [0, 1, 0], v: [0, 0, 1], label: "x = 20" }, rectSketch(-1, 9, 2, 2));
+    const along = sweep(mid.id, ell, { lockFaces: sides });
+    expect(build([box, mid, along]).featureErrors).toEqual({});
+    const plain = sweep(mid.id, ell);
+    const lockedVolume = volOf(along.id).exactVolume!;
+    build([box, mid, plain]);
+    expect(Math.abs(lockedVolume - volOf(plain.id).exactVolume!)).toBeLessThan(1e-3);
   });
 });

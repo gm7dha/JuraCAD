@@ -33,6 +33,10 @@ export const LOCK_FACES_PATH =
 const CORNER_TWIST =
   "At a sharp corner of the path the locked faces turn differently from the path itself, so the profile can't carry on round it in one piece. Round that corner of the part first (a fillet), or lock to fewer faces.";
 
+/** Where the path passes smoothly from one locked face to another that meets it at an angle. */
+const FACES_TURN =
+  "Where the path passes from one locked face to the next, the faces meet at an angle, so the profile would have to jump there. Round that edge of the part first (a fillet), or lock to fewer faces.";
+
 /** How sharp a turn between two edges counts as a corner (1°). */
 const CORNER = Math.cos(Math.PI / 180);
 
@@ -51,9 +55,14 @@ interface Walked {
 /** The path's edges in order along it, each the way it's walked (from the wire's start). */
 function walkedEdges(spine: Wire): Walked[] {
   const left = spine.edges.map((edge) => {
+    // An edge's own curve runs from its start to its end whichever way the edge is turned in the wire; `forward`
+    // below is about the edge as it's turned, so a reversed edge's ends and directions are swapped here first.
     const a = vec(edge.startPoint);
     const b = vec(edge.endPoint);
-    return { edge, a, b, ta: unit(vec(edge.tangentAt(0))), tb: unit(vec(edge.tangentAt(1))), forward: true };
+    const ta = unit(vec(edge.tangentAt(0)));
+    const tb = unit(vec(edge.tangentAt(1)));
+    if (edge.orientation === "backward") return { edge, a: b, b: a, ta: mul(tb, -1), tb: mul(ta, -1), forward: true };
+    return { edge, a, b, ta, tb, forward: true };
   });
   const out: Walked[] = [];
   let at = vec(spine.startPoint);
@@ -75,14 +84,19 @@ function walkedEdges(spine: Wire): Walked[] {
   return out;
 }
 
-/** The path cut at its sharp corners into smooth runs (a closed loop started at a corner). */
-function smoothRunsOf(walked: Walked[], closed: boolean): Walked[][] {
+/**
+ * The path cut into runs at its sharp corners and wherever it passes onto another locked face (a closed loop started
+ * at a corner or a change of face), so each run lies on one face: a flat one's runs keep a fixed direction, a curved
+ * one's follow it.
+ */
+function smoothRunsOf(walked: Walked[], closed: boolean, faceOfEdge: (w: Walked) => Face | null): Walked[][] {
+  const breaks = (a: Walked, b: Walked) => dot(a.tb, b.ta) < CORNER || faceOfEdge(a) !== faceOfEdge(b);
   const runs: Walked[][] = [[walked[0]]];
   for (let i = 1; i < walked.length; i++) {
-    if (dot(walked[i - 1].tb, walked[i].ta) < CORNER) runs.push([walked[i]]);
+    if (breaks(walked[i - 1], walked[i])) runs.push([walked[i]]);
     else runs[runs.length - 1].push(walked[i]);
   }
-  if (closed && runs.length > 1 && dot(walked[walked.length - 1].tb, walked[0].ta) >= CORNER) {
+  if (closed && runs.length > 1 && !breaks(walked[walked.length - 1], walked[0])) {
     // The loop's start isn't a corner: the last run carries on into the first.
     const last = runs.pop()!;
     runs[0] = [...last, ...runs[0]];
@@ -118,8 +132,13 @@ function runWire(run: Walked[]): Wire {
   return assembleWire(edges);
 }
 
-/** A pipe along `spine` with the section kept at the same angle to the faces (null when OpenCascade can't make it sound). */
-function lockedPipe(section: Wire, spine: Wire, support: unknown, flat: Vec3 | null): Shape3D | null {
+/**
+ * A pipe along `spine` (edges of `face`) with the section kept at the same angle to the face (null when OpenCascade
+ * can't make it sound). The face alone is the support: given several faces, OpenCascade can read an edge's curve on the
+ * wrong one and fail (a fillet's arc between a box's flat sides).
+ */
+function lockedPipe(section: Wire, spine: Wire, face: Face): Shape3D | null {
+  const flat = flatNormal(face);
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const oc = getOC() as any;
   const pipe = new oc.BRepOffsetAPI_MakePipeShell(spine.wrapped);
@@ -131,7 +150,7 @@ function lockedPipe(section: Wire, spine: Wire, support: unknown, flat: Vec3 | n
       const d = new oc.gp_Dir(...flat);
       made.push(d);
       pipe.SetMode(d);
-    } else if (!pipe.SetMode(support)) throw new Error(LOCK_FACES_PATH);
+    } else if (!pipe.SetMode(face.wrapped)) throw new Error(LOCK_FACES_PATH);
     pipe.Add(section.wrapped, false, false);
     pipe.Build();
     if (!pipe.IsDone() || !pipe.MakeSolid()) return null;
@@ -213,12 +232,17 @@ function profilePlace(runs: Wire[], faces: (Face | null)[], prof: SweepProfile):
         let lo = u0;
         let hi = u1;
         const sLo = side(prev);
-        for (let k = 0; k < 60; k++) {
-          const mid = (lo + hi) / 2;
-          const s = side(vec(w.pointAt(mid)));
-          if ((s <= 0) === (sLo <= 0)) lo = mid;
-          else hi = mid;
-        }
+        const sHi = side(q);
+        // A crossing right on a sample (the loop's own start, often) is that sample, not the far end of the step.
+        if (sLo === 0) hi = lo;
+        else if (sHi === 0) lo = hi;
+        else
+          for (let k = 0; k < 60; k++) {
+            const mid = (lo + hi) / 2;
+            const s = side(vec(w.pointAt(mid)));
+            if ((s < 0) === (sLo < 0)) lo = mid;
+            else hi = mid;
+          }
         const u = (lo + hi) / 2;
         const p = vec(w.pointAt(u));
         const d = dist(p, prof.centre);
@@ -240,22 +264,26 @@ function profilePlace(runs: Wire[], faces: (Face | null)[], prof: SweepProfile):
 export function sweepLockedToFaces(prof: SweepProfile, spine: Wire, faces: Face[]): Shape3D {
   if (!faces.length) throw new Error("Click the faces of the part to lock the profile to.");
   if (liesAlongPath(spine, prof.normal, prof.centre)) throw new Error(PROFILE_ALONG_PATH);
-  /* eslint-disable @typescript-eslint/no-explicit-any */
-  const oc = getOC() as any;
-  const builder = new oc.TopoDS_Builder();
-  const support = new oc.TopoDS_Compound();
-  builder.MakeCompound(support);
-  for (const f of faces) builder.Add(support, f.wrapped);
-  /* eslint-enable @typescript-eslint/no-explicit-any */
   const walked = walkedEdges(spine);
   const closed = spine.isClosed;
-  const runs = smoothRunsOf(walked, closed);
-  const runFaces = runs.map((run) => faceOf(run[0].edge, faces));
+  const edgeFaces = new Map(walked.map((w) => [w, faceOf(w.edge, faces)]));
+  const runs = smoothRunsOf(walked, closed, (w) => edgeFaces.get(w) ?? null);
+  const runFaces = runs.map((run) => edgeFaces.get(run[0]) ?? null);
   const wires = runs.map((run) => runWire(run));
   try {
-    if (runFaces.some((f) => !f) || walked.some((w) => !faceOf(w.edge, faces))) throw new Error(LOCK_FACES_PATH);
+    if (runFaces.some((f) => !f) || walked.some((w) => !edgeFaces.get(w))) throw new Error(LOCK_FACES_PATH);
     // Where the profile sits, and its frame there (the faces' normal is its reference).
-    const place = closed ? profilePlace(wires, runFaces, prof) : { run: 0, p: runs[0][0].a, t: runs[0][0].ta };
+    // An open path: where the profile crosses it (it may sit part way along), else its start, as before.
+    const start = { run: 0, p: runs[0][0].a, t: runs[0][0].ta };
+    let place = start;
+    if (closed) place = profilePlace(wires, runFaces, prof);
+    else {
+      try {
+        place = profilePlace(wires, runFaces, prof);
+      } catch {
+        place = start;
+      }
+    }
     const own = frameOn(runFaces[place.run]!, place.p, place.t);
     // The reach of the profile: the corners' legs are a share of it.
     let reach = 0;
@@ -273,7 +301,11 @@ export function sweepLockedToFaces(prof: SweepProfile, spine: Wire, faces: Face[
       const e = ends[i];
       const s = starts[next];
       // A loop that is one smooth run comes back to its start with no corner.
-      if (dot(e.t, s.t) >= CORNER) continue;
+      if (dot(e.t, s.t) >= CORNER) {
+        // Onto another face smoothly: the faces must meet smoothly there too, or the pieces wouldn't line up.
+        if (dot(e.d, s.d) < Math.cos((2 * Math.PI) / 180)) throw new Error(FACES_TURN);
+        continue;
+      }
       const k = cross(e.t, s.t);
       const sin = Math.hypot(...k);
       const angle = Math.atan2(sin, dot(e.t, s.t));
@@ -296,14 +328,14 @@ export function sweepLockedToFaces(prof: SweepProfile, spine: Wire, faces: Face[
       const pieces: Shape3D[] = [];
       try {
         if (runs.length === 1 && !corners.length) {
-          const piece = lockedPipe(square, wires[0], support, flatNormal(runFaces[0]!));
+          const piece = lockedPipe(square, wires[0], runFaces[0]!);
           if (!piece) throw new Error(FAILED);
           return piece;
         }
         runs.forEach((_, i) => {
           const section = placedSection(square, own, starts[i]);
           try {
-            const piece = lockedPipe(section, wires[i], support, flatNormal(runFaces[i]!));
+            const piece = lockedPipe(section, wires[i], runFaces[i]!);
             if (!piece) throw new Error(FAILED);
             pieces.push(piece);
           } finally {
@@ -334,8 +366,6 @@ export function sweepLockedToFaces(prof: SweepProfile, spine: Wire, faces: Face[
   } finally {
     release(...wires);
     walked.forEach((w) => w.edge.delete());
-    support.delete();
-    builder.delete();
   }
 }
 

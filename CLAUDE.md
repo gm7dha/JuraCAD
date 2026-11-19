@@ -554,15 +554,18 @@
   Lock profile faces (Onshape's): `sweepControl.lockFaces` (TopoPicks of one part's faces; picking "lockFaces" toggles them,
   `sweepClick`; Profile control "faces"; dependents via `sweepPartsUsed`) — only along `pathEdges` that are edges of those faces
   (sketch/curve paths refused, `LOCK_FACES_PATH`); no twist, no scale. `src/kernel/sweepFaces.ts` `sweepLockedToFaces`: the path's
-  edges walked in order (`walkedEdges`), cut into smooth runs at > 1° turns (a loop starts at a corner); each run a pipe-shell
+  edges walked in order (`walkedEdges`; a reversed edge's ends read as it's turned), cut into runs at > 1° turns and where the
+  path passes onto another locked face (a loop starts at one; a smooth change of face needs the faces to meet within 2°,
+  `FACES_TURN`), so each run lies on ONE face; each run a pipe-shell
   from the drawn profile placed by frames whose reference is the face's normal (`frameOn`, `placedSection`): a flat face = fixed
   binormal SetMode(gp_Dir) (the support mode throws "Adaptor3d_CurveOnSurface:EvalDN" on some planes' edges), a curved one
-  SetMode(TopoDS_Shape support = compound of the faces, curve-on-surface/Darboux); each sharp corner a plain RoundCorner pipe
+  SetMode(its own face — a compound of several fails on a fillet's arc between flat sides); each sharp corner a plain RoundCorner pipe
   over two short legs (≤ the profile's reach, ≤ half each run), refused when the faces don't turn with the path there
-  (`CORNER_TWIST`); all fused (`fuseInto`). Closed loops: the profile anywhere on them (`profilePlace`). Claude: sweep
+  (`CORNER_TWIST`); all fused (`fuseInto`). The profile anywhere on the path (`profilePlace`; open paths fall back to the start). Claude: sweep
   `lock_faces` (face choices of path_part, or {"part", "faces"}). Tests: tests/sweepLockFaces (pure), engineSweepLockFaces
   (a 2 × 2 lip round a 40 × 30 box's top edges = 2·((42·32 − 38·28) − 4(1 − π/4)) exactly, sound; a lip round a slanted cut's
-  ellipse kept on the cylinder (r ≥ 10) where a plain sweep tips 1 mm in; refusals), mcpSweepMore.
+  ellipse kept on the cylinder (r ≥ 10) where a plain sweep tips 1 mm in; refusals; a lopsided profile stays the way up drawn;
+  a filleted box's top and a cylinder's rim = Pappus; a profile part way along an open path), mcpSweepMore.
 - Loft (Onshape's): plain lofts (no `Feature.loft`) take the old `loftSketches`/`loftSurface` path untouched. `Feature.loft`
   (`LoftDef`, types.ts; pure helpers `src/model/loft.ts`, parsed by `parseLoftDef`): `profiles` (sections in order — `{sketch,
   areas?, turn?}` (one picked area), `{face}` (a flat face, its outer wire), `{point}` (a `GeomPick`: sketch point, part corner or
