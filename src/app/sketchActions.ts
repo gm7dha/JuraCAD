@@ -1,4 +1,6 @@
 /** Actions used by both the sketch toolbar and keyboard shortcuts. */
+import { patternGrid, readSecondDirection } from "../sketch/patternGrid";
+import { useEditToolOptions } from "../sketch/editToolOptions";
 import { useStore, type SketchTool } from "../model/store";
 import { applyRelation, relationMayTakeAWhile, RELATION_LABELS, setDimensionDriven, setMeasureTo, toggleConstruction, type MeasureTo, type RelationTool } from "../sketch/ops";
 import { patternCurves, readPatternSettings, readTransformSettings } from "../sketch/tools";
@@ -35,13 +37,22 @@ export function makeSketchPattern(): boolean {
   if (!data || !s.sketch) return false;
   const curves = s.sketch.selection.filter((id) => data.curves.some((c) => c.id === id));
   const opts = readPatternSettings(data, s.sketch);
-  const r = typeof opts === "string" ? { sketch: data, error: opts, curveIds: [] } : patternCurves(data, curves, opts);
+  // Linear with a second direction ticked: rows × columns.
+  const second = typeof opts !== "string" && opts.kind === "linear" ? readSecondDirection(useEditToolOptions.getState()) : null;
+  const r =
+    typeof opts === "string"
+      ? { sketch: data, error: opts, curveIds: [] }
+      : typeof second === "string"
+        ? { sketch: data, error: second, curveIds: [] }
+        : second
+          ? patternGrid(data, curves, opts, second)
+          : patternCurves(data, curves, opts);
   if (r.error) {
     s.setSketchMessage(r.error, "error");
     return false;
   }
   s.updateSketch(r.sketch, { record: true, selection: [] });
-  const copies = Math.round(s.sketch.patternCount) - 1;
+  const copies = Math.round(s.sketch.patternCount) * (second && typeof second !== "string" ? Math.round(second.count) : 1) - 1;
   s.setSketchMessage(`Made ${copies} ${copies === 1 ? "copy" : "copies"}. Click more shapes to make another pattern.`, "info");
   viewportApi.sketch?.refreshPreview();
   return true;

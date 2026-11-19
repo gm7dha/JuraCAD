@@ -131,7 +131,7 @@ export function addPolygon(
  * point stays as a "virtual sharp" so dimensions to it, and the lines'
  * length dimensions, keep working.
  */
-export function filletCorner(original: SketchData, pointId: string, radiusText: string): EditResult & { arcId: string } {
+export function filletCorner(original: SketchData, pointId: string, radiusText: string, equalTo?: string): EditResult & { arcId: string } {
   const fail = (error: string) => ({ sketch: original, arcId: "", error });
   const r = evaluate(radiusText);
   if (!r.ok) return fail(r.error);
@@ -142,7 +142,7 @@ export function filletCorner(original: SketchData, pointId: string, radiusText: 
     (c): c is SketchLine | SketchArc => !c.construction && ((c.type === "line" && (c.p1 === pointId || c.p2 === pointId)) || (c.type === "arc" && (c.start === pointId || c.end === pointId))),
   );
   if (meeting.length === 2 && meeting.some((c) => c.type === "arc")) {
-    const made = roundCurvedCorner(s, pointId, meeting[0], meeting[1], r.value, radiusText);
+    const made = roundCurvedCorner(s, pointId, meeting[0], meeting[1], r.value, radiusText, equalTo);
     return "error" in made ? fail(made.error) : made;
   }
   const lines = meeting.filter((c): c is SketchLine => c.type === "line");
@@ -178,7 +178,7 @@ export function filletCorner(original: SketchData, pointId: string, radiusText: 
     con("pointOnLine", [pointId, L2.id]),
     con("tangent", [L1.id, arcId]),
     con("tangent", [L2.id, arcId]),
-    con("radius", [arcId], radiusText),
+    sizeOfRound(s, arcId, radiusText, equalTo),
   );
   const changed: SketchData = {
     points: [...s.points.map((p) => (p.id === pointId ? { ...p, standalone: true } : p)), t1, t2, c],
@@ -188,6 +188,18 @@ export function filletCorner(original: SketchData, pointId: string, radiusText: 
   const solved = solveSketch(changed);
   if (!solved.ok) return fail("Rounding this corner would conflict with the sketch's other constraints.");
   return { sketch: solved.sketch, arcId };
+}
+
+/**
+ * A new round's size: its radius dimension, or — rounding several corners one after another with the same
+ * radius (`equalTo`, an earlier round's arc) — Equal to that one, so changing one changes them all (as Onshape).
+ */
+export function sizeOfRound(s: SketchData, arcId: string, radiusText: string, equalTo?: string): SketchConstraint {
+  const earlier = equalTo ? curveById(s, equalTo) : undefined;
+  // Only while the earlier round is still that size (its dimension may have been changed since).
+  const r = evaluate(radiusText);
+  const same = earlier?.type === "arc" && r.ok && Math.abs(radiusOf(s, earlier) - r.value) <= 1e-6 * Math.max(1, r.value);
+  return same ? con("equal", [equalTo!, arcId]) : con("radius", [arcId], radiusText);
 }
 
 /**
@@ -248,6 +260,7 @@ function roundCurvedCorner(
   k2: SketchLine | SketchArc,
   radius: number,
   radiusText: string,
+  equalTo?: string,
 ): { sketch: SketchData; arcId: string } | { error: string } {
   const P = pointPos(s, pointId);
   type Side = { kind: "line"; a: P2; d: P2 } | { kind: "circle"; c: P2; r: number };
@@ -339,7 +352,7 @@ function roundCurvedCorner(
     con(k2.type === "line" ? "pointOnLine" : "pointOnCircle", [pointId, k2.id]),
     tangentTo(k1, T1),
     tangentTo(k2, T2),
-    con("radius", [arcId], radiusText),
+    sizeOfRound(s, arcId, radiusText, equalTo),
   );
   const changed: SketchData = {
     points: [...s.points.map((p) => (p.id === pointId ? { ...p, standalone: true } : p)), p1, p2, pc],
