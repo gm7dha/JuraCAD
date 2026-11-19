@@ -2358,6 +2358,13 @@ kbd {
   background: var(--warn-soft);
 }
 
+/* What a shape being drawn is snapping to (H, V, ∥, ⊥, T…), by the pointer: never in the way of a click. */
+.sketch-overlay > .inference-badge {
+  pointer-events: none;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
 .constraint-badge.failing {
   border-color: var(--error);
   background: var(--error-soft);

@@ -128,7 +128,8 @@ function sketchShortcut(e: KeyboardEvent): boolean {
     runSketchKey(more);
     return true;
   }
-  if (e.shiftKey) return false;
+  // Shift+A while drawing lines: carry on with an arc from the last end (and back), as in Onshape.
+  if (e.shiftKey) return e.key.toLowerCase() === "a" && !!viewportApi.sketch?.toggleLineArc();
   const tools: Record<string, Parameters<typeof setSketchTool>[0]> = {
     l: "line",
     r: "rectangle",
