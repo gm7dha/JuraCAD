@@ -161,6 +161,26 @@
   `src/model/varComplete.ts` `suggestionsAt`/`completeWith`; ↑↓, Tab/Enter take one — Enter on a name typed in full
   sets the size —, a choice or Esc hides the list until more is typed; nothing until typed).
   Tests: tests/sketchClipboard (pure), sketchClipboardStore (controller), varComplete.
+  Editing tools (Onshape's): Chamfer (`src/sketch/sketchChamfer.ts` `chamferCorner`: two lines at a corner point; modes equal /
+  two / angle (`ChamferOptions`); the corner stays a virtual sharp (pointOnLine on both lines, their `length` dims → `distance` to
+  it, as filletCorner) and the cut-off stretches are construction lines sharp → chamfer ends carrying the sizes (`length` on the
+  first, `equal` / `length` / `angle` [sign, −1, 1] to the chamfer); `cornerOfLines` joins two picked lines that don't meet at
+  their crossing first, keeping the clicked parts). Round between two curves (`src/sketch/filletCurves.ts` `filletBetween`:
+  lines/arcs; sharing an end → filletCorner; else the offsets' crossing nearest both clicks, each curve's end on the round's
+  side of its click moved to the touch point, length/arcLength/arcAngle dims on them dropped, unused ends tidied). Done again
+  with the same size while the tool stays on (controller `lastEdge`, reset on tool change), a round is `equal` to the first
+  (`sizeOfRound` / `equalTo` in filletCorner) and an Equal chamfer's size line `equal` to the first's — one dimension sizes
+  them all. Slot on a curve (tool "slotAlong", `src/sketch/slotAlong.ts`): offsetCurves/offsetWavy both sides at
+  `halfWidthText`, the two offset constraints merged into ONE (its id returned), round end caps centred on the run's end points
+  with `tangent` to each copy (open runs only), the source made construction. Drag-trim: in Trim a press starts
+  `trimStroke`; let go unmoved = the old click trim, dragged = `trimAlong` (`src/sketch/trimStroke.ts`: the path as a
+  CurveParam, `crossings` with every curve in path order, each place's curve found again after each trim) — one undo step;
+  touch: `touchDragStarts` is true for trim, the lift's press just ends the path. Elliptical arc (tool "ellipticalArc",
+  `src/sketch/ellipticalArc.ts`: centre, axis end, start — sets the width —, end; an ellipse with start/end, short way round).
+  Linear pattern's second direction (rows × columns; `src/sketch/patternGrid.ts` `patternGrid` = patternCurves, then all of
+  it again along the second; previewed). Settings in `src/sketch/editToolOptions.ts` (own zustand store, session only; panel
+  `src/app/SketchEditOptions.tsx`, which also has the tools' icons). Not done: editing a pattern's count after it's made;
+  chamfers next to arcs; rounds with circles. Tests: tests/sketchEditTools, sketchPatternGrid (pure), sketchEditToolsStore.
   Move / copy handles (Onshape's sketch Transform): pure `src/sketch/transformSelection.ts` — `transformSelection(s, ids,
   {dx, dy, angle, scale}, about?)` (about = `selectionCentre`: the box middle of the picked shapes as drawn — `curveOutline`: arcs
   by their curve, circles' full size, splines' paths; a centre or axis point counts only when picked itself): points
