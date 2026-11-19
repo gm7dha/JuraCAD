@@ -29,6 +29,7 @@ import type { SketchData } from "../sketch/types";
 import { partCopiesPlan } from "../assembly/assembly";
 import { studiosOf } from "./studios";
 import { isPatternFeature, isSolidFeature } from "./features";
+import { takesMergeScope } from "./mergeScope";
 import type { Drawing, Feature, JuraCADDocument } from "./types";
 import { sweepFeaturesUsed, sweepPartsUsed } from "./sweepOptions";
 
@@ -209,7 +210,8 @@ function usesOf(f: Feature): Uses {
   if (f.simplifyParts?.length) lists.push({ what: "part it tidies", many: "parts it tidies", parts: f.simplifyParts });
   if (f.compositeParts?.length) lists.push({ what: "part it groups", many: "parts it groups", parts: f.compositeParts, least: 2 });
   // Merge scope: losing some of its parts leaves the rest; losing all of them, it goes (it would change other parts).
-  if (f.mergeScope?.length) lists.push({ what: "part it merges with or cuts", many: "parts it merges with or cuts", parts: f.mergeScope });
+  // (Only while it uses one: a scope left on a feature switched to New is ignored by the engine.)
+  if (f.mergeScope?.length && takesMergeScope(f)) lists.push({ what: "part it merges with or cuts", many: "parts it merges with or cuts", parts: f.mergeScope });
   if (f.frame || f.trimFrame || f.gusset) {
     // Frames: the path's sketches (a list), the profile's sketch; Trim frame's members (a list) and target; a gusset's two members.
     const fu = frameUses(f);
@@ -268,7 +270,7 @@ function makesSolidPart(f: Feature, makers: Set<string>): boolean {
 function usesLatestPart(f: Feature): boolean {
   if (f.suppressed || isSurfaceFeature(f) || f.operation === "new" || !LATEST_USERS.has(f.type)) return false;
   if (f.apart && (f.operation === "add" || f.operation === "remove")) return false;
-  if (f.mergeScope) return false;
+  if (f.mergeScope && takesMergeScope(f)) return false;
   if (f.intersectAll && f.operation === "intersect") return false;
   return true;
 }

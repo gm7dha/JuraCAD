@@ -1,4 +1,4 @@
-import { toggleScopePart } from "./mergeScope";
+import { scopePickingAfter, toggleScopePart } from "./mergeScope";
 import { sketchFromDxf, type LinkedSketch } from "../link/receive";
 import { clickRadiusPoint, tidyRadiusPoints } from "./variableFillet";
 import { defaultTemplate } from "../drawing/templateStorage";
@@ -1351,7 +1351,8 @@ export const useStore = create<AppState>((set, get) => {
       set((s) => {
         if (!s.editing) return {};
         const d = s.editing.draft;
-        const next = patch.picks && d.variableFillet ? tidyRadiusPoints({ ...d, ...patch }) : { ...d, ...patch };
+        // (Another box taking clicks stops the merge-scope box picking: one box picks at a time.)
+        const next = scopePickingAfter(patch, patch.picks && d.variableFillet ? tidyRadiusPoints({ ...d, ...patch }) : { ...d, ...patch });
         // Move / copy: a change is a step of its own undo — except only choosing what a click picks next.
         const { picking: _a, ...was } = d.transform ?? ({} as NonNullable<Feature["transform"]>);
         const { picking: _b, ...now } = next.transform ?? ({} as NonNullable<Feature["transform"]>);

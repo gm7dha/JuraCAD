@@ -4,7 +4,8 @@ import { findDependents, withoutGone } from "../src/model/dependents";
 import { parseFeatures, picksPartsBefore, withoutPicking } from "../src/model/document";
 import { copyFeatures, pasteFeatures } from "../src/model/featureClipboard";
 import { featureForEngine } from "../src/kernel/buildInput";
-import { resolveScope, scopeHeading, scopeMessage, setMergeWithAll, takesMergeScope, toggleScopePart } from "../src/model/mergeScope";
+import { resolveScope, scopeHeading, scopeMessage, scopePickingAfter, setMergeWithAll, takesMergeScope, toggleScopePart } from "../src/model/mergeScope";
+import { areaClickMode } from "../src/sketch/areaClicks";
 import type { Feature } from "../src/model/types";
 import { emptySketch } from "../src/sketch/types";
 
@@ -99,6 +100,9 @@ describe("merge scope in files, Delete with dependents and copy / paste", () => 
     // An old-style cut (no apart) with a scope doesn't follow "the latest part".
     const old = [feat("b1", "box"), feat("b2", "box"), sketch("s"), feat("cut", "extrude", { operation: "remove", sketchRef: "s", mergeScope: ["b1"] })];
     expect(findDependents(old, ["b2"]).dependents).toEqual([]);
+    // A scope left on a feature switched to New isn't used, so it doesn't make the feature a dependent.
+    const switched = [feat("b1", "box"), sketch("s"), feat("cut", "extrude", { operation: "new", sketchRef: "s", apart: true, mergeScope: ["b1"] })];
+    expect(findDependents(switched, ["b1"]).dependents).toEqual([]);
   });
 
   it("pasted copies keep scope parts that are there, and drop those that aren't", () => {
@@ -110,5 +114,26 @@ describe("merge scope in files, Delete with dependents and copy / paste", () => 
     expect(here.pasted.find((f) => f.type === "extrude")!.mergeScope).toEqual(["b1"]);
     const elsewhere = pasteFeatures([], c.clip, { allIds: [], makeId: (p) => `${p}_${++n}` });
     expect(elsewhere.pasted.find((f) => f.type === "extrude")!.mergeScope).toEqual([]);
+  });
+});
+
+describe("merge scope: one box picks at a time", () => {
+  const picking = feat("e", "extrude", { operation: "add", sketchRef: "s", extrude: { end: "blind", flip: false }, mergeScope: ["b1"], mergeScopePicking: true });
+  it("another box taking clicks (or an Up to face end) stops the scope box picking", () => {
+    const apply = (patch: Partial<Feature>) => scopePickingAfter(patch, { ...picking, ...patch });
+    expect(apply({ extrude: { end: "upToFace", flip: false } }).mergeScopePicking).toBeUndefined();
+    expect(apply({ loft: { profiles: [], picking: "guide" } as unknown as Feature["loft"] }).mergeScopePicking).toBeUndefined();
+    expect(apply({ pattern: { sources: [], axis: "x", flip: false } }).mergeScopePicking).toBeUndefined();
+    // Its own changes, a name or a blind depth leave it picking.
+    expect(apply({ mergeScope: ["b1", "b2"] }).mergeScopePicking).toBe(true);
+    expect(apply({ name: "Boss" }).mergeScopePicking).toBe(true);
+    expect(apply({ extrude: { end: "symmetric", flip: false } }).mergeScopePicking).toBe(true);
+    expect(apply({ operation: "new" }).mergeScopePicking).toBeUndefined();
+    const plain = feat("e", "extrude", { operation: "add" });
+    expect(scopePickingAfter({ name: "x" }, plain)).toBe(plain);
+  });
+  it("sketch areas aren't clickable while it picks parts", () => {
+    expect(areaClickMode(picking)).toBe("off");
+    expect(areaClickMode({ ...picking, mergeScopePicking: undefined })).toBe("first");
   });
 });

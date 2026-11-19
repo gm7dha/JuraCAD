@@ -82,3 +82,20 @@ export function scopeMessage(f: Feature, picked: number, lost: number): { error?
   if (lost > 0) return { warning: `${lost} of the ${picked} parts it was to ${verb} no longer ${lost === 1 ? "exists" : "exist"}, so ${lost === 1 ? "it was" : "they were"} left out.` };
   return {};
 }
+
+/** Draft fields whose own boxes take clicks in the view (a Loft's sections, a Sweep's face or path edges, a pattern's direction, a mirror's plane). */
+const OTHER_PICKERS = ["loft", "sweepControl", "pattern", "mirror", "pathEdges"] as const;
+
+/**
+ * One box takes clicks at a time: a dialog change that sets up another box's
+ * picking (or an Extrude's "Up to…" end) stops the merge-scope box picking.
+ * `next` = the draft with `patch` applied; the same object when nothing more changes.
+ */
+export function scopePickingAfter(patch: Partial<Feature>, next: Feature): Feature {
+  if (!next.mergeScopePicking || "mergeScopePicking" in patch || "mergeScope" in patch) return next;
+  // (Switched to New, or to a pattern of parts: the box is gone, so it can't go on taking clicks.)
+  const other = !takesMergeScope(next) || OTHER_PICKERS.some((k) => k in patch) || (!!patch.extrude && /^upTo(Face|Vertex|Part)$/.test(patch.extrude.end ?? ""));
+  if (!other) return next;
+  const { mergeScopePicking: _p, ...rest } = next;
+  return rest;
+}
