@@ -154,4 +154,17 @@ describe("Merge scope", () => {
     near(v.b1, 2240 - 400 - 40 - 8);
     near(v.b3, 1000);
   });
+
+  it("Thicken with a scope it doesn't touch makes new parts numbered on, with no name twice", () => {
+    const first = build(boxes());
+    const refs = first.parts[0].faceRefs;
+    const face = (z: number) => ({ partId: "b1", ref: refs[refs.findIndex((f) => f.surface === "PLANE" && f.normal[2] * z > 0.99)] });
+    const thicken: Feature = { id: "th", name: "th", type: "thicken", operation: "add", suppressed: false, params: { ...defaultParams("thicken"), thickness: "2" }, picks: [face(1), face(-1)], mergeScope: ["b3"] };
+    const r = build([...boxes(), thicken, box("b4", 80)]);
+    expect(r.featureErrors).toEqual({});
+    const names = r.parts.map((p) => p.name);
+    expect(names).toHaveLength(6);
+    expect(new Set(names).size).toBe(6);
+    near(volumes(r).b1, 1000);
+  });
 });

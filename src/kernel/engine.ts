@@ -3614,7 +3614,8 @@ export class GeometryEngine {
       if (feature.type === "thicken") {
         const r = this.applyThicken(feature, partCounter + 1);
         if (r.error) featureErrors[feature.id] = r.error;
-        if (r.newPart) partCounter++;
+        // (A merge scope's Add can make several new parts.)
+        partCounter += r.newParts ?? (r.newPart ? 1 : 0);
         continue;
       }
       if (feature.type === "sheetMetal") {
@@ -3664,7 +3665,7 @@ export class GeometryEngine {
         continue;
       }
       if (feature.type === "rib") {
-        const err = this.applyRib(feature, sketches);
+        const err = this.applyRib(feature, sketches, partCounter, (n) => (partCounter += n));
         if (err) featureErrors[feature.id] = err;
         continue;
       }
@@ -5176,7 +5177,7 @@ export class GeometryEngine {
     return { newPart: true };
   }
 
-  private applyThicken(feature: Feature, nextPartNumber: number): { error?: string; newPart?: boolean } {
+  private applyThicken(feature: Feature, nextPartNumber: number): { error?: string; newPart?: boolean; newParts?: number } {
     const { values, errors } = resolveParams(feature);
     if (errors.thickness) return { error: `Thickness: ${errors.thickness}` };
     const picks = (feature.picks ?? []).filter((p) => p.ref.kind === "face");
@@ -5277,14 +5278,14 @@ export class GeometryEngine {
   }
 
   /** Thicken with a merge scope: joined with / cut from only the chosen parts (the solid is used up). */
-  private thickenScoped(feature: Feature, solid: Shape3D, nextPartNumber: number): { error?: string; newPart?: boolean } {
+  private thickenScoped(feature: Feature, solid: Shape3D, nextPartNumber: number): { error?: string; newParts?: number } {
     try {
       const sc = this.scopeOf(feature);
       if ("error" in sc) return { error: sc.error };
       if (sc.warning) this.warnings[feature.id] = sc.warning;
       const r = this.applyScoped(feature, solid, sc.parts, nextPartNumber - 1, [], null, () => solid.clone());
       if (typeof r === "string") return { error: r };
-      return typeof r === "number" && r > 0 ? { newPart: true } : {};
+      return typeof r === "number" && r > 0 ? { newParts: r } : {};
     } finally {
       solid.delete();
     }
@@ -5645,7 +5646,7 @@ export class GeometryEngine {
    * each line, the one that adds less material is filled (the corner a gusset
    * braces); Flip picks the other.
    */
-  private applyRib(feature: Feature, sketches: SketchMap): string | null {
+  private applyRib(feature: Feature, sketches: SketchMap, partCounter = 0, made: (n: number) => void = () => {}): string | null {
     const { values, errors } = resolveParams(feature);
     if (errors.thickness) return `Thickness: ${errors.thickness}`;
     if (!feature.sketchRef) return "Choose the sketch with the rib's lines.";
@@ -5717,7 +5718,8 @@ export class GeometryEngine {
       }
       if (!rib) return "Draw the rib as straight lines (not construction) in the sketch.";
       if (sc) {
-        const r = this.applyScoped({ ...feature, operation: "add" }, rib, sc.parts, this.parts.filter((p) => !p.surface).length, [], null, () => rib!.clone());
+        const r = this.applyScoped({ ...feature, operation: "add" }, rib, sc.parts, partCounter, [], null, () => rib!.clone());
+        if (typeof r === "number") made(r);
         return typeof r === "string" ? r : null;
       }
       const result = part.shape.fuse(rib);
