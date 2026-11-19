@@ -1,3 +1,4 @@
+import { scopePickingAfter, toggleScopePart } from "./mergeScope";
 import { sketchFromDxf, type LinkedSketch } from "../link/receive";
 import { clickRadiusPoint, tidyRadiusPoints } from "./variableFillet";
 import { defaultTemplate } from "../drawing/templateStorage";
@@ -432,7 +433,7 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert" | "connector" | "thin" | "loft" | "modifyFillet" | "allEdges" | "curve" | "pathEdges" | "frame" | "trimFrame" | "gusset" | "boundary" | "blend" | "moveFace" | "variableFillet" | "importUnits">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "mergeScope" | "mergeScopePicking" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert" | "connector" | "thin" | "loft" | "modifyFillet" | "allEdges" | "curve" | "pathEdges" | "frame" | "trimFrame" | "gusset" | "boundary" | "blend" | "moveFace" | "variableFillet" | "importUnits">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Part pattern / Composite part: add a part to the open feature's parts, or take it out. */
@@ -1350,7 +1351,8 @@ export const useStore = create<AppState>((set, get) => {
       set((s) => {
         if (!s.editing) return {};
         const d = s.editing.draft;
-        const next = patch.picks && d.variableFillet ? tidyRadiusPoints({ ...d, ...patch }) : { ...d, ...patch };
+        // (Another box taking clicks stops the merge-scope box picking: one box picks at a time.)
+        const next = scopePickingAfter(patch, patch.picks && d.variableFillet ? tidyRadiusPoints({ ...d, ...patch }) : { ...d, ...patch });
         // Move / copy: a change is a step of its own undo — except only choosing what a click picks next.
         const { picking: _a, ...was } = d.transform ?? ({} as NonNullable<Feature["transform"]>);
         const { picking: _b, ...now } = next.transform ?? ({} as NonNullable<Feature["transform"]>);
@@ -1377,7 +1379,7 @@ export const useStore = create<AppState>((set, get) => {
     toggleDraftPart: (partId) => {
       const d0 = get().editing?.draft;
       // Never a part the open feature makes itself (a copy or the composite): it would use itself.
-      if (d0 && (d0.type === "composite" || d0.pattern?.of === "part") && madeByDraft(partId, d0.id)) {
+      if (d0 && (d0.type === "composite" || d0.pattern?.of === "part" || d0.mergeScopePicking) && madeByDraft(partId, d0.id)) {
         get().showToast(`That part is made by ${d0.name} itself. Click one of the parts made before it.`, "info");
         return;
       }
@@ -1385,6 +1387,8 @@ export const useStore = create<AppState>((set, get) => {
         const d = s.editing?.draft;
         if (!s.editing || !d) return {};
         const toggle = (list: string[]) => (list.includes(partId) ? list.filter((x) => x !== partId) : [...list, partId]);
+        // The merge-scope box taking clicks: the part is put in (or taken out of) the parts to merge with / cut.
+        if (d.mergeScopePicking) return { editing: { ...s.editing, draft: toggleScopePart(d, partId) } };
         if (d.type === "composite") return { editing: { ...s.editing, draft: { ...d, compositeParts: toggle(d.compositeParts ?? []) } } };
         if (d.pattern?.of === "part") return { editing: { ...s.editing, draft: { ...d, pattern: { ...d.pattern, parts: toggle(d.pattern.parts ?? []), picking: "items" } } } };
         return {};

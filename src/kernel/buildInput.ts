@@ -16,8 +16,9 @@ import { contextInputs } from "../assembly/featureParse";
 
 /** One feature without the parts the engine doesn't need (the same object when there are none). */
 export function featureForEngine<T extends Feature | null>(f: T): T {
-  if (!f || (f.folder === undefined && f.visible === undefined && !f.sketch?.data.images && f.loft?.picking === undefined && f.boundary?.picking === undefined && f.blend?.picking === undefined && f.trimFrame?.picking === undefined && f.moveFace?.picking === undefined && f.sweepControl?.picking === undefined)) return f;
-  const { folder: _f, visible: _v, ...rest } = f;
+  if (!f || (f.folder === undefined && f.visible === undefined && !f.sketch?.data.images && f.loft?.picking === undefined && f.boundary?.picking === undefined && f.blend?.picking === undefined && f.trimFrame?.picking === undefined && f.moveFace?.picking === undefined && f.sweepControl?.picking === undefined && f.mergeScopePicking === undefined)) return f;
+  // (The merge-scope box taking clicks isn't geometry either.)
+  const { folder: _f, visible: _v, mergeScopePicking: _ms, ...rest } = f;
   // What a click in the view chooses while the Loft dialog is open isn't geometry.
   if (rest.loft?.picking !== undefined) {
     const { picking: _p, ...loft } = rest.loft;
@@ -57,7 +58,7 @@ export function featureForEngine<T extends Feature | null>(f: T): T {
 const cache = new WeakMap<Feature[], Feature[]>();
 /** A Part Studio's features for the engine (the same array each time for the same list). */
 export function featuresForEngine(list: Feature[]): Feature[] {
-  if (!list.some((f) => f.folder !== undefined || f.visible !== undefined || f.sketch?.data.images || f.loft?.picking !== undefined || f.boundary?.picking !== undefined || f.blend?.picking !== undefined || f.trimFrame?.picking !== undefined || f.moveFace?.picking !== undefined)) return list;
+  if (!list.some((f) => f.folder !== undefined || f.visible !== undefined || f.sketch?.data.images || f.loft?.picking !== undefined || f.boundary?.picking !== undefined || f.blend?.picking !== undefined || f.trimFrame?.picking !== undefined || f.moveFace?.picking !== undefined || f.sweepControl?.picking !== undefined || f.mergeScopePicking !== undefined)) return list;
   let out = cache.get(list);
   if (!out) {
     out = list.map(featureForEngine);

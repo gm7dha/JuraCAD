@@ -538,6 +538,7 @@ export const TOOLS: ToolDef[] = [
     title: "Add a feature",
     description:
       `Add a feature to the design (built in order after the existing ones). "type" is one of ${Object.keys(FEATURE_KINDS).join(", ")}. "name" is optional. Settings by type:\n${Object.values(KIND_HELP).join("\n")}\n` +
+      `merge_with (extrude, revolve, sweep, loft with operation add/remove/intersect, hole, and linear_pattern/circular_pattern/mirror of features — Onshape's Merge scope): a list of part names; only those parts are joined (add — a piece touching none of them becomes a new part), cut (remove, hole) or intersected, the rest left alone. Leave it out (or "all") for every part it reaches, the usual.\n` +
       `Edge choices: ${PICK_HELP.edges}\nFace choices: ${PICK_HELP.faces}\nIf the feature fails to build, nothing is added and the reason is given.`,
     inputSchema: {
       type: "object",

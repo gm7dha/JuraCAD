@@ -1,5 +1,6 @@
 import { BoundaryOptions, FaceBlendOptions } from "./BoundaryBlendOptions";
 import { FinalToggle } from "./FinalToggle";
+import { MergeScopeField } from "./MergeScopeField";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { evaluate } from "../model/expr";
@@ -1733,7 +1734,7 @@ function PatternOptions() {
           label="Mirror plane"
           text={mirrorReferenceText(m, features)}
           prompt="Click a flat face, a plane or a sketch line in the view"
-          active={!(m.of === "face" && m.picking === "faces")}
+          active={!(m.of === "face" && m.picking === "faces") && !draft.mergeScopePicking}
           onActivate={() => {
             const { picking: _p, ...rest } = m;
             setDraftField({ mirror: rest });
@@ -1919,7 +1920,7 @@ function PatternDirectionBoxes() {
         label={circular ? "Axis" : "Direction"}
         text={patternReferenceText(pattern, features)}
         prompt={circular ? "Click a round face, an edge or a sketch line in the view" : "Click an edge, a flat face or a sketch line in the view"}
-        active={!second && picking !== "items"}
+        active={!second && picking !== "items" && !draft.mergeScopePicking}
         onActivate={() => setDraftField({ pattern })}
         onClear={() => setDraftField({ pattern: setPatternDirection(pattern, { kind: "none" }) })}
         hint={
@@ -1939,7 +1940,7 @@ function PatternDirectionBoxes() {
           label="Rows go along (for a grid)"
           text={patternReferenceText(pattern, features, true)}
           prompt="Click an edge, a flat face or a sketch line in the view"
-          active={second}
+          active={second && !draft.mergeScopePicking}
           onActivate={() => setDraftField({ pattern: { ...pattern, picking: "along2" } })}
           onClear={() => setDraftField({ pattern: setPatternDirection(pattern, { kind: "none" }, true) })}
           hint="Set Rows below to more than 1 for a grid."
@@ -2653,6 +2654,7 @@ export function FeatureDialog() {
             Surface (a skin with no inside)
           </label>
         )}
+        <MergeScopeField />
         <ThinOptions />
         <PlaneDefOptions />
         <MateConnectorOptions />

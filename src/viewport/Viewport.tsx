@@ -259,6 +259,12 @@ const FACE_TOOLS = new Set(["thicken", "draft", "moveFace", "replaceFace", "dele
 function handlePick(target: PickTarget | null, additive: boolean) {
   const s = useStore.getState();
   if (activeAssembly(s)) return handleAssemblyPick(target, additive);
+  // The merge-scope box taking clicks (Onshape's Merge scope): a part clicked is put in, or taken out again.
+  // First, so a Loft's, Sweep's or Mirror's own clicks (in geomPick) don't take it while this box is the active one.
+  if (s.editing?.draft.mergeScopePicking) {
+    if (target?.kind === "part" && !isContextPartId(target.item.partId)) s.toggleDraftPart(target.item.partId);
+    return;
+  }
   // Onshape's other Plane types, a Mate connector being placed, or a mate connector clicked.
   if (geomPick(viewportApi.current, target)) return;
   // An area of the sketch an Extrude, Revolve or Sweep uses: pick it, or leave it out again (as the 2D map does).

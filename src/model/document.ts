@@ -343,6 +343,7 @@ export function convertPreview(features: Feature[], draft: Feature | null): Feat
 export function picksPartsBefore(draft: Feature | null): boolean {
   if (!draft) return false;
   if (draft.type === "composite") return true;
+  if (draft.mergeScopePicking) return true;
   if (draft.pattern?.of && draft.pattern.picking === "items") return true;
   return draft.mirror?.of === "face" && draft.mirror.picking === "faces";
 }
@@ -364,6 +365,10 @@ export function withoutPicking(f: Feature): Feature {
   if (out.mirror?.picking !== undefined) {
     const { picking: _p, ...mirror } = out.mirror;
     out = { ...out, mirror };
+  }
+  if (out.mergeScopePicking !== undefined) {
+    const { mergeScopePicking: _m, ...rest } = out;
+    out = rest;
   }
   if (out.curve?.picking !== undefined) {
     const { picking: _p, ...curve } = out.curve;
@@ -903,6 +908,8 @@ export function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | n
     }
     if (feature.type === "import" && isSimplifyLevel(f.simplify)) feature.simplify = f.simplify;
     if (feature.type === "composite") feature.compositeParts = ids(f.compositeParts);
+    // Merge scope (Onshape's): only these parts are merged with / cut. Missing = Merge with all.
+    if (Array.isArray(f.mergeScope)) feature.mergeScope = ids(f.mergeScope);
     if (feature.type === "frame") feature.frame = parseFrameDef(f.frame, parsePick) ?? { paths: [], profile: { kind: "extrusion", size: "2020" } };
     if (feature.type === "trimFrame") feature.trimFrame = parseTrimFrame(f.trimFrame, parsePlane);
     if (feature.type === "gusset") feature.gusset = parseGusset(f.gusset);
