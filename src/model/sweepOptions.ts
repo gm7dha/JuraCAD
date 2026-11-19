@@ -7,13 +7,14 @@
 import type { TopoPick } from "../geometry/topoRef";
 import type { Feature, GeomPick, SweepOptions } from "./types";
 
-/** Onshape's Profile control choices JuraCAD has (Lock profile faces isn't done yet). */
-export type ProfileControl = "none" | "keep" | "direction";
+/** Onshape's Profile control choices. */
+export type ProfileControl = "none" | "keep" | "direction" | "faces";
 
 export const PROFILE_CONTROLS: { id: ProfileControl; label: string; hint: string }[] = [
   { id: "none", label: "None", hint: "The shape turns to follow the path's bends (it can also twist)." },
   { id: "keep", label: "Keep profile orientation", hint: "The shape doesn't tilt to follow the path: it stays parallel to the plane it was drawn on all the way along." },
   { id: "direction", label: "Lock profile direction", hint: "The shape keeps the same angle to a direction you click (a line, an edge, a flat face's normal or a mate connector's Z) as it follows the path." },
+  { id: "faces", label: "Lock profile faces", hint: "The shape keeps the same angle to faces of a part you click as it follows the path — e.g. a lip kept square to a box's sides. The path must be edges of those faces (choose Part edges as the path)." },
 ];
 
 /** How a twist is given. */
@@ -27,6 +28,7 @@ export const TWIST_BY: { id: TwistBy; label: string }[] = [
 
 export function profileControlOf(f: Pick<Feature, "sweepControl">): ProfileControl {
   if (f.sweepControl?.lockOrientation) return "keep";
+  if (f.sweepControl?.lockFaces || f.sweepControl?.picking === "lockFaces") return "faces";
   if (f.sweepControl?.lockDirection) return "direction";
   return "none";
 }
@@ -41,6 +43,7 @@ export function tidySweepControl(c: SweepOptions | undefined): SweepOptions | un
   if (c.opposite) out.opposite = true;
   if (c.scaled) out.scaled = true;
   if (c.face) out.face = c.face;
+  if (c.lockFaces?.length) out.lockFaces = c.lockFaces;
   if (c.picking) out.picking = c.picking;
   return Object.keys(out).length ? out : undefined;
 }
@@ -53,9 +56,11 @@ export function withProfileControl(f: Pick<Feature, "sweepControl">, choice: Pro
     c.lockOrientation = true;
     delete c.lockDirection;
   }
-  if (choice === "none") delete c.lockDirection;
+  if (choice === "none" || choice === "faces") delete c.lockDirection;
+  if (choice !== "faces") delete c.lockFaces;
   if (choice === "direction" && !c.lockDirection) c.picking = "direction";
-  else if (c.picking === "direction") delete c.picking;
+  else if (choice === "faces" && !c.lockFaces) c.picking = "lockFaces";
+  else if (c.picking === "direction" || c.picking === "lockFaces") delete c.picking;
   return tidySweepControl(c);
 }
 
@@ -126,6 +131,7 @@ export function sweepPartsUsed(f: Pick<Feature, "sweepControl">): string[] {
   if (c?.face) out.push(c.face.partId);
   if (c?.lockDirection?.pick) out.push(c.lockDirection.pick.partId);
   if (c?.lockDirection?.vertex) out.push(c.lockDirection.vertex.partId);
+  for (const f of c?.lockFaces ?? []) out.push(f.partId);
   return out;
 }
 
@@ -159,6 +165,10 @@ export function parseSweepControl(raw: unknown, parseGeom: (g: unknown) => GeomP
   if (c.scaled === true) out.scaled = true;
   const face = c.face !== undefined ? parsePick(c.face) : null;
   if (face && face.ref.kind === "face") out.face = face;
+  if (Array.isArray(c.lockFaces)) {
+    const faces = c.lockFaces.map(parsePick).filter((p): p is TopoPick => p !== null && p.ref.kind === "face");
+    if (faces.length) out.lockFaces = faces;
+  }
   return tidySweepControl(out);
 }
 
@@ -182,9 +192,19 @@ const unitOf = (v: [number, number, number]): [number, number, number] => {
 export function sweepClick(d: Pick<Feature, "sweepControl">, c: SweepClick | null): Partial<Pick<Feature, "sweepControl" | "sketchRef" | "areas" | "moreAreas">> | string | null {
   const picking = d.sweepControl?.picking;
   if (!picking) return null;
-  if (!c) return picking === "face" ? "Click a flat face of a part to sweep." : "Click a line, a straight edge, a flat face, a plane or a mate connector for the direction.";
+  if (!c) return picking === "face" ? "Click a flat face of a part to sweep." : picking === "lockFaces" ? LOCK_FACES_CLICK : "Click a line, a straight edge, a flat face, a plane or a mate connector for the direction.";
   const base = { ...(d.sweepControl ?? {}) };
   delete base.picking;
+  if (picking === "lockFaces") {
+    if (c.kind !== "part" || c.pick.ref.kind !== "face") return LOCK_FACES_CLICK;
+    const list = d.sweepControl?.lockFaces ?? [];
+    const pick = c.pick;
+    if (list.length && list[0].partId !== pick.partId) return "The faces the profile is locked to must all be on one part (the part whose edges are the path).";
+    const at = list.findIndex((f) => f.partId === pick.partId && sameFaceRef(f, pick));
+    const next = at >= 0 ? list.filter((_, i) => i !== at) : [...list, pick];
+    // Stays picking, so several faces can be clicked in turn.
+    return { sweepControl: tidySweepControl({ ...base, lockFaces: next.length ? next : undefined, picking: "lockFaces" }) };
+  }
   if (picking === "face") {
     if (c.kind !== "part" || c.pick.ref.kind !== "face") return "Click a flat face of a part to sweep.";
     if (c.pick.ref.surface !== "PLANE") return "That face is curved: a sweep's profile face must be flat.";
@@ -202,6 +222,22 @@ export function sweepClick(d: Pick<Feature, "sweepControl">, c: SweepClick | nul
   else if (c.kind === "sketchLine") g = { p: c.a, dir: unitOf([c.b[0] - c.a[0], c.b[1] - c.a[1], c.b[2] - c.a[2]]), sketchLine: c.line };
   if (!g) return "A corner has no direction: click a line, a straight edge, a flat face, a plane or a mate connector.";
   return { sweepControl: tidySweepControl({ ...base, lockDirection: g }) };
+}
+
+/** What to click for Lock profile faces. */
+const LOCK_FACES_CLICK = "Click the faces of the part to keep the profile at the same angle to (click one again to take it out).";
+
+/** The same face of a part, as picked twice (its kind of surface, centre and facing within a hair). */
+function sameFaceRef(a: TopoPick, b: TopoPick): boolean {
+  if (a.ref.kind !== "face" || b.ref.kind !== "face") return false;
+  const near = (p: [number, number, number], q: [number, number, number]) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < 1e-6;
+  return a.ref.surface === b.ref.surface && near(a.ref.center, b.ref.center);
+}
+
+/** A few words for the faces a sweep's profile is locked to (shown in its dialog). */
+export function lockFacesLabel(faces: TopoPick[] | undefined): string {
+  const n = faces?.length ?? 0;
+  return n === 0 ? "None yet" : n === 1 ? "1 face" : `${n} faces`;
 }
 
 /** A few words for the direction a sweep is locked to (shown in its dialog). */

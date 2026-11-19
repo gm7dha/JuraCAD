@@ -93,8 +93,10 @@ export interface SweepOptions {
   scaled?: boolean;
   /** A flat face of a part as the profile, instead of a sketch's shapes. */
   face?: TopoPick;
+  /** Profile control "Lock profile faces": the profile keeps the same angle to these faces of a part (the path must be their edges). */
+  lockFaces?: TopoPick[];
   /** What a click in the view chooses while the dialog is open (not saved). */
-  picking?: "face" | "direction";
+  picking?: "face" | "direction" | "lockFaces";
 }
 
 /**

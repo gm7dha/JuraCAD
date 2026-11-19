@@ -70,7 +70,7 @@ const OPERATIONS = ["new", "add", "remove", "intersect"] as const;
 export const KIND_KEYS: Record<FeatureKind, string[]> = {
   extrude: ["sketch", "depth", "end", "up_to_face", "up_to_vertex", "up_to_part", "flip", "second_depth", "draft", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   revolve: ["sketch", "axis", "angle", "symmetric", "second_angle", "flip", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
-  sweep: ["sketch", "profile_face", "path", "path_edges", "path_part", "twist", "twist_turns", "twist_pitch", "twist_opposite", "keep_orientation", "lock_direction", "scale", "surface", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
+  sweep: ["sketch", "profile_face", "path", "path_edges", "path_part", "twist", "twist_turns", "twist_pitch", "twist_opposite", "keep_orientation", "lock_direction", "lock_faces", "scale", "surface", "areas", "more_sketches", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   loft: ["sections", "start_point", "end_point", "start", "end", "start_magnitude", "end_magnitude", "start_direction", "end_direction", "guide", "guides", "connections", "path", "straight", "match_corners", "turns", "closed_loop", "surface", "thin", "thin_other_side", "thin_centred", "thin_flip"],
   hole: ["sketch", "size", "fit", "style", "end", "depth", "diameter", "counterbore_diameter", "counterbore_depth", "countersink_diameter", "countersink_angle", "flip"],
   fillet: ["part", "edges", "radius", "end_radius", "all_edges", "variable", "variable_straight"],
@@ -303,12 +303,44 @@ function sweepLockDirection(f: Feature, a: Obj, ctx: SpecContext) {
   f.sweepControl = tidySweepControl({ ...f.sweepControl, lockDirection: g });
 }
 
+/**
+ * Sweep's "lock_faces" (Onshape's Lock profile faces): face choices ("F2"…) of the part whose edges are the path
+ * ("path_part", or the part of the path_edges already there), or {"part", "faces"}; the shape keeps the same angle to
+ * them. null / false / []: none.
+ */
+function sweepLockFaces(f: Feature, a: Obj, ctx: SpecContext) {
+  const d = a.lock_faces;
+  if (d === null || d === false || (Array.isArray(d) && d.length === 0)) {
+    f.sweepControl = tidySweepControl({ ...f.sweepControl, lockFaces: undefined });
+    return;
+  }
+  const how = 'lock_faces must be a list of face choices ("F2", "top"…) of the part whose edges are the path, or {"part": "<name>", "faces": [...]}.';
+  let partName: unknown;
+  let faces: unknown;
+  if (Array.isArray(d)) {
+    partName = has(a, "path_part") ? a.path_part : f.pathEdges?.[0]?.partId;
+    faces = d;
+  } else if (d && typeof d === "object") {
+    const o = d as Obj;
+    noExtras(o, ["part", "faces"], "lock_faces");
+    partName = o.part;
+    faces = o.faces;
+  } else throw new InputError(how);
+  if (partName === undefined) throw new InputError('lock_faces: give "path_edges" with "path_part" too (the profile can only be locked to faces whose edges are the path).');
+  if (!f.pathEdges?.length) throw new InputError('lock_faces needs the path as part edges: give "path_edges" (edges of those faces) on "path_part" instead of a sketch or curve path.');
+  if (f.sweepControl?.lockOrientation || f.sweepControl?.lockDirection) throw new InputError('Give one kind of profile control: "keep_orientation", "lock_direction" or "lock_faces".');
+  const part = ctx.session.part(ctx.parts, partName, "lock_faces part");
+  const picks = list(faces, "lock_faces").map((x, i) => pickFace(part, x, `lock_faces[${i}]`));
+  f.sweepControl = tidySweepControl({ ...f.sweepControl, lockFaces: picks.map((p) => ({ partId: part.id, ref: p.ref })) });
+}
+
 /** Sweep's twist: "twist" (degrees), or "twist_turns" (whole turns) or "twist_pitch" (mm along the path per turn), and "twist_opposite". */
 function sweepTwist(f: Feature, a: Obj, ctx: SpecContext) {
   const given = ["twist", "twist_turns", "twist_pitch"].filter((k) => has(a, k));
   if (given.length > 1) throw new InputError(`Give the twist one way only: ${given.map((k) => `"${k}"`).join(" or ")}.`);
   if (given.length && f.sweepControl?.lockOrientation) throw new InputError(`"${given[0]}" isn't used with "keep_orientation": true (the shape keeps facing the same way); leave one out.`);
   if (given.length && f.sweepControl?.lockDirection) throw new InputError(`"${given[0]}" isn't used with "lock_direction" (the shape keeps its angle to that direction); leave one out.`);
+  if (given.length && f.sweepControl?.lockFaces) throw new InputError(`"${given[0]}" isn't used with "lock_faces" (the shape keeps its angle to those faces); leave one out.`);
   if (has(a, "twist")) {
     param(f, a, "twist", "twist", ctx, { unit: "°" });
     if (f.params.twist && Math.abs(Number(f.params.twist)) > 3600) throw new InputError("twist can be at most 3600° (10 turns) either way.");
@@ -712,6 +744,7 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
         } else f.sweepControl = tidySweepControl({ ...f.sweepControl, lockOrientation: undefined });
       }
       if (has(a, "lock_direction")) sweepLockDirection(f, a, ctx);
+      if (has(a, "lock_faces")) sweepLockFaces(f, a, ctx);
       sweepTwist(f, a, ctx);
       if (has(a, "scale")) {
         if (a.scale === null || a.scale === 1 || a.scale === false) f.sweepControl = tidySweepControl({ ...f.sweepControl, scaled: undefined });

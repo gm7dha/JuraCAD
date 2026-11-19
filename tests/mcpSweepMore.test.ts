@@ -90,3 +90,19 @@ describe("sweeps from Claude", () => {
     expect(await fails(s, "add_feature", { type: "sweep", profile_face: { part: "Part 1", face: "top" }, sketch: "Up", path: "Up" })).toMatch(/not both/);
   });
 });
+
+describe("Lock profile faces from Claude", () => {
+  const TOP = [{ near: [20, 0, 10] }, { near: [40, 15, 10] }, { near: [20, 30, 10] }, { near: [0, 15, 10] }];
+  it("sweeps a lip round a box's top edges kept square to its sides", async () => {
+    const s = newSession();
+    await ok(s, "new_design", { name: "Lip" });
+    await ok(s, "add_feature", { type: "box", width: 40, depth: 30, height: 10 });
+    await ok(s, "add_sketch", { name: "Lip shape", plane: "Right", offset: 20, shapes: [{ type: "rectangle", center: [0, 10], width: 2, height: 2 }] });
+    expect(await fails(s, "add_feature", { type: "sweep", sketch: "Lip shape", path_edges: TOP, path_part: "Part 1", lock_faces: ["front"], twist: 90, operation: "new" })).toMatch(/isn't used with "lock_faces"/);
+    await ok(s, "add_feature", { type: "sweep", sketch: "Lip shape", path_edges: TOP, path_part: "Part 1", lock_faces: ["front", "back", "left", "right"], operation: "new" });
+    const f = s.doc.features.find((x) => x.type === "sweep")!;
+    expect(f.sweepControl?.lockFaces?.length).toBe(4);
+    near(volumes(s)[1], 2 * (42 * 32 - 38 * 28 - 4 * (1 - Math.PI / 4)), 1e-5);
+    expect(TOOLS.find((t) => t.name === "add_feature")!.description).toMatch(/lock_faces/);
+  });
+});

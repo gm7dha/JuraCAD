@@ -28,6 +28,7 @@ import { copyNumber, isSkipped } from "../model/patterns";
 import { materialRuns, shapeDistance, upToFaceSolid, upToPartsSolid } from "./upTo";
 import { faceProfile, loftSketches, pathWire, sketchProfile, sweepAlongSketch, sweepProfileAlongSpine, type SweepProfile } from "./sweep";
 import { sweepSettings } from "../model/sweepOptions";
+import { LOCK_FACES_PATH, sweepLockedToFaces } from "./sweepFaces";
 import { bezierEdge, chainEdges, compoundOf, endFrame, helixWire, interpolatedEdge, planeSheet, reversedWire, sectionEdges, sheetAlong, squareTo, takeVec, wirePolyline } from "./curves";
 import { isoclineWires, offsetOnFace, trimWire } from "./curvesMore";
 import { assignCheapest } from "../geometry/assign";
@@ -1957,6 +1958,30 @@ function buildSolid(feature: Feature, v: Record<string, number>, sketches: Sketc
           found.delete();
         }
       };
+      // Lock profile faces: along the part's own edges, keeping the same angle to the faces clicked.
+      const lockFaces = feature.surface ? undefined : feature.sweepControl?.lockFaces;
+      if (lockFaces?.length) {
+        if (!feature.pathEdges?.length) throw new Error(LOCK_FACES_PATH);
+        if (control.scale !== undefined && Math.abs(control.scale - 1) > 1e-9) throw new Error("A scale can't be used with Lock profile faces yet. Set the scale to 1, or choose another Profile control.");
+        const faces: Face[] = [];
+        let spine: { wire: Wire } | null = null;
+        let profile: SweepProfile | null = null;
+        try {
+          for (const pick of lockFaces) {
+            const part = parts.find((p) => p.id === pick.partId);
+            if (!part) throw new Error("The part with the faces the profile is locked to no longer exists (or comes later in the list). Edit the sweep and click the faces again.");
+            faces.push(findPickedFace(part.shape, pick));
+          }
+          spine = paths?.(feature) ?? null;
+          if (!spine) throw new Error(LOCK_FACES_PATH);
+          profile = profileOf();
+          return sweepLockedToFaces(profile, spine.wire, faces);
+        } finally {
+          faces.forEach((f) => f.delete());
+          spine?.wire.delete();
+          profile?.dispose?.();
+        }
+      }
       // Along a curve feature or picked part edges.
       const spine = paths?.(feature) ?? null;
       if (spine) {

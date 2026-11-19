@@ -5,7 +5,7 @@
  * feature's ordinary size boxes, shown by visibleParamKeys.
  */
 import { describeRef } from "../geometry/topoRef";
-import { canTwist, directionLabel, PROFILE_CONTROLS, profileControlOf, tidySweepControl, TWIST_BY, twistByOf, withProfileControl, type ProfileControl, type TwistBy } from "../model/sweepOptions";
+import { canTwist, directionLabel, lockFacesLabel, PROFILE_CONTROLS, profileControlOf, tidySweepControl, TWIST_BY, twistByOf, withProfileControl, type ProfileControl, type TwistBy } from "../model/sweepOptions";
 import { useStore } from "../model/store";
 import type { SweepOptions as SweepDef } from "../model/types";
 
@@ -49,6 +49,7 @@ export function SweepControlOptions() {
   const set = (sweepControl: SweepDef | undefined) => setDraftField({ sweepControl: tidySweepControl(sweepControl) });
   const choice = profileControlOf(draft);
   const picking = c.picking === "direction";
+  const pickingFaces = c.picking === "lockFaces";
   const twistBy = twistByOf(draft);
   return (
     <>
@@ -56,7 +57,7 @@ export function SweepControlOptions() {
       <select
         className="full-select"
         aria-label="Profile control"
-        value={choice === "direction" || picking ? "direction" : choice}
+        value={choice === "direction" || picking ? "direction" : pickingFaces ? "faces" : choice}
         title={PROFILE_CONTROLS.find((p) => p.id === choice)?.hint}
         onChange={(e) => set(withProfileControl(draft, e.target.value as ProfileControl))}
       >
@@ -66,7 +67,23 @@ export function SweepControlOptions() {
           </option>
         ))}
       </select>
-      <p className="dialog-hint field-hint">{PROFILE_CONTROLS.find((p) => p.id === (picking ? "direction" : choice))?.hint} (Onshape&apos;s Lock profile faces isn&apos;t in JuraCAD yet.)</p>
+      <p className="dialog-hint field-hint">{PROFILE_CONTROLS.find((p) => p.id === (picking ? "direction" : choice))?.hint}</p>
+      {choice === "faces" && (
+        <fieldset className={`param-group pick-slot${pickingFaces ? " active" : ""}`} onClick={() => !pickingFaces && set({ ...c, picking: "lockFaces" })}>
+          <legend>Faces to keep the angle to</legend>
+          <p className="field-note">{lockFacesLabel(c.lockFaces)}</p>
+          {pickingFaces && c.lockFaces?.length ? (
+            <button type="button" className="link-button" onClick={(e) => { e.stopPropagation(); set({ ...c, picking: undefined }); }}>
+              Done
+            </button>
+          ) : null}
+          <p className="dialog-hint field-hint">
+            {pickingFaces
+              ? "Now click the faces in the 3D view (click one again to take it out). The path must be edges of these faces: choose Part edges as the path."
+              : "Click here, then faces in the 3D view, to change them."}
+          </p>
+        </fieldset>
+      )}
       {(choice === "direction" || picking) && (
         <fieldset className={`param-group pick-slot${picking ? " active" : ""}`} onClick={() => !picking && set({ ...c, picking: "direction" })}>
           <legend>Direction</legend>
