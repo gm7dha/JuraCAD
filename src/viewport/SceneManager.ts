@@ -1599,6 +1599,11 @@ export class SceneManager {
     this.sketchLayer.setActive(active);
   }
 
+  /** Light up these ids of the open sketch (a relation badge or dimension under the pointer). */
+  setSketchLit(ids: readonly string[]): void {
+    this.sketchLayer.setLit(ids);
+  }
+
   setSketchTransient(t: SketchTransient | null): void {
     this.sketchLayer.setTransient(t);
   }

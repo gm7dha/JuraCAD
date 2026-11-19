@@ -1,4 +1,5 @@
 import { useSketchView } from "../app/sketchViewState";
+import { hiddenConstruction } from "../sketch/sketchView";
 import { openSketchMenu } from "../app/sketchMenuActions";
 import { bedSize } from "../model/printBed";
 import { blendClick, boundaryClick } from "../model/surfaceClicks";
@@ -254,6 +255,7 @@ export function viewNormalToPlaneFeature(id: string): boolean {
 }
 
 const NO_IDS: string[] = [];
+const NO_HIDDEN: ReadonlySet<string> = new Set();
 const NO_LINES: PickableLine[] = [];
 const FACE_TOOLS = new Set(["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "modifyFillet", "thread", "fullRound", "wrap", "enclose", "offsetSurface"]);
 
@@ -1440,6 +1442,14 @@ export function Viewport() {
   );
   const refEdges = draft ? sketchLinks[draft.id]?.edges : undefined;
   const sketchView = useSketchView();
+  // Shift+P: construction geometry (and its own points) neither drawn nor picked.
+  const hiddenIds = useMemo(
+    () => (sketchData && sketchView.hideConstruction ? hiddenConstruction(sketchData, sketchSelection ?? []) : NO_HIDDEN),
+    [sketchData, sketchSelection, sketchView.hideConstruction],
+  );
+  useEffect(() => viewportApi.sketch?.setHidden(hiddenIds), [hiddenIds, sketching]);
+  // A badge or dimension under the pointer lights up what it ties (just the open sketch redrawn: hovering stays cheap).
+  useEffect(() => viewportApi.current?.setSketchLit(sketchView.lit), [sketchView.lit]);
   useEffect(() => {
     const manager = viewportApi.current;
     if (!manager) return;
@@ -1455,12 +1465,11 @@ export function Viewport() {
       failing,
       selection: new Set(sketchSelection ?? []),
       refs: refEdges,
-      hideConstruction: sketchView.hideConstruction,
+      hidden: hiddenIds,
       hideDimensions: !sketchView.dimensions,
-      lit: new Set(sketchView.lit),
     });
     // The theme changes the sketch colours, so redraw when it changes.
-  }, [others, plane, sketchData, sketchSelection, theme, refEdges, sketchView]);
+  }, [others, plane, sketchData, sketchSelection, theme, refEdges, hiddenIds, sketchView.dimensions]);
 
   return (
     <>

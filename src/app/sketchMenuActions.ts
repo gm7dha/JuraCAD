@@ -9,7 +9,7 @@ import { useStore } from "../model/store";
 import { setCentrelineDimension, switchRoundDimension } from "../sketch/dimensionKinds";
 import { findRegions } from "../sketch/regions";
 import { sketchHitsAt, sketchItemLabel, sketchMenuItems, type SketchMenuAction, type SketchMenuItem } from "../sketch/sketchMenu";
-import type { SketchKey } from "../sketch/sketchView";
+import { hiddenConstruction, type SketchKey } from "../sketch/sketchView";
 import { viewportApi } from "../viewport/Viewport";
 import { canPasteSketch, copySketchSelection, pasteIntoSketch } from "./sketchClipboardApp";
 import { applySketchRelation, deleteSketchSelection, setSketchTool, sketchEscape, toggleSketchConstruction } from "./sketchActions";
@@ -63,7 +63,9 @@ export function openSketchMenu(at: { x: number; y: number }, p: { x: number; y: 
   const s = useStore.getState();
   const data = sketchData();
   if (!data || !s.sketch || !s.editing?.draft.sketch?.plane) return false;
-  const under = p ? sketchHitsAt(data, p.x, p.y, tol) : [];
+  // (Construction geometry hidden with Shift+P isn't under the pointer.)
+  const hidden = sketchViewNow().hideConstruction ? hiddenConstruction(data, s.sketch.selection) : null;
+  const under = p ? sketchHitsAt(data, p.x, p.y, tol).filter((id) => !hidden?.has(id)) : [];
   let selection = s.sketch.selection;
   const busy = !!viewportApi.sketch?.busy();
   if (!busy && under.length && !selection.includes(under[0])) {

@@ -240,8 +240,8 @@ function preferFace(virt: SketchData, refs: RefEdge[], hit: Hit | null): Hit | n
  * centre): the sketch's own points and curves first, then part edges shown in
  * the sketch (as their stand-in ids).
  */
-export function pickAt(s: SketchData, x: number, y: number, pointTol: number, curveTol: number, refs: RefEdge[] = [], skip?: (e: RefEdge) => boolean): Hit | null {
-  const own = hitTest(s, x, y, pointTol, curveTol);
+export function pickAt(s: SketchData, x: number, y: number, pointTol: number, curveTol: number, refs: RefEdge[] = [], skip?: (e: RefEdge) => boolean, ignore?: Set<string>): Hit | null {
+  const own = hitTest(s, x, y, pointTol, curveTol, { ignore });
   if (own?.kind === "point" || !refs.length) return own;
   const virt = nearRefs(refs, x, y, Math.max(pointTol, curveTol), skip);
   const v = preferFace(virt, refs, hitTest(virt, x, y, pointTol, curveTol, { origin: false }));

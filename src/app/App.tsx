@@ -3,7 +3,7 @@ import { startLink } from "./juraLinkApp";
 import { startFeatureClipboard } from "./featureClipboardApp";
 import { PasteDialog, SelectOtherMenu } from "./ViewTools";
 import { SketchContextMenu } from "./SketchContextMenu";
-import { runSketchKey } from "./sketchMenuActions";
+import { closeSketchMenu, runSketchKey, sketchMenuNow } from "./sketchMenuActions";
 import { sketchKeyFor } from "../sketch/sketchView";
 import { useEffect } from "react";
 
@@ -121,8 +121,10 @@ function sketchShortcut(e: KeyboardEvent): boolean {
   }
   if (e.key === "Delete" || e.key === "Backspace") return deleteSketchSelection() || true;
   // Onshape's relation keys (I, E, B, Shift+L…), X for Extend, Shift+P to hide construction geometry: sketch/sketchView.ts.
-  const more = s.editing?.draft.sketch?.plane ? sketchKeyFor(e.code, e.shiftKey) : null;
+  const more = s.editing?.draft.sketch?.plane ? sketchKeyFor(e.code, e.shiftKey, e.key) : null;
   if (more) {
+    // (A key pressed with the right-click menu open: the menu goes, its choices would be out of date.)
+    if (sketchMenuNow()) closeSketchMenu();
     runSketchKey(more);
     return true;
   }

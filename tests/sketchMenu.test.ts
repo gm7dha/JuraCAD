@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { addCircle, addDimension, addLine, addPoint, measure, relationsFor, type Placed } from "../src/sketch/ops";
 import { canBeCentreline, scaledValue, setCentrelineDimension, switchRoundDimension } from "../src/sketch/dimensionKinds";
 import { sketchHitsAt, sketchItemLabel, sketchMenuItems, type SketchMenuContext } from "../src/sketch/sketchMenu";
-import { expressionText, keyLabel, readSketchView, relationKey, SKETCH_KEYS, SKETCH_VIEW_DEFAULTS, SKETCH_VIEW_KEY, sketchKeyFor, tiedIds, writeSketchView } from "../src/sketch/sketchView";
+import { expressionText, hiddenConstruction, keyLabel, readSketchView, relationKey, SKETCH_KEYS, SKETCH_VIEW_DEFAULTS, SKETCH_VIEW_KEY, sketchKeyFor, tiedIds, writeSketchView } from "../src/sketch/sketchView";
 import { solveSketch } from "../src/sketch/solver";
 import { dimensionLayout } from "../src/sketch/layout";
 import { parseSketchData } from "../src/sketch/validate";
@@ -195,6 +195,42 @@ describe("sketch view settings and keys", () => {
     expect(relationKey("horizontal")).toBe("H");
     expect(relationKey("symmetric")).toBe("Shift+Q");
     expect(relationKey("tangent")).toBe("");
+  });
+
+  it("goes by the letter printed on the key (any layout), else where the key sits", () => {
+    // AZERTY: the key printed M sits where QWERTY's ";" is (code Semicolon) — Shift+M is still Midpoint…
+    expect(sketchKeyFor("Semicolon", true, "M")?.action).toEqual({ relation: "midpoint" });
+    // …and the key in QWERTY's M place (printed "?" with Shift) does nothing.
+    expect(sketchKeyFor("KeyM", true, "?")).toBeNull();
+    // Caps Lock: still plain I.
+    expect(sketchKeyFor("KeyI", false, "I")?.action).toEqual({ relation: "coincident" });
+    // A Cyrillic layout gives no Latin letter: the key's place counts.
+    expect(sketchKeyFor("KeyB", false, "и")?.action).toEqual({ relation: "parallel" });
+  });
+});
+
+describe("Shift+P hides construction geometry", () => {
+  it("hides construction curves and the points only they use, never what's picked or shared", () => {
+    const axis = addLine(emptySketch(), at(0, -10), at(0, 10), { construction: true });
+    const ring = addCircle(axis.sketch, at(20, 0), 5);
+    const guide = addLine(ring.sketch, at(30, 0), at(40, 0), { construction: true });
+    const solid = addLine(guide.sketch, at(40, 0), at(50, 5));
+    const s = solid.sketch;
+    const g = s.curves.find((c) => c.id === guide.lineId)!;
+    const sh = s.curves.find((c) => c.id === solid.lineId)!;
+    if (g.type !== "line" || sh.type !== "line") throw new Error("lines");
+    // The guide's far end is the solid line's start (joined).
+    const joined = { ...s, curves: s.curves.map((c) => (c.id === sh.id && c.type === "line" ? { ...c, p1: g.p2 } : c)) };
+    const hidden = hiddenConstruction(joined, []);
+    const a = joined.curves.find((c) => c.id === axis.lineId)!;
+    if (a.type !== "line") throw new Error("axis");
+    expect(hidden.has(axis.lineId) && hidden.has(a.p1) && hidden.has(a.p2)).toBe(true);
+    expect(hidden.has(guide.lineId) && hidden.has(g.p1)).toBe(true);
+    expect(hidden.has(g.p2)).toBe(false);
+    expect(hidden.has(ring.circleId) || hidden.has(solid.lineId)).toBe(false);
+    const picked = hiddenConstruction(joined, [axis.lineId]);
+    expect(picked.has(axis.lineId) || picked.has(a.p1)).toBe(false);
+    expect(hiddenConstruction(emptySketch(), []).size).toBe(0);
   });
 });
 

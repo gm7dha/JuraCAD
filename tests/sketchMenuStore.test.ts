@@ -114,3 +114,35 @@ describe("the controller says when a shape is half drawn", () => {
     expect(c.busy()).toBe(false);
   });
 });
+
+describe("hidden construction geometry", () => {
+  it("can't be clicked or boxed while hidden, and can again once shown", () => {
+    const axis = addLine(draftData(), at(0, -10), at(0, 10), { construction: true });
+    s().updateSketch(axis.sketch, { record: true });
+    s().setSketchTool("select");
+    const c = new SketchController();
+    const click = (x: number, y: number) => {
+      c.pointerDown({ x, y, mmPerPx: 0.1, shift: false, ctrl: false });
+      c.pointerUp();
+    };
+    c.setHidden(new Set([axis.lineId]));
+    click(0, 3);
+    expect(s().sketch!.selection).toEqual([]);
+    c.setHidden(new Set());
+    click(0, 3);
+    expect(s().sketch!.selection).toEqual([axis.lineId]);
+  });
+
+  it("isn't offered by the right-click menu's Select other", () => {
+    const axis = addLine(draftData(), at(0, -10), at(0, 10), { construction: true });
+    s().updateSketch(axis.sketch, { record: true });
+    setSketchView({ hideConstruction: true });
+    try {
+      openSketchMenu({ x: 0, y: 0 }, { x: 0, y: 3 }, 1);
+      expect(sketchMenuNow()!.under).toEqual([]);
+      expect(s().sketch!.selection).toEqual([]);
+    } finally {
+      setSketchView({ hideConstruction: false });
+    }
+  });
+});

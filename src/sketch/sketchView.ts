@@ -4,7 +4,7 @@
  * localStorage (`juracad.sketchView`), as Onshape remembers them; construction hidden is for this session only.
  */
 import { evaluate } from "../model/expr";
-import type { RelationTool } from "./ops";
+import { curvePoints, type RelationTool } from "./ops";
 import type { SketchConstraint, SketchData } from "./types";
 
 export interface SketchViewSettings {
@@ -64,7 +64,28 @@ export function tiedIds(s: SketchData, constraintId: string): string[] {
   return [...new Set(c.refs.filter((r) => known.has(r)))];
 }
 
-/** A shortcut key in a sketch. `code` is KeyboardEvent.code, so it works whatever the keyboard's layout or Shift. */
+const NOTHING_HIDDEN: ReadonlySet<string> = new Set();
+
+/**
+ * Shift+P: what isn't drawn, picked or snapped to — the construction curves, and points used only by them (a construction
+ * circle's centre, a centreline's ends). Anything picked stays, so a selection never vanishes; a point also used by a solid
+ * curve, a text's anchor or a lone point stays.
+ */
+export function hiddenConstruction(s: SketchData, selection: readonly string[]): ReadonlySet<string> {
+  const picked = new Set(selection);
+  const hidden = new Set<string>();
+  const shown = new Set<string>((s.texts ?? []).map((t) => t.anchor));
+  for (const c of s.curves) {
+    const off = !!c.construction && !picked.has(c.id);
+    if (off) hidden.add(c.id);
+    for (const p of curvePoints(c)) if (!off) shown.add(p);
+  }
+  if (!hidden.size) return NOTHING_HIDDEN;
+  for (const c of s.curves) if (hidden.has(c.id)) for (const p of curvePoints(c)) if (!shown.has(p) && !picked.has(p)) hidden.add(p);
+  return hidden;
+}
+
+/** A shortcut key in a sketch: `code` names the letter as KeyboardEvent.code does ("KeyI"); see sketchKeyFor. */
 export interface SketchKey {
   code: string;
   shift: boolean;
@@ -91,8 +112,16 @@ export const SKETCH_KEYS: readonly SketchKey[] = [
   { code: "KeyP", shift: true, action: { toggle: "construction" } },
 ];
 
-export function sketchKeyFor(code: string, shift: boolean): SketchKey | null {
-  return SKETCH_KEYS.find((k) => k.code === code && k.shift === shift) ?? null;
+/**
+ * The sketch key pressed. `key` (KeyboardEvent.key) wins when it's a letter, so the letter printed on the key works on any
+ * layout (an AZERTY keyboard's M, Q…) just as the sketch's plain letters do; `code` (KeyboardEvent.code) is used when the
+ * key gives no Latin letter (a Cyrillic or Greek layout), by where the key sits.
+ */
+export function sketchKeyFor(code: string, shift: boolean, key?: string): SketchKey | null {
+  // A Latin letter: that one. Another script's letter: the key's place. Anything else (a "?" or "," on the key): none.
+  const byKey = key === undefined ? code : /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : /^\p{L}$/u.test(key) ? code : null;
+  if (!byKey) return null;
+  return SKETCH_KEYS.find((k) => k.code === byKey && k.shift === shift) ?? null;
 }
 
 /** How a key is written in tooltips and menus: "I", "Shift+L". */

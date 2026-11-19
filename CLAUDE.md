@@ -203,15 +203,17 @@
   `SketchContextMenu.tsx` (PlacedPopup). View settings: pure `src/sketch/sketchView.ts` (`readSketchView`/`writeSketchView`,
   localStorage `juracad.sketchView`: constraints, dimensions, expressions — `expressionText`), app store `sketchViewState.ts`
   (+ `hideConstruction`, Shift+P, session only; `lit` = `tiedIds` of the badge/dimension under the pointer; the toggles are the sketch toolbar's "sketch-show" group — not the panel, whose height the smoke test's clicks need) → SketchOverlay (hidden
-  labels/badges unless picked or being typed) and `ActiveSketch.hideConstruction/hideDimensions/lit` in SketchLayer (drawing only —
-  hidden construction can still be clicked). Keys `SKETCH_KEYS` (by `e.code`: I E B X, Shift+L/O/M/Q/J/U/G/S/P; Shift+A left free;
+  labels/badges unless picked or being typed) and `ActiveSketch.hidden/hideDimensions` in SketchLayer; Shift+P's `hiddenConstruction`
+  (construction curves + points only they use, not picked) is neither drawn nor picked/snapped/boxed (`controller.setHidden` →
+  `notHidden`, snaps.ts `pickAt`'s `ignore`) nor in the menu's Select other; `lit` goes by `SceneManager.setSketchLit` (redraws
+  only the open sketch, so hovering a label stays cheap). Keys `SKETCH_KEYS` (`sketchKeyFor(code, shift, key)`: the letter of
+  `e.key` when it is one — any layout, as the plain letters — else `e.code`; a key closes an open menu: I E B X, Shift+L/O/M/Q/J/U/G/S/P; Shift+A left free;
   tooltips via `relationKey`), run in App's sketchShortcut before its Shift check. Dimensions: pure `src/sketch/dimensionKinds.ts`
   `switchRoundDimension` (value halved/doubled, `scaledValue`; also the ⌀/R button in the value box) and `setCentrelineDimension`
   (`SketchConstraint.doubled` on a pointLineDistance to a construction line: solver uses value/2, `measure` ×2, layout runs to the
   mirror point, ⌀ label, validate keeps it; `measureToOf` null). Sketch toolbar Extrude / Revolve → `finishSketchInto` (commit, then
   startCreate on the sketch just finished; no closed shape = refused, sketch stays open). Tests: sketchMenu (pure), sketchMenuStore.
-  Not done: the Dimension tool making centreline dimensions by where the number is put (use the menu/panel), hiding construction
-  from clicks.
+  Not done: the Dimension tool making centreline dimensions by where the number is put (use the menu/panel).
 - Visibility (the eye in the feature list): `src/model/visibility.ts`. Sketches and Plane features have `Feature.visible`
   (missing = automatic: planes shown; a sketch shown until an unsuppressed feature uses it, `usedSketches` — as Onshape
   hides consumed sketches). The Origin and Top/Front/Right hidden per Part Studio: `doc.hiddenDatums` (first studio) /

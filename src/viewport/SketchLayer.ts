@@ -55,12 +55,10 @@ export interface ActiveSketch {
   selection: Set<string>;
   /** Edges of the part face it's on, shown faintly to snap to and use. */
   refs?: RefEdge[];
-  /** Construction geometry hidden (Shift+P). */
-  hideConstruction?: boolean;
+  /** Construction geometry hidden with Shift+P, and its own points (sketch/sketchView.ts hiddenConstruction). */
+  hidden?: ReadonlySet<string>;
   /** Dimension lines hidden (Show dimensions off). */
   hideDimensions?: boolean;
-  /** Lit up as if hovered: what the relation badge or dimension under the pointer ties. */
-  lit?: ReadonlySet<string>;
 }
 
 type Pt = [number, number];
@@ -273,6 +271,15 @@ export class SketchLayer {
     this.redrawActive();
   }
 
+  /** What the relation badge or dimension under the pointer ties, lit up as if hovered (only the open sketch is redrawn). */
+  private lit: ReadonlySet<string> = new Set();
+
+  setLit(ids: readonly string[]) {
+    if (ids.length === this.lit.size && ids.every((id) => this.lit.has(id))) return;
+    this.lit = new Set(ids);
+    this.redrawActive();
+  }
+
   setTransient(t: SketchTransient | null) {
     this.transient = t;
     this.redrawActive();
@@ -282,7 +289,7 @@ export class SketchLayer {
     const t = this.transient;
     const a = this.active!;
     if (a.selection.has(id) || t?.pending.includes(id)) return SKETCH_COLOURS.selected;
-    if (t?.hover?.id === id || a.lit?.has(id)) return SKETCH_COLOURS.hover;
+    if (t?.hover?.id === id || this.lit.has(id)) return SKETCH_COLOURS.hover;
     return defined ? SKETCH_COLOURS.defined : SKETCH_COLOURS.free;
   }
 
@@ -330,7 +337,7 @@ export class SketchLayer {
         continue;
       }
       // Shift+P: construction geometry hidden (unless it's picked, so a selection never vanishes).
-      if (c.construction && a.hideConstruction && !a.selection.has(c.id)) continue;
+      if (a.hidden?.has(c.id)) continue;
       const colour = conflicted.has(c.id) ? SKETCH_COLOURS.conflict : this.colourFor(c.id, a.analysis.definedCurves.has(c.id));
       for (const seg of segs) {
         (c.construction ? consSegs : solidSegs).push(seg);
@@ -402,6 +409,7 @@ export class SketchLayer {
     const pos: number[] = [];
     const col: number[] = [];
     for (const p of data.points) {
+      if (a.hidden?.has(p.id)) continue;
       pos.push(...toWorld(frame, p.x, p.y));
       const c = conflicted.has(p.id) ? SKETCH_COLOURS.conflict : this.colourFor(p.id, a.analysis.definedPoints.has(p.id));
       col.push(c.r, c.g, c.b);
