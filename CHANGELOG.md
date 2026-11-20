@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.102 — Planes as sketch references
+
+- **Top, Front and Right in sketches**, as in Onshape: where a plane crosses the sketch, its line can be snapped to,
+  dimensioned to, used in relations (Parallel, Symmetric…) and as a mirror line or revolve axis.
+- **Your own planes too**: a Plane feature's line follows when the plane moves (change its offset and the sketch moves with it).
+- **The origin** can be used as a point in sketches that aren't on it (on a face or an offset plane).
+- A plane that's deleted, suppressed or moved below the sketch is reported in plain words; the sketch stays where it was.
+
 ## v0.101 — Sketch: right-click menus, view options and quicker steps
 
 - **Right-click menu in sketches**, as in Onshape: the relations that fit what's picked, Construction, Delete, Select other, Finish. On a tablet, hold a finger still.
