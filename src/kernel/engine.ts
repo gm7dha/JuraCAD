@@ -12,6 +12,7 @@ import { applyPoint, applyVec, isClassicTransform, isStill, scaleOf, toAxisAngle
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams, visibleParamKeys } from "../model/features";
 import { planeFrame, toSketch, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
 import { planeAsSketchPlane, planeFeatureFrame, repointFeature } from "../sketch/planeFeature";
+import { isPlaneLink, seePlaneLink, type PlaneSource } from "../sketch/planeRefs";
 import { asTransformFrame, connectorFrame, connectorPlane, isMorePlaneMode, type FullFrame } from "../sketch/planeTypes";
 import { planeThroughLine, sketchLine3D, type SketchLineRef } from "../model/patternRefs";
 import { evaluate, getCurrentScope, setCurrentScope } from "../model/expr";
@@ -3269,6 +3270,21 @@ export class GeometryEngine {
     // matched to the nearest edge of the right kind, measured after the move the fitting links show (`followCurves`).
     const curveLinked = new Set<string>();
     this.followCurveLinks(sk.data, linked, linkedPts, frame, links, pointLinks, curveLinked, sameKind, shaped);
+    // Lines where planes cross the sketch, and the origin (planeRefs.ts): found again from the planes built so far.
+    const planesNow = new Map([...this.planeFrames].map(([id, p]) => [id, p.frame]));
+    for (const c of linked) {
+      const link = (c as { link: CurveLink }).link;
+      if (isPartLink(link) || curveLinked.has(c.id) || !isPlaneLink(link)) continue;
+      curveLinked.add(c.id);
+      links[c.id] = c.type === "line" ? seePlaneLink(frame, link, planesNow) : null;
+    }
+    for (const p of linkedPts) {
+      const link = p.link!;
+      if ("partId" in link || curveLinked.has(p.id) || !isPlaneLink(link)) continue;
+      curveLinked.add(p.id);
+      const seen = seePlaneLink(frame, link, planesNow);
+      pointLinks[p.id] = seen?.kind === "point" ? seen.a : null;
+    }
     for (const c of linked) {
       const link = (c as { link: CurveLink }).link;
       if (isPartLink(link) || curveLinked.has(c.id)) continue;
@@ -3536,6 +3552,7 @@ export class GeometryEngine {
     const sketches: SketchMap = new Map();
     // Newer Plane features and mate connectors, where they're found this build (things on them follow).
     this.followed = {};
+    this.planeFrames = new Map();
     this.disposeCurves(this.curves);
     this.curves = new Map();
     this.curveLines = {};
@@ -3581,6 +3598,10 @@ export class GeometryEngine {
       if (feature.type === "plane" && feature.planeDef && isMorePlaneMode(feature.planeDef.mode)) {
         const err = this.placeMorePlane(feature, sketches, features, moved);
         if (err) featureErrors[feature.id] = err;
+        else {
+          const at = moved.get(feature.id);
+          if (at) this.planeFrames.set(feature.id, { id: feature.id, name: feature.name, frame: planeFrame(at) });
+        }
         continue;
       }
       if (feature.type === "plane") {
@@ -3592,6 +3613,7 @@ export class GeometryEngine {
         else if (typeof frame === "string") featureErrors[feature.id] = frame;
         // Based on a plane that follows the model: it follows too (and so does anything on it, in this same build).
         else if (feature !== listed[index]) this.place(moved, feature, frame);
+        if (!bad && typeof frame !== "string") this.planeFrames.set(feature.id, { id: feature.id, name: feature.name, frame });
         continue;
       }
       if (feature.type === "sketch") {
@@ -6709,6 +6731,8 @@ export class GeometryEngine {
 
   /** Newer planes and mate connectors whose numbers changed this build (see RebuildResult.followed). */
   private followed: Record<string, FollowedFrame> = {};
+  /** Plane features placed so far this build (for sketches' plane lines, see planeRefs.ts). */
+  private planeFrames = new Map<string, PlaneSource>();
 
   /** A plane or mate connector placed in this build: things on it follow it, and it's reported where it is. */
   private place(moved: Map<string, SketchPlane>, f: Feature, frame: PlaneFrame): void {

@@ -94,7 +94,10 @@ describe("drawing lines", () => {
     const k = d().constraints.find((x) => x.type === "parallel")!;
     expect(k.refs).toContain(l.lineId);
     const [a, b] = ends(k.refs[0]);
-    expect((b[1] - a[1]) / (b[0] - a[0])).toBeCloseTo(0.5, 6);
+    const [c0, c1] = ends(k.refs[1]);
+    // (Its start is on Right's line — the sketch's Y axis — so the solve may nudge both lines a hair.)
+    expect((b[1] - a[1]) / (b[0] - a[0])).toBeCloseTo((c1[1] - c0[1]) / (c1[0] - c0[0]), 9);
+    expect((b[1] - a[1]) / (b[0] - a[0])).toBeCloseTo(0.5, 3);
   });
 
   it("infers perpendicular to the line just drawn, and nothing with Shift", () => {

@@ -117,7 +117,8 @@ describe("the controller says when a shape is half drawn", () => {
 
 describe("hidden construction geometry", () => {
   it("can't be clicked or boxed while hidden, and can again once shown", () => {
-    const axis = addLine(draftData(), at(0, -10), at(0, 10), { construction: true });
+    // (Beside the Y axis — Right's line, which can be clicked too.)
+    const axis = addLine(draftData(), at(5, -10), at(5, 10), { construction: true });
     s().updateSketch(axis.sketch, { record: true });
     s().setSketchTool("select");
     const c = new SketchController();
@@ -126,10 +127,10 @@ describe("hidden construction geometry", () => {
       c.pointerUp();
     };
     c.setHidden(new Set([axis.lineId]));
-    click(0, 3);
+    click(5, 3);
     expect(s().sketch!.selection).toEqual([]);
     c.setHidden(new Set());
-    click(0, 3);
+    click(5, 3);
     expect(s().sketch!.selection).toEqual([axis.lineId]);
   });
 

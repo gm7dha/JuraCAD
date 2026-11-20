@@ -8,6 +8,7 @@
 import { alignWith, distToCurve, hitTest, type Hit } from "./hit";
 import { isFaceEdge, isRefId, linkEdge, linkPoint, parseRefId, refSketchOf, type RefEdge } from "./links";
 import { refIndex } from "./refIndex";
+import { isPlaneRef } from "./planeRefs";
 import { curveById, ellipsePoints, joinPoints, nearestOnPath, pointPos, radiusOf, sketchId, splinePath, type EditResult, type Placed, type Snap } from "./ops";
 import { solveSketch } from "./solver";
 import { ORIGIN_ID, type SketchCurve, type SketchData } from "./types";
@@ -127,7 +128,9 @@ export function snapAt(s: SketchData, x: number, y: number, o: SnapOptions): Sna
       const [px, py] = pointPos(virt, vHit!.id);
       return { placed: { x: px, y: py, snap: { kind: "ref", edge: r.edge, at } }, hover: vHit, hints: [] };
     }
-    let vMid = nearestMidpoint(virt, x, y, o.pointTol, new Set());
+    // (A plane's line has no middle: it goes on for ever.)
+    const planeLines = new Set(virt.curves.filter((c) => { const e = refOf(c.id)?.edge; return !!e && isPlaneRef(e); }).map((c) => c.id));
+    let vMid = nearestMidpoint(virt, x, y, o.pointTol, planeLines);
     // The middle of the face's own edge, where an edge from elsewhere has its middle at the same place.
     if (vMid && refOf(vMid.id)?.edge && !isFaceEdge(refOf(vMid.id)!.edge)) {
       const at = vMid.at;
@@ -168,14 +171,15 @@ export function snapAt(s: SketchData, x: number, y: number, o: SnapOptions): Sna
     return { placed: { x: px, y: py, snap: { kind: "curve", id: c.id } }, hover: curveHit, hints: hint ? [hint] : [] };
   }
 
-  // 7. Onto an edge of the face. (Things from elsewhere — other sketches, parts off the sketch — are
-  // snapped to at their points only, so drawing near them doesn't tie a shape to them by accident;
-  // click one with the dimension tool, or start a tangent line, to use the curve itself.)
+  // 7. Onto an edge of the face, or a plane's line (Top, Front, Right, Plane features — as Onshape snaps onto the
+  // origin's axes). (Things from elsewhere — other sketches, parts off the sketch — are snapped to at their points
+  // only, so drawing near them doesn't tie a shape to them by accident; click one with the dimension tool, or start
+  // a tangent line, to use the curve itself.)
   if (virt) {
     let best: { c: SketchCurve; d: number } | null = null;
     for (const c of virt.curves) {
       const edge = refOf(c.id)?.edge;
-      if (!edge || !isFaceEdge(edge)) continue;
+      if (!edge || !(isFaceEdge(edge) || isPlaneRef(edge))) continue;
       const d = distToCurve(virt, c, x, y);
       if (d <= o.curveTol && (!best || d < best.d)) best = { c, d };
     }
