@@ -279,7 +279,7 @@ function spreadOwners(owner: Int32Array, nx: number, ny: number, land: (c: numbe
  * Keep only the land asked for (`isLand` changed in place): every island (land touching the area's edge dropped), the
  * biggest, or all of it. Throws when there's no land at all.
  */
-function keepLand(isLand: Uint8Array, nx: number, ny: number, land: IslandLand, warnings: string[], only?: OnlyCells) {
+export function keepLand(isLand: Uint8Array, nx: number, ny: number, land: IslandLand, warnings: string[], only?: OnlyCells) {
   const N = nx * ny;
   const spec = { land };
   const masses = stretches(nx, ny, (c) => isLand[c] === 1);

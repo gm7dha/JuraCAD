@@ -215,7 +215,7 @@ export function readOsm(text: string): OsmData {
       if (open && a.k) open.tags[a.k] = a.v ?? "";
     }
   }
-  if (!nodes.size) throw new OsmError("That map file has nothing in it. Export an area with the mountain in it from openstreetmap.org.");
+  if (!nodes.size) throw new OsmError("That map file has nothing in it. Export the area you want from openstreetmap.org.");
 
   const pointsOf = (refs: string[]) => refs.map((r) => nodes.get(r)).filter((p): p is LatLon => !!p);
   const data: OsmData = { bounds, lines: [], shapes: [], names: [], boundaries: [], regionNames: [], nodes: nodes.size };
@@ -330,7 +330,7 @@ const offGrid = (g: GridPoint) => !(g.e >= 0 && g.e <= 700000 && g.n >= 0 && g.n
  * turned a little from north–south lines of longitude), or the box round everything in it if it doesn't say. A
  * plain-English reason when it's outside Great Britain.
  */
-export function osmArea(data: OsmData): { sw: GridPoint; width: number; height: number } | string {
+export function osmArea(data: OsmData, puzzle = "the Mountain puzzle"): { sw: GridPoint; width: number; height: number } | string {
   let b = data.bounds;
   if (!b) {
     const all = [...data.lines.flatMap((l) => l.pts), ...data.shapes.flatMap((s) => s.rings.flat()), ...data.names.map((n) => n.at)];
@@ -344,7 +344,7 @@ export function osmArea(data: OsmData): { sw: GridPoint; width: number; height: 
     { lat: b.north, lon: b.west },
   ].map(latLonToGrid);
   if ([sw, se, ne, nw].some(offGrid) || b.south < 49 || b.north > 61.5 || b.west < -9 || b.east > 2.5)
-    return "That map is outside Great Britain — the Mountain puzzle works on the Ordnance Survey's grid, which only covers Great Britain.";
+    return `That map is outside Great Britain — ${puzzle} works on the Ordnance Survey's grid, which only covers Great Britain.`;
   const e0 = Math.ceil(Math.max(sw.e, nw.e));
   const e1 = Math.floor(Math.min(se.e, ne.e));
   const n0 = Math.ceil(Math.max(sw.n, se.n));

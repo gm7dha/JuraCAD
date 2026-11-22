@@ -1,5 +1,6 @@
 /**
- * Island puzzle: pick an island (or all of Great Britain, or any area by grid reference), fetch its heights, cut its land
+ * Island puzzle: pick an island (or all of Great Britain, any area by grid reference, or an OpenStreetMap file's area), trim
+ * its edges if wanted, fetch its heights, cut its land
  * into interlocking pieces — of about a chosen size, or along county / parish boundaries fetched from OpenStreetMap — and
  * download the pieces as print plates (3MF). "From the map" presses hill paths and lochs (and trunk roads and buildings) from
  * OpenStreetMap into the ground, fetched for the island or read from a map file. Nothing goes into the design. The maths is
@@ -12,14 +13,16 @@ import { featuresForIsland, IN_PLACE_FIT, ISLAND_DEFAULTS, islandChecks, type Is
 import { BOUNDARY_LEVELS, boundaryQuery, fetchCovers, ISLANDS, MARKS_MOST, marksQuery, OVERPASS_URL, type MarksFetched } from "../terrain/islands";
 import { TIDY_MARKS, type MarkChoice } from "../terrain/mapMarks";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
-import { boundariesOnGrid, boundaryLevels, featuresOnGrid, featureSummary, levelName, NO_FEATURES, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
+import { boundariesOnGrid, boundaryLevels, featuresOnGrid, featureSummary, levelName, MAX_OSM_BYTES, NO_FEATURES, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
 import { allPlatesZip, IN_PLACE_SETTINGS, plate3mf, platesByLevel, platesFor, platesInPlace, TOWER_ROOM, towerWhere, type BedRect } from "../terrain/puzzle3mf";
 import { islandBands, mapOnPuzzle, mapRaster, NO_MAP, PLAIN_COLOUR, SEA_BLUE, type ColourSpec, type HeightScale } from "../terrain/colour";
 import { ColourDownloads, ColourPanel, useColoured } from "./PuzzleColour";
 import { downloadFile, safeFileName } from "./download";
 import type { IslandJob, IslandReply } from "./islandPuzzle.worker";
 import { Modal } from "./Modal";
-import { DETAILS, MarkChoices, markStroke, Mountain3D } from "./MountainPuzzleDialog";
+import { DETAILS, MarkChoices, markStroke, Mountain3D, TrimSliders } from "./MountainPuzzleDialog";
+import { areaInside, ISLAND_MOST, osmIslandArea, trimmedIsland, type IslandArea } from "../terrain/islandArea";
+import { NO_TRIM, noTrim, type Trim } from "../terrain/mountainCrop";
 import { PickableView, type TopViewPick } from "./PathPicker";
 import { idsOf, isDropped, islandViewBox, landIdsAfter, NONE_DROPPED, pickableLines, withoutDropped } from "../terrain/pickMarks";
 import { openMountain } from "./mountainState";
@@ -27,7 +30,9 @@ import { loadTerrainTile } from "./mountainTiles";
 import { amsSlotsOf, loadPrinter, printerBed, savePrinter } from "./printerSetting";
 
 /** The widest area (m): all of Great Britain. */
-const MOST = 1_300_000;
+const MOST = ISLAND_MOST;
+
+type Source = "island" | "ref" | "osm";
 
 interface Area {
   sw: GridPoint;
@@ -36,11 +41,18 @@ interface Area {
   name: string;
   /** A list island's own land only. */
   only?: IslandOnly;
+  /** The OpenStreetMap file the area came from: its paths, lochs and boundaries are the map. */
+  osm?: OsmData;
 }
 
 const blobOf = (bytes: Uint8Array, type: string) => new Blob([new Uint8Array(bytes)], { type });
 
-function areaFrom(source: "island" | "ref", islandId: string, ref: string, km: [number, number]): Area | string {
+function areaFrom(source: Source, islandId: string, ref: string, km: [number, number], osm: { name: string; data: OsmData } | null): Area | string {
+  if (source === "osm") {
+    if (!osm) return "Choose an OpenStreetMap file (.osm): on openstreetmap.org, zoom to the island, press Export and save the file.";
+    const a = osmIslandArea(osm.data, osm.name);
+    return typeof a === "string" ? a : { ...a, osm: osm.data };
+  }
   if (source === "island") {
     const isl = ISLANDS.find((i) => i.id === islandId) ?? ISLANDS[0];
     return areaProblem(isl.sw, isl.width, isl.height, MOST, zoomFor(isl.sw, isl.width, isl.height)) ?? { ...isl };
@@ -75,7 +87,12 @@ const sameArea = (a: Area | null, b: Area | null) => !!a && !!b && a.sw.e === b.
 
 export function IslandPuzzleDialog() {
   const close = () => openMountain(false);
-  const [source, setSource] = useState<"island" | "ref">("island");
+  const [source, setSource] = useState<Source>("island");
+  // "An OpenStreetMap file": the area it covers, and its paths, lochs and boundaries.
+  const [osmFile, setOsmFile] = useState<{ name: string; data: OsmData } | null>(null);
+  const [osmError, setOsmError] = useState<string | null>(null);
+  // How much of the area is trimmed off each side before the island is made (as the Mountain puzzle's).
+  const [trim, setTrim] = useState<Trim>(NO_TRIM);
   const [islandId, setIslandId] = useState(ISLANDS[1].id);
   const [ref, setRef] = useState("NR 95 36");
   const [km, setKm] = useState<[number, number]>([30, 40]);
@@ -85,13 +102,13 @@ export function IslandPuzzleDialog() {
   const [spec, setSpec] = useState<Omit<IslandSpec, "bed">>(() => ({ ...ISLAND_DEFAULTS }));
   const [cutBy, setCutBy] = useState<"pieces" | "boundaries">("pieces");
   const [level, setLevel] = useState(6);
-  const [map, setMap] = useState<{ name: string; data: OsmData } | null>(null);
+  const [map, setMap] = useState<{ name: string; data: OsmData; covers?: IslandArea } | null>(null);
   const [mapBusy, setMapBusy] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   // "From the map": what to press into the ground, and the map it comes from (fetched, or a file).
   const [detail, setDetail] = useState<OsmDetail>("area");
   const [marks, setMarks] = useState<MarkChoice>(TIDY_MARKS);
-  const [marksMap, setMarksMap] = useState<{ name: string; data: OsmData; fetched: MarksFetched | null } | null>(null);
+  const [marksMap, setMarksMap] = useState<{ name: string; data: OsmData; fetched: MarksFetched | null; covers?: IslandArea } | null>(null);
   const [marksBusy, setMarksBusy] = useState(false);
   const [marksError, setMarksError] = useState<string | null>(null);
 
@@ -99,6 +116,15 @@ export function IslandPuzzleDialog() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [puzzle, setPuzzle] = useState<IslandBuilt | null>(null);
+  // What the island is made from: the area loaded, less what's trimmed off each side (the same grid when nothing is).
+  // Which land is kept ("every island", a list island's own land) is decided on the whole area, so a trim through the
+  // island doesn't make its cut edge "the area's edge" and drop it.
+  const used = useMemo(
+    () => (loaded ? trimmedIsland(loaded.area, loaded.grid, trim, { sea: spec.sea, land: spec.land, only: loaded.area.only }) : null),
+    [loaded, trim, spec.sea, spec.land],
+  );
+  // The map file the heights came from, if they did: it is the map for marks (and boundaries, if it has them).
+  const fileMap = loaded?.area.osm ? { name: loaded.area.name, data: loaded.area.osm, fetched: null } : null;
   // The area whose heights are loaded now: an answer from OpenStreetMap for another one is ignored.
   const loadedKey = useRef<string | null>(null);
   loadedKey.current = loaded ? areaKey(loaded.area) : null;
@@ -111,7 +137,7 @@ export function IslandPuzzleDialog() {
   const [towerOff, setTowerOff] = useState(false);
   const colourOn = colour.mode !== "plain";
 
-  const area = areaFrom(source, islandId, ref, km);
+  const area = areaFrom(source, islandId, ref, km, osmFile);
   const areaReady = typeof area !== "string";
   const fresh = areaReady && sameArea(loaded?.area ?? null, area);
 
@@ -123,7 +149,10 @@ export function IslandPuzzleDialog() {
       const z = zoomFor(area.sw, area.width, area.height);
       // About a thousand samples across the longer side: narrow straits stay sea.
       const spacing = Math.max(15, Math.max(area.width, area.height) / 1000);
-      setLoaded({ area, grid: await readHeights(loadTerrainTile, area.sw, area.width, area.height, spacing, z) });
+      const grid = await readHeights(loadTerrainTile, area.sw, area.width, area.height, spacing, z);
+      // Another area: its trims start again (shares of the old area's sides would mean something else on this one).
+      if (!sameArea(loaded?.area ?? null, area)) setTrim(NO_TRIM);
+      setLoaded({ area, grid });
       setMap(null);
       setMarksMap(null);
     } catch (e) {
@@ -138,7 +167,9 @@ export function IslandPuzzleDialog() {
     setMapBusy(true);
     setMapError(null);
     try {
-      const { sw, width, height } = loaded.area;
+      // Just the part being made (the area less its trims).
+      const covers = used ?? loaded.area;
+      const { sw, width, height } = covers;
       const asked = areaKey(loaded.area);
       let res: Response;
       try {
@@ -148,7 +179,7 @@ export function IslandPuzzleDialog() {
       }
       const data = await overpassMap(res, "boundaries");
       if (loadedKey.current !== asked) return;
-      setMap({ name: `${levelName(level)} from OpenStreetMap`, data });
+      setMap({ name: `${levelName(level)} from OpenStreetMap`, data, covers: { sw: covers.sw, width: covers.width, height: covers.height } });
     } catch (e) {
       setMap(null);
       setMapError(e instanceof Error ? e.message : String(e));
@@ -160,7 +191,8 @@ export function IslandPuzzleDialog() {
   /** One request to OpenStreetMap's query service for the island's paths, rivers and lochs (and roads), on a click. */
   const getMarks = async () => {
     if (!loaded || detail === "area") return;
-    const { sw, width, height } = loaded.area;
+    const covers = used ?? loaded.area;
+    const { sw, width, height } = covers;
     const query = marksQuery(sw, width, height, detail, marks);
     if (!query) return;
     setMarksBusy(true);
@@ -176,12 +208,33 @@ export function IslandPuzzleDialog() {
       const data = await overpassMap(res, "paths, lochs and roads");
       // Heights for another area were fetched meanwhile: this map is for the old one.
       if (loadedKey.current !== asked) return;
-      setMarksMap({ name: "OpenStreetMap", data, fetched: { detail, choice: marks } });
+      setMarksMap({ name: "OpenStreetMap", data, fetched: { detail, choice: marks }, covers: { sw: covers.sw, width: covers.width, height: covers.height } });
     } catch (e) {
       setMarksError(e instanceof OsmError ? e.message : e instanceof Error ? e.message : String(e));
     } finally {
       setMarksBusy(false);
     }
+  };
+
+  const chooseOsmFile = (file: File | undefined) => {
+    if (!file) return;
+    setOsmError(null);
+    if (file.size > MAX_OSM_BYTES) {
+      setOsmFile(null);
+      setOsmError("That map file is too big — export a smaller area (a few kilometres across).");
+      return;
+    }
+    file
+      .text()
+      .then((text) => {
+        setOsmFile({ name: file.name.replace(/\.(osm|xml)$/i, "").replace(/^map$/i, "My map") || "My map", data: readOsm(text) });
+        // A map file is for its marks: start with its paths and lochs pressed in.
+        setDetail((d) => (d === "area" ? "water" : d));
+      })
+      .catch((e) => {
+        setOsmFile(null);
+        setOsmError(e instanceof OsmError ? e.message : "That file couldn't be read as an OpenStreetMap file.");
+      });
   };
 
   const chooseMarksFile = (file: File | undefined) => {
@@ -208,15 +261,22 @@ export function IslandPuzzleDialog() {
       });
   };
 
-  const levels = useMemo(() => (map ? boundaryLevels(map.data) : []), [map]);
+  // Boundaries fetched or read win; else the heights' own map file, when it has any.
+  const fileBoundaries = useMemo(() => (fileMap && boundaryLevels(fileMap.data).length ? fileMap : null), [loaded]);
+  const boundaryMap = map ?? fileBoundaries;
+  const levels = useMemo(() => (boundaryMap ? boundaryLevels(boundaryMap.data) : []), [boundaryMap]);
   // The level asked for if the map has it, else its finest.
   const usedLevel = levels.some(([l]) => l === level) ? level : levels.length ? levels[levels.length - 1][0] : level;
-  const cuts: IslandCuts | undefined = useMemo(() => (cutBy === "boundaries" && map ? boundariesOnGrid(map.data, usedLevel) : undefined), [cutBy, map, usedLevel]);
+  const cuts: IslandCuts | undefined = useMemo(() => (cutBy === "boundaries" && boundaryMap ? boundariesOnGrid(boundaryMap.data, usedLevel) : undefined), [cutBy, boundaryMap, usedLevel]);
+  // Fetched for a smaller area than is being made now (a trim was taken back): fetch again to cover it all.
+  const shortOf = (m: { covers?: IslandArea } | null) => !!m?.covers && !!used && !areaInside(used, m.covers);
 
+  // The heights' own map file, else what was fetched or read for the marks.
+  const marksSource = fileMap ?? marksMap;
   // What the usual rules keep from the map, then less the paths and roads clicked off on the top view.
   const mapFeatures: MapFeatures = useMemo(
-    () => (detail !== "area" && marksMap ? featuresOnGrid(marksMap.data, detail, marks, loaded?.grid) : NO_FEATURES),
-    [detail, marksMap, marks, loaded],
+    () => (detail !== "area" && marksSource ? featuresOnGrid(marksSource.data, detail, marks, loaded?.grid) : NO_FEATURES),
+    [detail, marksSource, marks, loaded],
   );
   const [dropped, setDropped] = useState<ReadonlySet<string>>(NONE_DROPPED);
   // A new area starts with everything kept (kept by the map's own way ids, so fetching the same area again keeps the choice).
@@ -229,9 +289,9 @@ export function IslandPuzzleDialog() {
   }, [droppedArea]);
   const features: MapFeatures = useMemo(() => withoutDropped(mapFeatures, dropped), [mapFeatures, dropped]);
   // Fetched for less than is asked for now ("Everything" needs the roads, rivers and every path need fetching too).
-  const fetchedTooLittle = detail !== "area" && !!marksMap?.fetched && !fetchCovers(marksMap.fetched, detail, marks);
+  const fetchedTooLittle = !fileMap && detail !== "area" && !!marksMap?.fetched && (!fetchCovers(marksMap.fetched, detail, marks) || shortOf(marksMap));
   const needsFetch = detail !== "area" && (!marksMap || fetchedTooLittle);
-  const canFetch = !!loaded && fresh && Math.max(loaded.area.width, loaded.area.height) <= MARKS_MOST;
+  const canFetch = !!used && fresh && Math.max(used.width, used.height) <= MARKS_MOST;
 
   // Put together, the island is sized on Bambu Studio's own bed (it centres the file there) and keeps out of the printer's
   // no-print corner (and, on the H2D, of what only the other nozzle reaches); in several filaments it leaves a spot for the
@@ -242,7 +302,8 @@ export function IslandPuzzleDialog() {
   const only = loaded?.area.only;
   const fullSpec: IslandSpec = {
     ...(spec.inPlace ? { ...spec, bed: placeBed, keepOut, tower: colourOn && !towerOff } : { ...spec, bed }),
-    ...(only ? { only } : {}),
+    // Trimmed: the land was already chosen on the whole area (trimmedIsland), so build all that's left.
+    ...(used?.decided ? { land: "all" as const } : only ? { only } : {}),
   };
   const problems = islandChecks(fullSpec);
   const specKey = JSON.stringify(fullSpec);
@@ -257,7 +318,8 @@ export function IslandPuzzleDialog() {
     setWorking(true);
     const askedDropped = dropped;
     const timer = setTimeout(() => {
-      builder.current.build({ grid: loaded.grid, sw: loaded.area.sw, width: loaded.area.width, height: loaded.area.height, spec: fullSpec, cuts, features }, (reply) => {
+      if (!used) return;
+      builder.current.build({ grid: used.grid, sw: used.sw, width: used.width, height: used.height, spec: fullSpec, cuts, features }, (reply) => {
         if ("error" in reply) {
           setPuzzle(null);
           setBuildError(reply.error);
@@ -271,7 +333,7 @@ export function IslandPuzzleDialog() {
     }, 350);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, specKey, cuts, features]);
+  }, [loaded, used, specKey, cuts, features]);
 
   // Stop the builder when the window closes.
   useEffect(() => () => builder.current.stop(), []);
@@ -306,7 +368,7 @@ export function IslandPuzzleDialog() {
   // How ground heights sit in the puzzle (base + height × relief / highest), and the map over it, for colouring.
   const scaleKey = puzzle ? [spec.base, spec.relief, puzzle.high].join(",") : "";
   const scale: HeightScale | null = useMemo(() => (puzzle ? { z0: spec.base, h0: 0, mmPerM: spec.relief / Math.max(puzzle.high, 1) } : null), [scaleKey]);
-  const puzzleMap = useMemo(() => (puzzle && loaded ? mapOnPuzzle(featuresForIsland(features, puzzle.k).features, (puzzle.origin ?? loaded.area.sw).e, (puzzle.origin ?? loaded.area.sw).n, puzzle.k) : NO_MAP), [puzzle, features]);
+  const puzzleMap = useMemo(() => (puzzle && loaded ? mapOnPuzzle(featuresForIsland(features, puzzle.k).features, (puzzle.origin ?? used?.sw ?? loaded.area.sw).e, (puzzle.origin ?? used?.sw ?? loaded.area.sw).n, puzzle.k) : NO_MAP), [puzzle, features]);
   const mapSize: [number, number] = puzzle ? [puzzle.width, puzzle.height] : [1, 1];
   const paintMap = useMemo(() => mapRaster(puzzleMap, mapSize[0], mapSize[1]), [puzzleMap]);
   const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap);
@@ -331,8 +393,24 @@ export function IslandPuzzleDialog() {
             <label>
               <input type="radio" name="island-source" checked={source === "ref"} onChange={() => setSource("ref")} /> Round a grid reference
             </label>
+            <label>
+              <input type="radio" name="island-source" checked={source === "osm"} onChange={() => setSource("osm")} /> An OpenStreetMap file
+            </label>
           </div>
-          {source === "island" ? (
+          {source === "osm" ? (
+            <>
+              <label className="mountain-row">
+                <span>Map file</span>
+                <input type="file" accept=".osm,.xml,application/xml,text/xml" onChange={(e) => chooseOsmFile(e.target.files?.[0])} />
+              </label>
+              <p className="muted small">
+                On openstreetmap.org, zoom to the island, press <strong>Export</strong> and save the .osm file. The puzzle covers the area the file
+                covers; the heights still come from the height data, and the map's paths, lochs and roads (and any boundaries in it) are used from the
+                file. Trim the edges below once the heights are in. A map of part of the mainland? Choose “All the land in the area”.
+              </p>
+              {osmError && <p className="error-text small">{osmError}</p>}
+            </>
+          ) : source === "island" ? (
             <label className="mountain-row">
               <span>Island</span>
               <select value={islandId} onChange={(e) => setIslandId(e.target.value)}>
@@ -379,6 +457,12 @@ export function IslandPuzzleDialog() {
           )}
           {error && <p className="error-text small">{error}</p>}
           {loaded && !fresh && areaReady && <p className="muted small">The area has changed — get the heights again to use it.</p>}
+          {loaded && (
+            <>
+              <TrimSliders trim={trim} setTrim={setTrim} size={[loaded.area.width, loaded.area.height]} unit={(v) => formatDistance(v)} />
+              <AreaView grid={loaded.grid} area={loaded.area} used={used} sea={spec.sea} trimmed={!noTrim(trim)} />
+            </>
+          )}
 
           <h3 className="library-heading">2. Pieces</h3>
           <div className="mountain-choices" role="radiogroup" aria-label="How it's cut">
@@ -411,11 +495,12 @@ export function IslandPuzzleDialog() {
               </label>
               {!loaded && <p className="muted small">Get the heights first.</p>}
               {mapError && <p className="error-text small">{mapError}</p>}
-              {map && (
+              {boundaryMap && (
                 <p className="muted small">
                   {levels.length
-                    ? `${map.name}: ${levels.map(([l, n]) => `${levelName(l).toLowerCase()} (${n} lines)`).join(", ")}.${usedLevel !== level ? ` Using ${levelName(usedLevel).toLowerCase()}.` : ""}`
-                    : `${map.name} has no boundaries in it — try another level.`}
+                    ? `${boundaryMap.name}: ${levels.map(([l, n]) => `${levelName(l).toLowerCase()} (${n} lines)`).join(", ")}.${usedLevel !== level ? ` Using ${levelName(usedLevel).toLowerCase()}.` : ""}`
+                    : `${boundaryMap.name} has no boundaries in it — try another level.`}
+                  {shortOf(map) ? " They were fetched for a smaller area than you're making now — get them again to cover it all." : ""}
                 </p>
               )}
             </>
@@ -432,7 +517,17 @@ export function IslandPuzzleDialog() {
               ))}
             </select>
           </label>
-          {detail !== "area" && (
+          {detail !== "area" && fileMap && (
+            <>
+              <MarkChoices choice={marks} onChange={setMarks} roads={detail === "all"} />
+              <p className="muted small">
+                From your map file, {fileMap.name}: {featureSummary(features)}.{puzzle?.marks.tooSmall ? ` ${puzzle.marks.tooSmall} too small to show at this scale are left off.` : ""} Paths
+                {detail === "all" ? " and roads" : ""} become thin, shallow grooves in the ground, lochs flat water{detail === "all" ? ", buildings small blocks" : ""}. Marks stop at
+                the coast and at the trimmed edges.
+              </p>
+            </>
+          )}
+          {detail !== "area" && !fileMap && (
             <>
               <MarkChoices choice={marks} onChange={setMarks} roads={detail === "all"} />
               {canFetch || !loaded ? (
@@ -454,7 +549,7 @@ export function IslandPuzzleDialog() {
               {marksMap && (
                 <p className="muted small">
                   {marksMap.name}: {featureSummary(features)}.{puzzle?.marks.tooSmall ? ` ${puzzle.marks.tooSmall} too small to show at this scale are left off.` : ""}
-                  {fetchedTooLittle ? " Get them again for what you've added." : ""}
+                  {fetchedTooLittle ? (shortOf(marksMap) ? " They were fetched for a smaller area than you're making now — get them again to cover it all." : " Get them again for what you've added.") : ""}
                 </p>
               )}
             </>
@@ -556,7 +651,7 @@ export function IslandPuzzleDialog() {
                 <IslandTopView
                   puzzle={puzzle}
                   pick={puzzle && loaded ? { lines: pickableLines(featuresForIsland(mapFeatures, puzzle.k).features.lines, dropped, landIds.current), dropped, onChange: setDropped, pending: working } : null}
-                  origin={puzzle ? (puzzle.origin ?? loaded?.area.sw ?? null) : null}
+                  origin={puzzle ? (puzzle.origin ?? used?.sw ?? loaded?.area.sw ?? null) : null}
                 />
                 <Mountain3D puzzle={puzzle} explode={explode} paint={colourOn ? (coloured?.preview ?? null) : null} />
               </div>
@@ -583,7 +678,7 @@ export function IslandPuzzleDialog() {
                     {puzzle.warnings.some((w) => w.includes("fewer than two")) ? "" : ` — at least two on every piece${puzzle.loose ? " that has a neighbour" : ""}`}.
                     {puzzle.marks.shown ? ` ${puzzle.marks.shown} things from the map are pressed into the ground.` : ""}
                   </p>
-                  {puzzle.warnings.map((w) => (
+                  {[...(used?.notes ?? []).filter((w) => !puzzle.warnings.includes(w)), ...puzzle.warnings].map((w) => (
                     <p key={w} className="mountain-warn">
                       {w}
                     </p>
@@ -707,6 +802,66 @@ class IslandBuilder {
 
 /** "120 m", "2.5 km". */
 const formatDistance = (m: number) => (m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(m < 10000 ? 1 : 0)} km`);
+
+/**
+ * The whole area loaded, from above, north up: land green (lighter higher up), sea blue, and what the trims cut off
+ * dimmed — so the trims can be set before the island is made.
+ */
+function AreaView({ grid, area, used, sea, trimmed }: { grid: HeightGrid; area: IslandArea; used: IslandArea | null; sea: number; trimmed: boolean }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  // The picture of the heights only changes with the heights (and the sea level).
+  const picture = useMemo(() => {
+    const most = 300;
+    const s = Math.min(most / area.width, most / area.height);
+    const [w, h] = [Math.max(1, Math.round(area.width * s)), Math.max(1, Math.round(area.height * s))];
+    let high = 1;
+    for (const v of grid.h) high = Math.max(high, v);
+    const px = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        // Row 0 is the north edge.
+        const i = Math.min(grid.nx - 1, Math.round(((x + 0.5) / s) / grid.spacing));
+        const j = Math.min(grid.ny - 1, Math.round(((h - y - 0.5) / s) / grid.spacing));
+        const v = grid.h[j * grid.nx + i];
+        const k = (y * w + x) * 4;
+        if (v > sea) {
+          const t = Math.min(1, v / high);
+          [px[k], px[k + 1], px[k + 2]] = [90 + 120 * t, 140 + 70 * t, 80 + 110 * t];
+        } else [px[k], px[k + 1], px[k + 2]] = [79, 127, 174];
+        px[k + 3] = 255;
+      }
+    return { w, h, s, px };
+  }, [grid, area.width, area.height, sea]);
+  useEffect(() => {
+    const canvas = ref.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    const { w, h, s, px } = picture;
+    canvas.width = w;
+    canvas.height = h;
+    ctx.putImageData(new ImageData(px, w, h), 0, 0);
+    if (!used || !trimmed) return;
+    // Dim everything but the part kept, then outline it.
+    const x0 = (used.sw.e - area.sw.e) * s;
+    const x1 = x0 + used.width * s;
+    const y0 = h - (used.sw.n - area.sw.n + used.height) * s;
+    const y1 = h - (used.sw.n - area.sw.n) * s;
+    ctx.fillStyle = "rgba(10,15,25,0.55)";
+    ctx.fillRect(0, 0, w, y0);
+    ctx.fillRect(0, y1, w, h - y1);
+    ctx.fillRect(0, y0, x0, y1 - y0);
+    ctx.fillRect(x1, y0, w - x1, y1 - y0);
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1);
+  }, [picture, used, trimmed, area.sw.e, area.sw.n]);
+  return (
+    <figure className="mountain-figure">
+      <canvas ref={ref} className="mountain-top" />
+      <figcaption className="muted small">The whole area, north up{trimmed ? "; what's trimmed off is dimmed" : ""}.</figcaption>
+    </figure>
+  );
+}
 
 /** From above, north up: each piece in its own colour with its number. */
 function IslandTopView({ puzzle, pick, origin }: { puzzle: IslandBuilt | null; pick: TopViewPick | null; origin: { e: number; n: number } | null }) {

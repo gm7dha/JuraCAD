@@ -125,7 +125,7 @@ const borderParts = (p: { name: string }): BandPartFile[] => {
 };
 
 /** The four "trim from" sliders: how much of the area to cut off each side before it's sized to the bed. */
-function TrimSliders({ trim, setTrim, size, unit }: { trim: Trim; setTrim: (t: Trim) => void; size: [number, number]; unit: (v: number) => string }) {
+export function TrimSliders({ trim, setTrim, size, unit }: { trim: Trim; setTrim: (t: Trim) => void; size: [number, number]; unit: (v: number) => string }) {
   const row = (key: keyof Trim, label: string, across: number) => (
     <label className="mountain-row" key={key}>
       <span>{label}</span>

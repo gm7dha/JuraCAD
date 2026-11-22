@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.106 — Island puzzle: open an OpenStreetMap file, and trim the area
+
+- **"An OpenStreetMap file"** as the island's source: load a .osm export from openstreetmap.org. Its area is the puzzle's,
+  and its paths, roads and lochs become the map marks straight from the file (boundaries too, when it has them).
+- **Trim from the north / east / south / west**, as in the Mountain puzzle, for any source. A small map shows the whole
+  area with the trimmed edges dimmed. An island the trim cuts into is kept; land off the edge of the whole area is
+  still left out as before.
+
 ## v0.105.1 — Shell's Wall thickness box is back
 
 - **Fixed**: the Wall thickness box was missing from Shell (and Thicken, Rib, Sheet metal and Gusset) since v0.60,
