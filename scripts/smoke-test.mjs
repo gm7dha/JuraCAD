@@ -3863,7 +3863,11 @@ try {
     await page.getByRole("menuitem", { name: "Part Studio" }).click();
     await page.waitForFunction(() => document.querySelectorAll(".feature-row:not(.datum)").length === 0, null, { timeout: 10_000 });
     const partsBefore = await page.evaluate(() => window.juracadStore.getState().parts.map((p) => p.id));
-    await tool("Box"); // 40 × 30 × 20
+    await tool("Box");
+    // (The Box dialog may start from sizes used before: set them.)
+    await page.locator("#param-width").fill("40");
+    await page.locator("#param-depth").fill("30");
+    await page.locator("#param-height").fill("20");
     await page.getByRole("button", { name: "Accept" }).click();
     await page.waitForFunction(() => document.querySelectorAll(".part-row").length === 1, null, { timeout: 30_000 });
     await settled();
@@ -3892,7 +3896,12 @@ try {
     const expectVolume = async (t) => {
       const want = 24000 - (40 - 2 * t) * (30 - 2 * t) * (20 - t);
       await page.waitForFunction(([w, id]) => Math.abs((window.juracadStore.getState().parts.find((p) => p.id === id)?.volume ?? 0) - w) < 1, [want, boxId], { timeout: 30_000 }).catch(async () => {
-        throw new Error(`the shelled box should be ${want} mm³ with ${t} mm walls, but is ${await shellVolume()} mm³`);
+        const info = await page.evaluate((id) => {
+          const st = window.juracadStore.getState();
+          const shell = Object.values(st.featureErrors ?? {});
+          return JSON.stringify({ units: st.history.present.units, errors: shell, draft: st.editing?.draft?.params });
+        }, boxId);
+        throw new Error(`the shelled box should be ${want} mm³ with ${t} mm walls, but is ${await shellVolume()} mm³ (${info})`);
       });
     };
     await expectVolume(3);
