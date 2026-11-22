@@ -3853,6 +3853,58 @@ try {
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 
+  step = "Shell: typing a new wall thickness in its box (and again when editing it) changes the walls";
+  {
+    const settled = async () => {
+      await page.waitForTimeout(300);
+      await page.waitForFunction(() => !window.juracadStore.getState().rebuildBusy, null, { timeout: 60_000 });
+    };
+    await page.getByRole("button", { name: "Add a tab" }).click();
+    await page.getByRole("menuitem", { name: "Part Studio" }).click();
+    await page.waitForFunction(() => document.querySelectorAll(".feature-row:not(.datum)").length === 0, null, { timeout: 10_000 });
+    await tool("Box"); // 40 × 30 × 20
+    await page.getByRole("button", { name: "Accept" }).click();
+    await page.waitForFunction(() => document.querySelectorAll(".part-row").length === 1, null, { timeout: 30_000 });
+    await settled();
+    await tool("Shell");
+    await page.evaluate(() => {
+      const s = window.juracadStore.getState();
+      const part = s.parts.find((p) => !p.configuration && p.faceRefs.length === 6);
+      s.toggleDraftPick({ partId: part.id, ref: part.faceRefs[part.faceRefs.findIndex((f) => f.normal[2] > 0.99)] });
+    });
+    // The box was missing from the dialog (v0.60–v0.104): it must be there and take typing.
+    const wall = page.locator("#param-thickness");
+    await wall.waitFor({ timeout: 5_000 }).catch(() => {
+      throw new Error("the Shell dialog has no Wall thickness box");
+    });
+    await wall.click();
+    await page.keyboard.press("Control+a");
+    await page.keyboard.type("3");
+    await page.getByRole("button", { name: "Accept" }).click();
+    await page.waitForFunction(() => !window.juracadStore.getState().editing, null, { timeout: 30_000 });
+    await settled();
+    // Open at the top: 40·30·20 − (40 − 2t)(30 − 2t)(20 − t).
+    const shellVolume = () => page.evaluate(() => window.juracadStore.getState().parts.find((p) => !p.configuration && p.volume)?.volume ?? 0);
+    const expectVolume = async (t) => {
+      const want = 24000 - (40 - 2 * t) * (30 - 2 * t) * (20 - t);
+      await page.waitForFunction((w) => Math.abs((window.juracadStore.getState().parts.find((p) => !p.configuration && p.volume)?.volume ?? 0) - w) < 1, want, { timeout: 30_000 }).catch(async () => {
+        throw new Error(`the shelled box should be ${want} mm³ with ${t} mm walls, but is ${await shellVolume()} mm³`);
+      });
+    };
+    await expectVolume(3);
+    await page.locator(".feature-row", { hasText: "Shell" }).first().dblclick();
+    await wall.waitFor({ timeout: 5_000 });
+    if ((await wall.inputValue()) !== "3") throw new Error(`editing the Shell shows ${await wall.inputValue()} mm, not 3`);
+    await wall.click();
+    await page.keyboard.press("Control+a");
+    await page.keyboard.type("5");
+    await page.getByRole("button", { name: "Accept" }).click();
+    await page.waitForFunction(() => !window.juracadStore.getState().editing, null, { timeout: 30_000 });
+    await settled();
+    await expectVolume(5);
+    await page.getByRole("button", { name: "Part Studio 1" }).click();
+  }
+
   step = "sheet metal from a part: a hollowed box, its walls clicked one at a time, rips at the corners";
   let convertReport = "";
   {
