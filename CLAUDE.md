@@ -721,7 +721,7 @@
   guide / Tangent to guide (sketch and curve guides).
 - Thin (Onshape's "Thin" on Extrude/Revolve/Sweep, solids): `Feature.thin` (`midPlane`: the whole `thickness` centred; else
   `thickness` on the first side + `thickness2` (default 0) on the other; `flip` swaps; missing = solid, old files unchanged;
-  params in group "thin", shown by `ThinOptions` in FeatureDialog.tsx, hidden by `visibleParamKeys` unless thin; draft hidden).
+  params in group "thin", shown by `ThinOptions` in FeatureDialog.tsx, hidden by `visibleParamKeys` unless thin — only that type's group "thin" params, never Shell/Thicken/Rib/Sheet metal/Gusset's own `thickness` (tests/visibleParams pins every type's boxes hidden at first); draft hidden).
   Pure `src/sketch/thin.ts` `thinSketches(data, sides, { keep, axis, areas, verb })`: with areas picked, a ring round each
   picked area's outline and holes (`map.join`), first side into the area; else every curve: `sketchRuns` (findChains with
   branching, then a junction group's curves joined end to end through points where just two meet — only real junctions

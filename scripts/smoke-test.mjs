@@ -3864,6 +3864,72 @@ try {
     await page.getByRole("button", { name: "Part Studio 1" }).click();
   }
 
+  step = "Shell: typing a new wall thickness in its box (and again when editing it) changes the walls";
+  {
+    const settled = async () => {
+      await page.waitForTimeout(300);
+      await page.waitForFunction(() => !window.juracadStore.getState().rebuildBusy, null, { timeout: 60_000 });
+    };
+    await page.getByRole("button", { name: "Add a tab" }).click();
+    await page.getByRole("menuitem", { name: "Part Studio" }).click();
+    await page.waitForFunction(() => document.querySelectorAll(".feature-row:not(.datum)").length === 0, null, { timeout: 10_000 });
+    const partsBefore = await page.evaluate(() => window.juracadStore.getState().parts.map((p) => p.id));
+    await tool("Box");
+    // (The design is in inches by now: sizes typed with their unit.)
+    await page.locator("#param-width").fill("40 mm");
+    await page.locator("#param-depth").fill("30 mm");
+    await page.locator("#param-height").fill("20 mm");
+    await page.getByRole("button", { name: "Accept" }).click();
+    await page.waitForFunction(() => document.querySelectorAll(".part-row").length === 1, null, { timeout: 30_000 });
+    await settled();
+    // This Part Studio's box (every studio's parts are in the store).
+    const boxId = await page.evaluate((before) => window.juracadStore.getState().parts.find((p) => !before.includes(p.id) && !p.configuration)?.id, partsBefore);
+    if (!boxId) throw new Error("the box in the new Part Studio wasn't found");
+    await tool("Shell");
+    await page.evaluate((id) => {
+      const s = window.juracadStore.getState();
+      const part = s.parts.find((p) => p.id === id);
+      s.toggleDraftPick({ partId: part.id, ref: part.faceRefs[part.faceRefs.findIndex((f) => f.normal[2] > 0.99)] });
+    }, boxId);
+    // The box was missing from the dialog (v0.60–v0.104): it must be there and take typing.
+    const wall = page.locator("#param-thickness");
+    await wall.waitFor({ timeout: 5_000 }).catch(() => {
+      throw new Error("the Shell dialog has no Wall thickness box");
+    });
+    await wall.click();
+    await page.keyboard.press("Control+a");
+    await page.keyboard.type("3 mm");
+    await page.getByRole("button", { name: "Accept" }).click();
+    await page.waitForFunction(() => !window.juracadStore.getState().editing, null, { timeout: 30_000 });
+    await settled();
+    // Open at the top: 40·30·20 − (40 − 2t)(30 − 2t)(20 − t).
+    const shellVolume = () => page.evaluate((id) => window.juracadStore.getState().parts.find((p) => p.id === id)?.volume ?? 0, boxId);
+    const expectVolume = async (t) => {
+      const want = 24000 - (40 - 2 * t) * (30 - 2 * t) * (20 - t);
+      await page.waitForFunction(([w, id]) => Math.abs((window.juracadStore.getState().parts.find((p) => p.id === id)?.volume ?? 0) - w) < 1, [want, boxId], { timeout: 30_000 }).catch(async () => {
+        const info = await page.evaluate((id) => {
+          const st = window.juracadStore.getState();
+          const shell = Object.values(st.featureErrors ?? {});
+          return JSON.stringify({ units: st.history.present.units, errors: shell, draft: st.editing?.draft?.params });
+        }, boxId);
+        throw new Error(`the shelled box should be ${want} mm³ with ${t} mm walls, but is ${await shellVolume()} mm³ (${info})`);
+      });
+    };
+    await expectVolume(3);
+    await page.locator(".feature-row", { hasText: "Shell" }).first().dblclick();
+    await wall.waitFor({ timeout: 5_000 });
+    const kept = await page.evaluate(() => window.juracadStore.getState().editing?.draft.params.thickness);
+    if (kept !== "3 mm") throw new Error(`editing the Shell has ${kept} as its wall thickness, not 3 mm (the box shows ${await wall.inputValue()})`);
+    await wall.click();
+    await page.keyboard.press("Control+a");
+    await page.keyboard.type("5 mm");
+    await page.getByRole("button", { name: "Accept" }).click();
+    await page.waitForFunction(() => !window.juracadStore.getState().editing, null, { timeout: 30_000 });
+    await settled();
+    await expectVolume(5);
+    await page.getByRole("button", { name: "Part Studio 1" }).click();
+  }
+
   step = "sheet metal from a part: a hollowed box, its walls clicked one at a time, rips at the corners";
   let convertReport = "";
   {
