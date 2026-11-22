@@ -41,9 +41,9 @@ import {
   type HeightScale,
 } from "../src/terrain/colour";
 import { allItems, bandPlateFile, bandPuzzle, colour3mfModel, colourObjFiles, colourPuzzle, colourWrl, plateSwaps, pngStored, zipDeflated } from "../src/terrain/colourFiles";
-import { ISLAND_DEFAULTS, makeIslandPuzzle } from "../src/terrain/islandPuzzle";
+import { featuresForIsland, ISLAND_DEFAULTS, makeIslandPuzzle } from "../src/terrain/islandPuzzle";
 import { baseFor, makeMountainPuzzle, MOUNTAIN_DEFAULTS, type MountainSpec, type PuzzlePiece } from "../src/terrain/mountainPuzzle";
-import { featuresOnGrid, readOsm } from "../src/terrain/osm";
+import { featuresAtScale, featuresOnGrid, readOsm } from "../src/terrain/osm";
 import { GROOVES } from "../src/terrain/groundMarks";
 import { gridToLatLon } from "../src/terrain/osGrid";
 import { plate3mf, plateFiles, platesByLevel, platesFor } from "../src/terrain/puzzle3mf";
@@ -543,7 +543,8 @@ describe("red paths and black roads", () => {
     names: [],
   };
   const marked = makeIslandPuzzle(islandGrid, isw, IW, IH, { ...ISLAND_DEFAULTS, bed: BED, piece: 60 }, undefined, features);
-  const pmap = mapOnPuzzle(features, isw.e, isw.n, marked.k);
+  // The lines as the puzzle uses them (smoothed at its scale).
+  const pmap = mapOnPuzzle(featuresForIsland(features, marked.k).features, isw.e, isw.n, marked.k);
   const raster = mapRaster(pmap, marked.width, marked.height);
   const scale: HeightScale = { z0: ISLAND_DEFAULTS.base, h0: 0, mmPerM: ISLAND_DEFAULTS.relief / Math.max(marked.high, 1) };
   const spec = (mode: ColourSpec["mode"]): ColourSpec => ({ ...islandSpec(mode), paths: PATH_RED, roads: ROAD_BLACK });
@@ -622,11 +623,11 @@ describe("red paths and black roads", () => {
     let black = 0;
     for (const m of coloured.values())
       for (let c = 0; c < m.triangles.length; c++) {
-        const i = m.triangles[c];
-        const kind = raster.kindAt(m.vertices[i * 3], m.vertices[i * 3 + 1]);
         const [r, g, b] = [m.rgb[c * 3], m.rgb[c * 3 + 1], m.rgb[c * 3 + 2]];
         const t = c - (c % 3);
         const ids = [m.triangles[t], m.triangles[t + 1], m.triangles[t + 2]];
+        // Paths and roads go by the triangle's middle: the pieces are cut along their channels' edges.
+        const kind = raster.kindAt(ids.reduce((q, i) => q + m.vertices[i * 3], 0) / 3, ids.reduce((q, i) => q + m.vertices[i * 3 + 1], 0) / 3);
         const up = (() => {
           const V = m.vertices;
           const [a, bb, cc] = ids;
@@ -665,7 +666,7 @@ describe("map paint on mountains", () => {
   const spec = { ...MSPEC, cube: 30 };
   const m = makeMountainPuzzle(hill, MW, MH, spec, features);
   const scale: HeightScale = { z0: baseFor(spec), h0: m.layout.low, mmPerM: m.layout.k * spec.exaggeration };
-  const raster = mapRaster(mapOnPuzzle(features, m.layout.e0, m.layout.n0, m.layout.k), m.layout.cols * spec.cube, m.layout.rows * spec.cube);
+  const raster = mapRaster(mapOnPuzzle(featuresAtScale(features, m.layout.k).features, m.layout.e0, m.layout.n0, m.layout.k), m.layout.cols * spec.cube, m.layout.rows * spec.cube);
   const cs: ColourSpec = { ...mountainSpec("bands"), paths: PATH_RED, roads: ROAD_BLACK };
   const ctx = { spec: cs, scale, map: raster };
   const banded = bandPuzzle(m.pieces, ctx);

@@ -15,7 +15,8 @@
  */
 import { bambu, spoolFor, spoolLabel } from "./bambuColours";
 import { weld } from "../geometry/threeMf";
-import { grooveOf, GROOVES, THIN_GROOVE, WATER_DROP } from "./groundMarks";
+import { grooveOf, GROOVES, isChannel, THIN_FLAT, THIN_GROOVE, WATER_DROP } from "./groundMarks";
+import { GrooveIndex } from "./grooveCut";
 import type { Body } from "./mountainPuzzle";
 import type { MapFeatures, OsmLineKind } from "./osm";
 import type { P2 } from "./triangulate";
@@ -580,7 +581,10 @@ export function mapOnPuzzle(f: MapFeatures, e0: number, n0: number, k: number): 
 }
 
 export interface MapRaster {
+  /** What's at a point; paths, tracks and roads exactly as wide as their channels (grooveCut.ts), the rest from a grid. */
   kindAt(x: number, y: number): MapKind;
+  /** The same without paths, tracks and roads (what's under them). */
+  areaAt(x: number, y: number): MapKind;
   /** Anything to colour at all. */
   empty: boolean;
   /** Any water on it. */
@@ -591,7 +595,7 @@ export interface MapRaster {
   roads: boolean;
 }
 
-const EMPTY_RASTER: MapRaster = { kindAt: () => MapKind.None, empty: true, water: false, paths: false, roads: false };
+const EMPTY_RASTER: MapRaster = { kindAt: () => MapKind.None, areaAt: () => MapKind.None, empty: true, water: false, paths: false, roads: false };
 
 /** The map drawn on a grid over the puzzle (`width` × `height` mm), so a point's kind is one lookup. */
 export function mapRaster(map: PuzzleMap, width: number, height: number): MapRaster {
@@ -629,7 +633,20 @@ export function mapRaster(map: PuzzleMap, width: number, height: number): MapRas
   for (const w of map.woods) fill(w, MapKind.Wood);
   for (const s of map.shapes) fill(s.rings, s.kind === "water" ? MapKind.Water : MapKind.Building);
   const lineKind: Record<OsmLineKind, MapKind> = { path: MapKind.Path, track: MapKind.Track, road: MapKind.Road, river: MapKind.Water, stream: MapKind.Water };
+  // Paths, tracks and roads: exactly their channels' width, as cut into the pieces.
+  const channelLines = map.lines.filter(isChannel).map((l) => {
+    const hw = grooveOf(l).width / 2;
+    return { kind: l.kind, pts: l.pts, hw, flat: hw * THIN_FLAT, depth: 1 };
+  });
+  const channels = channelLines.length ? new GrooveIndex(channelLines) : null;
+  let [paths, roads] = [false, false];
+  for (const l of channelLines)
+    if (l.pts.some((p, i) => (i > 0 ? segmentMeetsBox(l.pts[i - 1], p, l.hw, width, height) : l.pts.length === 1 && segmentMeetsBox(p, p, l.hw, width, height)))) {
+      if (l.kind === "road") roads = true;
+      else paths = true;
+    }
   for (const line of map.lines) {
+    if (isChannel(line)) continue;
     const hw = grooveOf(line).width / 2;
     const kind = lineKind[line.kind];
     for (let s = 0; s + 1 < line.pts.length; s++) {
@@ -650,24 +667,44 @@ export function mapRaster(map: PuzzleMap, width: number, height: number): MapRas
     }
   }
   let water = false;
-  let paths = false;
-  let roads = false;
-  for (let i = 0; i < g.length && !(water && paths && roads); i++) {
-    water ||= g[i] === MapKind.Water;
-    paths ||= g[i] === MapKind.Path || g[i] === MapKind.Track;
-    roads ||= g[i] === MapKind.Road;
-  }
+  for (let i = 0; i < g.length && !water; i++) water ||= g[i] === MapKind.Water;
+  const areaAt = (x: number, y: number) => {
+    const i = Math.round(x / cell);
+    const j = Math.round(y / cell);
+    return i < 0 || j < 0 || i >= nx || j >= ny ? MapKind.None : (g[j * nx + i] as MapKind);
+  };
   return {
     empty: false,
     water,
     paths,
     roads,
+    areaAt,
     kindAt: (x, y) => {
-      const i = Math.round(x / cell);
-      const j = Math.round(y / cell);
-      return i < 0 || j < 0 || i >= nx || j >= ny ? MapKind.None : (g[j * nx + i] as MapKind);
+      const a = areaAt(x, y);
+      if (!channels || a === MapKind.Water || x < 0 || y < 0 || x > width || y > height) return a;
+      const c = channels.kindAt(x, y);
+      return c ? lineKind[c] : a;
     },
   };
+}
+
+/** Does the segment a–b, widened by r, come onto the box 0…w × 0…h? */
+function segmentMeetsBox(a: XY, b: XY, r: number, w: number, h: number): boolean {
+  if (Math.max(a[0], b[0]) < -r || Math.min(a[0], b[0]) > w + r || Math.max(a[1], b[1]) < -r || Math.min(a[1], b[1]) > h + r) return false;
+  // Clip to the widened box (Liang–Barsky).
+  const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+  let [t0, t1] = [0, 1];
+  for (const [p, q] of [[-dx, a[0] + r], [dx, w + r - a[0]], [-dy, a[1] + r], [dy, h + r - a[1]]] as [number, number][]) {
+    if (p === 0) {
+      if (q < 0) return false;
+      continue;
+    }
+    const t = q / p;
+    if (p < 0) t0 = Math.max(t0, t);
+    else t1 = Math.min(t1, t);
+    if (t0 > t1) return false;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -738,12 +775,17 @@ export function bandParts(bodies: Body[], z0: number, ctx: BandContext, top = tr
         const ranges = new Map<number, [number, number][]>();
         for (let t = 0; t < slab.triangles.length; t += 3) {
           const [a, b, c] = [slab.triangles[t], slab.triangles[t + 1], slab.triangles[t + 2]];
-          if (!takesMapPaint(normalOf(V, a, b, c)[2])) continue;
+          const nz = normalOf(V, a, b, c)[2];
+          if (!(nz > 1e-6)) continue;
           // The cap where this part was cut from the band above (flat at its top, inside the piece).
           if (s < cuts.length && [a, b, c].every((i) => Math.abs(V[i * 3 + 2] - high) < 1e-9)) continue;
           const x = (V[a * 3] + V[b * 3] + V[c * 3]) / 3;
           const y = (V[a * 3 + 1] + V[b * 3 + 1] + V[c * 3 + 1]) / 3;
-          const f = paintOf(ctx.map.kindAt(x, y));
+          const kind = ctx.map.kindAt(x, y);
+          // Paths and roads: every face of their channel that isn't a piece's upright side (the channel's cells can be
+          // steep slivers where its edges meet); water as before.
+          if (!(kind === MapKind.Path || kind === MapKind.Track || kind === MapKind.Road) && !takesMapPaint(nz)) continue;
+          const f = paintOf(kind);
           if (f && f !== filament) {
             paint[t / 3] = f;
             any = true;
@@ -954,8 +996,13 @@ export function fullColours(bodies: Body[], ctx: FullContext, top = true): Colou
     for (let i = 0; i < V.length; i++) vertices.push(V[i]);
     for (let t = 0; t < T.length; t += 3) {
       const n = tn[t / 3];
+      // Paths and roads go by the triangle's middle (the pieces are cut along their edges), so their colour has a clean
+      // edge; under them, and everywhere else, the map goes corner by corner.
+      const lineHere = ctx.map.empty || !top ? MapKind.None : ctx.map.kindAt((V[T[t] * 3] + V[T[t + 1] * 3] + V[T[t + 2] * 3]) / 3, (V[T[t] * 3 + 1] + V[T[t + 1] * 3 + 1] + V[T[t + 2] * 3 + 1]) / 3);
+      const onLine = lineHere === MapKind.Path || lineHere === MapKind.Track || lineHere === MapKind.Road;
       const cz = (V[T[t] * 3 + 2] + V[T[t + 1] * 3 + 2] + V[T[t + 2] * 3 + 2]) / 3;
-      const ground = n[2] > 0.2;
+      // A path's or road's channel walls are its colour too (as the bands' paint does), however they slope.
+      const ground = n[2] > 0.2 || (onLine && n[2] > 1e-6);
       // The base's own colour is for its sides; ground pressed below the base's top (a groove at the coast) stays ground.
       const inBase = baseRgb && cz < baseTop && !(ground && cz > baseTop - DEEPEST_MARK - 0.01);
       for (let k = 0; k < 3; k++) {
@@ -972,7 +1019,7 @@ export function fullColours(bodies: Body[], ctx: FullContext, top = true): Colou
         }
         const l = Math.hypot(vn[i * 3], vn[i * 3 + 1], vn[i * 3 + 2]);
         const nn: [number, number, number] = l > 0 ? [vn[i * 3] / l, vn[i * 3 + 1] / l, vn[i * 3 + 2] / l] : n;
-        const kind = ctx.map.empty || !top ? MapKind.None : ctx.map.kindAt(x, y);
+        const kind = ctx.map.empty || !top ? MapKind.None : onLine ? lineHere : ctx.map.areaAt(x, y);
         if (kind === MapKind.Water) {
           // Water is flat colour: no hill shading on it.
           rgbs.push(water[0], water[1], water[2]);

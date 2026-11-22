@@ -4,6 +4,7 @@
  * fine grid over the puzzle (mm), then `apply` changes a ground height there — so every piece, the "whole cubes
  * under the top" count and the snow line all see the same ground.
  */
+import { GrooveIndex, grooveDepth, type GrooveLine } from "./grooveCut";
 import type { MapFeatures, OsmLineKind } from "./osm";
 
 type XY = [number, number];
@@ -18,8 +19,9 @@ export const GROOVES: Record<OsmLineKind, { width: number; depth: number }> = {
 };
 /**
  * Tidy marks (hill routes, trunk roads: `thin` lines) are one neat line: 0.6 mm wide (one and a half nozzle widths on a
- * 0.4 mm nozzle), 0.4 mm (two layers) deep, flat-bottomed out to `THIN_FLAT` of the half-width so the mesh's samples,
- * wherever they fall, find the full depth.
+ * 0.4 mm nozzle), 0.4 mm (two layers) deep. Paths, tracks and roads (thin or not) are channels with a flat bottom out to
+ * `THIN_FLAT` of the half-width and straight walls, cut exactly into the pieces' tops (grooveCut.ts); rivers and streams
+ * keep their rounded grooves on the grid.
  */
 export const THIN_GROOVE = { width: 0.6, depth: 0.4 };
 export const THIN_FLAT = 2 / 3;
@@ -29,11 +31,11 @@ export const grooveOf = (l: { kind: OsmLineKind; thin?: true }) => (l.thin ? THI
 /** How deep a thin groove is `r` mm from its middle. */
 export function thinDepth(r: number): number {
   const hw = THIN_GROOVE.width / 2;
-  const flat = hw * THIN_FLAT;
-  if (r >= hw) return 0;
-  if (r <= flat) return THIN_GROOVE.depth;
-  return THIN_GROOVE.depth * (0.5 + 0.5 * Math.cos((Math.PI * (r - flat)) / (hw - flat)));
+  return grooveDepth(r, hw, hw * THIN_FLAT, THIN_GROOVE.depth);
 }
+
+/** Lines cut exactly as channels: footpaths, tracks and roads. */
+export const isChannel = (l: { kind: OsmLineKind }) => l.kind === "path" || l.kind === "track" || l.kind === "road";
 /** How far water sits below the lowest of its shore (mm). */
 export const WATER_DROP = 0.5;
 /** Buildings stand this high (mm), and at least this big across, so they print. */
@@ -45,6 +47,12 @@ export interface GroundMarks {
   apply(x: number, y: number, z: number): number;
   /** Nothing to change. */
   empty: boolean;
+  /**
+   * The paths', tracks' and roads' channels (missing: none): meshes are made with `base` (everything else) and then
+   * cut along them (`cutGrooves`), so `apply` = `base` less their depth.
+   */
+  channels?: GrooveIndex;
+  base?: GroundMarks;
 }
 
 export const PLAIN_GROUND: GroundMarks = { apply: (_x, _y, z) => z, empty: true };
@@ -64,28 +72,14 @@ export function groundMarks(f: MapFeatures, e0: number, n0: number, k: number, w
   const at = ([e, n]: XY): XY => [(e - e0) * k, (n - n0) * k];
   const onPuzzle = ([x, y]: XY, m: number) => x >= -m && y >= -m && x <= width + m && y <= height + m;
 
-  // Thin lines are worked out exactly where asked (a grid fine enough for them would be huge): their pieces in 2 mm buckets.
-  const BUCKET = 2;
-  const thin = new Map<string, [number, number, number, number][]>();
+  // Paths, tracks and roads: exact channels, cut into the meshes later.
+  const channelLines: GrooveLine[] = [];
   for (const line of f.lines) {
-    if (line.thin) {
+    if (isChannel(line)) {
       const pts = line.pts.map(at);
-      const r = THIN_GROOVE.width / 2;
-      for (let s = 0; s + 1 < pts.length; s++) {
-        const [a, b] = [pts[s], pts[s + 1]];
-        if (!onPuzzle(a, 50) && !onPuzzle(b, 50) && !crossesBox(a, b, width, height)) continue;
-        const seg: [number, number, number, number] = [a[0], a[1], b[0], b[1]];
-        const [gx0, gx1] = [Math.floor((Math.max(-1, Math.min(a[0], b[0])) - r) / BUCKET), Math.floor((Math.min(width + 1, Math.max(a[0], b[0])) + r) / BUCKET)];
-        const [gy0, gy1] = [Math.floor((Math.max(-1, Math.min(a[1], b[1])) - r) / BUCKET), Math.floor((Math.min(height + 1, Math.max(a[1], b[1])) + r) / BUCKET)];
-        if ((gx1 - gx0 + 1) * (gy1 - gy0 + 1) > 1e6) continue;
-        for (let gx = gx0; gx <= gx1; gx++)
-          for (let gy = gy0; gy <= gy1; gy++) {
-            const key = `${gx},${gy}`;
-            const list = thin.get(key);
-            if (list) list.push(seg);
-            else thin.set(key, [seg]);
-          }
-      }
+      if (!pts.some((p) => onPuzzle(p, 50)) && !pts.some((p, i) => i > 0 && crossesBox(pts[i - 1], p, width, height))) continue;
+      const { width: w, depth } = grooveOf(line);
+      channelLines.push({ kind: line.kind, pts, hw: w / 2, flat: (w / 2) * THIN_FLAT, depth });
       continue;
     }
     const { width: w, depth } = GROOVES[line.kind];
@@ -149,25 +143,29 @@ export function groundMarks(f: MapFeatures, e0: number, n0: number, k: number, w
     const c = j * nx + i;
     return (a[c] * (1 - u) + a[c + 1] * u) * (1 - v) + (a[c + nx] * (1 - u) + a[c + nx + 1] * u) * v;
   };
-  const thinAt = (x: number, y: number): number => {
-    const list = thin.get(`${Math.floor(x / BUCKET)},${Math.floor(y / BUCKET)}`);
-    if (!list) return 0;
-    let best = Infinity;
-    for (const [ax, ay, bx, by] of list) {
-      const [dx, dy] = [bx - ax, by - ay];
-      const L2 = dx * dx + dy * dy;
-      const t = L2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / L2)) : 0;
-      best = Math.min(best, Math.hypot(x - ax - t * dx, y - ay - t * dy));
-    }
-    return thinDepth(best);
-  };
   const nearest = (a: Float32Array, x: number, y: number) => a[Math.max(0, Math.min(ny - 1, Math.round(y / cell))) * nx + Math.max(0, Math.min(nx - 1, Math.round(x / cell)))];
+  const plainLines = channelLines.length < f.lines.length;
+  const base: GroundMarks = !plainLines && !f.shapes.length
+    ? PLAIN_GROUND
+    : {
+        empty: false,
+        apply(x, y, z) {
+          const top = Math.min(z, nearest(cap, x, y));
+          const lift = nearest(raise, x, y);
+          return top - read(groove, x, y) + (lift && top === z ? lift : 0);
+        },
+      };
+  if (!channelLines.length) return base;
+  const channels = new GrooveIndex(channelLines);
+  if (channels.empty) return base;
   return {
     empty: false,
+    channels,
+    base,
     apply(x, y, z) {
       const top = Math.min(z, nearest(cap, x, y));
       const lift = nearest(raise, x, y);
-      return top - (thin.size ? Math.max(read(groove, x, y), thinAt(x, y)) : read(groove, x, y)) + (lift && top === z ? lift : 0);
+      return top - Math.max(read(groove, x, y), channels.depthAt(x, y)) + (lift && top === z ? lift : 0);
     },
   };
 }

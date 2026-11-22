@@ -4,6 +4,7 @@
  * walking routes — never footways or paths through parks and towns. Thin lines; everything still there when asked for.
  */
 import { describe, expect, it } from "vitest";
+import { distanceToLine } from "../src/terrain/pickMarks";
 import { gridFrom } from "../src/terrain/elevation";
 import { GROOVES, THIN_GROOVE, thinDepth } from "../src/terrain/groundMarks";
 import { fetchCovers, ISLANDS, marksQuery } from "../src/terrain/islands";
@@ -17,6 +18,8 @@ const sw = { e: 201000, n: 770500 };
 const hill = gridFrom(sw, 4000, 3000, 20, (e, n) => 300 + 700 * Math.exp(-(((e - 202800) / 900) ** 2 + ((n - 771500) / 700) ** 2)));
 const data = readOsm(hillOsm());
 const near = (pts: [number, number][], de: number, dn: number) => pts.some(([e, n]) => Math.hypot(e - sw.e - de, n - sw.n - dn) < 2);
+/** On the line (printed lines are smoothed, so their corners may move a little or go): within 3 m of it. */
+const onLine = (pts: [number, number][], de: number, dn: number) => distanceToLine([sw.e + de, sw.n + dn], pts) < 3;
 
 describe("Reading what tidy marks need", () => {
   it("knows walking routes, flowing water and towns' streets and parks", () => {
@@ -65,10 +68,10 @@ describe("Tidy marks", () => {
     expect(paths.length).toBe(4);
     expect(paths.every((l) => l.thin)).toBe(true);
     expect(paths.some((l) => near(l.pts, 2600, 600) && near(l.pts, 2000, 1100))).toBe(true);
-    expect(paths.some((l) => near(l.pts, 2300, 1500))).toBe(true);
+    expect(paths.some((l) => onLine(l.pts, 2300, 1500))).toBe(true);
     const up = paths.find((l) => near(l.pts, 200, 500))!;
     // All three pieces in one line, end to end (the side path left as its own, short, route).
-    expect(near(up.pts, 1800, 1000)).toBe(true);
+    expect(onLine(up.pts, 1800, 1000)).toBe(true);
     expect(lineLength(up.pts)).toBeGreaterThan(1600);
     const walk = paths.find((l) => near(l.pts, 100, 2800))!;
     expect(walk).toBeTruthy();
