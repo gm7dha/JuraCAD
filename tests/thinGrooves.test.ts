@@ -47,8 +47,8 @@ describe("Thin grooves at their worst offset", () => {
       const y = key / 100;
       if (y < 85 || y > 215) continue;
       // Where the ground's own groove is full depth (not faded over a dovetail's neck).
-      const want = plain(x0, y) - p.groundAt(x0, y);
-      if (want < THIN_GROOVE.depth * 0.95) continue;
+      const want = (dy: number) => plain(x0, y + dy) - p.groundAt(x0, y + dy);
+      if ([-1, 0, 1].some((dy) => want(dy) < THIN_GROOVE.depth * 0.99)) continue;
       expect(d, `y ${y}`).toBeGreaterThan(THIN_GROOVE.depth * 0.97);
       checked++;
     }

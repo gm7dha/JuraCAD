@@ -5,7 +5,6 @@
  * painted strip's width, breaks and blobs, in bands and full colour.
  */
 import { describe, expect, it } from "vitest";
-import { weld } from "../src/geometry/threeMf";
 import { gridFrom, heightAt } from "../src/terrain/elevation";
 import { THIN_FLAT, THIN_GROOVE } from "../src/terrain/groundMarks";
 import { ISLAND_DEFAULTS, featuresForIsland, makeIslandPuzzle } from "../src/terrain/islandPuzzle";
@@ -107,18 +106,6 @@ describe("paths as printed", () => {
     // Every piece still closed, with the channels cut into it.
     for (const piece of island.pieces)
       for (const b of piece.bodies) {
-        if (process.env.LQ_DEBUG && meshCheck(b.vertices, b.triangles).open) {
-          const m = weld(b.vertices, b.triangles);
-          const edges = new Map<string, number>();
-          for (let t = 0; t < m.triangles.length; t += 3)
-            for (let k = 0; k < 3; k++) {
-              const [p, q] = [m.triangles[t + k], m.triangles[t + ((k + 1) % 3)]];
-              const back = `${q}>${p}`;
-              if (edges.get(back)) edges.set(back, edges.get(back)! - 1);
-              else edges.set(`${p}>${q}`, (edges.get(`${p}>${q}`) ?? 0) + 1);
-            }
-          for (const [key, n] of edges) if (n) console.log("open", key, n, key.split(">").map((i) => [0, 1, 2].map((d) => m.vertices[+i * 3 + d].toFixed(6)).join(",")).join(" -> "));
-        }
         expect(meshCheck(b.vertices, b.triangles).open, piece.name).toBe(0);
       }
     expect(g.depthP5).toBeGreaterThan(0.95 * D);

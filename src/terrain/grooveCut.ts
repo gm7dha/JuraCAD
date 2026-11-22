@@ -8,8 +8,8 @@
  * get the ground's height less the groove's depth exactly there. The paint then fills the channel exactly too
  * (`GrooveIndex.kindAt` on a cell's middle), and the full-colour corners follow the same edges.
  *
- * The edges are made of straight pieces: each segment's two sides, short chords round the outside of each bend and
- * round the line's ends (`ARC_STEP`); the cut lines run on across the cell they cut, which only adds corners. Points
+ * The edges are made of straight pieces: each side carried along the line, short chords round the outside of each bend
+ * and round the line's ends (`ARC_STEP`); the cut lines run on across the cell they cut, which only adds corners. Points
  * where cells' edges meet other triangles' edges are shared (no cracks): every new point on a triangle's edge is put on
  * the neighbours' too, and on the walls that share it.
  */
@@ -45,14 +45,16 @@ const RANK: Record<OsmLineKind, number> = { road: 3, path: 2, track: 1, river: 0
 type Cut = [number, number, number, number];
 
 const BUCKET = 1;
+/** A bucket's number (puzzles are well under 100 m across). */
+const bucketKey = (i: number, j: number) => (i + 100000) * 200001 + (j + 100000);
 
 /** Lines' grooves in buckets: depth and kind at a point, and the cuts near a triangle. */
 export class GrooveIndex {
   readonly lines: GrooveLine[];
-  private segs = new Map<string, number[]>();
+  private segs = new Map<number, number[]>();
   /** Per segment: line index, ax, ay, bx, by. */
   private seg: number[] = [];
-  private cutBuckets = new Map<string, number[]>();
+  private cutBuckets = new Map<number, number[]>();
   private cuts: Cut[] = [];
   readonly empty: boolean;
 
@@ -71,12 +73,12 @@ export class GrooveIndex {
     });
   }
 
-  private put(m: Map<string, number[]>, id: number, x0: number, y0: number, x1: number, y1: number) {
+  private put(m: Map<number, number[]>, id: number, x0: number, y0: number, x1: number, y1: number) {
     const [i0, i1, j0, j1] = [Math.floor(x0 / BUCKET), Math.floor(x1 / BUCKET), Math.floor(y0 / BUCKET), Math.floor(y1 / BUCKET)];
     if ((i1 - i0 + 1) * (j1 - j0 + 1) > 1e6) return;
     for (let i = i0; i <= i1; i++)
       for (let j = j0; j <= j1; j++) {
-        const key = `${i},${j}`;
+        const key = bucketKey(i, j);
         const list = m.get(key);
         if (list) list.push(id);
         else m.set(key, [id]);
@@ -92,7 +94,7 @@ export class GrooveIndex {
 
   /** Each line near (x, y): its distance from the middle. */
   private near(x: number, y: number, visit: (line: GrooveLine, r: number) => void) {
-    const list = this.segs.get(`${Math.floor(x / BUCKET)},${Math.floor(y / BUCKET)}`);
+    const list = this.segs.get(bucketKey(Math.floor(x / BUCKET), Math.floor(y / BUCKET)));
     if (!list) return;
     for (const id of list) {
       const o = id * 5;
@@ -122,15 +124,18 @@ export class GrooveIndex {
     return best;
   }
 
-  /** Is anything within `m` mm of the box? (A quick test before cutting a triangle.) */
+  /** The cut pieces whose boxes meet the box. */
+  private stamp = new Uint32Array(0);
+  private round = 0;
   cutsNear(x0: number, y0: number, x1: number, y1: number): Cut[] {
-    const seen = new Set<number>();
+    if (this.stamp.length < this.cuts.length) this.stamp = new Uint32Array(this.cuts.length);
+    const mark = ++this.round;
     const out: Cut[] = [];
     for (let i = Math.floor(x0 / BUCKET); i <= Math.floor(x1 / BUCKET); i++)
       for (let j = Math.floor(y0 / BUCKET); j <= Math.floor(y1 / BUCKET); j++)
-        for (const id of this.cutBuckets.get(`${i},${j}`) ?? []) {
-          if (seen.has(id)) continue;
-          seen.add(id);
+        for (const id of this.cutBuckets.get(bucketKey(i, j)) ?? []) {
+          if (this.stamp[id] === mark) continue;
+          this.stamp[id] = mark;
           const c = this.cuts[id];
           if (Math.max(c[0], c[2]) < x0 || Math.min(c[0], c[2]) > x1 || Math.max(c[1], c[3]) < y0 || Math.min(c[1], c[3]) > y1) continue;
           out.push(c);
@@ -139,9 +144,11 @@ export class GrooveIndex {
   }
 }
 
-/** The straight pieces round a line at distance r: both sides of each segment, chords round bends' outsides and the ends. */
+/**
+ * The outline round a line at distance r, as straight pieces: each side carried along the line — meeting its next piece
+ * where the side is on the inside of a bend, joined by chords round the outside — and round ends.
+ */
 function edgeCuts(pts: XY[], r: number): Cut[] {
-  const out: Cut[] = [];
   const n = pts.length;
   const normals: XY[] = [];
   for (let s = 0; s + 1 < n; s++) {
@@ -149,37 +156,47 @@ function edgeCuts(pts: XY[], r: number): Cut[] {
     const L = Math.hypot(dx, dy);
     normals.push(L > 1e-12 ? [-dy / L, dx / L] : normals[normals.length - 1] ?? [0, 1]);
   }
-  const arc = (c: XY, from: number, to: number) => {
-    // Round from angle `from` to `to` (to > from), as chords.
-    const k = Math.max(1, Math.ceil((to - from) / ARC_STEP));
-    for (let i = 0; i < k; i++) {
-      const [u, v] = [from + ((to - from) * i) / k, from + ((to - from) * (i + 1)) / k];
-      out.push([c[0] + r * Math.cos(u), c[1] + r * Math.sin(u), c[0] + r * Math.cos(v), c[1] + r * Math.sin(v)]);
-    }
+  const at = (c: XY, a: number): XY => [c[0] + r * Math.cos(a), c[1] + r * Math.sin(a)];
+  // Round from angle `from` to `to` (either way), the end points only past the start.
+  const arc = (c: XY, from: number, to: number, out: XY[]) => {
+    const k = Math.max(1, Math.ceil(Math.abs(to - from) / ARC_STEP));
+    for (let i = 1; i <= k; i++) out.push(at(c, from + ((to - from) * i) / k));
   };
-  for (let s = 0; s + 1 < n; s++) {
-    const [a, b] = [pts[s], pts[s + 1]];
-    const [nx, ny] = normals[s];
-    out.push([a[0] + r * nx, a[1] + r * ny, b[0] + r * nx, b[1] + r * ny]);
-    out.push([a[0] - r * nx, a[1] - r * ny, b[0] - r * nx, b[1] - r * ny]);
-  }
-  for (let i = 1; i + 1 < n; i++) {
-    const [n1, n2] = [normals[i - 1], normals[i]];
-    const cross = n1[0] * n2[1] - n1[1] * n2[0];
-    const dot = n1[0] * n2[0] + n1[1] * n2[1];
-    const turn = Math.atan2(cross, dot);
-    if (Math.abs(turn) < 1e-9) continue;
-    // A left turn (turn > 0) opens on the right (−normal side), a right turn on the left.
-    const a1 = Math.atan2(n1[1], n1[0]);
-    if (turn > 0) arc(pts[i], a1 + Math.PI, a1 + Math.PI + turn);
-    else arc(pts[i], a1 + turn, a1);
-  }
-  // Round ends.
+  /** One side (+1 left, −1 right) from the first point to the last. */
+  const side = (sign: number): XY[] => {
+    const out: XY[] = [[pts[0][0] + sign * r * normals[0][0], pts[0][1] + sign * r * normals[0][1]]];
+    for (let i = 1; i + 1 < n; i++) {
+      const [n1, n2] = [normals[i - 1], normals[i]];
+      const turn = Math.atan2(n1[0] * n2[1] - n1[1] * n2[0], n1[0] * n2[0] + n1[1] * n2[1]);
+      const p = pts[i];
+      const a1 = Math.atan2(sign * n1[1], sign * n1[0]);
+      const dot = n1[0] * n2[0] + n1[1] * n2[1];
+      // Left turns have the left side inside, right turns the right side.
+      const inside = turn * sign > 0;
+      if (Math.abs(turn) < 1e-9) out.push([p[0] + sign * r * n2[0], p[1] + sign * r * n2[1]]);
+      else if (inside && dot > -0.8) {
+        const m = r / (1 + dot);
+        out.push([p[0] + sign * m * (n1[0] + n2[0]), p[1] + sign * m * (n1[1] + n2[1])]);
+      } else {
+        out.push(at(p, a1));
+        arc(p, a1, a1 + turn, out);
+      }
+    }
+    const last = normals[normals.length - 1];
+    out.push([pts[n - 1][0] + sign * r * last[0], pts[n - 1][1] + sign * r * last[1]]);
+    return out;
+  };
+  const left = side(1);
+  const right = side(-1);
+  const loop: XY[] = [...left];
   const [s0, s1] = [normals[0], normals[normals.length - 1]];
-  const b0 = Math.atan2(s0[1], s0[0]);
-  arc(pts[0], b0, b0 + Math.PI);
   const b1 = Math.atan2(s1[1], s1[0]);
-  arc(pts[n - 1], b1 - Math.PI, b1);
+  arc(pts[n - 1], b1, b1 - Math.PI, loop);
+  loop.push(...right.reverse().slice(1));
+  const b0 = Math.atan2(-s0[1], -s0[0]);
+  arc(pts[0], b0, b0 - Math.PI, loop);
+  const out: Cut[] = [];
+  for (let i = 0; i + 1 < loop.length; i++) out.push([loop[i][0], loop[i][1], loop[i + 1][0], loop[i + 1][1]]);
   return out;
 }
 
@@ -299,8 +316,8 @@ export function cutGrooves(body: CutBody, index: GrooveIndex, base: (x: number, 
   // Cut each ground triangle a groove comes near.
   const cellsOf = new Map<number, CV[][]>();
   /** New points on the triangles' edges: edge key → shares along it (from its lower-numbered end). */
-  const edgePts = new Map<string, number[]>();
-  const edgeKey = (a: number, b: number) => (a < b ? `${a},${b}` : `${b},${a}`);
+  const edgePts = new Map<number, number[]>();
+  const edgeKey = (a: number, b: number) => (a < b ? a * nv + b : b * nv + a);
   let touched = false;
   for (let t = 0; t < nt; t++) {
     if (!ground[t]) continue;
@@ -325,19 +342,26 @@ export function cutGrooves(body: CutBody, index: GrooveIndex, base: (x: number, 
         else edgePts.set(key, [s]);
       }
   }
+  // Corners in a channel (also of triangles lying wholly inside one, which no edge crosses).
+  const lowered = new Uint8Array(nv);
+  for (let i = 0; i < nv; i++)
+    if (groundVertex[i] && index.depthAt(V[i * 3], V[i * 3 + 1]) > 0) {
+      lowered[i] = 1;
+      touched = true;
+    }
   if (!touched) return null;
 
   const out = V.slice();
-  // Every corner on the ground takes the grooved height.
-  for (let i = 0; i < nv; i++) if (groundVertex[i]) out[i * 3 + 2] = height(V[i * 3], V[i * 3 + 1]);
+  // Every corner on the ground in a channel takes the grooved height (elsewhere it's the same).
+  for (let i = 0; i < nv; i++) if (lowered[i]) out[i * 3 + 2] = height(V[i * 3], V[i * 3 + 1]);
   const newPoint = (x: number, y: number) => {
     out.push(x, y, height(x, y));
     return out.length / 3 - 1;
   };
   // Each edge's new points, merged where they're the same point, in order.
-  const edgeIds = new Map<string, { s: number; id: number }[]>();
+  const edgeIds = new Map<number, { s: number; id: number }[]>();
   for (const [key, list] of edgePts) {
-    const [a, b] = key.split(",").map(Number);
+    const [a, b] = [Math.floor(key / nv), key % nv];
     const len = Math.hypot(V[b * 3] - V[a * 3], V[b * 3 + 1] - V[a * 3 + 1], V[b * 3 + 2] - V[a * 3 + 2]) || 1;
     const sorted = [...list].sort((p, q) => p - q);
     const merged: { s: number; id: number }[] = [];
@@ -378,10 +402,14 @@ export function cutGrooves(body: CutBody, index: GrooveIndex, base: (x: number, 
   };
   const tris: number[] = [];
   for (let t = 0; t < nt; t++) {
-    const ids = [T[t * 3], T[t * 3 + 1], T[t * 3 + 2]];
     const cells = cellsOf.get(t);
+    const ids = [T[t * 3], T[t * 3 + 1], T[t * 3 + 2]];
     if (!cells) {
       // Untouched — but points put on its edges by a neighbour go in.
+      if (!edgeIds.has(edgeKey(ids[0], ids[1])) && !edgeIds.has(edgeKey(ids[1], ids[2])) && !edgeIds.has(edgeKey(ids[2], ids[0]))) {
+        tris.push(ids[0], ids[1], ids[2]);
+        continue;
+      }
       const ring: number[] = [];
       for (let k = 0; k < 3; k++) {
         ring.push(ids[k]);
@@ -416,9 +444,13 @@ export function cutGrooves(body: CutBody, index: GrooveIndex, base: (x: number, 
       }
       return ring.filter((id, i) => id !== ring[(i + 1) % ring.length]);
     });
-    // Corners of other cells lying on a cell's sides (a cut that stopped at one cell), put in as well.
-    const innerIds = [...new Set(rings.flat())];
+    // Corners made inside the triangle lying on another cell's side (a cut that stopped at one cell), put in as well.
+    const loose = [...inner.values()];
     for (const ring of rings) {
+      if (!loose.length) {
+        fanConvex(ring, out, tris, middleOf(true));
+        continue;
+      }
       const full: number[] = [];
       for (let i = 0; i < ring.length; i++) {
         const [a, b] = [ring[i], ring[(i + 1) % ring.length]];
@@ -426,18 +458,20 @@ export function cutGrooves(body: CutBody, index: GrooveIndex, base: (x: number, 
         const [ax, ay, bx, by] = [out[a * 3], out[a * 3 + 1], out[b * 3], out[b * 3 + 1]];
         const L = Math.hypot(bx - ax, by - ay);
         if (L < EPS) continue;
-        const on: [number, number][] = [];
-        const own = new Set(ring);
-        for (const c of innerIds) {
-          if (own.has(c)) continue;
+        const [x0, x1, y0, y1] = [Math.min(ax, bx) - 1e-9, Math.max(ax, bx) + 1e-9, Math.min(ay, by) - 1e-9, Math.max(ay, by) + 1e-9];
+        let on: [number, number][] | null = null;
+        for (const c of loose) {
           const [cx, cy] = [out[c * 3], out[c * 3 + 1]];
+          if (cx < x0 || cx > x1 || cy < y0 || cy > y1 || c === a || c === b) continue;
           const s = ((cx - ax) * (bx - ax) + (cy - ay) * (by - ay)) / (L * L);
           if (s * L <= EPS || (1 - s) * L <= EPS) continue;
           // Only a corner made on this very line (a cut that ran on across the next cell): within rounding of it.
-          if (Math.abs((cx - ax) * (by - ay) - (cy - ay) * (bx - ax)) / L < 1e-9) on.push([s, c]);
+          if (Math.abs((cx - ax) * (by - ay) - (cy - ay) * (bx - ax)) / L < 1e-9 && !ring.includes(c)) (on ??= []).push([s, c]);
         }
-        on.sort((p, q) => p[0] - q[0]);
-        for (const [, c] of on) full.push(c);
+        if (on) {
+          on.sort((p, q) => p[0] - q[0]);
+          for (const [, c] of on) full.push(c);
+        }
       }
       fanConvex(full, out, tris, middleOf(true));
     }

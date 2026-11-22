@@ -73,8 +73,6 @@ export class TopIndex {
       if (u < -1e-9 || v < -1e-9 || w < -1e-9) continue;
       const z = u * V[a * 3 + 2] + v * V[b * 3 + 2] + w * V[c * 3 + 2];
       if (!best || z > best.z) best = { z, painted: m.painted ? m.painted(t / 3) : false };
-      if (process.env.LQ_AT && Math.hypot(x - Number(process.env.LQ_AT.split(",")[0]), y - Number(process.env.LQ_AT.split(",")[1])) < 1e-3)
-        console.log("tri", [a, b, c].map((i) => [V[i * 3], V[i * 3 + 1], V[i * 3 + 2]].map((v) => v.toFixed(4)).join(" ")).join(" | "), "z", z.toFixed(4));
     }
     return best;
   }
@@ -139,7 +137,6 @@ export function measureLine(index: TopIndex, st: Station[], plain: (x: number, y
     if (!clear) continue;
     n++;
     depths.push(mid.d);
-    if (process.env.LQ_DEBUG && mid.d < 0.9 * depth) console.log("shallow at", x.toFixed(3), y.toFixed(3), mid.d.toFixed(3), want(x, y).toFixed(3));
     // Across: how far each way the groove is at least half deep, and the paint goes on.
     const across = (test: (h: { d: number; painted: boolean }) => boolean) => {
       if (!test(mid)) return 0;
@@ -159,15 +156,6 @@ export function measureLine(index: TopIndex, st: Station[], plain: (x: number, y
     if (paint) {
       const pw = across((h) => h.painted);
       if (!mid.painted) breaks++;
-      if (process.env.LQ_DEBUG && pw < 0.85 * width) {
-        console.log("thin paint at", x.toFixed(3), y.toFixed(3), pw.toFixed(3), "dir", s.dir.map((v) => v.toFixed(3)).join(","));
-        const row: string[] = [];
-        for (let r = -0.4; r <= 0.4; r += 0.02) {
-          const h = deepAt(x + nrm[0] * r, y + nrm[1] * r);
-          row.push(`${r.toFixed(2)}:${h ? (h.painted ? "P" : ".") + h.d.toFixed(2) : "-"}`);
-        }
-        console.log(row.join(" "));
-      }
       paints.push(pw);
       if (pw > 1.6 * width) blobs++;
     } else if (gw > 1.6 * half) blobs++;

@@ -2082,12 +2082,32 @@
   a route is kept if `hike`, else (needs `grid`): mostly in parks → climb ≥ `HILL_CLIMB` 150 m; tracks only → ≥ `TRACK_CLIMB`
   300 m and not mostly in woods; else ≥ 150 m or ≥ `HIGH_CLIMB` 50 m into the top `HIGH_GROUND` 30% of the grid's range;
   `least` = `LEAST_ROUTE` 10 mm. Tidy lines carry `thin` (MapFeatures, PuzzleMap, IslandMarks): `THIN_GROOVE` 0.6 wide ×
-  0.4 deep, flat out to `THIN_FLAT` ⅔ of the half-width (`thinDepth`), worked out exactly per point from 2 mm buckets in
-  groundMarks (no raster); `grooveOf` for widths (mapRaster); "all" lines keep the old `GROOVES` and top-view look
-  (`markStroke(kind, thin)`). Thin lines make the island's cell ≤ `THIN_CELL` 0.4 and the mountain's top samples ≤
-  `THIN_SAMPLE` 0.25 mm (≤ `MOST_THIN_SAMPLES` 240 a side) — only in the columns a thin line passes (`thinColumns`: its
-  pieces' boxes in cube/4 stretches ± half-width + 0.22 cube for tabs; others keep 64; top pieces stand apart, so neighbours
-  needn't match) — so a sample always lands on the flat bottom (tests/thinGrooves).
+  0.4 deep; "all" lines keep the old `GROOVES` widths and top-view look (`markStroke(kind, thin)`); `grooveOf` gives either.
+  Smooth, even paths and roads (the owner: "solid, continuous, the same width and height"): pure `src/terrain/smoothLines.ts`
+  `smoothedFeatures(f, k)` (cached per features + scale; nothing to smooth = same object), applied once inside
+  `featuresAtScale`/`featuresForIsland`, so grooves, paint, previews, top views, swaps and path picking all use one line —
+  path/track/road lines only (rivers, streams, shapes untouched), in puzzle mm: Douglas–Peucker at `NOISE` 0.1 (¼ nozzle),
+  `unfold` (a point coming back within `FOLD` 2 × groove width of an earlier one ≥ 2 × that further along, ≤ `MOST_FOLD` 12 ×
+  width: cut straight across — zigzags, switchbacks; the ridge left between passes is then ≥ a groove width), `roundBends`
+  (points bending tighter than `LEAST_RADIUS` 1 × width eased towards their neighbours' middle until none are), `KEEP` 0.01
+  thinning; ends exact, ids/name/thin/least kept. Channels: every path/track/road groove (thin or not) is a flat bottom to
+  `THIN_FLAT` ⅔ of the half-width + straight walls (`grooveDepth`, `thinDepth`), cut EXACTLY into the pieces
+  (`src/terrain/grooveCut.ts`): groundMarks returns `channels` (a `GrooveIndex`: 1 mm buckets of segments and of cut pieces
+  — each line's outline at the flat edge and at its edge, sides mitred inside bends, chords `ARC_STEP` 15° round outsides
+  and ends) and `base` (the marks without them); meshes are made on `base` (island `meshTop`, mountain `meshZ`; the island's
+  cell and the mountain's samples are as with no lines — THIN_CELL, THIN_SAMPLE and thinColumns are gone) and then
+  `cutGrooves(body, channels, base, height)`: ground triangles (all corners on `base`, facing up) split into convex cells by
+  every cut piece that reaches into a cell (`cutTriangle`, Sutherland–Hodgman halves, crossings worked out the same way from
+  either side), new points on triangle edges shared with the neighbours and the walls (`edgeIds`), corners made on a cut
+  that stopped at one cell put into the next cell's side, convex fans (from a corner whose sides have no extra points, else
+  a middle point); every ground corner in a channel takes `height` (the full ground: water/building marks, channels, island
+  fade/LEAST_BASE). Bodies must share corners (the mountain's are welded first). `mapRaster` draws no path/road lines on its
+  grid: `kindAt` asks a GrooveIndex of the map's lines (strictly inside the edge; roads over paths over tracks; water on the
+  grid still wins), `areaAt` = the grid alone; bandParts paints a line's colour on any face of its channel that isn't
+  upright (nz > 1e-6; sliver cells where edges meet can be steep), full colour colours a triangle by its middle when that's
+  on a line (all three corners; else corner by corner with `areaAt`). Measured by tests/pathQuality (harness
+  `tests/support/lineQuality.ts`: stations every 0.1 mm along the line used, depth, width half-way down, painted width,
+  breaks, blobs — island and mountain, bands and full colour), smoothLines (pure + cutGrooves on a block), thinGrooves.
   `featuresAtScale(f, k)` (mountain build/preview/colour) and `featuresForIsland` honour `least`. `marksQuery(…, choice)`
   fetches path|footway|bridleway|steps|track, towns/parks (+ woods for hills), natural=water/landuse=reservoir (+ multipolygons),
   waterways only for "all", roads by `ROAD_RANK`, walking route relations bare (`->.hr`); `fetchCovers` says when to fetch
