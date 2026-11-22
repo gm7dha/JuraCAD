@@ -1908,6 +1908,13 @@
   points. Ground on top (base + h × relief/high), flat at 0, walls. Pieces are `PuzzlePiece`s (layer 0, bbox outline) so
   `platesFor`/`plate3mf` work. `src/terrain/islands.ts`:
   `ISLANDS` (boxes by lat/lon middle; Great Britain = sw (0, 0), 665 × 1230 km — Ireland and France touch its edges),
+  From a map file and trimmed (pure `src/terrain/islandArea.ts`): source "An OpenStreetMap file" → `osmIslandArea` (osmArea's box,
+  `osmArea(data, puzzle)` names the puzzle when outside GB; ≤ `ISLAND_MOST`) — the loaded `Area.osm` keeps the file, which is then
+  the marks map (no Overpass fetch; `fileMap` beats `marksMap`) and the boundaries map if it has any; land still from heights.
+  The Mountain's `TrimSliders` (exported) on every source → `trimmedIsland(area, grid, trim)` (cropGrid; NO_TRIM = the same grid
+  and corner, byte-identical) is what the worker builds, so keepLand/landBox/in-place see only what's left; `AreaView` draws the
+  whole area with the trims dimmed. Boundary/marks fetches ask for the trimmed area and keep `covers`; a later bigger area
+  (`areaInside` fails) asks to fetch again. tests/islandArea.
   One island only: `IslandPlace.only` (`IslandOnly`: `keep` / `apart` OS grid points, from lat/lon in `around`) → the dialog's
   `spec.only` (the Land choice is hidden then) → `keepOnly` (from keepLand, in landBox and buildIsland; `onlyCells` puts the
   points on each grid): land holding a keep point (nearest within `KEEP_REACH`) is kept, everything else dropped, whatever
