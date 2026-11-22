@@ -80,6 +80,9 @@ export interface MarkLine {
   pts: XY[];
   highway?: string;
   hike?: true;
+  /** The map's way id and name (or number), passed on so a line can be picked off by hand (pickMarks.ts). */
+  id?: string;
+  name?: string;
 }
 
 /** Outlines (OS grid metres) hill routes are judged against. */
@@ -89,7 +92,15 @@ export interface MarkAreas {
   woods: XY[][];
 }
 
-type OutLine = { kind: OsmLineKind; pts: XY[]; least?: number; thin?: true };
+type OutLine = { kind: OsmLineKind; pts: XY[]; least?: number; thin?: true; ids?: string[]; name?: string };
+
+/** A line kept as it is, with its way id and name when it has them. */
+function asIs(l: MarkLine, thin?: true): OutLine {
+  const out: OutLine = thin ? { kind: l.kind, pts: l.pts, thin } : { kind: l.kind, pts: l.pts };
+  if (l.id) out.ids = [l.id];
+  if (l.name) out.name = l.name;
+  return out;
+}
 
 /** The lines (OS grid metres) the choice keeps; tidy ones are `thin`. `grid`: heights for climbs. */
 export function tidyMarks(lines: MarkLine[], areas: MarkAreas, choice: MarkChoice, grid?: HeightGrid): OutLine[] {
@@ -97,13 +108,13 @@ export function tidyMarks(lines: MarkLine[], areas: MarkAreas, choice: MarkChoic
   const paths: MarkLine[] = [];
   for (const l of lines) {
     if (l.kind === "river" || l.kind === "stream") {
-      if (choice.water === "all") out.push({ kind: l.kind, pts: l.pts });
+      if (choice.water === "all") out.push(asIs(l));
     } else if (l.kind === "road") {
       if (choice.roads === "none") continue;
-      if (choice.roads === "all") out.push({ kind: l.kind, pts: l.pts });
-      else if ((choice.roads === "main" ? MAIN_ROADS : TRUNK_ROADS).has(l.highway ?? "")) out.push({ kind: l.kind, pts: l.pts, thin: true });
+      if (choice.roads === "all") out.push(asIs(l));
+      else if ((choice.roads === "main" ? MAIN_ROADS : TRUNK_ROADS).has(l.highway ?? "")) out.push(asIs(l, true));
     } else if (choice.paths === "none") continue;
-    else if (choice.paths === "all") out.push({ kind: l.kind, pts: l.pts });
+    else if (choice.paths === "all") out.push(asIs(l));
     else paths.push(l);
   }
   if (paths.length) out.push(...hillRoutes(paths, areas, grid));
@@ -111,7 +122,7 @@ export function tidyMarks(lines: MarkLine[], areas: MarkAreas, choice: MarkChoic
 }
 
 /** The main hill routes among paths and tracks (see the file's note), each joined into one thin line. */
-export function hillRoutes(lines: MarkLine[], areas: MarkAreas, grid?: HeightGrid): { kind: OsmLineKind; pts: XY[]; least: number; thin: true }[] {
+export function hillRoutes(lines: MarkLine[], areas: MarkAreas, grid?: HeightGrid): { kind: OsmLineKind; pts: XY[]; least: number; thin: true; ids?: string[]; name?: string }[] {
   const inTown = townTest(areas.towns);
   const inPark = townTest(areas.parks);
   const inWood = townTest(areas.woods);
@@ -124,7 +135,7 @@ export function hillRoutes(lines: MarkLine[], areas: MarkAreas, grid?: HeightGri
   let high = -Infinity;
   if (grid) for (const v of grid.h) [low, high] = [Math.min(low, v), Math.max(high, v)];
   const highGround = high - HIGH_GROUND * (high - low);
-  const out: { kind: OsmLineKind; pts: XY[]; least: number; thin: true }[] = [];
+  const out: { kind: OsmLineKind; pts: XY[]; least: number; thin: true; ids?: string[]; name?: string }[] = [];
   for (const r of routes) {
     let keep = r.hike;
     if (!keep && grid) {
@@ -136,7 +147,15 @@ export function hillRoutes(lines: MarkLine[], areas: MarkAreas, grid?: HeightGri
       else if (inParks) keep = climb >= HILL_CLIMB;
       else keep = climb >= HILL_CLIMB || (climb >= HIGH_CLIMB && top >= highGround);
     }
-    if (keep) out.push({ kind: r.kind, pts: r.pts, least: LEAST_ROUTE, thin: true });
+    if (!keep) continue;
+    const route: (typeof out)[number] = { kind: r.kind, pts: r.pts, least: LEAST_ROUTE, thin: true };
+    const ids = r.pieces.map((i) => pieces[i].id).filter((id): id is string => !!id);
+    if (ids.length) route.ids = ids.sort();
+    // Named after its longest named piece.
+    let best = -1;
+    for (const i of r.pieces) if (pieces[i].name && (best < 0 || lengths[i] > lengths[best])) best = i;
+    if (best >= 0) route.name = pieces[best].name;
+    out.push(route);
   }
   return out;
 }

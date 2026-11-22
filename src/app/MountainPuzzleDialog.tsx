@@ -38,6 +38,8 @@ import { downloadFile, safeFileName } from "./download";
 import { Modal } from "./Modal";
 import { openMountain, useMountain } from "./mountainState";
 import { loadTerrainTile } from "./mountainTiles";
+import { PathPickBar, PathPickOverlay } from "./PathPicker";
+import { NONE_DROPPED, withoutDropped } from "../terrain/pickMarks";
 import { amsSlotsOf, loadPrinter, printerBed, savePrinter } from "./printerSetting";
 
 type Source = "peak" | "ref" | "picture" | "osm";
@@ -269,10 +271,16 @@ export function MountainPuzzleDialog() {
   const mapUsed = useMemo(() => (mapLoaded ? cropGrid(mapLoaded.grid, mapLoaded.area.width, mapLoaded.area.height, trim) : null), [mapLoaded, trim]);
   const used = photoMode ? photoLoaded?.used ?? null : mapUsed;
   const area = areaFrom(source, peakId, ref, km, corners, osm);
-  const features: MapFeatures = useMemo(
+  // What the usual rules keep from the map, then less the paths and roads clicked off on the top view.
+  const mapFeatures: MapFeatures = useMemo(
     () => (source === "osm" && osm ? featuresOnGrid(osm.data, detail, marks, mapLoaded?.grid) : NO_FEATURES),
     [source, osm, detail, marks, mapLoaded],
   );
+  const [dropped, setDropped] = useState<ReadonlySet<string>>(NONE_DROPPED);
+  // A new area starts with everything kept (the map's own way ids, so reading the same file again keeps the choice).
+  const droppedArea = mapLoaded ? `${mapLoaded.area.sw.e},${mapLoaded.area.sw.n},${mapLoaded.area.width},${mapLoaded.area.height}` : "";
+  useEffect(() => setDropped(NONE_DROPPED), [droppedArea]);
+  const features: MapFeatures = useMemo(() => withoutDropped(mapFeatures, dropped), [mapFeatures, dropped]);
   const areaReady = typeof area !== "string";
   const fresh = areaReady && sameArea(loaded?.area ?? null, area);
 
@@ -707,7 +715,14 @@ export function MountainPuzzleDialog() {
           ) : (
             <>
               <div className="mountain-previews">
-                <TopView grid={loaded.grid} area={loaded.area} puzzle={puzzle} picture={photoMode ? photo?.url ?? null : source === "picture" ? picture : null} features={photoMode ? NO_FEATURES : features} />
+                <TopView
+                  grid={loaded.grid}
+                  area={loaded.area}
+                  puzzle={puzzle}
+                  picture={photoMode ? photo?.url ?? null : source === "picture" ? picture : null}
+                  features={photoMode ? NO_FEATURES : features}
+                  pick={photoMode ? null : { lines: (puzzle ? featuresAtScale(mapFeatures, puzzle.layout.k).features : mapFeatures).lines, dropped, onChange: setDropped }}
+                />
                 <Mountain3D puzzle={puzzle} explode={explode} paint={colourOn ? (coloured?.preview ?? null) : null} border={border && !border.problems.length ? border.pieces : null} />
               </div>
               <label className="mountain-explode small">
@@ -815,7 +830,14 @@ export function MountainPuzzleDialog() {
 }
 
 /** Top-down: the heights shaded (or your map picture), the piece grid, column letters and row numbers. */
-function TopView({ grid, area, puzzle, picture, features }: { grid: HeightGrid; area: Area; puzzle: MountainPuzzle | null; picture: string | null; features: MapFeatures }) {
+/** Paths and roads to click off on a top view (PathPicker.tsx). */
+export interface TopViewPick {
+  lines: MapFeatures["lines"];
+  dropped: ReadonlySet<string>;
+  onChange: (d: ReadonlySet<string>) => void;
+}
+
+function TopView({ grid, area, puzzle, picture, features, pick }: { grid: HeightGrid; area: Area; puzzle: MountainPuzzle | null; picture: string | null; features: MapFeatures; pick: TopViewPick | null }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const [img, setImg] = useState<HTMLImageElement | null>(null);
   useEffect(() => {
@@ -916,8 +938,12 @@ function TopView({ grid, area, puzzle, picture, features }: { grid: HeightGrid; 
   }, [grid, area, puzzle, img, features]);
   return (
     <figure className="mountain-figure">
-      <canvas ref={ref} className="mountain-top" />
+      <div className="path-pick-wrap">
+        <canvas ref={ref} className="mountain-top" />
+        {pick && <PathPickOverlay lines={pick.lines} dropped={pick.dropped} onChange={pick.onChange} box={{ e0: area.sw.e, n0: area.sw.n, width: area.width, height: area.height }} />}
+      </div>
       <figcaption className="muted small">From above, north up: each square is a column of cubes (name × pieces in it).</figcaption>
+      {pick && <PathPickBar features={{ lines: pick.lines, shapes: [], names: [] }} dropped={pick.dropped} onChange={pick.onChange} />}
     </figure>
   );
 }

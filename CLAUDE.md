@@ -2096,6 +2096,16 @@
   drops buildings, and `marksQuery` then asks only for water (no ways of paths/towns/parks/woods, no walking-route relations);
   `fetchCovers` knows a water-only fetch holds no paths. `MarkChoices` has a "Lochs, lakes and reservoirs only" box (hides the
   three rows). Tests: tests/mapMarks (pure, `hillOsm` in osmSample.ts), thinGrooves, mapMarksSwaps.
+  Picking paths off by hand (both windows): osm.ts keeps each line's way `id` and `ref`; MapFeatures lines carry `ids` (a hill
+  route's sorted way ids — hillRoutes gathers them from joinRoutes' `pieces`) and `name` (its longest named piece's name, else ref).
+  Pure `src/terrain/pickMarks.ts`: a session-only `dropped` set of WAY ids (so a re-fetch of the area, or hills ↔ all paths, keeps
+  the choice); a path/track/road line is off when ≥ half its ways are (`isDropped`), `withoutDropped` (none = the same object, so
+  output is byte for byte as before), `toggleDropped`, `dropAll`, `keptCount`, `nearestLine`, `lineLabel`. The dialogs keep the
+  rules' result as `mapFeatures` and `features = withoutDropped(mapFeatures, dropped)` feeds everything (build/island worker,
+  paint, swaps, previews, files); `dropped` resets when the loaded area changes. `src/app/PathPicker.tsx`: `PathPickOverlay` (an
+  SVG in grid metres over the top view canvas, `.path-pick-wrap`; dropped lines faint dashed, hover highlighted with name/length,
+  nearest within `REACH_PX` screen px — 20 for a finger; tap toggles) and `PathPickBar` ("12 of 15 paths kept", Keep all / Leave
+  all off). Island candidates = `featuresForIsland(mapFeatures, k)` once built; mountain's = featuresAtScale. Tests: tests/pickMarks.
 - Puzzle colours (Island and Mountain puzzle windows' "Colour" choice; `src/app/PuzzleColour.tsx`: `ColourPanel`, `useColoured`,
   `ColourDownloads`; the photo puzzle stays plain): pure `src/terrain/colour.ts` + `colourFiles.ts`. Colouring runs in
   `src/app/puzzleColour.worker.ts` (`ColourRunner`: a new job while one runs restarts the worker; pieces sent only when new) over
