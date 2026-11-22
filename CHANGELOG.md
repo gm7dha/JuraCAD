@@ -8,6 +8,12 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.105.1 — Shell's Wall thickness box is back
+
+- **Fixed**: the Wall thickness box was missing from Shell (and Thicken, Rib, Sheet metal and Gusset) since v0.60,
+  so only the arrow in the view could change it. It's back, and a thickness that can't be used now says so instead
+  of quietly using 2 mm.
+
 ## v0.105 — Sketches start in Select; hide all constraints from the right-click menu
 
 - **Sketches start with the Select tool**, new or opened again, instead of Line.

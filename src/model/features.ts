@@ -657,8 +657,10 @@ export function visibleParamKeys(f: Pick<Feature, "type" | "extrude" | "hole" | 
   // A profile kept facing one way (or locked to a direction) can't also twist; one box for how the twist is given; the scale when on.
   if (f.type === "sweep") sweepParamKeys(f, keys);
   // Thin walls: their thicknesses only when Thin is on (one when centred); a revolve's second angle only for two directions.
-  if (!f.thin || f.surface) ["thickness", "thickness2"].forEach((k) => keys.delete(k));
-  if (f.thin?.midPlane) keys.delete("thickness2");
+  // (Only the Thin boxes, group "thin": Shell, Thicken, Rib, Sheet metal and Gusset have a "thickness" of their own.)
+  const thinKeys = FEATURE_DEFS[f.type].params.filter((p) => p.group === "thin").map((p) => p.key);
+  if (!f.thin || f.surface) thinKeys.forEach((k) => keys.delete(k));
+  if (f.thin?.midPlane && thinKeys.includes("thickness2")) keys.delete("thickness2");
   // A thin wall doesn't taper.
   if (f.type === "extrude" && f.thin && !f.surface) keys.delete("draft");
   if (f.type === "revolve" && !(f.revolve?.second && !f.revolve.symmetric)) keys.delete("angle2");
