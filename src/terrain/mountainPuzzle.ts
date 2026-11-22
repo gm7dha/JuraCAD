@@ -21,7 +21,9 @@
  */
 import { insideGap, offsetPolygon } from "../library/outlines";
 import { heightAt, type HeightGrid } from "./elevation";
-import { groundMarks, THIN_GROOVE } from "./groundMarks";
+import { groundMarks } from "./groundMarks";
+import { cutGrooves } from "./grooveCut";
+import { weld } from "../geometry/threeMf";
 import { featuresAtScale, NO_FEATURES, type MapFeatures } from "./osm";
 import { triangulate, type P2 } from "./triangulate";
 
@@ -948,38 +950,8 @@ export function codeKeys(columns: { joins: (Key | null)[] }[], cols: number, row
 
 const columnName = (c: number): string => (c < 26 ? String.fromCharCode(65 + c) : columnName(Math.floor(c / 26) - 1) + String.fromCharCode(65 + (c % 26)));
 
-/** With thin map lines, top pieces are sampled at least this finely (mm), up to this many a side. */
-export const THIN_SAMPLE = 0.25;
-export const MOST_THIN_SAMPLES = 240;
-
-/**
- * The columns (r · cols + c) a thin map line passes through: any piece of it whose box, widened by the groove's
- * half-width and a dovetail's reach into the next cube, meets the column's square.
- */
-export function thinColumns(f: MapFeatures, e0: number, n0: number, k: number, cube: number, cols: number, rows: number): Set<number> {
-  const out = new Set<number>();
-  // Tabbed top pieces reach into the neighbouring square (dovetails are at most 0.21 of a side deep).
-  const reach = THIN_GROOVE.width / 2 + 0.22 * cube;
-  const mark = (ax: number, ay: number, bx: number, by: number) => {
-    const c0 = Math.max(0, Math.floor((Math.min(ax, bx) - reach) / cube));
-    const c1 = Math.min(cols - 1, Math.floor((Math.max(ax, bx) + reach) / cube));
-    const r0 = Math.max(0, Math.floor((Math.min(ay, by) - reach) / cube));
-    const r1 = Math.min(rows - 1, Math.floor((Math.max(ay, by) + reach) / cube));
-    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) out.add(r * cols + c);
-  };
-  for (const l of f.lines) {
-    if (!l.thin) continue;
-    for (let s = 0; s + 1 < l.pts.length; s++) {
-      const [px, py] = [(l.pts[s][0] - e0) * k, (l.pts[s][1] - n0) * k];
-      const [qx, qy] = [(l.pts[s + 1][0] - e0) * k, (l.pts[s + 1][1] - n0) * k];
-      // In short stretches, so a long slanting piece only marks the squares it passes.
-      const parts = Math.min(10000, Math.max(1, Math.ceil(Math.hypot(qx - px, qy - py) / (cube / 4))));
-      for (let t = 0; t < parts; t++)
-        mark(px + ((qx - px) * t) / parts, py + ((qy - py) * t) / parts, px + ((qx - px) * (t + 1)) / parts, py + ((qy - py) * (t + 1)) / parts);
-    }
-  }
-  return out;
-}
+/** A channel in the snow stops this far (mm) above the snow part's floor. */
+const SNOW_CLEAR = 1e-3;
 
 /** The whole puzzle from the heights of an area `areaWidth` × `areaHeight` m. Throws if `mountainChecks` has problems. */
 export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeight: number, spec: MountainSpec, features: MapFeatures = NO_FEATURES): MountainPuzzle {
@@ -997,15 +969,23 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
   const used = featuresAtScale(features, k).features;
   const marks = groundMarks(used, layout.e0, layout.n0, k, cols * cube, rows * cube, plain);
   const Z = marks.empty ? plain : (x: number, y: number) => marks.apply(x, y, plain(x, y));
+  // Paths and roads are cut into the top pieces exactly afterwards (grooveCut.ts): the meshes are made without them.
+  const baseMarks = marks.base ?? marks;
+  const meshZ = baseMarks.empty ? plain : (x: number, y: number) => baseMarks.apply(x, y, plain(x, y));
   const snowZ = spec.snowline === null ? Infinity : zOf(spec.snowline);
-  // Samples along each side of a top piece: about one per height-data point (finer for map marks), 8 to 48 (64).
-  // Thin tidy lines (0.6 mm) need samples at most `THIN_SAMPLE` apart, so one always falls on the groove's flat bottom.
-  // Only the columns a thin line passes through (its pieces' boxes ± the groove's half-width) are sampled that finely;
-  // the others keep the usual count. Top pieces stand apart (the fit gap), so neighbours needn't share samples.
-  const n = marks.empty ? Math.min(48, Math.max(8, Math.ceil(cube / Math.max(0.6, grid.spacing * k)))) : Math.min(64, Math.max(16, Math.ceil(cube / 0.45)));
-  const fineN = Math.min(MOST_THIN_SAMPLES, Math.max(16, Math.ceil(cube / THIN_SAMPLE)));
-  const fine = thinColumns(used, layout.e0, layout.n0, k, cube, cols, rows);
-  const nAt = (c: number, r: number) => (fine.has(r * cols + c) ? fineN : n);
+  // Samples along each side of a top piece: about one per height-data point (finer for map marks pressed on the grid:
+  // rivers, lochs, buildings), 8 to 48 (64).
+  const n = baseMarks.empty ? Math.min(48, Math.max(8, Math.ceil(cube / Math.max(0.6, grid.spacing * k)))) : Math.min(64, Math.max(16, Math.ceil(cube / 0.45)));
+  const nAt = (_c: number, _r: number) => n;
+  const cutTop = (b: Body, zs: number): Body => {
+    if (!marks.channels) return b;
+    const w = weld(b.vertices, b.triangles);
+    // The snow part sits on a flat floor at its snow line `zs`: a channel never takes the snow's ground down to it (it
+    // stops a hair above, `SNOW_CLEAR`), so the snow never folds through its own floor or into the rock under it.
+    const height = b.part !== "snow" ? Z : (x: number, y: number) => Math.max(zs + SNOW_CLEAR, Z(x, y));
+    const cut = cutGrooves(w, marks.channels, meshZ, height);
+    return cut ? { part: b.part, vertices: cut.vertices, triangles: cut.triangles } : b;
+  };
   const thinnest = g.depth + 2;
   // Layer 0 is the thin plate, the rest full cubes.
   const plate = plateFor(spec);
@@ -1139,7 +1119,7 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
           const sq: [number, number, number, number] = [c * cube + fit, r * cube + fit, (c + 1) * cube - fit, (r + 1) * cube - fit];
           const zs = Math.max(snowZ, z0 + (pocket ? g.depth + 1 : 1));
           const m = nAt(c, r);
-          const bodies = outlines[L].length === 4 ? topBodies(sq, m, Z, z0, zs, pocket, g) : outlineTopBodies(outlines[L], cube / m, Z, z0, zs, pocket, g);
+          const bodies = (outlines[L].length === 4 ? topBodies(sq, m, meshZ, z0, zs, pocket, g) : outlineTopBodies(outlines[L], cube / m, meshZ, z0, zs, pocket, g)).map((b) => cutTop(b, zs));
           let peak = z0;
           for (const b of bodies) for (let i = 2; i < b.vertices.length; i += 3) peak = Math.max(peak, b.vertices[i]);
           const beside = besideAtLevel(c, r, L);

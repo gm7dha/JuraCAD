@@ -16,7 +16,9 @@
  * (dovetails, narrow strips) and never leave the ground thinner than `LEAST_BASE`.
  */
 import { heightAt, type HeightGrid } from "./elevation";
-import { BUILDING_LEAST, groundMarks } from "./groundMarks";
+import { BUILDING_LEAST, groundMarks, type GroundMarks } from "./groundMarks";
+import { cutGrooves, type GrooveIndex } from "./grooveCut";
+import { smoothedFeatures } from "./smoothLines";
 import type { Body, PuzzlePiece } from "./mountainPuzzle";
 import { NO_FEATURES, type MapFeatures, type OsmLineKind } from "./osm";
 import { bestRoom, centredRooms, platesInPlace, roomScale, towerCorner, towerSpot, type BedRect } from "./puzzle3mf";
@@ -150,8 +152,6 @@ export const smallestPiece = (piece: number) => Math.max(60, (0.4 * piece) ** 2)
 
 /** The thinnest base allowed (mm): map marks never take the ground below it either. */
 export const LEAST_BASE = 1.5;
-/** The finest grid cell is used up to this size (mm) when the island has thin map lines (hill routes, trunk roads). */
-export const THIN_CELL = 0.4;
 /** Shortest line (mm on the puzzle) and smallest loch (mm²) worth pressing in; smaller ones would be dimples. */
 export const LEAST_MARK_LINE = 3;
 export const LEAST_MARK_WATER = 4;
@@ -711,9 +711,8 @@ function buildIsland(
   const k = kGiven ?? Math.min((spec.bed[0] - 10) / areaWidth, (spec.bed[1] - 10) / areaHeight) * spec.scale;
   const W = areaWidth * k;
   const H = areaHeight * k;
-  // Thin map lines (0.6 mm) need the mesh's points at most `THIN_CELL` apart, so one always lands on a groove's flat bottom.
-  const most = features.lines.some((l) => l.thin) ? THIN_CELL : 0.6;
-  const cell = Math.min(most, Math.max(0.25, Math.sqrt((W * H) / 700000)));
+  // Paths and roads are cut into the meshes exactly (grooveCut.ts), so the cell is the same with or without them.
+  const cell = Math.min(0.6, Math.max(0.25, Math.sqrt((W * H) / 700000)));
   const nx = Math.ceil(W / cell);
   const ny = Math.ceil(H / cell);
   const N = nx * ny;
@@ -932,20 +931,26 @@ function buildIsland(
   const lift = spec.relief / Math.max(high, 1);
   const plainTop = (x: number, y: number) => spec.base + Math.max(0, ground(x, y)) * lift;
   let top = plainTop;
+  let meshTop = plainTop;
   let fine: ((x: number, y: number) => number) | undefined;
+  let channels: GrooveIndex | undefined;
   let marks = NO_MARKS;
   const used = featuresForIsland(features, k);
   if (used.features.lines.length || used.features.shapes.length) {
     const m = groundMarks(used.features, sw.e, sw.n, k, W, H, plainTop);
     if (!m.empty) {
       const fade = neckFade(joined.tabs, nx, ny, cell);
-      top = (x, y) => {
+      const lowered = (g: GroundMarks) => (x: number, y: number) => {
         const p = plainTop(x, y);
-        let z = m.apply(x, y, p);
+        let z = g.apply(x, y, p);
         if (z < p) z = Math.max(LEAST_BASE, p + fade(x, y) * (z - p));
         return z;
       };
-      fine = plainTop;
+      top = lowered(m);
+      // Paths and roads are cut into the meshes exactly afterwards; the meshes are made without them.
+      channels = m.channels;
+      meshTop = m.base ? (m.base.empty ? plainTop : lowered(m.base)) : top;
+      if (meshTop !== plainTop) fine = plainTop;
     }
     marks = marksOnLand(used.features, used.tooSmall, sw, k, (x, y) => {
       const [i, j] = [Math.floor(x / cell), Math.floor(y / cell)];
@@ -969,8 +974,12 @@ function buildIsland(
   // Numbered from the north-west, row by row.
   order.sort((p, q) => Math.round((q.y - p.y) / P) * 1e6 + (p.x - q.x) || q.y - p.y);
   order.forEach((o, n) => {
-    const body = pieceMesh(piece, nx, ny, cell, o.id, spec.fit, top, fine);
+    let body = pieceMesh(piece, nx, ny, cell, o.id, spec.fit, meshTop, fine);
     if (!body) return;
+    if (channels) {
+      const cut = cutGrooves(body, channels, meshTop, top);
+      if (cut) body = { part: body.part, vertices: cut.vertices, triangles: cut.triangles };
+    }
     let [x0, y0, x1, y1, z1] = [Infinity, Infinity, -Infinity, -Infinity, 0];
     for (let i = 0; i < body.vertices.length; i += 3) {
       x0 = Math.min(x0, body.vertices[i]);
@@ -1017,7 +1026,9 @@ function buildIsland(
  * bigger so they print; smaller ones at an island's scale would be specks) — or bigger, a feature's own `least` (hill
  * routes, lochs and reservoirs when only those are kept).
  */
-export function featuresForIsland(f: MapFeatures, k: number): { features: MapFeatures; tooSmall: number } {
+export function featuresForIsland(raw: MapFeatures, k: number): { features: MapFeatures; tooSmall: number } {
+  // Paths, tracks and roads smoothed to what prints at this scale (smoothLines.ts).
+  const f = smoothedFeatures(raw, k);
   let tooSmall = 0;
   const lines = f.lines.filter((l) => {
     let len = 0;

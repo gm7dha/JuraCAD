@@ -5,6 +5,7 @@
  * come from the height tiles. Shared, unchanged, by JuraCAD's and JuraCUT's Mountain puzzles.
  */
 import type { HeightGrid } from "./elevation";
+import { smoothedFeatures } from "./smoothLines";
 import { ALL_MARKS, tidyMarks, waterOnly, type MarkChoice } from "./mapMarks";
 import { latLonToGrid, type GridPoint, type LatLon } from "./osGrid";
 
@@ -429,10 +430,12 @@ function withWho<T extends object>(line: T, id: string | undefined, name: string
 export const LEAST_LOCH = 16;
 
 /**
- * Features worth printing at `k` mm per metre: those with a `least` (see MapFeatures) smaller than it on the puzzle
+ * Features worth printing at `k` mm per metre, their paths and roads smoothed (`smoothedFeatures`): those with a `least` (see MapFeatures) smaller than it on the puzzle
  * are left off, and counted.
  */
-export function featuresAtScale(f: MapFeatures, k: number): { features: MapFeatures; tooSmall: number } {
+export function featuresAtScale(raw: MapFeatures, k: number): { features: MapFeatures; tooSmall: number } {
+  // Paths, tracks and roads smoothed to what prints at this scale (smoothLines.ts), so everything made uses that line.
+  const f = smoothedFeatures(raw, k);
   let tooSmall = 0;
   const lines = f.lines.filter((l) => {
     if (!l.least) return true;
