@@ -146,7 +146,7 @@ describe("a trim is only a frame: which land is kept is decided on the whole are
       const p = build(t, { ...SPEC, land: "all" }, features);
       expect(p.marks.lines.length).toBeGreaterThan(0);
       // Every drawn point, back on the map, lies on the path.
-      for (const l of p.marks.lines) for (const [x, y] of l.pts) expect(Math.abs(p.origin.e + x / p.k - 202200)).toBeLessThan(2);
+      for (const l of p.marks.lines) for (const [x] of l.pts) expect(Math.abs(p.origin.e + x / p.k - 202200)).toBeLessThan(2);
       // And the groove is pressed in there, not beside it.
       for (const n of [771400, 772600]) {
         const at = (e: number) => p.groundAt((e - p.origin.e) * p.k, (n - p.origin.n) * p.k);
