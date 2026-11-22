@@ -59,7 +59,7 @@ describe("the right-click menu", () => {
     expect(items.find((i) => i.label === "Parallel")?.key).toBe("B");
     expect(items.find((i) => i.label === "Perpendicular")?.key).toBe("Shift+L");
     expect(labels).toContain("Make it construction");
-    for (const x of ["Copy", "Paste", "Delete", "Hide constraints", "Hide dimensions", "Select other…"]) expect(labels).toContain(x);
+    for (const x of ["Copy", "Paste", "Delete", "Hide all constraints", "Hide all dimensions", "Select other…"]) expect(labels).toContain(x);
     expect(labels).not.toContain("Finish");
     // Groups are divided.
     expect(items.filter((i) => i.divider).length).toBeGreaterThanOrEqual(3);
@@ -67,7 +67,7 @@ describe("the right-click menu", () => {
 
   it("nothing selected: Finish while drawing, and the view choices", () => {
     const items = sketchMenuItems(emptySketch(), [], { ...ctx, busy: true, showDimensions: false });
-    expect(items.map((i) => i.label)).toEqual(["Finish", "Hide constraints", "Show dimensions"]);
+    expect(items.map((i) => i.label)).toEqual(["Finish", "Hide all constraints", "Show all dimensions"]);
   });
 
   it("a circle's diameter offers the radius", () => {

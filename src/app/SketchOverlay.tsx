@@ -14,7 +14,7 @@ import { completeWith, suggestionsAt } from "../model/varComplete";
 import { expressionText, tiedIds } from "../sketch/sketchView";
 import { canSwitchRound } from "../sketch/dimensionKinds";
 import { setSketchLit, useSketchView } from "./sketchViewState";
-import { switchSketchRoundDimension } from "./sketchMenuActions";
+import { openSketchMenuOn, switchSketchRoundDimension } from "./sketchMenuActions";
 
 const RELATION_NAMES: Partial<Record<SketchConstraint["type"], string>> = {
   coincident: "Coincident",
@@ -166,6 +166,7 @@ export function SketchOverlay() {
           title={`${RELATION_NAMES[c.type] ?? c.type} — click to select, then Delete to remove`}
           aria-label={RELATION_NAMES[c.type] ?? c.type}
           onPointerDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => menuOn(e, c.id)}
           onPointerEnter={() => setSketchLit(tiedIds(data, c.id))}
           onPointerLeave={() => setSketchLit(null)}
           onClick={(e) => toggleSelect(c.id, additive(e))}
@@ -176,6 +177,13 @@ export function SketchOverlay() {
       <span ref={inferenceEl} className="constraint-badge inference-badge" style={{ display: "none" }} aria-hidden="true" />
     </div>
   );
+}
+
+/** Right-click (or a long press) on a badge or a dimension's number: the sketch's menu, with it picked. */
+function menuOn(e: { preventDefault(): void; stopPropagation(): void; clientX: number; clientY: number }, id: string) {
+  e.preventDefault();
+  e.stopPropagation();
+  openSketchMenuOn(id, { x: e.clientX, y: e.clientY });
 }
 
 function toggleSelect(id: string, additive: boolean) {
@@ -415,6 +423,8 @@ function DimensionLabel({
   // Click: select. Double-click: edit. Drag: move the label.
   const onPointerDown = (e: ReactPointerEvent) => {
     e.stopPropagation();
+    // (Only the main button picks or drags; a right-click opens the menu, below.)
+    if (e.button !== 0) return;
     const s = useStore.getState();
     const start = s.editing?.draft.sketch?.data;
     if (!start) return;
@@ -455,6 +465,7 @@ function DimensionLabel({
       onPointerUp={onPointerUp}
       onPointerEnter={() => setSketchLit(tiedIds(sketch, c.id))}
       onPointerLeave={() => setSketchLit(null)}
+      onContextMenu={(e) => menuOn(e, c.id)}
       onDoubleClick={(e) => {
         e.stopPropagation();
         if (c.driven) {

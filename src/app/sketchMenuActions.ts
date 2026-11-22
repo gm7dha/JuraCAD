@@ -78,6 +78,17 @@ export function openSketchMenu(at: { x: number; y: number }, p: { x: number; y: 
   return true;
 }
 
+/**
+ * Right-click (or a long press) on a relation badge or a dimension's number: it joins the selection (as anything else
+ * under the pointer does) and the menu opens there.
+ */
+export function openSketchMenuOn(id: string, at: { x: number; y: number }): boolean {
+  const s = useStore.getState();
+  if (!s.sketch) return false;
+  if (!viewportApi.sketch?.busy() && !s.sketch.selection.includes(id)) s.setSketchSelection([...s.sketch.selection, id]);
+  return openSketchMenu(at, null, 0);
+}
+
 /** Run one of the menu's choices (the menu closes first). */
 export function runSketchMenu(action: SketchMenuAction): void {
   const open = current;
@@ -113,12 +124,18 @@ export function runSketchMenu(action: SketchMenuAction): void {
       if (d) setSketchCentreline(d, action.on);
       break;
     }
-    case "showConstraints":
-      setSketchView({ constraints: !sketchViewNow().constraints });
+    case "showConstraints": {
+      const show = !sketchViewNow().constraints;
+      setSketchView({ constraints: show });
+      s.setSketchMessage(show ? "Constraints shown." : "Constraints hidden — they still hold the shapes. Right-click and choose Show all constraints to see them again.", "info");
       break;
-    case "showDimensions":
-      setSketchView({ dimensions: !sketchViewNow().dimensions });
+    }
+    case "showDimensions": {
+      const show = !sketchViewNow().dimensions;
+      setSketchView({ dimensions: show });
+      s.setSketchMessage(show ? "Dimensions shown." : "Dimensions hidden — they still set the sizes. Right-click and choose Show all dimensions to see them again.", "info");
       break;
+    }
     case "selectOther": {
       const data = sketchData();
       if (!open || !data) break;
