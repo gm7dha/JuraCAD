@@ -67,8 +67,8 @@ export function sketchMenuItems(s: SketchData, selection: string[], ctx: SketchM
   if (selection.length) edit.push({ label: "Delete", key: "Del", action: { kind: "delete" } });
   if (edit.length) groups.push(edit);
   const view: SketchMenuItem[] = [
-    { label: ctx.showConstraints ? "Hide constraints" : "Show constraints", action: { kind: "showConstraints" } },
-    { label: ctx.showDimensions ? "Hide dimensions" : "Show dimensions", action: { kind: "showDimensions" } },
+    { label: ctx.showConstraints ? "Hide all constraints" : "Show all constraints", action: { kind: "showConstraints" } },
+    { label: ctx.showDimensions ? "Hide all dimensions" : "Show all dimensions", action: { kind: "showDimensions" } },
   ];
   if (ctx.under >= 2) view.push({ label: "Select other…", action: { kind: "selectOther" } });
   groups.push(view);
