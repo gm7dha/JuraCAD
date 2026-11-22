@@ -3862,16 +3862,20 @@ try {
     await page.getByRole("button", { name: "Add a tab" }).click();
     await page.getByRole("menuitem", { name: "Part Studio" }).click();
     await page.waitForFunction(() => document.querySelectorAll(".feature-row:not(.datum)").length === 0, null, { timeout: 10_000 });
+    const partsBefore = await page.evaluate(() => window.juracadStore.getState().parts.map((p) => p.id));
     await tool("Box"); // 40 × 30 × 20
     await page.getByRole("button", { name: "Accept" }).click();
     await page.waitForFunction(() => document.querySelectorAll(".part-row").length === 1, null, { timeout: 30_000 });
     await settled();
+    // This Part Studio's box (every studio's parts are in the store).
+    const boxId = await page.evaluate((before) => window.juracadStore.getState().parts.find((p) => !before.includes(p.id) && !p.configuration)?.id, partsBefore);
+    if (!boxId) throw new Error("the box in the new Part Studio wasn't found");
     await tool("Shell");
-    await page.evaluate(() => {
+    await page.evaluate((id) => {
       const s = window.juracadStore.getState();
-      const part = s.parts.find((p) => !p.configuration && p.faceRefs.length === 6);
+      const part = s.parts.find((p) => p.id === id);
       s.toggleDraftPick({ partId: part.id, ref: part.faceRefs[part.faceRefs.findIndex((f) => f.normal[2] > 0.99)] });
-    });
+    }, boxId);
     // The box was missing from the dialog (v0.60–v0.104): it must be there and take typing.
     const wall = page.locator("#param-thickness");
     await wall.waitFor({ timeout: 5_000 }).catch(() => {
@@ -3884,10 +3888,10 @@ try {
     await page.waitForFunction(() => !window.juracadStore.getState().editing, null, { timeout: 30_000 });
     await settled();
     // Open at the top: 40·30·20 − (40 − 2t)(30 − 2t)(20 − t).
-    const shellVolume = () => page.evaluate(() => window.juracadStore.getState().parts.find((p) => !p.configuration && p.volume)?.volume ?? 0);
+    const shellVolume = () => page.evaluate((id) => window.juracadStore.getState().parts.find((p) => p.id === id)?.volume ?? 0, boxId);
     const expectVolume = async (t) => {
       const want = 24000 - (40 - 2 * t) * (30 - 2 * t) * (20 - t);
-      await page.waitForFunction((w) => Math.abs((window.juracadStore.getState().parts.find((p) => !p.configuration && p.volume)?.volume ?? 0) - w) < 1, want, { timeout: 30_000 }).catch(async () => {
+      await page.waitForFunction(([w, id]) => Math.abs((window.juracadStore.getState().parts.find((p) => p.id === id)?.volume ?? 0) - w) < 1, [want, boxId], { timeout: 30_000 }).catch(async () => {
         throw new Error(`the shelled box should be ${want} mm³ with ${t} mm walls, but is ${await shellVolume()} mm³`);
       });
     };
