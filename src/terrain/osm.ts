@@ -24,7 +24,7 @@ export interface OsmData {
    * Lines, with their `highway` type when they're one (footway, track, trunk…) and `hike` when they're part of a
    * walking route (route=hiking/foot/walking) or graded as a mountain path (sac_scale).
    */
-  lines: { kind: OsmLineKind; name?: string; pts: LatLon[]; highway?: string; hike?: true }[];
+  lines: { kind: OsmLineKind; name?: string; pts: LatLon[]; highway?: string; hike?: true; id?: string; ref?: string }[];
   /** Closed shapes: the first ring is the outline, any more are islands in it. `flowing`: a river's or canal's water, not a loch's. */
   shapes: { kind: OsmShapeKind; name?: string; rings: LatLon[][]; flowing?: true }[];
   names: { kind: OsmNameKind; text: string; at: LatLon }[];
@@ -47,8 +47,12 @@ export interface OsmData {
  * on the puzzle (mm), a shape's area there (mm²); what's smaller at the puzzle's scale is left off.
  */
 export interface MapFeatures {
-  /** `thin`: a tidy mark — a thin, flat-bottomed line (`THIN_GROOVE`), drawn red (paths) or dark (roads). */
-  lines: { kind: OsmLineKind; pts: XY[]; least?: number; thin?: true }[];
+  /**
+   * `thin`: a tidy mark — a thin, flat-bottomed line (`THIN_GROOVE`), drawn red (paths) or dark (roads). `ids`: the map's
+   * ways it's made of (a hill route joins several), so a path picked off stays off when the map is fetched again (pickMarks.ts);
+   * `name`: its name or number on the map, for the windows.
+   */
+  lines: { kind: OsmLineKind; pts: XY[]; least?: number; thin?: true; ids?: string[]; name?: string }[];
   shapes: { kind: OsmShapeKind; rings: XY[][]; least?: number }[];
   names: { kind: OsmNameKind; text: string; at: XY }[];
   /** Woods (rings, outline first), for full-colour prints only; missing when there are none. */
@@ -240,7 +244,8 @@ export function readOsm(text: string): OsmData {
     if (kind) {
       const pts = pointsOf(refs);
       if (pts.length >= 2) {
-        const line: OsmData["lines"][number] = { kind, name: tags.name, pts };
+        const line: OsmData["lines"][number] = { kind, name: tags.name, pts, id };
+        if (tags.ref) line.ref = tags.ref;
         if (tags.highway) line.highway = PAVEMENTS.has(tags.footway ?? "") ? "sidewalk" : tags.highway;
         if (onRoute.has(id) || (tags.sac_scale && tags.sac_scale !== "no")) line.hike = true;
         data.lines.push(line);
@@ -385,7 +390,7 @@ export function featuresOnGrid(data: OsmData, detail: OsmDetail, choice: MarkCho
   const tidy = choice.water !== "all" || choice.paths !== "all" || choice.roads !== "all";
   const picked = tidy
     ? tidyMarks(
-        data.lines.filter((l) => all || l.kind !== "road").map((l) => ({ kind: l.kind, pts: l.pts.map(onGrid), highway: l.highway, hike: l.hike })),
+        data.lines.filter((l) => all || l.kind !== "road").map((l) => ({ kind: l.kind, pts: l.pts.map(onGrid), highway: l.highway, hike: l.hike, id: l.id, name: l.name ?? l.ref })),
         {
           towns: (data.builtUp ?? []).map((r) => r.map(onGrid)),
           parks: (data.parks ?? []).map((r) => r.map(onGrid)),
@@ -395,7 +400,7 @@ export function featuresOnGrid(data: OsmData, detail: OsmDetail, choice: MarkCho
         grid,
       )
     : null;
-  const lines: MapFeatures["lines"] = picked ?? data.lines.filter((l) => all || l.kind !== "road").map((l) => ({ kind: l.kind, pts: l.pts.map(onGrid) }));
+  const lines: MapFeatures["lines"] = picked ?? data.lines.filter((l) => all || l.kind !== "road").map((l) => withWho({ kind: l.kind, pts: l.pts.map(onGrid) }, l.id, l.name ?? l.ref));
   // Lochs, lakes and reservoirs only: no buildings either.
   const kept = data.shapes.filter((s) => (all || s.kind === "water") && !(s.kind !== "water" && waterOnly(choice)) && !(s.kind === "water" && s.flowing && choice.water !== "all"));
   const shapes: MapFeatures["shapes"] = kept.map((s) =>
@@ -410,6 +415,14 @@ export function featuresOnGrid(data: OsmData, detail: OsmDetail, choice: MarkCho
   }
   const woods = data.woods?.map((w) => w.map((r) => r.map(onGrid)));
   return woods?.length ? { lines, shapes, names, woods } : { lines, shapes, names };
+}
+
+/** A line with the map's way id and name, when it has them. */
+function withWho<T extends object>(line: T, id: string | undefined, name: string | undefined): T & { ids?: string[]; name?: string } {
+  const out: T & { ids?: string[]; name?: string } = line;
+  if (id) out.ids = [id];
+  if (name) out.name = name;
+  return out;
 }
 
 /** Lochs and reservoirs smaller than this on the printed puzzle (mm²) are left off when only those are kept: about 4 × 4 mm. */

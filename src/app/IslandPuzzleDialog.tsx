@@ -20,6 +20,8 @@ import { downloadFile, safeFileName } from "./download";
 import type { IslandJob, IslandReply } from "./islandPuzzle.worker";
 import { Modal } from "./Modal";
 import { DETAILS, MarkChoices, markStroke, Mountain3D } from "./MountainPuzzleDialog";
+import { PickableView, type TopViewPick } from "./PathPicker";
+import { idsOf, isDropped, islandViewBox, landIdsAfter, NONE_DROPPED, pickableLines, withoutDropped } from "../terrain/pickMarks";
 import { openMountain } from "./mountainState";
 import { loadTerrainTile } from "./mountainTiles";
 import { amsSlotsOf, loadPrinter, printerBed, savePrinter } from "./printerSetting";
@@ -211,10 +213,21 @@ export function IslandPuzzleDialog() {
   const usedLevel = levels.some(([l]) => l === level) ? level : levels.length ? levels[levels.length - 1][0] : level;
   const cuts: IslandCuts | undefined = useMemo(() => (cutBy === "boundaries" && map ? boundariesOnGrid(map.data, usedLevel) : undefined), [cutBy, map, usedLevel]);
 
-  const features: MapFeatures = useMemo(
+  // What the usual rules keep from the map, then less the paths and roads clicked off on the top view.
+  const mapFeatures: MapFeatures = useMemo(
     () => (detail !== "area" && marksMap ? featuresOnGrid(marksMap.data, detail, marks, loaded?.grid) : NO_FEATURES),
     [detail, marksMap, marks, loaded],
   );
+  const [dropped, setDropped] = useState<ReadonlySet<string>>(NONE_DROPPED);
+  // A new area starts with everything kept (kept by the map's own way ids, so fetching the same area again keeps the choice).
+  const droppedArea = loaded ? areaKey(loaded.area) : "";
+  // The map's ways whose lines are on the land, as the latest puzzle knows (see landIdsAfter): only those are offered.
+  const landIds = useRef<ReadonlySet<string>>(new Set<string>());
+  useEffect(() => {
+    setDropped(NONE_DROPPED);
+    landIds.current = new Set<string>();
+  }, [droppedArea]);
+  const features: MapFeatures = useMemo(() => withoutDropped(mapFeatures, dropped), [mapFeatures, dropped]);
   // Fetched for less than is asked for now ("Everything" needs the roads, rivers and every path need fetching too).
   const fetchedTooLittle = detail !== "area" && !!marksMap?.fetched && !fetchCovers(marksMap.fetched, detail, marks);
   const needsFetch = detail !== "area" && (!marksMap || fetchedTooLittle);
@@ -242,12 +255,14 @@ export function IslandPuzzleDialog() {
       return;
     }
     setWorking(true);
+    const askedDropped = dropped;
     const timer = setTimeout(() => {
       builder.current.build({ grid: loaded.grid, sw: loaded.area.sw, width: loaded.area.width, height: loaded.area.height, spec: fullSpec, cuts, features }, (reply) => {
         if ("error" in reply) {
           setPuzzle(null);
           setBuildError(reply.error);
         } else {
+          landIds.current = landIdsAfter(landIds.current, idsOf(reply.puzzle.marks.lines), askedDropped);
           setPuzzle(reply.puzzle);
           setBuildError(null);
         }
@@ -538,7 +553,11 @@ export function IslandPuzzleDialog() {
           ) : (
             <>
               <div className="mountain-previews">
-                <IslandTopView puzzle={puzzle} />
+                <IslandTopView
+                  puzzle={puzzle}
+                  pick={puzzle && loaded ? { lines: pickableLines(featuresForIsland(mapFeatures, puzzle.k).features.lines, dropped, landIds.current), dropped, onChange: setDropped, pending: working } : null}
+                  origin={puzzle ? (puzzle.origin ?? loaded?.area.sw ?? null) : null}
+                />
                 <Mountain3D puzzle={puzzle} explode={explode} paint={colourOn ? (coloured?.preview ?? null) : null} />
               </div>
               <label className="mountain-explode small">
@@ -690,7 +709,7 @@ class IslandBuilder {
 const formatDistance = (m: number) => (m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(m < 10000 ? 1 : 0)} km`);
 
 /** From above, north up: each piece in its own colour with its number. */
-function IslandTopView({ puzzle }: { puzzle: IslandBuilt | null }) {
+function IslandTopView({ puzzle, pick, origin }: { puzzle: IslandBuilt | null; pick: TopViewPick | null; origin: { e: number; n: number } | null }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = ref.current;
@@ -733,6 +752,8 @@ function IslandTopView({ puzzle }: { puzzle: IslandBuilt | null }) {
       ctx.fill("evenodd");
     }
     for (const line of puzzle.marks.lines) {
+      // Left off since this puzzle was made: not drawn now, so the view says what the files will have.
+      if (pick && isDropped(line, pick.dropped)) continue;
       ctx.beginPath();
       line.pts.forEach((p, i) => (i ? ctx.lineTo(...px(p)) : ctx.moveTo(...px(p))));
       const stroke = markStroke(line.kind, line.thin);
@@ -754,10 +775,12 @@ function IslandTopView({ puzzle }: { puzzle: IslandBuilt | null }) {
       const [[x0, y0], , [x1, y1]] = p.outline;
       if ((x1 - x0) * s > 14 && (y1 - y0) * s > 10) ctx.fillText(p.name.split(" ")[0], ((x0 + x1) / 2) * s, h - ((y0 + y1) / 2) * s + 3);
     });
-  }, [puzzle]);
+  }, [puzzle, pick?.dropped]);
   return (
     <figure className="mountain-figure">
-      <canvas ref={ref} className="mountain-top" />
+      <PickableView pick={pick} box={puzzle && origin ? islandViewBox(puzzle, origin) : null}>
+        <canvas ref={ref} className="mountain-top" />
+      </PickableView>
       <figcaption className="muted small">From above, north up: each piece numbered, with the map's paths, rivers and lochs.</figcaption>
     </figure>
   );

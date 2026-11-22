@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.103 — Puzzles: pick which paths and roads to keep
+
+- **Island and Mountain puzzles**: on the top view, point at a path or road to see its name and length, and click
+  (or tap) it to leave it off; click again to bring it back. Left-off lines show faint and dashed.
+- "12 of 15 paths and roads kept", with **Keep all** and **Leave all off**. Arrow keys and Enter work too.
+- What you leave off is gone from the grooves, the paint, the filament-change count, the preview and every exported file.
+  Fetching the same area again keeps your choices for the session.
+
 ## v0.102 — Planes as sketch references
 
 - **Top, Front and Right in sketches**, as in Onshape: where a plane crosses the sketch, its line can be snapped to,
