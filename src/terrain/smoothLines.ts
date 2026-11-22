@@ -149,14 +149,133 @@ export function roundBends(pts: XY[], radius: number, step: number, passes = 400
   return p;
 }
 
+/** Corners are found to this (mm) before they're rounded with arcs. */
+const CORNER_TOLERANCE = 0.02;
+/** Arcs put in a little wider than the least radius, so the bend check that follows passes them as they are. */
+const ARC_ROOM = 1.01;
+/** Arcs are drawn with chords this many radians apart. */
+const ARC_CHORD = Math.PI / 36;
+
+/**
+ * Corners tighter than `radius` rounded with a true arc of that radius where the arc's ends fit on the pieces either
+ * side (shared with the next corner's): a switchback's U-turn becomes two quarter circles and its legs keep their length
+ * — easing points step by step instead (`roundBends`) shrinks a U barely wider than two radii back along its legs.
+ * Corners whose arc doesn't fit are left for `roundBends`.
+ */
+export function filletCorners(pts: XY[], radius: number, step: number): XY[] {
+  const p = simplifyLine(pts, CORNER_TOLERANCE);
+  const n = p.length;
+  if (n < 3) return pts.slice();
+  const R = radius * ARC_ROOM;
+  const turn = new Float64Array(n);
+  const want = new Float64Array(n);
+  for (let i = 1; i + 1 < n; i++) {
+    const [ux, uy] = [p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]];
+    const [vx, vy] = [p[i + 1][0] - p[i][0], p[i + 1][1] - p[i][1]];
+    const [lu, lv] = [Math.hypot(ux, uy), Math.hypot(vx, vy)];
+    if (lu < 1e-12 || lv < 1e-12) continue;
+    turn[i] = Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy);
+    const a = Math.abs(turn[i]);
+    // Too sharp once the line is spread out `step` apart (as roundBends measures it), and not turning right back (a
+    // hairpin's arc never fits).
+    if (a > 1e-9 && Math.min(step, (lu + lv) / 2) / a < radius && a < Math.PI * 0.95) want[i] = R * Math.tan(a / 2);
+  }
+  // Greedy from the start: an arc goes in when its ends fit on both pieces beside it with the arcs already put in.
+  const used = new Float64Array(n);
+  for (let i = 1; i + 1 < n; i++) {
+    if (!want[i]) continue;
+    const before = dist(p[i - 1], p[i]) - used[i - 1];
+    const after = dist(p[i], p[i + 1]);
+    if (want[i] <= before + 1e-12 && want[i] <= after + 1e-12) used[i] = want[i];
+  }
+  // A later corner may have no room left beside an earlier one: check the pieces again from the far side.
+  for (let i = n - 2; i >= 1; i--) if (used[i] && used[i] + used[i + 1] > dist(p[i], p[i + 1]) + 1e-12) used[i] = 0;
+  const out: XY[] = [p[0]];
+  for (let i = 1; i + 1 < n; i++) {
+    if (!used[i]) {
+      out.push(p[i]);
+      continue;
+    }
+    const t = used[i];
+    const u: XY = [(p[i][0] - p[i - 1][0]) / dist(p[i - 1], p[i]), (p[i][1] - p[i - 1][1]) / dist(p[i - 1], p[i])];
+    const side = Math.sign(turn[i]);
+    const start: XY = [p[i][0] - u[0] * t, p[i][1] - u[1] * t];
+    // The centre: R to the inside of the incoming piece at the arc's start.
+    const c: XY = [start[0] - side * u[1] * R, start[1] + side * u[0] * R];
+    const a0 = Math.atan2(start[1] - c[1], start[0] - c[0]);
+    const k = Math.max(1, Math.ceil(Math.abs(turn[i]) / ARC_CHORD));
+    for (let q = 0; q <= k; q++) {
+      const a = a0 + (turn[i] * q) / k;
+      out.push([c[0] + R * Math.cos(a), c[1] + R * Math.sin(a)]);
+    }
+  }
+  out.push(p[n - 1]);
+  return out.filter((q, i) => i === 0 || dist(q, out[i - 1]) > 1e-9);
+}
+
+/** Is the bend at point i tighter than `radius` (as `roundBends` measures it)? */
+function tightAt(p: XY[], i: number, radius: number): boolean {
+  const [ux, uy] = [p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]];
+  const [vx, vy] = [p[i + 1][0] - p[i][0], p[i + 1][1] - p[i][1]];
+  const lu = Math.hypot(ux, uy);
+  const lv = Math.hypot(vx, vy);
+  if (lu < 1e-12 || lv < 1e-12) return false;
+  const turn = Math.atan2(Math.abs(ux * vy - uy * vx), ux * vx + uy * vy);
+  return turn > 1e-9 && (lu + lv) / 2 / turn < radius * 0.999;
+}
+
+/** Points either side of a tight bend eased with it (`roundBends` on just that stretch, its ends held). */
+const ROUND_REACH = 40;
+
+/**
+ * `roundBends` on only the stretches round the bends still too tight (each ± `ROUND_REACH` points, ends held), so a long
+ * line with a few sharp spots isn't walked over and over end to end. The same line back when nothing is too tight.
+ */
+function roundTight(p: XY[], radius: number, step: number): XY[] {
+  const n = p.length;
+  const spans: [number, number][] = [];
+  for (let i = 1; i + 1 < n; i++)
+    if (tightAt(p, i, radius)) {
+      const [a, b] = [Math.max(0, i - ROUND_REACH), Math.min(n - 1, i + ROUND_REACH)];
+      if (spans.length && a <= spans[spans.length - 1][1]) spans[spans.length - 1][1] = b;
+      else spans.push([a, b]);
+    }
+  if (!spans.length) return p;
+  const out: XY[] = [];
+  let at = 0;
+  for (const [a, b] of spans) {
+    for (let i = at; i < a; i++) out.push(p[i]);
+    const r = roundBends(p.slice(a, b + 1), radius, step);
+    for (let i = 0; i + 1 < r.length; i++) out.push(r[i]);
+    at = b;
+  }
+  for (let i = at; i < n; i++) out.push(p[i]);
+  return out;
+}
+
+/** `roundTight` until nothing is too tight (a few rounds), else `roundBends` on the whole line. */
+function roundAll(p: XY[], radius: number, step: number): XY[] {
+  for (let round = 0; round < 3; round++) {
+    const next = roundTight(p, radius, step);
+    if (next === p) return p;
+    p = next;
+  }
+  return roundBends(p, radius, step);
+}
+
 /** One line (puzzle mm) smoothed for a groove `width` mm wide. */
 export function smoothLine(pts: XY[], width: number): XY[] {
   const clean = pts.filter((q, i) => i === 0 || dist(q, pts[i - 1]) > 1e-9);
   if (clean.length < 3) return clean;
   const step = width / 4;
   let p = simplifyLine(clean, NOISE);
-  p = unfold(resampleLine(p, step), FOLD * width, MOST_FOLD * width);
-  p = roundBends(resampleLine(p, step), LEAST_RADIUS * width, step);
+  // A line that closes on itself (round a loch) isn't folded across its own closing: only stretches up to half way round.
+  let total = 0;
+  for (let i = 1; i < p.length; i++) total += dist(p[i - 1], p[i]);
+  const closed = dist(clean[0], clean[clean.length - 1]) < FOLD * width;
+  p = unfold(resampleLine(p, step), FOLD * width, closed ? Math.min(MOST_FOLD * width, total / 2) : MOST_FOLD * width);
+  p = filletCorners(p, LEAST_RADIUS * width, step);
+  p = roundAll(resampleLine(p, step), LEAST_RADIUS * width, step);
   p = simplifyLine(p, KEEP);
   // The ends exactly as they were.
   p[0] = clean[0];
@@ -165,6 +284,8 @@ export function smoothLine(pts: XY[], width: number): XY[] {
 }
 
 const cache = new WeakMap<MapFeatures, Map<number, MapFeatures>>();
+/** Smoothed copies kept per map: the latest scales. */
+const MOST_SCALES = 4;
 
 /**
  * The features with their paths, tracks and roads smoothed at `k` mm per metre (OS grid metres in and out). Nothing to
@@ -186,6 +307,8 @@ export function smoothedFeatures(f: MapFeatures, k: number): MapFeatures {
     return { ...l, pts: done };
   });
   const out = { ...f, lines };
+  // A few scales per map at most (the scale slider would otherwise keep one copy per position tried).
+  if (byK.size >= MOST_SCALES) byK.delete(byK.keys().next().value!);
   byK.set(k, out);
   return out;
 }

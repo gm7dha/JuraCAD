@@ -2108,6 +2108,18 @@
   on a line (all three corners; else corner by corner with `areaAt`). Measured by tests/pathQuality (harness
   `tests/support/lineQuality.ts`: stations every 0.1 mm along the line used, depth, width half-way down, painted width,
   breaks, blobs — island and mountain, bands and full colour), smoothLines (pure + cutGrooves on a block), thinGrooves.
+  Review fixes: corners tighter than the radius get a true arc first where it fits (`filletCorners`; a U-turn barely wider
+  than two radii kept its legs only this way — easing shrank them), `roundBends` then runs only round what's still tight
+  (`roundAll`/`roundTight`, ± `ROUND_REACH` points); a line closing on itself is unfolded only up to half way round (small
+  loops stay loops); a smoothed copy cache keeps `MOST_SCALES` 4 per map. cutGrooves: walls (not ground) whose top edge took
+  a channel's points are triangulated in their plane together with their coplanar partner (`walls`, triangulate.ts — a fan
+  of the triangle alone reached past its diagonal and folded over the partner); ground fans test corners seen from above,
+  by distance > `EPS` (`fanConvex(…, plan)` — else xy-collinear points made upright fins, and EPS-merged points flipped
+  triangles); cut corners lying within EPS of another cell's side are put into it; bodies/triangles no line's box meets are
+  skipped (`GrooveIndex.touches`). Mountain snow parts: a channel stops `SNOW_CLEAR` above the part's floor (`zs`), so the
+  snow never folds through it. tests/grooveCutMesh: every edge shared by exactly two triangles and none folded back on
+  another, with crossings, a T, a path on a road and over the coast, and on a mountain with a snow line; untouched pieces
+  as without the map; switchbacks wider than the fold keep their legs; small loops stay.
   `featuresAtScale(f, k)` (mountain build/preview/colour) and `featuresForIsland` honour `least`. `marksQuery(…, choice)`
   fetches path|footway|bridleway|steps|track, towns/parks (+ woods for hills), natural=water/landuse=reservoir (+ multipolygons),
   waterways only for "all", roads by `ROAD_RANK`, walking route relations bare (`->.hr`); `fetchCovers` says when to fetch

@@ -14,6 +14,7 @@
  * the neighbours' too, and on the walls that share it.
  */
 import type { OsmLineKind } from "./osm";
+import { triangulate, type P2 } from "./triangulate";
 
 type XY = [number, number];
 
@@ -104,6 +105,13 @@ export class GrooveIndex {
       const t = L2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / L2)) : 0;
       visit(this.lines[this.seg[o]], Math.hypot(x - ax - t * dx, y - ay - t * dy));
     }
+  }
+
+  /** Does any line's groove (by its pieces' boxes) come into the box? */
+  touches(x0: number, y0: number, x1: number, y1: number): boolean {
+    for (let i = Math.floor(x0 / BUCKET); i <= Math.floor(x1 / BUCKET); i++)
+      for (let j = Math.floor(y0 / BUCKET); j <= Math.floor(y1 / BUCKET); j++) if (this.segs.has(bucketKey(i, j))) return true;
+    return false;
   }
 
   /** How deep the grooves are at (x, y): the deepest there. */
@@ -295,8 +303,18 @@ export function cutGrooves(body: CutBody, index: GrooveIndex, base: (x: number, 
   const V = body.vertices;
   const T = body.triangles;
   const nv = V.length / 3;
-  const onGround = new Uint8Array(nv);
-  for (let i = 0; i < nv; i++) onGround[i] = Math.abs(V[i * 3 + 2] - base(V[i * 3], V[i * 3 + 1])) < 1e-6 ? 1 : 0;
+  {
+    // Nothing near the body at all: nothing to do (most pieces of a big puzzle).
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < nv; i++) [x0, y0, x1, y1] = [Math.min(x0, V[i * 3]), Math.min(y0, V[i * 3 + 1]), Math.max(x1, V[i * 3]), Math.max(y1, V[i * 3 + 1])];
+    if (!index.touches(x0, y0, x1, y1)) return null;
+  }
+  // Which corners lie on the ground, worked out only for triangles a line comes near (−1: not yet asked).
+  const onGroundAt = new Int8Array(nv).fill(-1);
+  const onGround = (i: number) => {
+    if (onGroundAt[i] < 0) onGroundAt[i] = Math.abs(V[i * 3 + 2] - base(V[i * 3], V[i * 3 + 1])) < 1e-6 ? 1 : 0;
+    return onGroundAt[i] === 1;
+  };
   const nt = T.length / 3;
   const upward = (t: number) => {
     const [a, b, c] = [T[t * 3], T[t * 3 + 1], T[t * 3 + 2]];
@@ -307,11 +325,15 @@ export function cutGrooves(body: CutBody, index: GrooveIndex, base: (x: number, 
   };
   const ground = new Uint8Array(nt);
   const groundVertex = new Uint8Array(nv);
-  for (let t = 0; t < nt; t++)
-    if (onGround[T[t * 3]] && onGround[T[t * 3 + 1]] && onGround[T[t * 3 + 2]] && upward(t)) {
+  for (let t = 0; t < nt; t++) {
+    const [a, b, c] = [T[t * 3], T[t * 3 + 1], T[t * 3 + 2]];
+    // Only triangles some line's groove (its box) comes near can be cut or lowered.
+    if (!index.touches(Math.min(V[a * 3], V[b * 3], V[c * 3]), Math.min(V[a * 3 + 1], V[b * 3 + 1], V[c * 3 + 1]), Math.max(V[a * 3], V[b * 3], V[c * 3]), Math.max(V[a * 3 + 1], V[b * 3 + 1], V[c * 3 + 1]))) continue;
+    if (onGround(a) && onGround(b) && onGround(c) && upward(t)) {
       ground[t] = 1;
       for (let k = 0; k < 3; k++) groundVertex[T[t * 3 + k]] = 1;
     }
+  }
 
   // Cut each ground triangle a groove comes near.
   const cellsOf = new Map<number, CV[][]>();
@@ -401,9 +423,102 @@ export function cutGrooves(body: CutBody, index: GrooveIndex, base: (x: number, 
     return out.length / 3 - 1;
   };
   const tris: number[] = [];
+  const hasPoints = (t: number) => {
+    for (let k = 0; k < 3; k++) if (edgeIds.has(edgeKey(T[t * 3 + k], T[t * 3 + (k + 1) % 3]))) return true;
+    return false;
+  };
+  // Walls (not ground) whose top edge took a channel's points: the points dip below the edge, so a wall triangle is
+  // taken together with its partner across its other edges (the quad's two halves) and the outline triangulated in the
+  // wall's plane — a fan of the triangle alone could reach below its diagonal and fold over its partner.
+  const byEdge = new Map<number, number[]>();
+  let wallsAt = false;
+  for (let t = 0; t < nt && !wallsAt; t++) if (!ground[t] && !cellsOf.has(t) && hasPoints(t)) wallsAt = true;
+  if (wallsAt)
+    for (let t = 0; t < nt; t++)
+      for (let k = 0; k < 3; k++) {
+        const key = edgeKey(T[t * 3 + k], T[t * 3 + (k + 1) % 3]);
+        const list = byEdge.get(key);
+        if (list) list.push(t);
+        else byEdge.set(key, [t]);
+      }
+  const taken = new Uint8Array(nt);
+  const walls = new Map<number, number[]>();
+  const normalOf = (t: number): [number, number, number] => {
+    const [a, b, c] = [T[t * 3], T[t * 3 + 1], T[t * 3 + 2]];
+    const [ux, uy, uz] = [V[b * 3] - V[a * 3], V[b * 3 + 1] - V[a * 3 + 1], V[b * 3 + 2] - V[a * 3 + 2]];
+    const [vx, vy, vz] = [V[c * 3] - V[a * 3], V[c * 3 + 1] - V[a * 3 + 1], V[c * 3 + 2] - V[a * 3 + 2]];
+    const n: [number, number, number] = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
+    const L = Math.hypot(n[0], n[1], n[2]) || 1;
+    return [n[0] / L, n[1] / L, n[2] / L];
+  };
+  for (let t = 0; t < nt; t++) {
+    if (ground[t] || cellsOf.has(t) || taken[t] || !hasPoints(t)) continue;
+    const n = normalOf(t);
+    const ring: number[] = [];
+    const used = [t];
+    for (let k = 0; k < 3; k++) {
+      const [a, b] = [T[t * 3 + k], T[t * 3 + (k + 1) % 3]];
+      ring.push(a);
+      const key = edgeKey(a, b);
+      if (edgeIds.has(key)) {
+        ring.push(...between(a, b, 0, 1));
+        continue;
+      }
+      // The triangle across this edge, if it lies in the same plane and is otherwise untouched: its far corner joins in.
+      const other = (byEdge.get(key) ?? []).find((u) => u !== t);
+      if (other === undefined || ground[other] || cellsOf.has(other) || taken[other] || hasPoints(other)) continue;
+      const m = normalOf(other);
+      if (n[0] * m[0] + n[1] * m[1] + n[2] * m[2] < 1 - 1e-9) continue;
+      const far = [0, 1, 2].map((q) => T[other * 3 + q]).find((v) => v !== a && v !== b);
+      if (far === undefined || ring.includes(far)) continue;
+      ring.push(far);
+      used.push(other);
+    }
+    walls.set(t, ring);
+    for (const u of used) taken[u] = 1;
+  }
+  /** A wall's outline (corners in `out`) as triangles in its plane (normal n), the way round it's given; false if it can't. */
+  const wallTriangles = (ring: number[], n: [number, number, number]): boolean => {
+    const r = ring.filter((id, i) => id !== ring[(i + 1) % ring.length]);
+    if (r.length < 3) return true;
+    // u, v across the plane with u × v = n, so the outline keeps its way round.
+    const ax: [number, number, number] = Math.abs(n[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+    let u = [ax[1] * n[2] - ax[2] * n[1], ax[2] * n[0] - ax[0] * n[2], ax[0] * n[1] - ax[1] * n[0]];
+    const lu = Math.hypot(u[0], u[1], u[2]);
+    u = u.map((c) => c / lu);
+    const v = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]];
+    const pts: P2[] = r.map((id) => {
+      const [x, y, z] = [out[id * 3], out[id * 3 + 1], out[id * 3 + 2]];
+      return [x * u[0] + y * u[1] + z * u[2], x * v[0] + y * v[1] + z * v[2]];
+    });
+    let area = 0;
+    for (let i = 0; i < pts.length; i++) area += pts[i][0] * pts[(i + 1) % pts.length][1] - pts[(i + 1) % pts.length][0] * pts[i][1];
+    if (!(area > 0)) return false;
+    // Simple outline only (no side crossing another).
+    for (let i = 0; i < pts.length; i++)
+      for (let j = i + 2; j < pts.length; j++) {
+        if (i === 0 && j === pts.length - 1) continue;
+        if (segmentsCross(pts[i], pts[(i + 1) % pts.length], pts[j], pts[(j + 1) % pts.length])) return false;
+      }
+    let made: [number, number, number][];
+    try {
+      made = triangulate(pts);
+    } catch {
+      return false;
+    }
+    if (made.length !== pts.length - 2) return false;
+    for (const [a, b, c] of made) tris.push(r[a], r[b], r[c]);
+    return true;
+  };
   for (let t = 0; t < nt; t++) {
     const cells = cellsOf.get(t);
     const ids = [T[t * 3], T[t * 3 + 1], T[t * 3 + 2]];
+    const wall = walls.get(t);
+    if (wall) {
+      if (!wallTriangles(wall, normalOf(t))) fanConvex(wall, out, tris, middleOf(false), false);
+      continue;
+    }
+    if (taken[t]) continue;
     if (!cells) {
       // Untouched — but points put on its edges by a neighbour go in.
       if (!edgeIds.has(edgeKey(ids[0], ids[1])) && !edgeIds.has(edgeKey(ids[1], ids[2])) && !edgeIds.has(edgeKey(ids[2], ids[0]))) {
@@ -416,7 +531,7 @@ export function cutGrooves(body: CutBody, index: GrooveIndex, base: (x: number, 
         ring.push(...between(ids[k], ids[(k + 1) % 3], 0, 1));
       }
       if (ring.length === 3) tris.push(ids[0], ids[1], ids[2]);
-      else fanConvex(ring, out, tris, middleOf(!!ground[t]));
+      else fanConvex(ring, out, tris, middleOf(!!ground[t]), !!ground[t]);
       continue;
     }
     // The cells' corners as points of the mesh (new ones inside shared between the cells).
@@ -448,7 +563,7 @@ export function cutGrooves(body: CutBody, index: GrooveIndex, base: (x: number, 
     const loose = [...inner.values()];
     for (const ring of rings) {
       if (!loose.length) {
-        fanConvex(ring, out, tris, middleOf(true));
+        fanConvex(ring, out, tris, middleOf(true), true);
         continue;
       }
       const full: number[] = [];
@@ -466,17 +581,24 @@ export function cutGrooves(body: CutBody, index: GrooveIndex, base: (x: number, 
           const s = ((cx - ax) * (bx - ax) + (cy - ay) * (by - ay)) / (L * L);
           if (s * L <= EPS || (1 - s) * L <= EPS) continue;
           // Only a corner made on this very line (a cut that ran on across the next cell): within rounding of it.
-          if (Math.abs((cx - ax) * (by - ay) - (cy - ay) * (bx - ax)) / L < 1e-9 && !ring.includes(c)) (on ??= []).push([s, c]);
+          if (Math.abs((cx - ax) * (by - ay) - (cy - ay) * (bx - ax)) / L < EPS && !ring.includes(c)) (on ??= []).push([s, c]);
         }
         if (on) {
           on.sort((p, q) => p[0] - q[0]);
           for (const [, c] of on) full.push(c);
         }
       }
-      fanConvex(full, out, tris, middleOf(true));
+      fanConvex(full, out, tris, middleOf(true), true);
     }
   }
   return { vertices: out, triangles: tris };
+}
+
+/** Do the segments p–q and r–s cross (properly, not just touching at an end)? */
+function segmentsCross(p: P2, q: P2, r: P2, s: P2): boolean {
+  const c = (a: P2, b: P2, d: P2) => (b[0] - a[0]) * (d[1] - a[1]) - (b[1] - a[1]) * (d[0] - a[0]);
+  const [d1, d2, d3, d4] = [c(r, s, p), c(r, s, q), c(p, q, r), c(p, q, s)];
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
 }
 
 /**
@@ -484,21 +606,24 @@ export function cutGrooves(body: CutBody, index: GrooveIndex, base: (x: number, 
  * real corner whose sides carry no extra corners, so no triangle is flat; failing one, a fan from a new point in its
  * middle (`centre`).
  */
-function fanConvex(ring: number[], V: number[], tris: number[], centre: (ring: number[]) => number) {
+function fanConvex(ring: number[], V: number[], tris: number[], centre: (ring: number[]) => number, plan = false) {
   const r = ring.filter((id, i) => id !== ring[(i + 1) % ring.length]);
   if (r.length < 3) return;
-  const cross = (a: number, b: number, c: number) => {
-    const [ux, uy, uz] = [V[b * 3] - V[a * 3], V[b * 3 + 1] - V[a * 3 + 1], V[b * 3 + 2] - V[a * 3 + 2]];
-    const [vx, vy, vz] = [V[c * 3] - V[a * 3], V[c * 3 + 1] - V[a * 3 + 1], V[c * 3 + 2] - V[a * 3 + 2]];
-    return Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / (Math.hypot(ux, uy, uz) * Math.hypot(vx, vy, vz) || 1);
+  // How far corner a lies off the straight line through its neighbours b and c. On the ground, cells are convex seen
+  // from above, so it's measured seen from above: a point on a straight side where only the height bends is no corner
+  // (a fan from beside it would stand a triangle on its edge there). Points merged within `EPS` count as on the line.
+  const off = (a: number, b: number, c: number) => {
+    const [ux, uy, uz] = [V[c * 3] - V[b * 3], V[c * 3 + 1] - V[b * 3 + 1], plan ? 0 : V[c * 3 + 2] - V[b * 3 + 2]];
+    const [wx, wy, wz] = [V[a * 3] - V[b * 3], V[a * 3 + 1] - V[b * 3 + 1], plan ? 0 : V[a * 3 + 2] - V[b * 3 + 2]];
+    return Math.hypot(uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx) / (Math.hypot(ux, uy, uz) || 1);
   };
   const n = r.length;
   if (n === 3) {
     tris.push(r[0], r[1], r[2]);
     return;
   }
-  // A real corner: the sides either side of it turn (sine of the turn above a hair).
-  const corner = r.map((_, i) => cross(r[i], r[(i + 1) % n], r[(i + n - 1) % n]) > 1e-7);
+  // A real corner: off the line through its neighbours by more than `EPS`.
+  const corner = r.map((_, i) => off(r[i], r[(i + n - 1) % n], r[(i + 1) % n]) > EPS);
   for (let i = 0; i < n; i++)
     if (corner[i] && corner[(i + 1) % n] && corner[(i + n - 1) % n]) {
       for (let k = 1; k + 1 < n; k++) tris.push(r[i], r[(i + k) % n], r[(i + k + 1) % n]);

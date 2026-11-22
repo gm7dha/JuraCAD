@@ -950,6 +950,9 @@ export function codeKeys(columns: { joins: (Key | null)[] }[], cols: number, row
 
 const columnName = (c: number): string => (c < 26 ? String.fromCharCode(65 + c) : columnName(Math.floor(c / 26) - 1) + String.fromCharCode(65 + (c % 26)));
 
+/** A channel in the snow stops this far (mm) above the snow part's floor. */
+const SNOW_CLEAR = 1e-3;
+
 /** The whole puzzle from the heights of an area `areaWidth` × `areaHeight` m. Throws if `mountainChecks` has problems. */
 export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeight: number, spec: MountainSpec, features: MapFeatures = NO_FEATURES): MountainPuzzle {
   const layout = layoutFor(grid, areaWidth, areaHeight, spec);
@@ -974,10 +977,13 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
   // rivers, lochs, buildings), 8 to 48 (64).
   const n = baseMarks.empty ? Math.min(48, Math.max(8, Math.ceil(cube / Math.max(0.6, grid.spacing * k)))) : Math.min(64, Math.max(16, Math.ceil(cube / 0.45)));
   const nAt = (_c: number, _r: number) => n;
-  const cutTop = (b: Body): Body => {
+  const cutTop = (b: Body, zs: number): Body => {
     if (!marks.channels) return b;
     const w = weld(b.vertices, b.triangles);
-    const cut = cutGrooves(w, marks.channels, meshZ, Z);
+    // The snow part sits on a flat floor at its snow line `zs`: a channel never takes the snow's ground down to it (it
+    // stops a hair above, `SNOW_CLEAR`), so the snow never folds through its own floor or into the rock under it.
+    const height = b.part !== "snow" ? Z : (x: number, y: number) => Math.max(zs + SNOW_CLEAR, Z(x, y));
+    const cut = cutGrooves(w, marks.channels, meshZ, height);
     return cut ? { part: b.part, vertices: cut.vertices, triangles: cut.triangles } : b;
   };
   const thinnest = g.depth + 2;
@@ -1113,7 +1119,7 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
           const sq: [number, number, number, number] = [c * cube + fit, r * cube + fit, (c + 1) * cube - fit, (r + 1) * cube - fit];
           const zs = Math.max(snowZ, z0 + (pocket ? g.depth + 1 : 1));
           const m = nAt(c, r);
-          const bodies = (outlines[L].length === 4 ? topBodies(sq, m, meshZ, z0, zs, pocket, g) : outlineTopBodies(outlines[L], cube / m, meshZ, z0, zs, pocket, g)).map(cutTop);
+          const bodies = (outlines[L].length === 4 ? topBodies(sq, m, meshZ, z0, zs, pocket, g) : outlineTopBodies(outlines[L], cube / m, meshZ, z0, zs, pocket, g)).map((b) => cutTop(b, zs));
           let peak = z0;
           for (const b of bodies) for (let i = 2; i < b.vertices.length; i += 3) peak = Math.max(peak, b.vertices[i]);
           const beside = besideAtLevel(c, r, L);
