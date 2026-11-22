@@ -8,6 +8,15 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.104 — Smooth, solid paths and roads on map puzzles
+
+- **Even grooves**: each path, track and road is now cut into the ground as an exact channel, the same width and depth
+  all along its length — on slopes, across piece joins and round bends. No thin, shallow or broken stretches.
+- **Clean colour**: the red (paths) and black (roads) paint fills exactly the channel, so the lines print as solid
+  bands of even width instead of ragged triangles. The preview matches.
+- **Tidied routes**: wiggles too small to print are ironed out, bends are eased, and where a path doubles back so
+  tightly that its two sides would merge into a blob, it's smoothed across. Ends and your picked paths are kept.
+
 ## v0.103 — Puzzles: pick which paths and roads to keep
 
 - **Island and Mountain puzzles**: on the top view, point at a path or road to see its name and length, and click
