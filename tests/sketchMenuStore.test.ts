@@ -83,6 +83,23 @@ describe("the sketch's right-click menu", () => {
     expect(sketchMenuNow()!.items.map((i) => i.label)).toContain("Show as a radius");
   });
 
+  it("hiding constraints or dimensions lets the picked ones go (else they'd stay on show)", () => {
+    const r = addRectangle(draftData(), at(0, 0), at(20, 10));
+    const d = addDimension(r.sketch, [r.lineIds[0]]);
+    s().updateSketch(d.sketch, { record: true });
+    const relation = draftData().constraints.find((c) => c.type === "horizontal")!;
+    setSketchView({ constraints: true, dimensions: true });
+    s().setSketchSelection([r.lineIds[1], relation.id, d.dimensionId]);
+    openSketchMenuOn(relation.id, { x: 0, y: 0 });
+    runSketchMenu(sketchMenuNow()!.items.find((i) => i.label === "Hide all constraints")!.action);
+    expect(s().sketch!.selection).toEqual([r.lineIds[1], d.dimensionId]);
+    openSketchMenuOn(d.dimensionId, { x: 0, y: 0 });
+    runSketchMenu(sketchMenuNow()!.items.find((i) => i.label === "Hide all dimensions")!.action);
+    expect(s().sketch!.selection).toEqual([r.lineIds[1]]);
+    expect(draftData().constraints.some((c) => c.id === d.dimensionId)).toBe(true);
+    setSketchView({ constraints: true, dimensions: true });
+  });
+
   it("switches a circle's diameter to a radius", () => {
     const c = addCircle(draftData(), at(0, 0), 4);
     const d = addDimension(c.sketch, [c.circleId]);

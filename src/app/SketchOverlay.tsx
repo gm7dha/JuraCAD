@@ -165,7 +165,10 @@ export function SketchOverlay() {
           className={`constraint-badge${selection.includes(c.id) ? " selected" : ""}${failing.has(c.id) ? " failing" : ""}`}
           title={`${RELATION_NAMES[c.type] ?? c.type} — click to select, then Delete to remove`}
           aria-label={RELATION_NAMES[c.type] ?? c.type}
-          onPointerDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            pressedOn(e);
+          }}
           onContextMenu={(e) => menuOn(e, c.id)}
           onPointerEnter={() => setSketchLit(tiedIds(data, c.id))}
           onPointerLeave={() => setSketchLit(null)}
@@ -179,11 +182,27 @@ export function SketchOverlay() {
   );
 }
 
-/** Right-click (or a long press) on a badge or a dimension's number: the sketch's menu, with it picked. */
-function menuOn(e: { preventDefault(): void; stopPropagation(): void; clientX: number; clientY: number }, id: string) {
+/** The last press on a badge or a dimension's number (where, and on which), so a right-click there can be told from a drag. */
+let pressed: { on: EventTarget; x: number; y: number } | null = null;
+/** How far (px) the pointer may move between a right button's press and its menu (as in the 3D view). */
+const MENU_SLOP = 5;
+
+function pressedOn(e: { currentTarget: EventTarget; clientX: number; clientY: number }) {
+  pressed = { on: e.currentTarget, x: e.clientX, y: e.clientY };
+}
+
+/**
+ * Right-click (or a long press) on a badge or a dimension's number: the sketch's menu, with it picked. Not after a
+ * drag (the view turned with the right button, or a press that started somewhere else and let go here). A long press's
+ * made-up right-click (touchCompat) always counts. False = no menu.
+ */
+function menuOn(e: { preventDefault(): void; stopPropagation(): void; clientX: number; clientY: number; currentTarget: EventTarget; nativeEvent: Event }, id: string): boolean {
   e.preventDefault();
   e.stopPropagation();
-  openSketchMenuOn(id, { x: e.clientX, y: e.clientY });
+  const still = !e.nativeEvent.isTrusted || (!!pressed && pressed.on === e.currentTarget && Math.hypot(e.clientX - pressed.x, e.clientY - pressed.y) <= MENU_SLOP);
+  pressed = null;
+  if (!still) return false;
+  return openSketchMenuOn(id, { x: e.clientX, y: e.clientY });
 }
 
 function toggleSelect(id: string, additive: boolean) {
@@ -423,6 +442,7 @@ function DimensionLabel({
   // Click: select. Double-click: edit. Drag: move the label.
   const onPointerDown = (e: ReactPointerEvent) => {
     e.stopPropagation();
+    pressedOn(e);
     // (Only the main button picks or drags; a right-click opens the menu, below.)
     if (e.button !== 0) return;
     const s = useStore.getState();
@@ -465,7 +485,13 @@ function DimensionLabel({
       onPointerUp={onPointerUp}
       onPointerEnter={() => setSketchLit(tiedIds(sketch, c.id))}
       onPointerLeave={() => setSketchLit(null)}
-      onContextMenu={(e) => menuOn(e, c.id)}
+      onContextMenu={(e) => {
+        // The menu takes over from this press: letting go mustn't then pick or unpick it (a long press, Ctrl+click on a Mac).
+        const d = drag.current;
+        if (!menuOn(e, c.id)) return;
+        drag.current = null;
+        if (d?.moved) useStore.getState().recordSketchStep(d.startData);
+      }}
       onDoubleClick={(e) => {
         e.stopPropagation();
         if (c.driven) {

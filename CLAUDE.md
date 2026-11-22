@@ -245,7 +245,7 @@
   controller) → `onSketchMenu(at, p, tol)` → `src/app/sketchMenuActions.ts` `openSketchMenu` (the nearest thing under the pointer
   joins the selection) → pure `src/sketch/sketchMenu.ts` `sketchMenuItems` (Finish while `controller.busy()`, the relations
   `relationsFor` (ops.ts: `relationConstraints` gives constraints, Pierce = a point + a linked curve) says fit, Construction,
-  diameter ↔ radius / centreline, Copy/Paste/Delete, Show/Hide all constraints/dimensions — always, empty space too; hidden ones still apply, a message says how to get them back —, Select other via `sketchHitsAt`; a right-click / long press on a badge or dimension label picks it and opens the menu, `openSketchMenuOn`) →
+  diameter ↔ radius / centreline, Copy/Paste/Delete, Show/Hide all constraints/dimensions — always, empty space too; hidden ones still apply, a message says how to get them back —, Select other via `sketchHitsAt`; a right-click / long press on a badge or dimension label picks it and opens the menu, `openSketchMenuOn` — not when the right button moved from its press there (`menuOn`, `MENU_SLOP`), and the label's lift then doesn't toggle it; hiding lets picked ones of that kind go, `dropPicked`) →
   `SketchContextMenu.tsx` (PlacedPopup). View settings: pure `src/sketch/sketchView.ts` (`readSketchView`/`writeSketchView`,
   localStorage `juracad.sketchView`: constraints, dimensions, expressions — `expressionText`), app store `sketchViewState.ts`
   (+ `hideConstruction`, Shift+P, session only; `lit` = `tiedIds` of the badge/dimension under the pointer; the toggles are the sketch toolbar's "sketch-show" group — not the panel, whose height the smoke test's clicks need) → SketchOverlay (hidden
