@@ -93,3 +93,65 @@ describe("trimming the island's area", () => {
     expect(placed.origin.e + placed.width / placed.k).toBeLessThanOrEqual(t.sw.e + t.width + 1);
   });
 });
+
+describe("a trim is only a frame: which land is kept is decided on the whole area", () => {
+  // A trim from the west cuts through the big island (it runs 200800–203600 E); the small one stays whole.
+  const westCut = { ...NO_TRIM, w: 0.2 };
+  const rule = (land: IslandSpec["land"], only?: IslandSpec["only"]) => ({ sea: SPEC.sea, land, only });
+  const build = (t: ReturnType<typeof trimmedIsland>, spec: IslandSpec, features?: Parameters<typeof makeIslandPuzzle>[6]) =>
+    makeIslandPuzzle(t.grid, t.sw, t.width, t.height, t.decided ? { ...spec, land: "all", only: undefined } : spec, undefined, features);
+
+  it("keeps an island the trim cuts through (it isn't mainland)", () => {
+    // Decided on the trimmed area alone, the cut island would touch its edge and be dropped, leaving only the small one.
+    const naive = trimmedIsland(area, grid, westCut);
+    expect(makeIslandPuzzle(naive.grid, naive.sw, naive.width, naive.height, { ...SPEC, land: "islands" }).high).toBeLessThan(150);
+    const t = trimmedIsland(area, grid, westCut, rule("islands"));
+    expect(t.decided).toBe(true);
+    expect(build(t, { ...SPEC, land: "islands" }).high).toBeGreaterThan(250);
+  });
+
+  it("still leaves out land running off the whole area's edge", () => {
+    // Mainland (500 m) along the east edge, the island in the middle-west; a trim from the west cuts the island.
+    const g = gridFrom(sw, W, H, 25, (e, n) => Math.max(0, (1 - Math.hypot((e - 202200) / 1400, (n - 772000) / 1500)) * 300, e > 204700 ? 500 : 0));
+    const t = trimmedIsland(area, g, westCut, rule("islands"));
+    expect(t.notes.join(" ")).toMatch(/running off the edge/);
+    const p = build(t, { ...SPEC, land: "islands" });
+    expect(p.high).toBeGreaterThan(250);
+    expect(p.high).toBeLessThan(400);
+  });
+
+  it("keeps a list island's own land whole when the trim cuts it", () => {
+    const only = { keep: [{ e: 202200, n: 772000 }] };
+    const t = trimmedIsland(area, grid, westCut, rule("islands", only));
+    expect(t.decided).toBe(true);
+    const p = build(t, { ...SPEC, only });
+    expect(p.high).toBeGreaterThan(250);
+    // The small island to the east isn't the list island's.
+    expect(p.pieces.every((q) => q.outline[2][0] / p.k + p.origin.e < 204000)).toBe(true);
+    expect(p.warnings.join(" ")).not.toMatch(/cut free|joined to other land/);
+  });
+
+  it("changes nothing without a trim, whatever the rule", () => {
+    const t = trimmedIsland(area, grid, NO_TRIM, rule("islands", { keep: [{ e: 202200, n: 772000 }] }));
+    expect(t.grid).toBe(grid);
+    expect(t.decided).toBe(false);
+  });
+
+  it("puts a path at the same place on the map with and without a trim", () => {
+    // A straight path across the big island, north–south through 202200 E.
+    const features = { lines: [{ kind: "path" as const, pts: [[202200, 770900], [202200, 773100]] as [number, number][], thin: true as const, ids: ["w1"] }], shapes: [], names: [] };
+    const trims = [NO_TRIM, { n: 0.1, e: 0.25, s: 0.08, w: 0.15 }];
+    for (const trim of trims) {
+      const t = trimmedIsland(area, grid, trim, rule("all"));
+      const p = build(t, { ...SPEC, land: "all" }, features);
+      expect(p.marks.lines.length).toBeGreaterThan(0);
+      // Every drawn point, back on the map, lies on the path.
+      for (const l of p.marks.lines) for (const [x, y] of l.pts) expect(Math.abs(p.origin.e + x / p.k - 202200)).toBeLessThan(2);
+      // And the groove is pressed in there, not beside it.
+      for (const n of [771400, 772600]) {
+        const at = (e: number) => p.groundAt((e - p.origin.e) * p.k, (n - p.origin.n) * p.k);
+        expect(at(202200)).toBeLessThan((at(202140) + at(202260)) / 2 - 0.2);
+      }
+    }
+  });
+});

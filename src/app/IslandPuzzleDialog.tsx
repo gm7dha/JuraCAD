@@ -13,7 +13,7 @@ import { featuresForIsland, IN_PLACE_FIT, ISLAND_DEFAULTS, islandChecks, type Is
 import { BOUNDARY_LEVELS, boundaryQuery, fetchCovers, ISLANDS, MARKS_MOST, marksQuery, OVERPASS_URL, type MarksFetched } from "../terrain/islands";
 import { TIDY_MARKS, type MarkChoice } from "../terrain/mapMarks";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
-import { boundariesOnGrid, boundaryLevels, featuresOnGrid, featureSummary, levelName, NO_FEATURES, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
+import { boundariesOnGrid, boundaryLevels, featuresOnGrid, featureSummary, levelName, MAX_OSM_BYTES, NO_FEATURES, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
 import { allPlatesZip, IN_PLACE_SETTINGS, plate3mf, platesByLevel, platesFor, platesInPlace, TOWER_ROOM, towerWhere, type BedRect } from "../terrain/puzzle3mf";
 import { islandBands, mapOnPuzzle, mapRaster, NO_MAP, PLAIN_COLOUR, SEA_BLUE, type ColourSpec, type HeightScale } from "../terrain/colour";
 import { ColourDownloads, ColourPanel, useColoured } from "./PuzzleColour";
@@ -117,7 +117,12 @@ export function IslandPuzzleDialog() {
   const [error, setError] = useState<string | null>(null);
   const [puzzle, setPuzzle] = useState<IslandBuilt | null>(null);
   // What the island is made from: the area loaded, less what's trimmed off each side (the same grid when nothing is).
-  const used = useMemo(() => (loaded ? trimmedIsland(loaded.area, loaded.grid, trim) : null), [loaded, trim]);
+  // Which land is kept ("every island", a list island's own land) is decided on the whole area, so a trim through the
+  // island doesn't make its cut edge "the area's edge" and drop it.
+  const used = useMemo(
+    () => (loaded ? trimmedIsland(loaded.area, loaded.grid, trim, { sea: spec.sea, land: spec.land, only: loaded.area.only }) : null),
+    [loaded, trim, spec.sea, spec.land],
+  );
   // The map file the heights came from, if they did: it is the map for marks (and boundaries, if it has them).
   const fileMap = loaded?.area.osm ? { name: loaded.area.name, data: loaded.area.osm, fetched: null } : null;
   // The area whose heights are loaded now: an answer from OpenStreetMap for another one is ignored.
@@ -144,7 +149,10 @@ export function IslandPuzzleDialog() {
       const z = zoomFor(area.sw, area.width, area.height);
       // About a thousand samples across the longer side: narrow straits stay sea.
       const spacing = Math.max(15, Math.max(area.width, area.height) / 1000);
-      setLoaded({ area, grid: await readHeights(loadTerrainTile, area.sw, area.width, area.height, spacing, z) });
+      const grid = await readHeights(loadTerrainTile, area.sw, area.width, area.height, spacing, z);
+      // Another area: its trims start again (shares of the old area's sides would mean something else on this one).
+      if (!sameArea(loaded?.area ?? null, area)) setTrim(NO_TRIM);
+      setLoaded({ area, grid });
       setMap(null);
       setMarksMap(null);
     } catch (e) {
@@ -211,6 +219,11 @@ export function IslandPuzzleDialog() {
   const chooseOsmFile = (file: File | undefined) => {
     if (!file) return;
     setOsmError(null);
+    if (file.size > MAX_OSM_BYTES) {
+      setOsmFile(null);
+      setOsmError("That map file is too big — export a smaller area (a few kilometres across).");
+      return;
+    }
     file
       .text()
       .then((text) => {
@@ -289,7 +302,8 @@ export function IslandPuzzleDialog() {
   const only = loaded?.area.only;
   const fullSpec: IslandSpec = {
     ...(spec.inPlace ? { ...spec, bed: placeBed, keepOut, tower: colourOn && !towerOff } : { ...spec, bed }),
-    ...(only ? { only } : {}),
+    // Trimmed: the land was already chosen on the whole area (trimmedIsland), so build all that's left.
+    ...(used?.decided ? { land: "all" as const } : only ? { only } : {}),
   };
   const problems = islandChecks(fullSpec);
   const specKey = JSON.stringify(fullSpec);
@@ -664,7 +678,7 @@ export function IslandPuzzleDialog() {
                     {puzzle.warnings.some((w) => w.includes("fewer than two")) ? "" : ` — at least two on every piece${puzzle.loose ? " that has a neighbour" : ""}`}.
                     {puzzle.marks.shown ? ` ${puzzle.marks.shown} things from the map are pressed into the ground.` : ""}
                   </p>
-                  {puzzle.warnings.map((w) => (
+                  {[...(used?.notes ?? []).filter((w) => !puzzle.warnings.includes(w)), ...puzzle.warnings].map((w) => (
                     <p key={w} className="mountain-warn">
                       {w}
                     </p>

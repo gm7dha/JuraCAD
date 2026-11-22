@@ -1912,7 +1912,10 @@
   `osmArea(data, puzzle)` names the puzzle when outside GB; ≤ `ISLAND_MOST`) — the loaded `Area.osm` keeps the file, which is then
   the marks map (no Overpass fetch; `fileMap` beats `marksMap`) and the boundaries map if it has any; land still from heights.
   The Mountain's `TrimSliders` (exported) on every source → `trimmedIsland(area, grid, trim)` (cropGrid; NO_TRIM = the same grid
-  and corner, byte-identical) is what the worker builds, so keepLand/landBox/in-place see only what's left; `AreaView` draws the
+  and corner, byte-identical) is what the worker builds, so landBox/in-place see only what's left — but WHICH land ("every
+  island", a list island's `only`) is decided on the whole area first (`LandRule`; keepLand on the height samples, land left out
+  lowered to 0, `decided` → built with land "all" and no `only`, keepLand's words in `notes`), so a trim through the island never
+  drops it as "mainland" nor cuts it free of its own cut edge; a new area resets the trims; `AreaView` draws the
   whole area with the trims dimmed. Boundary/marks fetches ask for the trimmed area and keep `covers`; a later bigger area
   (`areaInside` fails) asks to fetch again. tests/islandArea.
   One island only: `IslandPlace.only` (`IslandOnly`: `keep` / `apart` OS grid points, from lat/lon in `around`) → the dialog's
