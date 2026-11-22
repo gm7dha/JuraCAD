@@ -1021,6 +1021,17 @@ try {
   const cx = vp.x + vp.width / 2;
   const cy = vp.y + vp.height / 2;
 
+  step = "a new sketch starts with Select; right-click on empty space hides and shows constraints";
+  {
+    const startTool = await page.evaluate(() => window.juracadStore.getState().sketch?.tool);
+    if (startTool !== "select") throw new Error(`a new sketch started with the ${startTool} tool, not Select`);
+    for (const [label, want] of [["Hide all constraints", false], ["Show all constraints", true]]) {
+      await page.mouse.click(cx + 150, cy - 100, { button: "right" });
+      await page.getByRole("menuitem", { name: label }).click({ timeout: 10_000 });
+      await page.waitForFunction((w) => JSON.parse(localStorage.getItem("juracad.sketchView") ?? "{}").constraints === w, want, { timeout: 5_000 });
+    }
+  }
+
   step = "drawing a rectangle";
   await page.keyboard.press("r");
   await page.mouse.click(cx - 90, cy + 60);

@@ -10,6 +10,7 @@ import { setCentrelineDimension, switchRoundDimension } from "../sketch/dimensio
 import { findRegions } from "../sketch/regions";
 import { sketchHitsAt, sketchItemLabel, sketchMenuItems, type SketchMenuAction, type SketchMenuItem } from "../sketch/sketchMenu";
 import { hiddenConstruction, type SketchKey } from "../sketch/sketchView";
+import { isDimension, type SketchConstraint } from "../sketch/types";
 import { viewportApi } from "../viewport/Viewport";
 import { canPasteSketch, copySketchSelection, pasteIntoSketch } from "./sketchClipboardApp";
 import { applySketchRelation, deleteSketchSelection, setSketchTool, sketchEscape, toggleSketchConstruction } from "./sketchActions";
@@ -78,6 +79,30 @@ export function openSketchMenu(at: { x: number; y: number }, p: { x: number; y: 
   return true;
 }
 
+/**
+ * Right-click (or a long press) on a relation badge or a dimension's number: it joins the selection (as anything else
+ * under the pointer does) and the menu opens there.
+ */
+export function openSketchMenuOn(id: string, at: { x: number; y: number }): boolean {
+  const s = useStore.getState();
+  if (!s.sketch) return false;
+  if (!viewportApi.sketch?.busy() && !s.sketch.selection.includes(id)) s.setSketchSelection([...s.sketch.selection, id]);
+  return openSketchMenu(at, null, 0);
+}
+
+/**
+ * Hiding constraints or dimensions: the picked ones of that kind are let go too, or they'd stay on show (a picked one
+ * is always drawn) — the very badge right-clicked to hide them all would be left behind.
+ */
+function dropPicked(kind: (c: SketchConstraint) => boolean): void {
+  const s = useStore.getState();
+  const data = sketchData();
+  if (!s.sketch || !data) return;
+  const going = new Set(data.constraints.filter(kind).map((c) => c.id));
+  const left = s.sketch.selection.filter((id) => !going.has(id));
+  if (left.length !== s.sketch.selection.length) s.setSketchSelection(left);
+}
+
 /** Run one of the menu's choices (the menu closes first). */
 export function runSketchMenu(action: SketchMenuAction): void {
   const open = current;
@@ -113,12 +138,20 @@ export function runSketchMenu(action: SketchMenuAction): void {
       if (d) setSketchCentreline(d, action.on);
       break;
     }
-    case "showConstraints":
-      setSketchView({ constraints: !sketchViewNow().constraints });
+    case "showConstraints": {
+      const show = !sketchViewNow().constraints;
+      setSketchView({ constraints: show });
+      if (!show) dropPicked((c) => !isDimension(c));
+      s.setSketchMessage(show ? "Constraints shown." : "Constraints hidden — they still hold the shapes. Right-click and choose Show all constraints to see them again.", "info");
       break;
-    case "showDimensions":
-      setSketchView({ dimensions: !sketchViewNow().dimensions });
+    }
+    case "showDimensions": {
+      const show = !sketchViewNow().dimensions;
+      setSketchView({ dimensions: show });
+      if (!show) dropPicked(isDimension);
+      s.setSketchMessage(show ? "Dimensions shown." : "Dimensions hidden — they still set the sizes. Right-click and choose Show all dimensions to see them again.", "info");
       break;
+    }
     case "selectOther": {
       const data = sketchData();
       if (!open || !data) break;

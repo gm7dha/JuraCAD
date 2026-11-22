@@ -4,7 +4,7 @@ import { emptyDocument, historyOf } from "../src/model/document";
 import { useStore } from "../src/model/store";
 import { addCircle, addDimension, addLine, addRectangle, type Placed } from "../src/sketch/ops";
 import { SketchController } from "../src/sketch/controller";
-import { finishSketchInto, openSketchMenu, runSketchKey, runSketchMenu, sketchMenuNow, switchSketchRoundDimension } from "../src/app/sketchMenuActions";
+import { finishSketchInto, openSketchMenu, openSketchMenuOn, runSketchKey, runSketchMenu, sketchMenuNow, switchSketchRoundDimension } from "../src/app/sketchMenuActions";
 import { setSketchView, sketchViewNow } from "../src/app/sketchViewState";
 import { sketchKeyFor } from "../src/sketch/sketchView";
 
@@ -54,6 +54,52 @@ describe("the sketch's right-click menu", () => {
     setSketchView({ dimensions: true });
   });
 
+  it("on empty space it still opens, with Hide all constraints; hidden ones still hold the shapes", () => {
+    const r = addRectangle(draftData(), at(0, 0), at(20, 10));
+    s().updateSketch(r.sketch, { record: true });
+    const before = draftData().constraints.length;
+    setSketchView({ constraints: true });
+    expect(openSketchMenu({ x: 0, y: 0 }, { x: 200, y: 200 }, 0.5)).toBe(true);
+    expect(s().sketch!.selection).toEqual([]);
+    const hide = sketchMenuNow()!.items.find((i) => i.label === "Hide all constraints")!;
+    expect(hide).toBeTruthy();
+    runSketchMenu(hide.action);
+    expect(sketchViewNow().constraints).toBe(false);
+    expect(draftData().constraints.length).toBe(before);
+    expect(s().sketch!.message?.text).toContain("still hold");
+    openSketchMenu({ x: 0, y: 0 }, null, 0);
+    const show = sketchMenuNow()!.items.find((i) => i.label === "Show all constraints")!;
+    runSketchMenu(show.action);
+    expect(sketchViewNow().constraints).toBe(true);
+  });
+
+  it("right-clicking a relation badge or a dimension picks it and opens the menu", () => {
+    const c = addCircle(draftData(), at(0, 0), 4);
+    const d = addDimension(c.sketch, [c.circleId]);
+    s().updateSketch(d.sketch, { record: true });
+    s().setSketchSelection([]);
+    expect(openSketchMenuOn(d.dimensionId, { x: 10, y: 10 })).toBe(true);
+    expect(s().sketch!.selection).toEqual([d.dimensionId]);
+    expect(sketchMenuNow()!.items.map((i) => i.label)).toContain("Show as a radius");
+  });
+
+  it("hiding constraints or dimensions lets the picked ones go (else they'd stay on show)", () => {
+    const r = addRectangle(draftData(), at(0, 0), at(20, 10));
+    const d = addDimension(r.sketch, [r.lineIds[0]]);
+    s().updateSketch(d.sketch, { record: true });
+    const relation = draftData().constraints.find((c) => c.type === "horizontal")!;
+    setSketchView({ constraints: true, dimensions: true });
+    s().setSketchSelection([r.lineIds[1], relation.id, d.dimensionId]);
+    openSketchMenuOn(relation.id, { x: 0, y: 0 });
+    runSketchMenu(sketchMenuNow()!.items.find((i) => i.label === "Hide all constraints")!.action);
+    expect(s().sketch!.selection).toEqual([r.lineIds[1], d.dimensionId]);
+    openSketchMenuOn(d.dimensionId, { x: 0, y: 0 });
+    runSketchMenu(sketchMenuNow()!.items.find((i) => i.label === "Hide all dimensions")!.action);
+    expect(s().sketch!.selection).toEqual([r.lineIds[1]]);
+    expect(draftData().constraints.some((c) => c.id === d.dimensionId)).toBe(true);
+    setSketchView({ constraints: true, dimensions: true });
+  });
+
   it("switches a circle's diameter to a radius", () => {
     const c = addCircle(draftData(), at(0, 0), 4);
     const d = addDimension(c.sketch, [c.circleId]);
@@ -62,6 +108,19 @@ describe("the sketch's right-click menu", () => {
     const k = draftData().constraints.find((x) => x.id === d.dimensionId)!;
     expect(k.type).toBe("radius");
     expect(Number(k.value)).toBeCloseTo(4, 6);
+  });
+});
+
+describe("a sketch opens with the Select tool", () => {
+  it("new, and edited again", () => {
+    expect(s().sketch!.tool).toBe("select");
+    const r = addRectangle(draftData(), at(0, 0), at(20, 10));
+    s().updateSketch(r.sketch, { record: true });
+    s().setSketchTool("line");
+    expect(s().commitDraft()).toBe(true);
+    const id = s().history.present.features.find((f) => f.type === "sketch")!.id;
+    s().startEdit(id);
+    expect(s().sketch!.tool).toBe("select");
   });
 });
 

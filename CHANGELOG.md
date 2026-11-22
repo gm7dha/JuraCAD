@@ -8,6 +8,13 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.105 — Sketches start in Select; hide all constraints from the right-click menu
+
+- **Sketches start with the Select tool**, new or opened again, instead of Line.
+- **Right-click in a sketch** (anywhere, empty space too): "Hide all constraints" / "Show all constraints" and
+  "Hide all dimensions" / "Show all dimensions". A short note says hidden constraints still hold the shapes.
+- **Right-click a constraint badge or a dimension's number** to pick it and open the menu (a held finger on a tablet).
+
 ## v0.104 — Smooth, solid paths and roads on map puzzles
 
 - **Even grooves**: each path, track and road is now cut into the ground as an exact channel, the same width and depth

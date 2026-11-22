@@ -795,7 +795,7 @@ let toastCounter = 0;
 const newSession = (): SketchSession => ({
   past: [],
   future: [],
-  tool: "line",
+  tool: "select",
   selection: [],
   construction: false,
   message: null,
