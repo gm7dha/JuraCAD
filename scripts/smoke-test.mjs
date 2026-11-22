@@ -3864,10 +3864,10 @@ try {
     await page.waitForFunction(() => document.querySelectorAll(".feature-row:not(.datum)").length === 0, null, { timeout: 10_000 });
     const partsBefore = await page.evaluate(() => window.juracadStore.getState().parts.map((p) => p.id));
     await tool("Box");
-    // (The Box dialog may start from sizes used before: set them.)
-    await page.locator("#param-width").fill("40");
-    await page.locator("#param-depth").fill("30");
-    await page.locator("#param-height").fill("20");
+    // (The design is in inches by now: sizes typed with their unit.)
+    await page.locator("#param-width").fill("40 mm");
+    await page.locator("#param-depth").fill("30 mm");
+    await page.locator("#param-height").fill("20 mm");
     await page.getByRole("button", { name: "Accept" }).click();
     await page.waitForFunction(() => document.querySelectorAll(".part-row").length === 1, null, { timeout: 30_000 });
     await settled();
@@ -3887,7 +3887,7 @@ try {
     });
     await wall.click();
     await page.keyboard.press("Control+a");
-    await page.keyboard.type("3");
+    await page.keyboard.type("3 mm");
     await page.getByRole("button", { name: "Accept" }).click();
     await page.waitForFunction(() => !window.juracadStore.getState().editing, null, { timeout: 30_000 });
     await settled();
@@ -3907,10 +3907,11 @@ try {
     await expectVolume(3);
     await page.locator(".feature-row", { hasText: "Shell" }).first().dblclick();
     await wall.waitFor({ timeout: 5_000 });
-    if ((await wall.inputValue()) !== "3") throw new Error(`editing the Shell shows ${await wall.inputValue()} mm, not 3`);
+    const kept = await page.evaluate(() => window.juracadStore.getState().editing?.draft.params.thickness);
+    if (kept !== "3 mm") throw new Error(`editing the Shell has ${kept} as its wall thickness, not 3 mm (the box shows ${await wall.inputValue()})`);
     await wall.click();
     await page.keyboard.press("Control+a");
-    await page.keyboard.type("5");
+    await page.keyboard.type("5 mm");
     await page.getByRole("button", { name: "Accept" }).click();
     await page.waitForFunction(() => !window.juracadStore.getState().editing, null, { timeout: 30_000 });
     await settled();
