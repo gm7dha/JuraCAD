@@ -100,7 +100,8 @@ export interface IslandPiece extends PuzzlePiece {
 
 /** The map marks on the puzzle (mm, x east, y north), for the preview: lines clipped to the land, shapes as they are. */
 export interface IslandMarks {
-  lines: { kind: OsmLineKind; pts: XY[]; thin?: true }[];
+  /** `ids`: the map's ways the line came from (pickMarks.ts), so the top view can tell which paths are on the land. */
+  lines: { kind: OsmLineKind; pts: XY[]; thin?: true; ids?: string[] }[];
   shapes: { kind: "water" | "building"; rings: XY[][] }[];
   /** Lines and shapes on the land, and how many were too small to show at this scale. */
   shown: number;
@@ -1057,7 +1058,9 @@ function marksOnLand(f: MapFeatures, tooSmall: number, sw: { e: number; n: numbe
     let any = false;
     const end = () => {
       if (run.length >= 2) {
-        lines.push(line.thin ? { kind: line.kind, pts: run, thin: true } : { kind: line.kind, pts: run });
+        const out: IslandMarks["lines"][number] = line.thin ? { kind: line.kind, pts: run, thin: true } : { kind: line.kind, pts: run };
+        if (line.ids?.length) out.ids = line.ids;
+        lines.push(out);
         any = true;
       }
       run = [];

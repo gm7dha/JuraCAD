@@ -2102,10 +2102,15 @@
   the choice); a path/track/road line is off when ≥ half its ways are (`isDropped`), `withoutDropped` (none = the same object, so
   output is byte for byte as before), `toggleDropped`, `dropAll`, `keptCount`, `nearestLine`, `lineLabel`. The dialogs keep the
   rules' result as `mapFeatures` and `features = withoutDropped(mapFeatures, dropped)` feeds everything (build/island worker,
-  paint, swaps, previews, files); `dropped` resets when the loaded area changes. `src/app/PathPicker.tsx`: `PathPickOverlay` (an
-  SVG in grid metres over the top view canvas, `.path-pick-wrap`; dropped lines faint dashed, hover highlighted with name/length,
-  nearest within `REACH_PX` screen px — 20 for a finger; tap toggles) and `PathPickBar` ("12 of 15 paths kept", Keep all / Leave
-  all off). Island candidates = `featuresForIsland(mapFeatures, k)` once built; mountain's = featuresAtScale. Tests: tests/pickMarks.
+  paint, swaps, previews, files); `dropped` resets when the loaded area changes. `src/app/PathPicker.tsx` `PickableView` (the
+  canvas + an SVG laid over it, `.path-pick-wrap`, placed with pickMarks' `onView`/`fromView` and `islandViewBox`/`mountainViewBox`
+  — the canvases' own mapping, tested against them; dropped lines dashed white on a dark halo, the hovered one yellow, its name and
+  length in a line under the view (never over the map); nearest within `REACH_PX` screen px — 20 for a finger; tap/click toggles;
+  focusable: arrows step, Enter/Space toggles; then the count bar, "updating the puzzle…" while it's remade). Offered lines =
+  `pickableLines`: the island's only those on the land (`landIdsAfter`: way ids its marks show — `IslandMarks.lines[].ids` — kept
+  for lines left off when it was made, so one put back stays offered), the mountain's only those within the puzzle's layout, plus
+  any left off. The island's canvas skips marks left off since it was made, so it never shows a dropped line while rebuilding.
+  No two lines of one rule share a way, so a click flips only what was clicked. Tests: tests/pickMarks.
 - Puzzle colours (Island and Mountain puzzle windows' "Colour" choice; `src/app/PuzzleColour.tsx`: `ColourPanel`, `useColoured`,
   `ColourDownloads`; the photo puzzle stays plain): pure `src/terrain/colour.ts` + `colourFiles.ts`. Colouring runs in
   `src/app/puzzleColour.worker.ts` (`ColourRunner`: a new job while one runs restarts the worker; pieces sent only when new) over

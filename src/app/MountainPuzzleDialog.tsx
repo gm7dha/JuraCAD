@@ -38,8 +38,8 @@ import { downloadFile, safeFileName } from "./download";
 import { Modal } from "./Modal";
 import { openMountain, useMountain } from "./mountainState";
 import { loadTerrainTile } from "./mountainTiles";
-import { PathPickBar, PathPickOverlay } from "./PathPicker";
-import { NONE_DROPPED, withoutDropped } from "../terrain/pickMarks";
+import { PickableView, type TopViewPick } from "./PathPicker";
+import { mountainViewBox, NONE_DROPPED, pickableLines, withoutDropped } from "../terrain/pickMarks";
 import { amsSlotsOf, loadPrinter, printerBed, savePrinter } from "./printerSetting";
 
 type Source = "peak" | "ref" | "picture" | "osm";
@@ -721,7 +721,22 @@ export function MountainPuzzleDialog() {
                   puzzle={puzzle}
                   picture={photoMode ? photo?.url ?? null : source === "picture" ? picture : null}
                   features={photoMode ? NO_FEATURES : features}
-                  pick={photoMode ? null : { lines: (puzzle ? featuresAtScale(mapFeatures, puzzle.layout.k).features : mapFeatures).lines, dropped, onChange: setDropped }}
+                  pick={
+                    photoMode
+                      ? null
+                      : {
+                          // Only lines on the puzzle itself (not on the dimmed, trimmed-off edge) are offered and counted.
+                          lines: pickableLines(
+                            (puzzle ? featuresAtScale(mapFeatures, puzzle.layout.k).features : mapFeatures).lines,
+                            dropped,
+                            null,
+                            puzzle ? { e0: puzzle.layout.e0, n0: puzzle.layout.n0, width: puzzle.layout.width, height: puzzle.layout.height } : null,
+                          ),
+                          dropped,
+                          onChange: setDropped,
+                          pending: working,
+                        }
+                  }
                 />
                 <Mountain3D puzzle={puzzle} explode={explode} paint={colourOn ? (coloured?.preview ?? null) : null} border={border && !border.problems.length ? border.pieces : null} />
               </div>
@@ -830,13 +845,6 @@ export function MountainPuzzleDialog() {
 }
 
 /** Top-down: the heights shaded (or your map picture), the piece grid, column letters and row numbers. */
-/** Paths and roads to click off on a top view (PathPicker.tsx). */
-export interface TopViewPick {
-  lines: MapFeatures["lines"];
-  dropped: ReadonlySet<string>;
-  onChange: (d: ReadonlySet<string>) => void;
-}
-
 function TopView({ grid, area, puzzle, picture, features, pick }: { grid: HeightGrid; area: Area; puzzle: MountainPuzzle | null; picture: string | null; features: MapFeatures; pick: TopViewPick | null }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const [img, setImg] = useState<HTMLImageElement | null>(null);
@@ -938,12 +946,10 @@ function TopView({ grid, area, puzzle, picture, features, pick }: { grid: Height
   }, [grid, area, puzzle, img, features]);
   return (
     <figure className="mountain-figure">
-      <div className="path-pick-wrap">
+      <PickableView pick={pick} box={mountainViewBox(area)}>
         <canvas ref={ref} className="mountain-top" />
-        {pick && <PathPickOverlay lines={pick.lines} dropped={pick.dropped} onChange={pick.onChange} box={{ e0: area.sw.e, n0: area.sw.n, width: area.width, height: area.height }} />}
-      </div>
+      </PickableView>
       <figcaption className="muted small">From above, north up: each square is a column of cubes (name × pieces in it).</figcaption>
-      {pick && <PathPickBar features={{ lines: pick.lines, shapes: [], names: [] }} dropped={pick.dropped} onChange={pick.onChange} />}
     </figure>
   );
 }

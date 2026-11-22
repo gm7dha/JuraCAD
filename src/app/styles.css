@@ -4471,8 +4471,17 @@ kbd {
   stroke-linejoin: round;
   stroke-linecap: round;
 }
+.path-pick:focus-visible {
+  outline: 2px solid var(--accent, #2b7de9);
+  outline-offset: 1px;
+}
+/* On the map itself (not app chrome), so fixed colours: a dark halo under white dashes reads on light and dark ground. */
+.path-pick-off-under {
+  stroke: rgba(20, 25, 30, 0.6);
+  stroke-width: 3px;
+}
 .path-pick-off {
-  stroke: rgba(255, 255, 255, 0.85);
+  stroke: rgba(255, 255, 255, 0.95);
   stroke-width: 1.5px;
   stroke-dasharray: 3 3;
 }
@@ -4480,24 +4489,21 @@ kbd {
   stroke: #ffd23f;
   stroke-width: 3px;
 }
+/* The hovered line's name, under the view (never over the map, so it can't hide the line). */
 .path-pick-label {
-  position: absolute;
-  transform: translate(8px, -130%);
-  pointer-events: none;
+  display: block;
+  min-height: 1.3em;
   line-height: 1.3;
-  white-space: nowrap;
-  max-width: 320px;
+  max-width: 380px;
   overflow: hidden;
   text-overflow: ellipsis;
-  background: var(--panel);
+  white-space: nowrap;
   color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 2px 6px;
-  z-index: 2;
+  margin-top: 4px;
 }
 .path-pick-bar {
   display: flex;
+  max-width: 380px;
   flex-wrap: wrap;
   gap: 4px 10px;
   align-items: center;
