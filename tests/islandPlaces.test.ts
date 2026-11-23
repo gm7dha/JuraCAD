@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { gridFrom } from "../src/terrain/elevation";
 import { ISLANDS } from "../src/terrain/islands";
-import { APART_REACH, heldDropped, ISLAND_DEFAULTS, keepOnly, makeIslandPuzzle, onlyCells, type IslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
+import { APART_REACH, ISLAND_DEFAULTS, keepOnly, makeIslandPuzzle, onlyCells, type IslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
 import { latLonToGrid } from "../src/terrain/osGrid";
 
 const SPEC: IslandSpec = { ...ISLAND_DEFAULTS, bed: [256, 256, 256] };
@@ -194,18 +194,51 @@ describe("an island with an islet joined across a bay (Arran and Holy Isle)", ()
     expect(spanE(p)[1]).toBeLessThan(6000);
     expect(p.warnings.join(" ")).toMatch(/cut free/);
     expect(p.warnings.join(" ")).not.toMatch(/too broadly/);
+    // Cut through ground the data may have read from the sea: it says so, as a bit of the bay may be left.
+    expect(p.warnings.join(" ")).toMatch(/low ground/);
+    // Parted by shape alone, that isn't said.
+    expect(makeIslandPuzzle(arranLike(0.2), sw, AW, AH, { ...SPEC, only: arranOnly }).warnings.join(" ")).not.toMatch(/low ground/);
   });
 
-  it("keeps sea round a dropped islet as sea, and an apart point on sea doesn't reach the island", () => {
-    // A 5 × 5 patch whose middle cell was an islet that's been dropped: sea at 0 m, so sea, not a hole.
-    const before = new Uint8Array(25);
-    before[12] = 1;
-    const land = new Uint8Array(25);
-    const cells = Array.from({ length: 25 }, (_, c) => c);
-    expect(heldDropped(cells, before, land, () => 0)).toBe(true);
-    expect(heldDropped(cells, new Uint8Array(25), land, () => 0)).toBe(false);
-    // A loch (above sea level) round a dropped islet is still filled.
-    expect(heldDropped(cells, before, land, (c) => (c === 12 ? 30 : 40))).toBe(false);
+  it("never cuts away land holding a keep point when parting through low ground", () => {
+    // 100 m cells: a hill and an islet joined by a broad flat 3 m high.
+    const [gx, gy] = [60, 30];
+    const h = (c: number) => {
+      const [i, j] = [c % gx, Math.floor(c / gx)];
+      const flat = i > 15 && i < 45 && Math.abs(j - 15) < 8 ? 3 : 0;
+      return Math.max(300 - 30 * Math.hypot(i - 15, j - 15), 200 - 60 * Math.hypot(i - 45, j - 15), flat, 0);
+    };
+    const run = (keep: [number, number][]) => {
+      const isl = new Uint8Array(gx * gy);
+      for (let c = 0; c < isl.length; c++) isl[c] = h(c) > 0.5 ? 1 : 0;
+      const w: string[] = [];
+      keepOnly(isl, gx, gy, { keep, apart: [[45, 15]], reach: 20, widest: 15 }, w, h);
+      return { isl, w: w.join(" ") };
+    };
+    // The hill alone: the islet is cut free across the flat.
+    const one = run([[15, 15]]);
+    expect(one.isl[15 * gx + 45]).toBe(0);
+    expect(one.w).toMatch(/cut free/);
+    // A keep point on the flat near the islet: cutting there would take it, so it's all kept and said.
+    const two = run([[15, 15], [38, 15]]);
+    expect(two.isl[15 * gx + 38]).toBe(1);
+    expect(two.w).toMatch(/too broadly/);
+  });
+
+  it("still fills a small sea-level hole in the island, even round an islet that's left out", () => {
+    // A lagoon 0 m high (a gap the data holds at sea level) inside the island, with a speck of land in it.
+    const lagoon = gridFrom(sw, AW, AH, 20, (e, n) => {
+      const [x, y] = [e - sw.e, n - sw.n];
+      const r = Math.hypot(x - 3500, y - 3000);
+      if (r < 40) return 5;
+      if (r < 120) return 0;
+      return Math.max(0, 400 * (1 - Math.hypot(x - 3000, y - 3000) / 2500));
+    });
+    const p = makeIslandPuzzle(lagoon, sw, AW, AH, { ...SPEC, only: arranOnly });
+    expect(p.warnings.join(" ")).toMatch(/filled in/);
+  });
+
+  it("an apart point on sea doesn't reach the island", () => {
     // An apart point 1 km off the island (an islet the data hasn't got) finds nothing to part.
     const [gx, gy] = [40, 20];
     const isl = new Uint8Array(gx * gy);

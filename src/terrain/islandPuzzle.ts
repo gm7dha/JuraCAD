@@ -393,6 +393,7 @@ export function keepOnly(
   let parted = false;
   let joined = false;
   let handedAway = false;
+  let throughLow = 0;
   for (const m of keepMasses) {
     // Other land in this mass: apart points, and its cells on the area's edge.
     const others = points.filter((c) => masses.id[c] === m);
@@ -427,45 +428,60 @@ export function keepOnly(
       }
       return null;
     };
-    let split = findSplit();
-    // Joined too broadly by shape: the height data may read a shallow strait or bay as low land (the sea's depths
-    // blended over the coast), so try again with ever more of the lowest ground counted as shore.
-    if (heightOf) for (const low of LOW_JOINS) if (!split) split = findSplit(low);
-    if (!split) {
+    // Both sides grow back over the land shaved off, step by step; whatever the other side reaches first goes.
+    const growBack = (split: { core: Int32Array; mineCores: Set<number>; otherCores: Set<number> }) => {
+      const side = new Uint8Array(N);
+      let frontier: number[] = [];
+      for (let c = 0; c < N; c++) {
+        const q = split.core[c];
+        if (q < 0) continue;
+        if (split.mineCores.has(q)) side[c] = 1;
+        else if (split.otherCores.has(q)) side[c] = 2;
+        else continue;
+        frontier.push(c);
+      }
+      // Thick land that was neither side's (a lobe of the island with a waist narrower than the join) and went to the other
+      // side is counted, so a cut that took a real part of the island says so. Thin strips (the join itself) aren't.
+      let handed = 0;
+      while (frontier.length) {
+        const next: number[] = [];
+        for (const c of frontier) {
+          const [i, j] = [c % nx, Math.floor(c / nx)];
+          for (const [di, dj] of STEPS) {
+            const [a, b] = [i + di, j + dj];
+            if (a < 0 || b < 0 || a >= nx || b >= ny) continue;
+            const d = b * nx + a;
+            if (!side[d] && masses.id[d] === m) {
+              side[d] = side[c];
+              next.push(d);
+              if (side[d] === 2 && split.core[d] >= 0) handed++;
+            }
+          }
+        }
+        frontier = next;
+      }
+      return { side, handed };
+    };
+    // Parted by shape first; joined too broadly by shape, the height data may read a shallow strait or bay as low land
+    // (the sea's depths blended over the coast), so try again with ever more of the lowest ground counted as shore. A
+    // parting that would give away land holding a keep point is never used.
+    let cut: { side: Uint8Array; handed: number } | null = null;
+    let low: number | undefined;
+    for (const tryLow of heightOf ? [undefined, ...LOW_JOINS] : [undefined]) {
+      const split = findSplit(tryLow);
+      if (!split) continue;
+      const grown = growBack(split);
+      if (mine.some((c) => grown.side[c] !== 1)) continue;
+      cut = grown;
+      low = tryLow;
+      break;
+    }
+    if (!cut) {
       if (!onlyCutSides) joined = true;
       continue;
     }
-    // Both sides grow back over the land shaved off, step by step; whatever the other side reaches first goes.
-    const side = new Uint8Array(N);
-    let frontier: number[] = [];
-    for (let c = 0; c < N; c++) {
-      const q = split.core[c];
-      if (q < 0) continue;
-      if (split.mineCores.has(q)) side[c] = 1;
-      else if (split.otherCores.has(q)) side[c] = 2;
-      else continue;
-      frontier.push(c);
-    }
-    // Thick land that was neither side's (a lobe of the island with a waist narrower than the join) and went to the other
-    // side is counted, so a cut that took a real part of the island says so. Thin strips (the join itself) aren't.
-    let handed = 0;
-    while (frontier.length) {
-      const next: number[] = [];
-      for (const c of frontier) {
-        const [i, j] = [c % nx, Math.floor(c / nx)];
-        for (const [di, dj] of STEPS) {
-          const [a, b] = [i + di, j + dj];
-          if (a < 0 || b < 0 || a >= nx || b >= ny) continue;
-          const d = b * nx + a;
-          if (!side[d] && masses.id[d] === m) {
-            side[d] = side[c];
-            next.push(d);
-            if (side[d] === 2 && split.core[d] >= 0) handed++;
-          }
-        }
-      }
-      frontier = next;
-    }
+    if (low !== undefined) throughLow = Math.max(throughLow, low);
+    const { side, handed } = cut;
     let mineCount = 0;
     for (let c = 0; c < N; c++) if (side[c] === 1) mineCount++;
     if ((only.cellArea !== undefined && handed * only.cellArea > MOST_HANDED) || handed > MOST_HANDED_SHARE * mineCount) handedAway = true;
@@ -475,6 +491,8 @@ export function keepOnly(
   if (parted) warnings.push("The island is joined to other land in the height data (at a bridge or narrow strait), so it was cut free there.");
   if (handedAway)
     warnings.push("Cutting it free also took away a sizeable piece of land beside the cut — check the island hasn't lost part of itself (a narrow headland, say).");
+  if (throughLow)
+    warnings.push(`The cut went through low ground (up to ${throughLow} m) that the height data may have read from shallow sea — check the shore near the cut: a bit of bay may be left as land, or a bit of low shore taken.`);
   if (joined) warnings.push("The island is joined to other land too broadly to cut it free, so that land is kept too.");
   if (parted) masses = stretches(nx, ny, (c) => isLand[c] === 1);
   const kept = new Set(keep.map((c) => masses.id[c]));
@@ -490,19 +508,6 @@ export function keepOnly(
 
 /** A patch at sea level bigger than this (mm² on the puzzle) and not a loch on the map is taken to be the sea (a sea loch). */
 export const SMALL_HOLE = 100;
-
-/**
- * Did a patch of sea hold land that was left out (`before` = land before keepLand), with its own sea at sea level
- * (≤ 0 m)? Then it's the sea round an islet that was dropped, not a hole in the island.
- */
-export function heldDropped(cells: number[], before: Uint8Array, isLand: Uint8Array, heightOf: (c: number) => number): boolean {
-  let dropped = false;
-  let lowest = Infinity;
-  for (const c of cells)
-    if (before[c] && !isLand[c]) dropped = true;
-    else lowest = Math.min(lowest, heightOf(c));
-  return dropped && lowest <= 0;
-}
 
 /** Is (x, y) inside the ring (even–odd)? */
 function inRing(r: XY[], x: number, y: number): boolean {
@@ -790,7 +795,6 @@ function buildIsland(
   const isLand = new Uint8Array(N);
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) isLand[j * nx + i] = rawGround((i + 0.5) * cell, (j + 0.5) * cell) > spec.sea ? 1 : 0;
   const cellHeight = (c: number) => rawGround(((c % nx) + 0.5) * cell, (Math.floor(c / nx) + 0.5) * cell);
-  const landBefore = Uint8Array.from(isLand);
   keepLand(isLand, nx, ny, spec.land, warnings, spec.only && onlyCells(spec.only, sw, cell / k, edges), cellHeight);
   // Low ground the land closes round (a loch whose height data sits at sea level, a gap in the data) is filled in as land,
   // smoothly from the ground round it, so it never prints as a hole right through the island.
@@ -802,10 +806,7 @@ function buildIsland(
     return lochs.some((r) => inRing(r, e, n));
   };
   const holes = fillEnclosed(isLand, nx, ny, cellHeight, (cells, lowest) => {
-    if (lowest > 0) return true;
-    // Sea round land that was left out (an islet cut free or dropped) is sea, however small.
-    if (heldDropped(cells, landBefore, isLand, cellHeight)) return false;
-    if (cells.length * cell * cell <= SMALL_HOLE) return true;
+    if (lowest > 0 || cells.length * cell * cell <= SMALL_HOLE) return true;
     const step = Math.max(1, Math.floor(cells.length / 40));
     for (let q = 0; q < cells.length; q += step) if (onMapWater(cells[q])) return true;
     return false;
