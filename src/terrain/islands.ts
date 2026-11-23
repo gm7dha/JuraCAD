@@ -36,7 +36,10 @@ const around = (id: string, name: string, lat: number, lon: number, kmWide: numb
 export const ISLANDS: IslandPlace[] = [
   // The whole grid's land: Ireland and France run off its edges, so they're left out.
   { id: "great-britain", name: "Great Britain", sw: { e: 0, n: 0 }, width: 665000, height: 1230000 },
-  around("arran", "Isle of Arran", 55.58, -5.22, 32, 40),
+  // Arran without Holy Isle or Pladda, which the height data can join to it across the narrow sounds at Lamlash and
+  // Kildonan (and Lamlash Bay, closed in between, would then be filled as land): points on Goatfell, Beinn Bharrain and
+  // the southern moors; others on Holy Isle's top and on Pladda.
+  around("arran", "Isle of Arran", 55.58, -5.22, 32, 40, [[55.626, -5.192], [55.635, -5.3], [55.5, -5.21]], [[55.525, -5.071], [55.427, -5.119]]),
   // Tiny (about 1.2 × 0.9 km, 338 m high), so a small area: it's then printed about 10 cm long.
   around("ailsa-craig", "Ailsa Craig", 55.2525, -5.1158, 3, 3, [[55.2525, -5.1158]]),
   around("wight", "Isle of Wight", 50.67, -1.33, 46, 28),

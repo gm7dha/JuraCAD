@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { gridFrom } from "../src/terrain/elevation";
 import { ISLANDS } from "../src/terrain/islands";
-import { ISLAND_DEFAULTS, keepOnly, makeIslandPuzzle, onlyCells, type IslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
+import { APART_REACH, ISLAND_DEFAULTS, keepOnly, makeIslandPuzzle, onlyCells, type IslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
 import { latLonToGrid } from "../src/terrain/osGrid";
 
 const SPEC: IslandSpec = { ...ISLAND_DEFAULTS, bed: [256, 256, 256] };
@@ -146,17 +146,123 @@ describe("one island only", () => {
   });
 });
 
+// Arran and Holy Isle (the owner's report): a big island, and a long thin islet off its east coast joined to it by two
+// strips the height data reads as land (the narrow sounds), so the bay between them — shallows read just above 0 m,
+// under the sea line — is closed in and was filled as land.
+const AW = 8000;
+const AH = 6000;
+const islet = (x: number, y: number) => {
+  const r = Math.hypot((x - 6200) / 300, (y - 3000) / 1200);
+  return r < 1 ? 20 + 200 * (1 - r) : 0;
+};
+const arranLike = (bay: number) =>
+  gridFrom(sw, AW, AH, 20, (e, n) => {
+    const [x, y] = [e - sw.e, n - sw.n];
+    const main = Math.max(0, 400 * (1 - Math.hypot(x - 3000, y - 3000) / 2500));
+    const sounds = x > 4800 && x < 6300 && Math.abs(Math.abs(y - 3000) - 1150) < 60 ? 3 : 0;
+    const shallows = x > 4800 && x < 6100 && Math.abs(y - 3000) < 1150 ? bay : 0;
+    return Math.max(main, islet(x, y), sounds, shallows);
+  });
+const mainAlone = gridFrom(sw, AW, AH, 20, (e, n) => Math.max(0, 400 * (1 - Math.hypot(e - sw.e - 3000, n - sw.n - 3000) / 2500)));
+const landArea = (p: IslandPuzzle) => p.pieces.reduce((s, q) => s + q.area, 0);
+const arranOnly = { keep: [{ e: sw.e + 3000, n: sw.n + 3000 }], apart: [{ e: sw.e + 6200, n: sw.n + 3000 }] };
+
+describe("an island with an islet joined across a bay (Arran and Holy Isle)", () => {
+  it("drops the islet and leaves the bay as sea", () => {
+    const grid = arranLike(0.2);
+    const lone = makeIslandPuzzle(mainAlone, sw, AW, AH, SPEC);
+    const alone = landArea(lone);
+    // As it was: the islet kept and the bay filled in.
+    const before = makeIslandPuzzle(grid, sw, AW, AH, SPEC);
+    expect(spanE(before)[1]).toBeGreaterThan(6400);
+    expect(landArea(before)).toBeGreaterThan(alone * 1.1);
+    expect(before.warnings.join(" ")).toMatch(/filled in/);
+    for (const spec of [SPEC, { ...SPEC, inPlace: true }]) {
+      const p = makeIslandPuzzle(grid, sw, AW, AH, { ...spec, only: arranOnly });
+      expect(spanE(p)[1] + (p.origin.e - sw.e)).toBeLessThan(5900);
+      // Put together, the area is first cut down to the island (cut free on a coarser grid), so there's nothing left to part.
+      if (!spec.inPlace) expect(p.warnings.join(" ")).toMatch(/cut free/);
+      expect(p.warnings.join(" ")).not.toMatch(/filled in|too broadly/);
+      // Only the stubs of the two sounds are left on the island.
+      const k2 = (p.k / lone.k) ** 2;
+      expect(landArea(p)).toBeLessThan(alone * k2 * 1.04);
+    }
+  });
+
+  it("cuts the islet free even when the whole bay reads as low land", () => {
+    const p = makeIslandPuzzle(arranLike(3), sw, AW, AH, { ...SPEC, only: arranOnly });
+    expect(spanE(p)[1]).toBeLessThan(6000);
+    expect(p.warnings.join(" ")).toMatch(/cut free/);
+    expect(p.warnings.join(" ")).not.toMatch(/too broadly/);
+    // Cut through ground the data may have read from the sea: it says so, as a bit of the bay may be left.
+    expect(p.warnings.join(" ")).toMatch(/low ground/);
+    // Parted by shape alone, that isn't said.
+    expect(makeIslandPuzzle(arranLike(0.2), sw, AW, AH, { ...SPEC, only: arranOnly }).warnings.join(" ")).not.toMatch(/low ground/);
+  });
+
+  it("never cuts away land holding a keep point when parting through low ground", () => {
+    // 100 m cells: a hill and an islet joined by a broad flat 3 m high.
+    const [gx, gy] = [60, 30];
+    const h = (c: number) => {
+      const [i, j] = [c % gx, Math.floor(c / gx)];
+      const flat = i > 15 && i < 45 && Math.abs(j - 15) < 8 ? 3 : 0;
+      return Math.max(300 - 30 * Math.hypot(i - 15, j - 15), 200 - 60 * Math.hypot(i - 45, j - 15), flat, 0);
+    };
+    const run = (keep: [number, number][]) => {
+      const isl = new Uint8Array(gx * gy);
+      for (let c = 0; c < isl.length; c++) isl[c] = h(c) > 0.5 ? 1 : 0;
+      const w: string[] = [];
+      keepOnly(isl, gx, gy, { keep, apart: [[45, 15]], reach: 20, widest: 15 }, w, h);
+      return { isl, w: w.join(" ") };
+    };
+    // The hill alone: the islet is cut free across the flat.
+    const one = run([[15, 15]]);
+    expect(one.isl[15 * gx + 45]).toBe(0);
+    expect(one.w).toMatch(/cut free/);
+    // A keep point on the flat near the islet: cutting there would take it, so it's all kept and said.
+    const two = run([[15, 15], [38, 15]]);
+    expect(two.isl[15 * gx + 38]).toBe(1);
+    expect(two.w).toMatch(/too broadly/);
+  });
+
+  it("still fills a small sea-level hole in the island, even round an islet that's left out", () => {
+    // A lagoon 0 m high (a gap the data holds at sea level) inside the island, with a speck of land in it.
+    const lagoon = gridFrom(sw, AW, AH, 20, (e, n) => {
+      const [x, y] = [e - sw.e, n - sw.n];
+      const r = Math.hypot(x - 3500, y - 3000);
+      if (r < 40) return 5;
+      if (r < 120) return 0;
+      return Math.max(0, 400 * (1 - Math.hypot(x - 3000, y - 3000) / 2500));
+    });
+    const p = makeIslandPuzzle(lagoon, sw, AW, AH, { ...SPEC, only: arranOnly });
+    expect(p.warnings.join(" ")).toMatch(/filled in/);
+  });
+
+  it("an apart point on sea doesn't reach the island", () => {
+    // An apart point 1 km off the island (an islet the data hasn't got) finds nothing to part.
+    const [gx, gy] = [40, 20];
+    const isl = new Uint8Array(gx * gy);
+    for (let j = 5; j < 15; j++) for (let i = 5; i < 15; i++) isl[j * gx + i] = 1;
+    const quiet: string[] = [];
+    const cellM = 100;
+    keepOnly(isl, gx, gy, { keep: [[10, 10]], apart: [[25, 10]], reach: 2000 / cellM, apartReach: APART_REACH / cellM, widest: 15 }, quiet);
+    expect(quiet.join(" ")).not.toMatch(/too broadly/);
+    expect(isl.reduce((s, v) => s + v, 0)).toBe(100);
+  });
+});
+
 describe("the list of islands", () => {
   it("has the new islands in their places", () => {
     expect(ISLANDS.map((i) => i.id)).toEqual(["great-britain", "arran", "ailsa-craig", "wight", "man", "anglesey", "mull", "islay", "jura", "skye", "lewis-harris", "orkney", "shetland"]);
-    for (const id of ["ailsa-craig", "islay", "jura", "skye"]) expect(ISLANDS.find((i) => i.id === id)?.only, id).toBeDefined();
+    for (const id of ["arran", "ailsa-craig", "islay", "jura", "skye"]) expect(ISLANDS.find((i) => i.id === id)?.only, id).toBeDefined();
   });
 
   it("holds every keep and apart point well inside its box", () => {
     for (const i of ISLANDS) {
-      for (const p of [...(i.only?.keep ?? []), ...(i.only?.apart ?? [])]) {
+      // Apart points may sit nearer the edge (Pladda, off Arran's south coast): they're on other land, not the island.
+      for (const [p, most] of [...(i.only?.keep ?? []).map((q) => [q, 3000] as const), ...(i.only?.apart ?? []).map((q) => [q, 2000] as const)]) {
         const margin = Math.min(p.e - i.sw.e, i.sw.e + i.width - p.e, p.n - i.sw.n, i.sw.n + i.height - p.n);
-        expect(margin, i.name).toBeGreaterThan(i.width < 10000 ? 1000 : 3000);
+        expect(margin, i.name).toBeGreaterThan(i.width < 10000 ? 1000 : most);
       }
     }
   });
@@ -178,7 +284,7 @@ describe("the list of islands", () => {
     for (const [id, e, n, width, height] of before) {
       const i = ISLANDS.find((x) => x.id === id)!;
       expect({ e: i.sw.e, n: i.sw.n, width: i.width, height: i.height }, id).toEqual({ e, n, width, height });
-      if (id !== "islay" && id !== "skye") expect(i.only, id).toBeUndefined();
+      if (id !== "islay" && id !== "skye" && id !== "arran") expect(i.only, id).toBeUndefined();
     }
   });
 

@@ -1926,7 +1926,12 @@
   side's share made sea (thick land of neither side's core handed over — past `MOST_HANDED` 2 km² or `MOST_HANDED_SHARE` 3% — gets its own
   warning; no keep point found = the hidden Land choice, said). Skye: the tiles (zoom 10, ~80 m) join it to the mainland at Kyle Akin / Kylerhea, so with "every
   island" both went (touching the edge) and "biggest" gave both. Ailsa Craig (3 × 3 km box), Islay (no Jura), Jura (no Islay,
-  Scarba, Knapdale), Skye (no mainland, Raasay or Small Isles). tests/islandPlaces.
+  Scarba, Knapdale), Skye (no mainland, Raasay or Small Isles). Arran (no Holy Isle or Pladda: the tiles can join
+  Holy Isle across the Lamlash sounds, closing Lamlash Bay, whose shallows read just above 0 m, so it was filled as land).
+  Apart points on sea look only `APART_REACH` 600 m (never snapping onto the island). Parting by shape failing, `keepOnly`
+  (given heights) tries again counting ground ≤ each of `LOW_JOINS` 2/5/10/20 m as shore (a bay read as low land; said in a
+  warning, as part of the bay may stay land); a parting that would give away a keep point's land is never used. Put
+  together, land met only on the sides cut inside the area that can't be parted is kept quietly (`OnlyCells.edges`/`Sides`). tests/islandPlaces.
   `boundaryQuery` (Overpass: one admin_level's relations in the box, recursed; fetched by POST from the dialog — CORS),
   `BOUNDARY_LEVELS`. osm.ts reads `boundaries`/`regionNames` (`boundaryLevels`, `boundariesOnGrid`, `levelName`).
   elevation.ts: `zoomFor` (finest zoom with ≤ MAX_TILES), `areaProblem(…, most, z)`, `readHeights(…, spacing, z)`.
