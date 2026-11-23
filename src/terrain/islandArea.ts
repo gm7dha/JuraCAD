@@ -60,7 +60,7 @@ export function trimmedIsland(
     try {
       // The samples sit on the grid's points: cell i covers e0 + (i ± ½) × spacing.
       const only = rule.only && onlyCells(rule.only, { e: grid.e0 - spacing / 2, n: grid.n0 - spacing / 2 }, spacing);
-      keepLand(isLand, nx, ny, rule.land, notes, only);
+      keepLand(isLand, nx, ny, rule.land, notes, only, (c) => h[c]);
       const lowered = new Float32Array(h);
       for (let i = 0; i < isLand.length; i++) if (h[i] > rule.sea && !isLand[i]) lowered[i] = Math.min(0, h[i]);
       from = { ...grid, h: lowered };
