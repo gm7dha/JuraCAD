@@ -8,6 +8,13 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.106.1 — Island puzzle: Arran without Holy Isle
+
+- **Isle of Arran** now keeps only the main island: Holy Isle and Pladda are cut away, and Lamlash Bay stays sea
+  instead of being filled in as land.
+- When an island can only be cut free across low ground (a sound the height data reads as land), the puzzle now says so,
+  so you can check the shore near the cut.
+
 ## v0.106 — Island puzzle: open an OpenStreetMap file, and trim the area
 
 - **"An OpenStreetMap file"** as the island's source: load a .osm export from openstreetmap.org. Its area is the puzzle's,
