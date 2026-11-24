@@ -23,6 +23,14 @@ The point in the history for each version is the commit shown (see https://githu
   off" to make it bigger. Each piece comes with no brim and elephant-foot compensation on, so the gaps stay open.
 - Not yet tried on a real printer: print a small test first.
 
+## v0.107 — Island puzzle: the coastline from OpenStreetMap
+
+- **Land and sea now come from OpenStreetMap's coastline**, fetched by itself when an island is loaded; the heights only
+  give the ground its height. Sea lochs and bays with narrow mouths stay sea — Loch Tarbert and Small Isles Bay on Jura,
+  Lamlash Bay on Arran — instead of being filled in as land.
+- A line under the area picture says when the coastline is used, or why not (then the puzzle is made from the heights as before).
+- Tiny pools of sea too small to print are still filled, so pieces don't get pinholes.
+
 ## v0.106.1 — Island puzzle: Arran without Holy Isle · commit `123323e`
 
 - **Isle of Arran** now keeps only the main island: Holy Isle and Pladda are cut away, and Lamlash Bay stays sea
