@@ -525,6 +525,9 @@ export function landByCoast(coast: Coast, sw: { e: number; n: number }, cellM: n
   return mask;
 }
 
+/** Sea closed in by the coastline's land is filled in when no bigger than this (mm² on the puzzle): a pinhole won't print. */
+export const COAST_SPECK = 4;
+
 /** A patch at sea level bigger than this (mm² on the puzzle) and not a loch on the map is taken to be the sea (a sea loch). */
 export const SMALL_HOLE = 100;
 
@@ -835,8 +838,9 @@ function buildIsland(
     return lochs.some((r) => inRing(r, e, n));
   };
   const holes = fillEnclosed(isLand, nx, ny, cellHeight, (cells, lowest) => {
-    // By the coastline, what's left closed in is sea (a loch mouth too narrow for the grid) or land left out: never filled.
-    if (byCoast) return false;
+    // By the coastline, what's left closed in is sea (a loch mouth too narrow for the grid) or land left out: kept, but
+    // for specks too small to print as holes (a pool, or a creek's bits between cells the coastline calls land).
+    if (byCoast) return cells.length * cell * cell <= COAST_SPECK;
     if (lowest > 0 || cells.length * cell * cell <= SMALL_HOLE) return true;
     const step = Math.max(1, Math.floor(cells.length / 40));
     for (let q = 0; q < cells.length; q += step) if (onMapWater(cells[q])) return true;
@@ -845,7 +849,9 @@ function buildIsland(
   const ground = holes.count
     ? filledGround(rawGround, smoothFill(holes, isLand, nx, ny, cellHeight, Math.min(40, Math.ceil((grid.spacing * k) / cell) + 1)), nx, ny, cell)
     : rawGround;
-  if (holes.count) warnings.push(`${holes.count === 1 ? "A low patch" : `${holes.count} low patches`} inside the land (a loch, or a gap in the height data) ${holes.count === 1 ? "was" : "were"} filled in, so there's no hole through the island.`);
+  if (holes.count && byCoast)
+    warnings.push(`${holes.count === 1 ? "A tiny bit of sea" : `${holes.count} tiny bits of sea`} closed in by the land ${holes.count === 1 ? "was" : "were"} filled in, as ${holes.count === 1 ? "it" : "they"}'d only print as pinholes.`);
+  else if (holes.count) warnings.push(`${holes.count === 1 ? "A low patch" : `${holes.count} low patches`} inside the land (a loch, or a gap in the height data) ${holes.count === 1 ? "was" : "were"} filled in, so there's no hole through the island.`);
   if (holes.kept && !byCoast)
     warnings.push(
       `${holes.kept === 1 ? "A big patch" : `${holes.kept} big patches`} at sea level closed in by the land (a sea loch whose mouth is too narrow to show at this size, perhaps) ${holes.kept === 1 ? "was" : "were"} kept as sea.`,

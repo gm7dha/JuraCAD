@@ -32,7 +32,7 @@ export function coastQuery(sw: GridPoint, width: number, height: number): string
   ];
   const r = (x: number) => x.toFixed(4);
   const box = [Math.min(...corners.map((c) => c.lat)), Math.min(...corners.map((c) => c.lon)), Math.max(...corners.map((c) => c.lat)), Math.max(...corners.map((c) => c.lon))].map(r).join(",");
-  return `[out:xml][timeout:90][maxsize:62914560];way["natural"="coastline"](${box});(._;>;);out qt;`;
+  return `[out:xml][timeout:50][maxsize:62914560];way["natural"="coastline"](${box});(._;>;);out qt;`;
 }
 
 /** Coastline ways (as the map gives them, land on the left) on the OS grid (m). */
@@ -63,7 +63,9 @@ export function joinCoast(ways: XY[][]): XY[][] {
       const next = (byStart.get(endKey) ?? []).find((j) => j !== i && alive[j]);
       if (next === undefined) break;
       alive[next] = false;
-      chains[i] = [...c, ...chains[next].slice(1)];
+      // In place (a coast in thousands of ways would otherwise be copied over and over).
+      const add = chains[next];
+      for (let q = 1; q < add.length; q++) c.push(add[q]);
     }
   }
   // A chain that was extended forward may still be the continuation of another one processed earlier: join again.
@@ -85,7 +87,8 @@ export function joinCoast(ways: XY[][]): XY[][] {
         const j = starts.get(key(c[c.length - 1]));
         if (j === undefined || used[j]) break;
         used[j] = true;
-        c = [...c, ...out[j].slice(1)];
+        const add = out[j];
+        for (let q = 1; q < add.length; q++) c.push(add[q]);
       }
       merged.push(c);
     }
@@ -164,19 +167,33 @@ function clipChain(b: Box, c: XY[]): XY[][] | null {
     if (!hit || t0 >= t1) continue;
     const at = (t: number): XY => [p[0] + dx * t, p[1] + dy * t];
     if (!cur) cur = [at(t0)];
-    if (t1 < 1) {
-      cur.push(at(t1));
-      if (cur.length >= 2) pieces.push(cur);
+    // Out through the edge — or onto it exactly at a point of the way (from there it may go out, or run along it).
+    if (t1 < 1 || !inside(b, q)) {
+      cur.push(t1 < 1 ? at(t1) : q);
+      if (reachesIn(b, cur)) pieces.push(cur);
       cur = null;
     } else cur.push(q);
   }
-  if (cur) {
-    // Ended exactly on the edge counts; inside, it's a gap.
-    const last = cur[cur.length - 1];
-    if (inside(b, last)) return null;
-    if (cur.length >= 2) pieces.push(cur);
+  // Ending inside the box, the coastline has a gap there.
+  return cur ? null : pieces;
+}
+
+/** Does a stretch from the box's edge to its edge reach in (any point or the middle of any step strictly inside)? */
+function reachesIn(b: Box, s: XY[]): boolean {
+  if (s.length < 2) return false;
+  for (let i = 0; i + 1 < s.length; i++)
+    if (inside(b, s[i]) || inside(b, [(s[i][0] + s[i + 1][0]) / 2, (s[i][1] + s[i + 1][1]) / 2])) return true;
+  return false;
+}
+
+/** Twice the area a stretch closes off with the straight line back to its start (+ anticlockwise). */
+function signedArea(s: XY[]): number {
+  let a = 0;
+  for (let i = 0; i < s.length; i++) {
+    const [p, q] = [s[i], s[(i + 1) % s.length]];
+    a += p[0] * q[1] - q[0] * p[1];
   }
-  return pieces;
+  return a;
 }
 
 /**
@@ -223,7 +240,8 @@ export function coastRings(ways: XY[][], b: Box): XY[][] | null {
         if (used[j] && j !== first) continue;
         let d = ins[j] - outs[i];
         if (d < 0) d += P;
-        if (d === 0 && j === i && pieces[i].length > 1) d = P;
+        // Back in where it went out: round land (anticlockwise) closes there; round sea, the box's edge goes all round.
+        if (d === 0 && j === i && signedArea(pieces[i]) <= 0) d = P;
         if (d < bd) [bd, best] = [d, j];
       }
       if (best < 0) return null;

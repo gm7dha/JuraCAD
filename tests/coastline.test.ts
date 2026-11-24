@@ -260,3 +260,34 @@ describe("a sea loch with a narrow mouth", () => {
     expect(onAPiece(p, ...toPuzzle(p, CX + 1500, CY))).toBe(true);
   });
 });
+
+describe("the coastline and holes", () => {
+  const coast = juraCoast();
+  const toPuzzle = (p: IslandPuzzle, e: number, n: number): [number, number] => [(e - p.origin.e) * p.k, (n - p.origin.n) * p.k];
+  // A tidal pool the coastline rings (clockwise: sea inside the land), far too small to print as a hole; and a sea-level
+  // gap in the heights inside the land (the owner's Arran print: holes through pieces).
+  const POOL = { e: CX + 1200, n: CY + 600 };
+  const GAP = { e: CX + 600, n: CY - 900 };
+  const holey = gridFrom(sw, W, H, 25, (e, n) => (Math.hypot(e - GAP.e, n - GAP.n) < 60 ? -2 : juraHeight(e, n)));
+  const withPool = [...coast, ring(POOL.e, POOL.n, 25, 25, 24, false)];
+
+  // Round a point (±0.3 mm), mostly on a piece: a gap between two pieces (0.2 mm) covers at most three of the nine.
+  const covered = (p: IslandPuzzle, e: number, n: number) => {
+    const [x, y] = toPuzzle(p, e, n);
+    let on = 0;
+    for (const dx of [-0.3, 0, 0.3]) for (const dy of [-0.3, 0, 0.3]) if (onAPiece(p, x + dx, y + dy)) on++;
+    return on >= 6;
+  };
+
+  it("a pool too small to print is filled in; the sea loch stays sea; a gap in the heights is land", () => {
+    const p = makeIslandPuzzle(holey, sw, W, H, SPEC, undefined, undefined, withPool);
+    expect(p.coastline).toBe(true);
+    expect(covered(p, POOL.e, POOL.n)).toBe(true);
+    expect(covered(p, GAP.e, GAP.n)).toBe(true);
+    expect(onAPiece(p, ...toPuzzle(p, LOCH.e, LOCH.n))).toBe(false);
+    expect(p.warnings.join(" ")).toMatch(/tiny bit of sea/);
+    // Every piece one outline, no hole in it: the ground at the gap is at the sea line, not below.
+    for (const q of p.pieces) expect(q.bodies.length).toBe(1);
+    expect(p.groundAt(...toPuzzle(p, GAP.e, GAP.n))).toBeGreaterThan(0);
+  });
+});

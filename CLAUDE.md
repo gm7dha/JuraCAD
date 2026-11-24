@@ -2000,15 +2000,17 @@
   low land, so sea lochs were closed off and filled. Pure `src/terrain/coastline.ts`: OSM `natural=coastline` ways (land on
   the LEFT; osm.ts keeps them as `OsmData.coastline`) → `joinCoast` (end to start) → `coastRings` (closed chains inside the
   box as they are; the rest cut to the box, `clipChain`, each carried on ANTICLOCKWISE round the box's edge from where it
-  leaves to the next one coming in; a chain ending inside the box = a gap → null) → `coastMask` (scanline winding > 0;
+  leaves to the next one coming in; a point exactly on the edge ends a stretch, stretches lying wholly on the edge are
+  dropped, one back in where it left closes there only when anticlockwise; a chain ending inside the box = a gap → null) → `coastMask` (scanline winding > 0;
   null when no coastline lies in the box) → `coastAgrees` (≤ 10% of cells > 20 m called sea). `landByCoast` (islandPuzzle.ts)
   = the mask less land a trim left out (heights < `LEFT_OUT_BELOW`; trimmedIsland lowers it to `LEFT_OUT` when `rule.coast`).
   makeIslandPuzzle/buildIsland/landBox take `coast?: Coast` (OS grid m): isLand = landByCoast, ground ≥ `spec.sea`,
-  fillEnclosed fills nothing (enclosed = real sea or land left out); unusable = `COAST_UNUSED` warning + the height rule;
+  fillEnclosed fills only specks ≤ `COAST_SPECK` 4 mm² (pinholes; else enclosed = real sea or land left out); unusable = `COAST_UNUSED` warning + the height rule;
   none given = byte for byte as before. `IslandPuzzle.coastline` when used. Dialog: `coastQuery` (Overpass, area + 2 km,
   ≤ `COAST_MOST` 130 km) fetched automatically once heights load (module `coastCache` by area; a map-file area uses the
-  file's coastline), the build waits for it; a line under the area view says "Coastline from OpenStreetMap…" / failed /
-  none. Lochs inland aren't coastline (land, at their heights). Tests: tests/coastline (pure + a Jura-like loch).
+  file's coastline), the build waits for it (≤ `COAST_WAIT_MS` 60 s, then the heights); a line under the area view says "Coastline from OpenStreetMap…" / failed /
+  none. Lochs inland aren't coastline (land, at their heights). Tests: tests/coastline (pure + a Jura-like loch, a pool filled, a height gap), coastlineReal (wiggly coasts crossing
+  the box's sides/corners exactly, ways shuffled, doubled points, islands touching the edge, every cell vs the true land).
   Plugs and pinholes (v0.75): a hole in a piece's outline is given to it whole — thin cells of others, a bit of another
   piece cut off from its body (`mainBody`), sea that isn't kept (`FilledHoles.keptCells`), a pinhole — unless it's kept
   sea, holds another piece's body (an islet piece) or a live tab's knob. A dovetail whose knob is no longer in its piece's

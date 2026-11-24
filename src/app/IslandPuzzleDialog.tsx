@@ -82,6 +82,9 @@ async function overpassMap(res: Response, what: string): Promise<OsmData> {
   return readOsm(text);
 }
 
+/** How long (ms) the puzzle waits for the coastline before it's made from the heights alone. */
+const COAST_WAIT_MS = 60_000;
+
 /** Coastlines fetched this session, by area: fetched once, used again when the same island is loaded again. */
 const coastCache = new Map<string, Coast>();
 
@@ -197,24 +200,37 @@ export function IslandPuzzleDialog() {
     }
     setCoastState({ key, status: "fetching" });
     let gone = false;
+    // The puzzle waits for the coastline, so never for long: past COAST_WAIT_MS it's made from the heights.
+    const stop = new AbortController();
+    let late = false;
+    const timer = setTimeout(() => {
+      late = true;
+      stop.abort();
+    }, COAST_WAIT_MS);
     (async () => {
       try {
         let res: Response;
         try {
-          res = await fetch(OVERPASS_URL, { method: "POST", body: new URLSearchParams({ data: query }) });
+          res = await fetch(OVERPASS_URL, { method: "POST", body: new URLSearchParams({ data: query }), signal: stop.signal });
         } catch {
-          throw new Error("Couldn't reach OpenStreetMap's map service for the coastline");
+          throw new Error(late ? "OpenStreetMap's map service took too long to send the coastline" : "Couldn't reach OpenStreetMap's map service for the coastline");
         }
-        const data = await overpassMap(res, "coastline");
+        const data = await overpassMap(res, "coastline").catch((e: unknown) => {
+          throw late ? new Error("OpenStreetMap's map service took too long to send the coastline") : e;
+        });
         const lines = data.coastline?.length ? coastOnGrid(data.coastline) : [];
         coastCache.set(key, lines);
         if (!gone) setCoastState({ key, status: "ready", lines: lines.length ? lines : null, from: "fetched" });
       } catch (e) {
         if (!gone) setCoastState({ key, status: "failed", message: e instanceof Error ? e.message.replace(/\.$/, "") : String(e) });
+      } finally {
+        clearTimeout(timer);
       }
     })();
     return () => {
       gone = true;
+      clearTimeout(timer);
+      stop.abort();
     };
   }, [loaded]);
 
