@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { gridFrom } from "../src/terrain/elevation";
 import { coastAgrees, coastMask, coastQuery, coastRings, joinCoast, LEFT_OUT } from "../src/terrain/coastline";
-import { COAST_UNUSED, ISLAND_DEFAULTS, landBox, makeIslandPuzzle, type IslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
+import { COAST_UNUSED, coastFits, ISLAND_DEFAULTS, landBox, makeIslandPuzzle, type IslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
 import { trimmedIsland } from "../src/terrain/islandArea";
 import { readOsm } from "../src/terrain/osm";
 import { outlineSegs, type Seg } from "./support/outlineGeom";
@@ -289,5 +289,173 @@ describe("the coastline and holes", () => {
     // Every piece one outline, no hole in it: the ground at the gap is at the sea line, not below.
     for (const q of p.pieces) expect(q.bodies.length).toBe(1);
     expect(p.groundAt(...toPuzzle(p, GAP.e, GAP.n))).toBeGreaterThan(0);
+  });
+});
+
+describe("laid out and put together use the same coastline", () => {
+  // The owner's Jura: with the coastline in use, "Print it put together" went back to the heights' shape. Put together,
+  // the area is cut down to the island and the coastline was judged against the heights again on that smaller box.
+  // Here the island's heights spill past its coast (as coarse height tiles blur a steep shore into the sea), so on its
+  // own about a seventh of its high ground is "sea" by the coastline; the whole area — with a mainland that matches
+  // exactly — is well within the one-in-ten allowed.
+  const AW = 30000;
+  const AH = 16000;
+  const asw = { e: 350000, n: 680000 };
+  const I = { e: asw.e + 8000, n: asw.n + 8000, rx: 5000, ry: 3000 };
+  const POOL = { e: I.e + 1500, n: I.n, r: 600 };
+  const MX = asw.e + 17000;
+  const inIsland = (e: number, n: number, f = 1) => ((e - I.e) / (I.rx * f)) ** 2 + ((n - I.n) / (I.ry * f)) ** 2 < 1;
+  const height = (e: number, n: number) => {
+    if (e > MX) return 120;
+    if (Math.hypot(e - POOL.e, n - POOL.n) < POOL.r) return 0.8; // a sea pool read as low land
+    return inIsland(e, n, 1.08) ? 150 : -20;
+  };
+  const g = gridFrom(asw, AW, AH, 25, height);
+  const mainland: XY[] = [];
+  for (let y = asw.n + AH + 3000; y >= asw.n - 3000; y -= 500) mainland.push([MX, y]);
+  const lines: XY[][] = [ring(I.e, I.n, I.rx, I.ry, 160), ring(POOL.e, POOL.n, POOL.r, POOL.r, 48, false), mainland];
+  const only = { keep: [{ e: I.e - 2000, n: I.n }] };
+  const toPuzzle = (p: IslandPuzzle, e: number, n: number): [number, number] => [(e - p.origin.e) * p.k, (n - p.origin.n) * p.k];
+
+  it("judged on the island's box alone, the coastline wouldn't pass", () => {
+    const cell = 20;
+    const [x0, y0] = [I.e - I.rx * 1.2, I.n - I.ry * 1.2];
+    const [nx, ny] = [Math.ceil((I.rx * 2.4) / cell), Math.ceil((I.ry * 2.4) / cell)];
+    const m = coastMask(lines, { e: x0, n: y0 }, cell, nx, ny)!;
+    expect(m).not.toBeNull();
+    const h = (c: number) => height(x0 + ((c % nx) + 0.5) * cell, y0 + (Math.floor(c / nx) + 0.5) * cell);
+    expect(coastAgrees(m, h)).toBe(false);
+    expect(coastFits(g, asw, AW, AH, lines)).toBe(true);
+  });
+
+  it("put together keeps the coastline's land, as laid out does", () => {
+    for (const spec of [{ ...SPEC, only }, { ...SPEC, land: "islands" as const }]) {
+      const laid = makeIslandPuzzle(g, asw, AW, AH, spec, undefined, undefined, lines);
+      const placed = makeIslandPuzzle(g, asw, AW, AH, { ...spec, inPlace: true }, undefined, undefined, lines);
+      for (const p of [laid, placed]) {
+        expect(p.coastline).toBe(true);
+        expect(p.warnings).not.toContain(COAST_UNUSED);
+        // The pool stays sea; the heights' spill past the coast isn't land.
+        expect(onAPiece(p, ...toPuzzle(p, POOL.e, POOL.n))).toBe(false);
+        expect(onAPiece(p, ...toPuzzle(p, I.e + I.rx * 1.04, I.n))).toBe(false);
+        expect(onAPiece(p, ...toPuzzle(p, I.e - 2500, I.n))).toBe(true);
+      }
+    }
+  });
+
+  it("trimmed and put together too, judged on the whole area loaded", () => {
+    const ok = coastFits(g, asw, AW, AH, lines);
+    const t = trimmedIsland({ sw: asw, width: AW, height: AH }, g, { n: 0.05, e: 0.2, s: 0.05, w: 0.05 }, { sea: 0.5, land: "islands", only, coast: lines, coastOk: ok });
+    expect(t.decided).toBe(true);
+    for (const inPlace of [false, true]) {
+      const p = makeIslandPuzzle(t.grid, t.sw, t.width, t.height, { ...SPEC, land: "all", inPlace }, undefined, undefined, lines, ok);
+      expect(p.coastline).toBe(true);
+      expect(onAPiece(p, ...toPuzzle(p, POOL.e, POOL.n))).toBe(false);
+      expect(onAPiece(p, ...toPuzzle(p, I.e - 2500, I.n))).toBe(true);
+    }
+  });
+
+  it("a coastline that doesn't fit the whole area isn't used put together either", () => {
+    const p = makeIslandPuzzle(g, asw, AW, AH, { ...SPEC, inPlace: true }, undefined, undefined, lines, false);
+    expect(p.coastline).toBeUndefined();
+    expect(p.warnings).toContain(COAST_UNUSED);
+  });
+});
+
+describe("a small island with sheer cliffs (Ailsa Craig)", () => {
+  // About a kilometre across and over 300 m high in a 3 × 3 km box: the height tiles blur its cliffs ~90 m out into the
+  // sea, which alone is about a third of its high ground. Judged away from the shore, the coastline fits.
+  const A = 3000;
+  const asw = { e: 202000, n: 600000 };
+  const C = { e: asw.e + A / 2, n: asw.n + A / 2, r: 550 };
+  const BLUR = 90;
+  const height = (e: number, n: number) => {
+    const d = Math.hypot(e - C.e, n - C.n);
+    if (d < C.r) return 120 + 220 * (1 - d / C.r);
+    if (d < C.r + BLUR) return 120 * (1 - (d - C.r) / BLUR) + 5;
+    return -15;
+  };
+  const g = gridFrom(asw, A, A, 10, height);
+  const lines: XY[][] = [ring(C.e, C.n, C.r, C.r, 96)];
+  const toPuzzle = (p: IslandPuzzle, e: number, n: number): [number, number] => [(e - p.origin.e) * p.k, (n - p.origin.n) * p.k];
+
+  it("judged over all its high ground it wouldn't pass; away from the shore it does", () => {
+    const cell = 3;
+    const n = A / cell;
+    const m = coastMask(lines, asw, cell, n, n)!;
+    const h = (c: number) => height(asw.e + ((c % n) + 0.5) * cell, asw.n + (Math.floor(c / n) + 0.5) * cell);
+    expect(coastAgrees(m, h)).toBe(false);
+    expect(coastAgrees(m, h, { nx: n, ny: n, cellM: cell })).toBe(true);
+    expect(coastFits(g, asw, A, A, lines)).toBe(true);
+  });
+
+  it("the coastline wrong way round is still refused", () => {
+    expect(coastFits(g, asw, A, A, [ring(C.e, C.n, C.r, C.r, 96, false)])).toBe(false);
+  });
+
+  it("laid out and put together both use it", () => {
+    for (const inPlace of [false, true]) {
+      const p = makeIslandPuzzle(g, asw, A, A, { ...SPEC, inPlace }, undefined, undefined, lines);
+      expect(p.coastline).toBe(true);
+      expect(p.warnings).not.toContain(COAST_UNUSED);
+      expect(onAPiece(p, ...toPuzzle(p, C.e, C.n))).toBe(true);
+      expect(onAPiece(p, ...toPuzzle(p, C.e + C.r + BLUR / 2, C.n))).toBe(false);
+    }
+  });
+});
+
+describe("put together: the cut-down box crosses the mainland's coast and other islands", () => {
+  // The island kept lies close to a mainland whose coast runs past its east tip, with a neighbouring island just
+  // off its north-east: the box cut round the island goes through both coasts. The coastline must still be read there,
+  // the same land as on the whole area.
+  const AW = 30000;
+  const AH = 16000;
+  const asw = { e: 330000, n: 690000 };
+  const I = { e: asw.e + 9000, n: asw.n + 8000, rx: 4000, ry: 3000 };
+  const N = { e: I.e + 3600, n: I.n + 3200, r: 900 };
+  // The mainland: land east of a line slanting past the island's east tip (x = tip + 60 m at the island's middle).
+  const coastX = (n: number) => I.e + I.rx + 60 + Math.abs(n - I.n) * 0.4;
+  const inI = (e: number, n: number) => ((e - I.e) / I.rx) ** 2 + ((n - I.n) / I.ry) ** 2 < 1;
+  const inN = (e: number, n: number) => Math.hypot(e - N.e, n - N.n) < N.r;
+  const height = (e: number, n: number) => (e > coastX(n) ? 90 : inI(e, n) || inN(e, n) ? 110 : -20);
+  const g = gridFrom(asw, AW, AH, 25, height);
+  const mainland: XY[] = [];
+  // Land on the left going north→south with land to the east: run south.
+  for (let y = asw.n + AH + 3000; y >= asw.n - 3000; y -= 250) mainland.push([coastX(y), y]);
+  const lines: XY[][] = [ring(I.e, I.n, I.rx, I.ry, 160), ring(N.e, N.n, N.r, N.r, 64), mainland];
+  const only = { keep: [{ e: I.e - 1000, n: I.n }] };
+
+  it("the coastline cut to a smaller box is the whole area's, cell for cell", () => {
+    const cell = 20;
+    const nx = AW / cell;
+    const ny = AH / cell;
+    const whole = coastMask(lines, asw, cell, nx, ny)!;
+    expect(whole).not.toBeNull();
+    // A box through the mainland's coast and the neighbour island, on the same cells.
+    const i0 = Math.round((I.e - I.rx - 100 - asw.e) / cell);
+    const j0 = Math.round((I.n - I.ry - 100 - asw.n) / cell);
+    const i1 = Math.round((N.e - asw.e) / cell);
+    const j1 = Math.round((I.n + I.ry + 100 - asw.n) / cell);
+    const cw = i1 - i0;
+    const ch = j1 - j0;
+    const part = coastMask(lines, { e: asw.e + i0 * cell, n: asw.n + j0 * cell }, cell, cw, ch)!;
+    expect(part).not.toBeNull();
+    let diff = 0;
+    let land = 0;
+    for (let j = 0; j < ch; j++)
+      for (let i = 0; i < cw; i++) {
+        if (part[j * cw + i] !== whole[(j + j0) * nx + i + i0]) diff++;
+        land += part[j * cw + i];
+      }
+    expect(diff).toBe(0);
+    expect(land).toBeGreaterThan(0);
+  });
+
+  it("put together keeps the coastline", () => {
+    for (const spec of [{ ...SPEC, only }, { ...SPEC, land: "all" as const }]) {
+      const p = makeIslandPuzzle(g, asw, AW, AH, { ...spec, inPlace: true }, undefined, undefined, lines);
+      expect(p.coastline).toBe(true);
+      expect(p.warnings).not.toContain(COAST_UNUSED);
+    }
   });
 });

@@ -6,6 +6,7 @@
 import { ROAD_RANK, TIDY_MARKS, type MarkChoice } from "./mapMarks";
 import type { IslandOnly } from "./islandPuzzle";
 import { gridToLatLon, latLonToGrid, type GridPoint } from "./osGrid";
+import { OVERPASS_SERVERS } from "./overpass";
 
 export interface IslandPlace {
   id: string;
@@ -69,7 +70,7 @@ export const ISLANDS: IslandPlace[] = [
 ];
 
 /** Overpass API (OpenStreetMap's query service, which lets any web page ask): free, no key, CORS allowed. */
-export const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
+export const OVERPASS_URL = OVERPASS_SERVERS[0];
 
 /** The query for one level of boundaries round an area, with their lines and label points, as an .osm file. */
 export function boundaryQuery(sw: GridPoint, width: number, height: number, level: number): string {

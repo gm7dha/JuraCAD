@@ -17,6 +17,8 @@ export interface IslandJob {
   features: MapFeatures;
   /** OpenStreetMap's coastline, when fetched: it decides land and sea. */
   coast?: Coast;
+  /** Whether the coastline fits the heights over the whole area loaded (coastFits): the same land laid out or put together. */
+  coastOk?: boolean;
 }
 
 export type IslandReply = { id: number; puzzle: IslandBuilt } | { id: number; error: string };
@@ -27,10 +29,10 @@ const ctx = self as unknown as {
 };
 
 ctx.onmessage = (e) => {
-  const { id, grid, sw, width, height, spec, cuts, features, coast } = e.data;
+  const { id, grid, sw, width, height, spec, cuts, features, coast, coastOk } = e.data;
   try {
     // Everything but the function, which can't be sent back.
-    const { groundAt: _ground, ...puzzle } = makeIslandPuzzle(grid, sw, width, height, spec, cuts, features, coast);
+    const { groundAt: _ground, ...puzzle } = makeIslandPuzzle(grid, sw, width, height, spec, cuts, features, coast, coastOk);
     void _ground;
     ctx.postMessage({ id, puzzle });
   } catch (err) {

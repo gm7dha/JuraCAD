@@ -512,17 +512,46 @@ export function keepOnly(
 /** Coastline ways on the OS grid (m), each with the land on its left (OpenStreetMap's rule). */
 export type Coast = [number, number][][];
 
+/** The coastline as a build gets it: its ways, and whether it was found to fit the heights over the whole area. */
+interface CoastUse {
+  lines: Coast;
+  fits: boolean;
+}
+
 export const COAST_UNUSED = "The coastline from OpenStreetMap couldn't be used here (it has a gap, or doesn't match the heights), so the heights decide where the sea is.";
 
 /**
  * Land cells by the coastline (1 land): the coastline's land, less land a trim left out (lowered far below the sea, see
  * trimmedIsland). Null when the coastline can't say or doesn't agree with the heights (`heightOf` a cell, m).
  */
-export function landByCoast(coast: Coast, sw: { e: number; n: number }, cellM: number, nx: number, ny: number, heightOf: (c: number) => number): Uint8Array | null {
+export function landByCoast(
+  coast: Coast,
+  sw: { e: number; n: number },
+  cellM: number,
+  nx: number,
+  ny: number,
+  heightOf: (c: number) => number,
+  /** Already found to agree with the heights over the whole area (`coastFits`): not judged again on this box. */
+  trusted = false,
+): Uint8Array | null {
   const mask = coastMask(coast, sw, cellM, nx, ny);
-  if (!mask || !coastAgrees(mask, heightOf)) return null;
+  if (!mask || (!trusted && !coastAgrees(mask, heightOf, { nx, ny, cellM }))) return null;
   for (let c = 0; c < mask.length; c++) if (mask[c] && heightOf(c) < LEFT_OUT_BELOW) mask[c] = 0;
   return mask;
+}
+
+/**
+ * Can the coastline decide land and sea over this area: does it say something here, and agree with the heights? Judged
+ * once on the WHOLE area (about a thousand cells a side), so a put-together build (the area cut down to the island) or a
+ * trim never judges it again on its smaller box — where the share of high ground the coastline calls sea can come out
+ * differently, and the island would go back to the heights' shape.
+ */
+export function coastFits(grid: HeightGrid, sw: { e: number; n: number }, areaWidth: number, areaHeight: number, coast: Coast): boolean {
+  const cell = Math.max(areaWidth, areaHeight) / 1000;
+  const nx = Math.max(1, Math.ceil(areaWidth / cell));
+  const ny = Math.max(1, Math.ceil(areaHeight / cell));
+  const heightOf = (c: number) => heightAt(grid, sw.e + ((c % nx) + 0.5) * cell, sw.n + (Math.floor(c / nx) + 0.5) * cell);
+  return landByCoast(coast, sw, cell, nx, ny, heightOf) !== null;
 }
 
 /** Sea closed in by the coastline's land is filled in when no bigger than this (mm² on the puzzle): a pinhole won't print. */
@@ -729,14 +758,21 @@ export function makeIslandPuzzle(
   features: MapFeatures = NO_FEATURES,
   /** The coastline (OpenStreetMap's, on the OS grid): where given and usable it decides land and sea, not the heights. */
   coast?: Coast,
+  /**
+   * Whether the coastline fits the heights, judged on the whole area loaded (`coastFits`; before a trim). Missing: judged
+   * here, on this area. Laid out and put together then always use the same land.
+   */
+  coastOk?: boolean,
 ): IslandPuzzle {
   const problems = islandChecks(spec);
   if (problems.length) throw new Error(problems[0]);
-  if (!spec.inPlace) return buildIsland(grid, sw, areaWidth, areaHeight, spec, cuts, features, undefined, undefined, coast);
+  const fits = coast ? (coastOk ?? coastFits(grid, sw, areaWidth, areaHeight, coast)) : false;
+  const usable: CoastUse | undefined = coast ? { lines: coast, fits } : undefined;
+  if (!spec.inPlace) return buildIsland(grid, sw, areaWidth, areaHeight, spec, cuts, features, undefined, undefined, usable);
   // Put together: the area is cut down to the land kept (plus a little sea where the land doesn't reach the area's edge,
   // so "every island" still sees which land ran off it — never past the area, which has no heights there), and that —
   // not the whole area — is what fills the bed (or the best free part of it) at 100%.
-  const box = landBox(grid, sw, areaWidth, areaHeight, spec.sea, spec.land, spec.only, coast);
+  const box = landBox(grid, sw, areaWidth, areaHeight, spec.sea, spec.land, spec.only, fits ? coast : undefined, true);
   const pad = Math.max(box.w, box.h) * 0.01 + box.cell;
   const x0 = box.x0 > 0 ? Math.max(0, box.x0 - pad) : 0;
   const y0 = box.y0 > 0 ? Math.max(0, box.y0 - pad) : 0;
@@ -749,7 +785,7 @@ export function makeIslandPuzzle(
     const room = bestRoom(rooms.length ? rooms : [[0, 0, spec.bed[0], spec.bed[1]]], x1 - x0, y1 - y0);
     const k = roomScale(room, x1 - x0, y1 - y0) * spec.scale;
     const edges = { w: x0 === 0, e: x1 === areaWidth, s: y0 === 0, n: y1 === areaHeight };
-    return { ...buildIsland(grid, { e: sw.e + x0, n: sw.n + y0 }, x1 - x0, y1 - y0, spec, cuts, features, k, edges, coast), room };
+    return { ...buildIsland(grid, { e: sw.e + x0, n: sw.n + y0 }, x1 - x0, y1 - y0, spec, cuts, features, k, edges, usable), room };
   };
   const p = build(keepOut);
   if (!spec.tower) return p;
@@ -766,12 +802,23 @@ export function makeIslandPuzzle(
 }
 
 /** Where the land asked for lies in the area (m from its south-west corner), found on a grid of about 1500 a side. */
-export function landBox(grid: HeightGrid, sw: { e: number; n: number }, areaWidth: number, areaHeight: number, sea: number, land: IslandLand, only?: IslandOnly, coast?: Coast) {
+export function landBox(
+  grid: HeightGrid,
+  sw: { e: number; n: number },
+  areaWidth: number,
+  areaHeight: number,
+  sea: number,
+  land: IslandLand,
+  only?: IslandOnly,
+  coast?: Coast,
+  /** The coastline already found to fit the heights (`coastFits`). */
+  trusted = false,
+) {
   const cell = Math.max(areaWidth, areaHeight) / 1500;
   const nx = Math.max(1, Math.ceil(areaWidth / cell));
   const ny = Math.max(1, Math.ceil(areaHeight / cell));
   const heightOf = (c: number) => heightAt(grid, sw.e + ((c % nx) + 0.5) * cell, sw.n + (Math.floor(c / nx) + 0.5) * cell);
-  const byCoast = coast ? landByCoast(coast, sw, cell, nx, ny, heightOf) : null;
+  const byCoast = coast ? landByCoast(coast, sw, cell, nx, ny, heightOf, trusted) : null;
   const isLand = byCoast ?? new Uint8Array(nx * ny);
   if (!byCoast) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) isLand[j * nx + i] = heightAt(grid, sw.e + (i + 0.5) * cell, sw.n + (j + 0.5) * cell) > sea ? 1 : 0;
   keepLand(isLand, nx, ny, land, [], only && onlyCells(only, sw, cell), heightOf);
@@ -804,7 +851,7 @@ function buildIsland(
   kGiven?: number,
   /** Which sides are the area's own edges (missing: all), when it's been cut down to the island. */
   edges?: Sides,
-  coast?: Coast,
+  coast?: CoastUse,
 ): IslandPuzzle {
   const k = kGiven ?? Math.min((spec.bed[0] - 10) / areaWidth, (spec.bed[1] - 10) / areaHeight) * spec.scale;
   const W = areaWidth * k;
@@ -821,7 +868,7 @@ function buildIsland(
   // where it says, whatever the heights (they read narrow straits and loch mouths as low land), and its land is never
   // lower than the sea.
   const cellOf = (c: number) => heights(((c % nx) + 0.5) * cell, (Math.floor(c / nx) + 0.5) * cell);
-  const byCoast = coast ? landByCoast(coast, sw, cell / k, nx, ny, cellOf) : null;
+  const byCoast = coast?.fits ? landByCoast(coast.lines, sw, cell / k, nx, ny, cellOf, true) : null;
   if (coast && !byCoast) warnings.push(COAST_UNUSED);
   const rawGround = byCoast ? (x: number, y: number) => Math.max(heights(x, y), spec.sea) : heights;
   const isLand = byCoast ?? new Uint8Array(N);

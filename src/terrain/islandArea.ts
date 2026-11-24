@@ -34,6 +34,8 @@ export interface LandRule {
   only?: IslandOnly;
   /** OpenStreetMap's coastline, when it's used to tell land from sea (see makeIslandPuzzle). */
   coast?: Coast;
+  /** Whether the coastline fits the heights over the whole area (`coastFits`); missing: judged on the grid here. */
+  coastOk?: boolean;
 }
 
 /**
@@ -60,7 +62,7 @@ export function trimmedIsland(
     const { nx, ny, h, spacing } = grid;
     // The samples sit on the grid's points: cell i covers e0 + (i ± ½) × spacing.
     const cellSw = { e: grid.e0 - spacing / 2, n: grid.n0 - spacing / 2 };
-    const byCoast = rule.coast ? landByCoast(rule.coast, cellSw, spacing, nx, ny, (c) => h[c]) : null;
+    const byCoast = rule.coast && rule.coastOk !== false ? landByCoast(rule.coast, cellSw, spacing, nx, ny, (c) => h[c], rule.coastOk === true) : null;
     const isLand = byCoast ? new Uint8Array(byCoast) : new Uint8Array(nx * ny);
     if (!byCoast) for (let i = 0; i < isLand.length; i++) isLand[i] = h[i] > rule.sea ? 1 : 0;
     try {
