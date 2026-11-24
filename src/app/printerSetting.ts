@@ -17,12 +17,12 @@ export interface PrinterChoice {
 
 export interface PrinterSetting extends PrinterChoice {
   print: PrintSettings;
-  /** Filament slots in the AMS units: 4 (one AMS) or 8 (two). Missing = 8 on the X2D (the owner has two AMS Pros), else 4. */
+  /** Filament slots in the AMS units: 4 (one AMS) or 8 (two). Missing = 8 (the owner's wish: two AMS units), on every printer. */
   amsSlots?: 4 | 8;
 }
 
 /** How many filaments the AMS units hold, for the puzzles' colours. */
-export const amsSlotsOf = (p: Pick<PrinterSetting, "printer" | "amsSlots">): 4 | 8 => p.amsSlots ?? (p.printer === "bambu-x2d" ? 8 : 4);
+export const amsSlotsOf = (p: Pick<PrinterSetting, "printer" | "amsSlots">): 4 | 8 => p.amsSlots ?? 8;
 
 function readRaw(): Record<string, unknown> {
   try {

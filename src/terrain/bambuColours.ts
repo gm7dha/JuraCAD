@@ -111,3 +111,10 @@ export function bambu(line: BambuLine, name: string): string {
   if (!c) throw new Error(`No ${line} ${name} in Bambu's list`);
   return c.hex;
 }
+
+/** A colour's spool code by line and name (throws if Bambu's list has no such colour). */
+export function bambuCode(line: BambuLine, name: string): string {
+  const c = BAMBU_COLOURS.find((x) => x.line === line && x.name === name);
+  if (!c) throw new Error(`No ${line} ${name} in Bambu's list`);
+  return c.code;
+}
