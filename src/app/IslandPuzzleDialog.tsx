@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CUSTOM_PRINTER, printerOf, PRINTERS } from "../model/printBed";
 import { areaProblem, readHeights, zoomFor, type HeightGrid } from "../terrain/elevation";
-import { featuresForIsland, IN_PLACE_FIT, ISLAND_DEFAULTS, islandChecks, type IslandBuilt, type IslandCuts, type IslandLand, type IslandOnly, type IslandSpec } from "../terrain/islandPuzzle";
+import { featuresForIsland, IN_PLACE_FIT, ISLAND_DEFAULTS, islandChecks, type Coast, type IslandBuilt, type IslandCuts, type IslandLand, type IslandOnly, type IslandSpec } from "../terrain/islandPuzzle";
 import { BOUNDARY_LEVELS, boundaryQuery, fetchCovers, ISLANDS, MARKS_MOST, marksQuery, OVERPASS_URL, type MarksFetched } from "../terrain/islands";
 import { TIDY_MARKS, type MarkChoice } from "../terrain/mapMarks";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
@@ -26,6 +26,7 @@ import { NO_TRIM, noTrim, type Trim } from "../terrain/mountainCrop";
 import { PickableView, type TopViewPick } from "./PathPicker";
 import { idsOf, isDropped, islandViewBox, landIdsAfter, NONE_DROPPED, pickableLines, withoutDropped } from "../terrain/pickMarks";
 import { openMountain } from "./mountainState";
+import { coastOnGrid, coastQuery } from "../terrain/coastline";
 import { loadTerrainTile } from "./mountainTiles";
 import { amsSlotsOf, loadPrinter, printerBed, savePrinter } from "./printerSetting";
 
@@ -81,6 +82,12 @@ async function overpassMap(res: Response, what: string): Promise<OsmData> {
   return readOsm(text);
 }
 
+/** Coastlines fetched this session, by area: fetched once, used again when the same island is loaded again. */
+const coastCache = new Map<string, Coast>();
+
+/** What's known about the coastline of the area loaded: being fetched, fetched (null lines = none there), or not to be had. */
+type CoastState = { key: string; status: "fetching" } | { key: string; status: "ready"; lines: Coast | null; from: "fetched" | "file" } | { key: string; status: "failed"; message: string };
+
 const areaKey = (a: Area) => `${a.sw.e},${a.sw.n},${a.width},${a.height}`;
 
 const sameArea = (a: Area | null, b: Area | null) => !!a && !!b && a.sw.e === b.sw.e && a.sw.n === b.sw.n && a.width === b.width && a.height === b.height;
@@ -113,6 +120,12 @@ export function IslandPuzzleDialog() {
   const [marksError, setMarksError] = useState<string | null>(null);
 
   const [loaded, setLoaded] = useState<{ area: Area; grid: HeightGrid } | null>(null);
+  // OpenStreetMap's coastline round the area loaded: it, not the heights, says where the sea is (the heights read narrow
+  // sea passages and the mouths of sea lochs as low land, so lochs got closed off and filled in).
+  const [coastState, setCoastState] = useState<CoastState | null>(null);
+  const coastKey = loaded ? areaKey(loaded.area) : null;
+  const coast: Coast | undefined = coastState && coastState.key === coastKey && coastState.status === "ready" ? coastState.lines ?? undefined : undefined;
+  const coastPending = !!loaded && (!coastState || coastState.key !== coastKey || coastState.status === "fetching");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [puzzle, setPuzzle] = useState<IslandBuilt | null>(null);
@@ -120,8 +133,8 @@ export function IslandPuzzleDialog() {
   // Which land is kept ("every island", a list island's own land) is decided on the whole area, so a trim through the
   // island doesn't make its cut edge "the area's edge" and drop it.
   const used = useMemo(
-    () => (loaded ? trimmedIsland(loaded.area, loaded.grid, trim, { sea: spec.sea, land: spec.land, only: loaded.area.only }) : null),
-    [loaded, trim, spec.sea, spec.land],
+    () => (loaded ? trimmedIsland(loaded.area, loaded.grid, trim, { sea: spec.sea, land: spec.land, only: loaded.area.only, ...(coast ? { coast } : {}) }) : null),
+    [loaded, trim, spec.sea, spec.land, coast],
   );
   // The map file the heights came from, if they did: it is the map for marks (and boundaries, if it has them).
   const fileMap = loaded?.area.osm ? { name: loaded.area.name, data: loaded.area.osm, fetched: null } : null;
@@ -161,6 +174,49 @@ export function IslandPuzzleDialog() {
       setLoading(false);
     }
   };
+
+  // The coastline: from the heights' own map file when that has one, else fetched from OpenStreetMap (once per area).
+  useEffect(() => {
+    if (!loaded) return;
+    const key = areaKey(loaded.area);
+    const { osm, sw, width, height } = loaded.area;
+    if (osm) {
+      const lines = osm.coastline?.length ? coastOnGrid(osm.coastline) : null;
+      setCoastState({ key, status: "ready", lines, from: "file" });
+      return;
+    }
+    const cached = coastCache.get(key);
+    if (cached) {
+      setCoastState({ key, status: "ready", lines: cached.length ? cached : null, from: "fetched" });
+      return;
+    }
+    const query = coastQuery(sw, width, height);
+    if (!query) {
+      setCoastState({ key, status: "ready", lines: null, from: "fetched" });
+      return;
+    }
+    setCoastState({ key, status: "fetching" });
+    let gone = false;
+    (async () => {
+      try {
+        let res: Response;
+        try {
+          res = await fetch(OVERPASS_URL, { method: "POST", body: new URLSearchParams({ data: query }) });
+        } catch {
+          throw new Error("Couldn't reach OpenStreetMap's map service for the coastline");
+        }
+        const data = await overpassMap(res, "coastline");
+        const lines = data.coastline?.length ? coastOnGrid(data.coastline) : [];
+        coastCache.set(key, lines);
+        if (!gone) setCoastState({ key, status: "ready", lines: lines.length ? lines : null, from: "fetched" });
+      } catch (e) {
+        if (!gone) setCoastState({ key, status: "failed", message: e instanceof Error ? e.message.replace(/\.$/, "") : String(e) });
+      }
+    })();
+    return () => {
+      gone = true;
+    };
+  }, [loaded]);
 
   const getBoundaries = async () => {
     if (!loaded) return;
@@ -308,18 +364,18 @@ export function IslandPuzzleDialog() {
   const problems = islandChecks(fullSpec);
   const specKey = JSON.stringify(fullSpec);
   useEffect(() => {
-    if (!loaded || problems.length) {
+    if (!loaded || problems.length || coastPending) {
       // A build still running for the old settings mustn't show its puzzle beside the problem.
       builder.current.stop();
       setPuzzle(null);
-      setWorking(false);
+      setWorking(coastPending && !problems.length);
       return;
     }
     setWorking(true);
     const askedDropped = dropped;
     const timer = setTimeout(() => {
       if (!used) return;
-      builder.current.build({ grid: used.grid, sw: used.sw, width: used.width, height: used.height, spec: fullSpec, cuts, features }, (reply) => {
+      builder.current.build({ grid: used.grid, sw: used.sw, width: used.width, height: used.height, spec: fullSpec, cuts, features, ...(coast ? { coast } : {}) }, (reply) => {
         if ("error" in reply) {
           setPuzzle(null);
           setBuildError(reply.error);
@@ -333,7 +389,7 @@ export function IslandPuzzleDialog() {
     }, 350);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, used, specKey, cuts, features]);
+  }, [loaded, used, specKey, cuts, features, coast, coastPending]);
 
   // Stop the builder when the window closes.
   useEffect(() => () => builder.current.stop(), []);
@@ -461,6 +517,19 @@ export function IslandPuzzleDialog() {
             <>
               <TrimSliders trim={trim} setTrim={setTrim} size={[loaded.area.width, loaded.area.height]} unit={(v) => formatDistance(v)} />
               <AreaView grid={loaded.grid} area={loaded.area} used={used} sea={spec.sea} trimmed={!noTrim(trim)} />
+              <p className="muted small">
+                {coastPending
+                  ? "Getting the coastline from OpenStreetMap…"
+                  : coastState?.status === "failed"
+                    ? `${coastState.message}, so the heights decide where the sea is (narrow sea lochs may come out filled in).`
+                    : coast && puzzle?.coastline
+                      ? `Coastline from OpenStreetMap${coastState?.status === "ready" && coastState.from === "file" ? " (your map file)" : ""}: it decides where the sea is, so sea lochs and narrow straits stay open.`
+                      : coast
+                        ? puzzle
+                          ? ""
+                          : "Coastline from OpenStreetMap."
+                        : "No coastline here on OpenStreetMap, so the heights decide where the sea is."}
+              </p>
             </>
           )}
 

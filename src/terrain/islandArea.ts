@@ -7,7 +7,8 @@
 import { areaProblem, zoomFor, type HeightGrid } from "./elevation";
 import { cropGrid, type Trim } from "./mountainCrop";
 import type { GridPoint } from "./osGrid";
-import { keepLand, onlyCells, type IslandLand, type IslandOnly } from "./islandPuzzle";
+import { keepLand, landByCoast, onlyCells, type Coast, type IslandLand, type IslandOnly } from "./islandPuzzle";
+import { LEFT_OUT } from "./coastline";
 import { osmArea, type OsmData } from "./osm";
 
 /** The widest island area (m): all of Great Britain. */
@@ -31,6 +32,8 @@ export interface LandRule {
   sea: number;
   land: IslandLand;
   only?: IslandOnly;
+  /** OpenStreetMap's coastline, when it's used to tell land from sea (see makeIslandPuzzle). */
+  coast?: Coast;
 }
 
 /**
@@ -55,14 +58,19 @@ export function trimmedIsland(
   const notes: string[] = [];
   if (rule && (rule.only || rule.land === "islands")) {
     const { nx, ny, h, spacing } = grid;
-    const isLand = new Uint8Array(nx * ny);
-    for (let i = 0; i < isLand.length; i++) isLand[i] = h[i] > rule.sea ? 1 : 0;
+    // The samples sit on the grid's points: cell i covers e0 + (i ± ½) × spacing.
+    const cellSw = { e: grid.e0 - spacing / 2, n: grid.n0 - spacing / 2 };
+    const byCoast = rule.coast ? landByCoast(rule.coast, cellSw, spacing, nx, ny, (c) => h[c]) : null;
+    const isLand = byCoast ? new Uint8Array(byCoast) : new Uint8Array(nx * ny);
+    if (!byCoast) for (let i = 0; i < isLand.length; i++) isLand[i] = h[i] > rule.sea ? 1 : 0;
     try {
-      // The samples sit on the grid's points: cell i covers e0 + (i ± ½) × spacing.
-      const only = rule.only && onlyCells(rule.only, { e: grid.e0 - spacing / 2, n: grid.n0 - spacing / 2 }, spacing);
-      keepLand(isLand, nx, ny, rule.land, notes, only, (c) => h[c]);
+      const only = rule.only && onlyCells(rule.only, cellSw, spacing);
+      keepLand(isLand, nx, ny, rule.land, notes, only, (c) => (byCoast ? Math.max(h[c], rule.sea) : h[c]));
       const lowered = new Float32Array(h);
-      for (let i = 0; i < isLand.length; i++) if (h[i] > rule.sea && !isLand[i]) lowered[i] = Math.min(0, h[i]);
+      // By the coastline, land left out goes far below the sea (the coastline would call it land again).
+      if (byCoast) {
+        for (let i = 0; i < isLand.length; i++) if (byCoast[i] && !isLand[i]) lowered[i] = LEFT_OUT;
+      } else for (let i = 0; i < isLand.length; i++) if (h[i] > rule.sea && !isLand[i]) lowered[i] = Math.min(0, h[i]);
       from = { ...grid, h: lowered };
       decided = true;
     } catch {

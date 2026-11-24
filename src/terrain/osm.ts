@@ -41,6 +41,8 @@ export interface OsmData {
   builtUp?: LatLon[][];
   /** Outlines of parks, gardens, playing fields and golf courses — a hill route there needs a signed route or a big climb. */
   parks?: LatLon[][];
+  /** Coastline ways (natural=coastline), each as the map draws it — land on its left — when the map has any. */
+  coastline?: LatLon[][];
 }
 
 /**
@@ -241,6 +243,11 @@ export function readOsm(text: string): OsmData {
   const onRoute = new Set<string>();
   for (const { members, tags } of relations) if (isWalkingRoute(tags)) for (const x of members) if (x.type === "way") onRoute.add(x.ref);
   for (const [id, { refs, tags }] of ways) {
+    if (tags.natural === "coastline") {
+      const pts = pointsOf(refs);
+      if (pts.length >= 2 && pts.length === refs.length) (data.coastline ??= []).push(pts);
+      continue;
+    }
     const kind = lineKind(tags);
     if (kind) {
       const pts = pointsOf(refs);
