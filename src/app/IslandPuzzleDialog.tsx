@@ -149,7 +149,10 @@ export function IslandPuzzleDialog() {
   const [buildError, setBuildError] = useState<string | null>(null);
   const [explode, setExplode] = useState(0);
   // Colour bands with the usual colours to start with (the owner's wish); the bands follow the ground until changed.
-  const usualBands = islandBands(puzzle?.high ?? 500);
+  // The last island's highest ground, so the bands don't jump while a new puzzle is being made.
+  const lastHigh = useRef(500);
+  if (puzzle) lastHigh.current = puzzle.high;
+  const usualBands = islandBands(lastHigh.current);
   const [colour, setColour, autoBands] = useUsualColour(usualBands, SEA_BLUE);
   useBandsFollow(colour, setColour, autoBands, usualBands);
   // Put together in colour: the prime tower will be turned off in Bambu Studio, so no room is kept for it.
@@ -714,7 +717,7 @@ export function IslandPuzzleDialog() {
           <ColourPanel
             spec={colour}
             setSpec={setColour}
-            usual={() => islandBands(puzzle?.high ?? 500)}
+            usual={() => islandBands(lastHigh.current)}
             slots={amsSlotsOf(printer)}
             setSlots={(n) => setPrinter(savePrinter({ amsSlots: n }))}
             usualBase={GROUND_BROWN}

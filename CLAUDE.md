@@ -2198,7 +2198,8 @@
   highest) and `mountainBands(low, high, snowline)` (Upland 0.3 of the range, Snow from the snow line, `snow: true`). Both
   windows START in colour bands: `usualColour(bands, water)` (+ water — island SEA_BLUE, mountain WATER_BLUE —, red paths,
   black roads: 7 filaments) via `useUsualColour`; `useBandsFollow` keeps the bands following the ground as it loads until
-  they're changed by hand (identity of `spec.bands`). "Usual colours and heights" puts the bands and base back. Bands: `bandLevels` (with a base colour, levels clamped to ≥ z0;
+  they're changed by hand (pure `followedBands`: still equal to the last usual set — so "Usual colours and heights", which puts the
+  bands and base back, starts the following again; the island's from its last built `high`, the mountain's from `layout`). Bands: `bandLevels` (with a base colour, levels clamped to ≥ z0;
   sorted lowest first, stably) → per piece `snappedCuts` (sorted again; each edge on a layer boundary of the piece AS PRINTED, from its
   own z0: `firstLayer` then every `layer`; edges on the bed dropped; same layer → the later band wins) → `sliceMesh`
   (weld, planes moved ≥ `PLANE_CLEAR` 1e-4 off every corner to the nearest free height, each triangle clipped to each slab with

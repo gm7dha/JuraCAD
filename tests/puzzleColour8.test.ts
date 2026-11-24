@@ -10,6 +10,7 @@ import {
   colourProblems,
   colourWarnings,
   filaments,
+  followedBands,
   islandBands,
   ISLAND_COLOURS,
   mapOnPuzzle,
@@ -31,6 +32,7 @@ import { allItems, bandPlateFile, bandPuzzle, colour3mfModel, colourPuzzle } fro
 import { gridFrom } from "../src/terrain/elevation";
 import { ISLAND_DEFAULTS, makeIslandPuzzle } from "../src/terrain/islandPuzzle";
 import { platesFor } from "../src/terrain/puzzle3mf";
+import { amsSlotsOf } from "../src/app/printerSetting";
 
 const BED: [number, number, number] = [256, 256, 256];
 const IW = 6000;
@@ -185,5 +187,27 @@ describe("Eight filaments", () => {
     const colours = [...model.matchAll(/<m:color color="#([0-9A-F]{6})"\/>/g)].map((m) => [0, 2, 4].map((k) => parseInt(m[1].slice(k, k + 2), 16)));
     expect(colours.some(([r, g, b]) => r > 120 && g < 70 && b < 70)).toBe(true);
     expect(colours.some(([r, g, b]) => Math.max(r, g, b) < 40)).toBe(true);
+  });
+});
+
+describe("The usual bands follow the ground", () => {
+  it("while they're still the usual ones, never once changed by hand", () => {
+    const first = islandBands(500);
+    const later = islandBands(900);
+    // Untouched: the new ground's bands.
+    expect(followedBands(first, first, later)).toBe(later);
+    // The same ground again (a rebuild): nothing to do.
+    expect(followedBands(first, first, islandBands(500))).toBeNull();
+    // Changed by hand (a height or a colour): left alone.
+    expect(followedBands([first[0], { ...first[1], from: 300 }, first[2]], first, later)).toBeNull();
+    expect(followedBands([first[0], first[1], { ...first[2], colour: "#123456" }], first, later)).toBeNull();
+    // Put back with "Usual colours and heights" (a new array, the same bands): they follow again.
+    expect(followedBands(islandBands(500), first, later)).toBe(later);
+  });
+  it("8 filament slots unless 4 were chosen, on every printer", () => {
+    expect(amsSlotsOf({ printer: "bambu-a1-mini" })).toBe(8);
+    expect(amsSlotsOf({ printer: "bambu-x2d" })).toBe(8);
+    expect(amsSlotsOf({ printer: "bambu-x2d", amsSlots: 4 })).toBe(4);
+    expect(amsSlotsOf({ printer: "bambu-p1s", amsSlots: 4 })).toBe(4);
   });
 });

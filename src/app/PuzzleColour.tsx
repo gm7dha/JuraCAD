@@ -22,6 +22,7 @@ import {
   type MapHas,
   PATH_RED,
   ROAD_BLACK,
+  followedBands,
   USUAL_SPOOLS,
   usualColour,
 } from "../terrain/colour";
@@ -323,10 +324,6 @@ let mapIds = 0;
 const mapIdOf = new WeakMap<PuzzleMap, number>();
 
 /**
- * The pieces coloured for the choices, worked out in a worker a moment after the last change — or null while there's
- * nothing to colour. `map` is the map on the puzzle (`mapSize` mm); keep it the same object while it doesn't change.
- */
-/**
  * The colour choices a puzzle window starts with: colour bands with the usual colours (`usualColour`). The third value
  * holds the bands made automatically; `useBandsFollow` keeps them in step with the ground until they're changed by hand.
  */
@@ -336,19 +333,27 @@ export function useUsualColour(bands: ColourBand[], water: string): [ColourSpec,
   return [spec, setSpec, auto];
 }
 
-/** While the bands are still the ones made automatically, they follow `usual` (the usual bands for the ground now). */
+/**
+ * While the bands are still the usual ones (made automatically, or put back with "Usual colours and heights"), they follow
+ * `usual` (the usual bands for the ground now); bands changed by hand stay as they are (`followedBands`).
+ */
 export function useBandsFollow(spec: ColourSpec, setSpec: (s: ColourSpec) => void, auto: { current: ColourBand[] }, usual: ColourBand[]) {
   const now = useRef(spec);
   now.current = spec;
   const key = JSON.stringify(usual);
   useEffect(() => {
-    if (now.current.bands !== auto.current || JSON.stringify(auto.current) === key) return;
+    const before = auto.current;
     auto.current = usual;
-    setSpec({ ...now.current, bands: usual });
+    const next = followedBands(now.current.bands, before, usual);
+    if (next) setSpec({ ...now.current, bands: next });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 }
 
+/**
+ * The pieces coloured for the choices, worked out in a worker a moment after the last change — or null while there's
+ * nothing to colour. `map` is the map on the puzzle (`mapSize` mm); keep it the same object while it doesn't change.
+ */
 export function useColoured(
   pieces: PuzzlePiece[] | null,
   spec: ColourSpec,

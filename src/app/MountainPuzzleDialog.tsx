@@ -377,7 +377,8 @@ export function MountainPuzzleDialog() {
   const mapSize: [number, number] = puzzle ? [puzzle.layout.cols * puzzle.spec.cube, puzzle.layout.rows * puzzle.spec.cube] : [1, 1];
   const paintMap = useMemo(() => mapRaster(puzzleMap, mapSize[0], mapSize[1]), [puzzleMap]);
   const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap);
-  const usualBands = () => (puzzle ? mountainBands(puzzle.layout.low, puzzle.layout.high, snowline) : mountainBands(0, 1000, snowline));
+  // From the layout (worked out before the puzzle is made, and kept while it's remade), so the bands don't jump.
+  const usualBands = () => (layout ? mountainBands(layout.low, layout.high, snowline) : mountainBands(0, 1000, snowline));
   useBandsFollow(colour, setColour, autoBands, usualBands());
   const fileName = safeFileName(`${loaded?.area.name ?? "Mountain"} puzzle`, "Mountain puzzle");
   // The frame round the finished puzzle: its words are the mountain's name, height, grid reference and scale unless typed.

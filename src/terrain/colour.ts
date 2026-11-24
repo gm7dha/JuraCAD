@@ -145,6 +145,16 @@ export function mountainBands(low: number, high: number, snowline: number | null
 }
 
 /**
+ * The bands a window should switch to when the usual bands for its ground change from `before` to `usual`: `usual` while
+ * `bands` are still the usual ones (made automatically, or put back with "Usual colours and heights"), else null (the
+ * owner's own bands are never overwritten).
+ */
+export function followedBands(bands: ColourBand[], before: ColourBand[], usual: ColourBand[]): ColourBand[] | null {
+  const same = (a: ColourBand[], b: ColourBand[]) => JSON.stringify(a) === JSON.stringify(b);
+  return same(bands, before) && !same(before, usual) ? usual : null;
+}
+
+/**
  * The colours a puzzle window starts with (the owner's wish): colour bands, the usual land bands, the base and sides in
  * Dark Brown, water in its own blue, paths red and roads black.
  */
