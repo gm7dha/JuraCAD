@@ -16,6 +16,7 @@
  * (dovetails, narrow strips) and never leave the ground thinner than `LEAST_BASE`.
  */
 import { heightAt, type HeightGrid } from "./elevation";
+import { coastAgrees, coastMask, LEFT_OUT_BELOW } from "./coastline";
 import { BUILDING_LEAST, groundMarks, type GroundMarks } from "./groundMarks";
 import { cutGrooves, type GrooveIndex } from "./grooveCut";
 import { smoothedFeatures } from "./smoothLines";
@@ -144,6 +145,8 @@ export interface IslandPuzzle {
   marks: IslandMarks;
   /** Every dovetail. */
   tabs: IslandTab[];
+  /** Land and sea came from OpenStreetMap's coastline (missing: from the heights). */
+  coastline?: true;
   /** The ground's height (mm) at x, y — the one field every piece's top is drawn from, marks and all. */
   groundAt(x: number, y: number): number;
 }
@@ -506,6 +509,25 @@ export function keepOnly(
   return true;
 }
 
+/** Coastline ways on the OS grid (m), each with the land on its left (OpenStreetMap's rule). */
+export type Coast = [number, number][][];
+
+export const COAST_UNUSED = "The coastline from OpenStreetMap couldn't be used here (it has a gap, or doesn't match the heights), so the heights decide where the sea is.";
+
+/**
+ * Land cells by the coastline (1 land): the coastline's land, less land a trim left out (lowered far below the sea, see
+ * trimmedIsland). Null when the coastline can't say or doesn't agree with the heights (`heightOf` a cell, m).
+ */
+export function landByCoast(coast: Coast, sw: { e: number; n: number }, cellM: number, nx: number, ny: number, heightOf: (c: number) => number): Uint8Array | null {
+  const mask = coastMask(coast, sw, cellM, nx, ny);
+  if (!mask || !coastAgrees(mask, heightOf)) return null;
+  for (let c = 0; c < mask.length; c++) if (mask[c] && heightOf(c) < LEFT_OUT_BELOW) mask[c] = 0;
+  return mask;
+}
+
+/** Sea closed in by the coastline's land is filled in when no bigger than this (mm² on the puzzle): a pinhole won't print. */
+export const COAST_SPECK = 4;
+
 /** A patch at sea level bigger than this (mm² on the puzzle) and not a loch on the map is taken to be the sea (a sea loch). */
 export const SMALL_HOLE = 100;
 
@@ -705,14 +727,16 @@ export function makeIslandPuzzle(
   spec: IslandSpec,
   cuts?: IslandCuts,
   features: MapFeatures = NO_FEATURES,
+  /** The coastline (OpenStreetMap's, on the OS grid): where given and usable it decides land and sea, not the heights. */
+  coast?: Coast,
 ): IslandPuzzle {
   const problems = islandChecks(spec);
   if (problems.length) throw new Error(problems[0]);
-  if (!spec.inPlace) return buildIsland(grid, sw, areaWidth, areaHeight, spec, cuts, features);
+  if (!spec.inPlace) return buildIsland(grid, sw, areaWidth, areaHeight, spec, cuts, features, undefined, undefined, coast);
   // Put together: the area is cut down to the land kept (plus a little sea where the land doesn't reach the area's edge,
   // so "every island" still sees which land ran off it — never past the area, which has no heights there), and that —
   // not the whole area — is what fills the bed (or the best free part of it) at 100%.
-  const box = landBox(grid, sw, areaWidth, areaHeight, spec.sea, spec.land, spec.only);
+  const box = landBox(grid, sw, areaWidth, areaHeight, spec.sea, spec.land, spec.only, coast);
   const pad = Math.max(box.w, box.h) * 0.01 + box.cell;
   const x0 = box.x0 > 0 ? Math.max(0, box.x0 - pad) : 0;
   const y0 = box.y0 > 0 ? Math.max(0, box.y0 - pad) : 0;
@@ -725,7 +749,7 @@ export function makeIslandPuzzle(
     const room = bestRoom(rooms.length ? rooms : [[0, 0, spec.bed[0], spec.bed[1]]], x1 - x0, y1 - y0);
     const k = roomScale(room, x1 - x0, y1 - y0) * spec.scale;
     const edges = { w: x0 === 0, e: x1 === areaWidth, s: y0 === 0, n: y1 === areaHeight };
-    return { ...buildIsland(grid, { e: sw.e + x0, n: sw.n + y0 }, x1 - x0, y1 - y0, spec, cuts, features, k, edges), room };
+    return { ...buildIsland(grid, { e: sw.e + x0, n: sw.n + y0 }, x1 - x0, y1 - y0, spec, cuts, features, k, edges, coast), room };
   };
   const p = build(keepOut);
   if (!spec.tower) return p;
@@ -742,13 +766,14 @@ export function makeIslandPuzzle(
 }
 
 /** Where the land asked for lies in the area (m from its south-west corner), found on a grid of about 1500 a side. */
-export function landBox(grid: HeightGrid, sw: { e: number; n: number }, areaWidth: number, areaHeight: number, sea: number, land: IslandLand, only?: IslandOnly) {
+export function landBox(grid: HeightGrid, sw: { e: number; n: number }, areaWidth: number, areaHeight: number, sea: number, land: IslandLand, only?: IslandOnly, coast?: Coast) {
   const cell = Math.max(areaWidth, areaHeight) / 1500;
   const nx = Math.max(1, Math.ceil(areaWidth / cell));
   const ny = Math.max(1, Math.ceil(areaHeight / cell));
-  const isLand = new Uint8Array(nx * ny);
-  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) isLand[j * nx + i] = heightAt(grid, sw.e + (i + 0.5) * cell, sw.n + (j + 0.5) * cell) > sea ? 1 : 0;
   const heightOf = (c: number) => heightAt(grid, sw.e + ((c % nx) + 0.5) * cell, sw.n + (Math.floor(c / nx) + 0.5) * cell);
+  const byCoast = coast ? landByCoast(coast, sw, cell, nx, ny, heightOf) : null;
+  const isLand = byCoast ?? new Uint8Array(nx * ny);
+  if (!byCoast) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) isLand[j * nx + i] = heightAt(grid, sw.e + (i + 0.5) * cell, sw.n + (j + 0.5) * cell) > sea ? 1 : 0;
   keepLand(isLand, nx, ny, land, [], only && onlyCells(only, sw, cell), heightOf);
   let [i0, j0, i1, j1] = [nx, ny, -1, -1];
   for (let j = 0; j < ny; j++)
@@ -779,6 +804,7 @@ function buildIsland(
   kGiven?: number,
   /** Which sides are the area's own edges (missing: all), when it's been cut down to the island. */
   edges?: Sides,
+  coast?: Coast,
 ): IslandPuzzle {
   const k = kGiven ?? Math.min((spec.bed[0] - 10) / areaWidth, (spec.bed[1] - 10) / areaHeight) * spec.scale;
   const W = areaWidth * k;
@@ -788,12 +814,18 @@ function buildIsland(
   const nx = Math.ceil(W / cell);
   const ny = Math.ceil(H / cell);
   const N = nx * ny;
-  const rawGround = (x: number, y: number) => heightAt(grid, sw.e + x / k, sw.n + y / k);
+  const heights = (x: number, y: number) => heightAt(grid, sw.e + x / k, sw.n + y / k);
   const warnings: string[] = [];
 
-  // Land, then only the land asked for.
-  const isLand = new Uint8Array(N);
-  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) isLand[j * nx + i] = rawGround((i + 0.5) * cell, (j + 0.5) * cell) > spec.sea ? 1 : 0;
+  // Land, then only the land asked for. By the coastline when there is one (and it agrees with the heights): the sea is
+  // where it says, whatever the heights (they read narrow straits and loch mouths as low land), and its land is never
+  // lower than the sea.
+  const cellOf = (c: number) => heights(((c % nx) + 0.5) * cell, (Math.floor(c / nx) + 0.5) * cell);
+  const byCoast = coast ? landByCoast(coast, sw, cell / k, nx, ny, cellOf) : null;
+  if (coast && !byCoast) warnings.push(COAST_UNUSED);
+  const rawGround = byCoast ? (x: number, y: number) => Math.max(heights(x, y), spec.sea) : heights;
+  const isLand = byCoast ?? new Uint8Array(N);
+  if (!byCoast) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) isLand[j * nx + i] = rawGround((i + 0.5) * cell, (j + 0.5) * cell) > spec.sea ? 1 : 0;
   const cellHeight = (c: number) => rawGround(((c % nx) + 0.5) * cell, (Math.floor(c / nx) + 0.5) * cell);
   keepLand(isLand, nx, ny, spec.land, warnings, spec.only && onlyCells(spec.only, sw, cell / k, edges), cellHeight);
   // Low ground the land closes round (a loch whose height data sits at sea level, a gap in the data) is filled in as land,
@@ -806,6 +838,9 @@ function buildIsland(
     return lochs.some((r) => inRing(r, e, n));
   };
   const holes = fillEnclosed(isLand, nx, ny, cellHeight, (cells, lowest) => {
+    // By the coastline, what's left closed in is sea (a loch mouth too narrow for the grid) or land left out: kept, but
+    // for specks too small to print as holes (a pool, or a creek's bits between cells the coastline calls land).
+    if (byCoast) return cells.length * cell * cell <= COAST_SPECK;
     if (lowest > 0 || cells.length * cell * cell <= SMALL_HOLE) return true;
     const step = Math.max(1, Math.floor(cells.length / 40));
     for (let q = 0; q < cells.length; q += step) if (onMapWater(cells[q])) return true;
@@ -814,8 +849,10 @@ function buildIsland(
   const ground = holes.count
     ? filledGround(rawGround, smoothFill(holes, isLand, nx, ny, cellHeight, Math.min(40, Math.ceil((grid.spacing * k) / cell) + 1)), nx, ny, cell)
     : rawGround;
-  if (holes.count) warnings.push(`${holes.count === 1 ? "A low patch" : `${holes.count} low patches`} inside the land (a loch, or a gap in the height data) ${holes.count === 1 ? "was" : "were"} filled in, so there's no hole through the island.`);
-  if (holes.kept)
+  if (holes.count && byCoast)
+    warnings.push(`${holes.count === 1 ? "A tiny bit of sea" : `${holes.count} tiny bits of sea`} closed in by the land ${holes.count === 1 ? "was" : "were"} filled in, as ${holes.count === 1 ? "it" : "they"}'d only print as pinholes.`);
+  else if (holes.count) warnings.push(`${holes.count === 1 ? "A low patch" : `${holes.count} low patches`} inside the land (a loch, or a gap in the height data) ${holes.count === 1 ? "was" : "were"} filled in, so there's no hole through the island.`);
+  if (holes.kept && !byCoast)
     warnings.push(
       `${holes.kept === 1 ? "A big patch" : `${holes.kept} big patches`} at sea level closed in by the land (a sea loch whose mouth is too narrow to show at this size, perhaps) ${holes.kept === 1 ? "was" : "were"} kept as sea.`,
     );
@@ -1089,7 +1126,7 @@ function buildIsland(
   const tabs: IslandTab[] = joined.tabs
     .filter((tb) => indexOf.has(tb.from) && indexOf.has(tb.into))
     .map((tb) => ({ from: indexOf.get(tb.from)!, into: indexOf.get(tb.into)!, at: tb.at, dir: tb.dir, neck: tb.neck, reach: tb.reach }));
-  return { width: W, height: H, origin: { e: sw.e, n: sw.n }, k, high, pieces, alongBoundaries, joins, unjoined, loose, warnings, marks, tabs, groundAt: top };
+  return { width: W, height: H, origin: { e: sw.e, n: sw.n }, k, high, pieces, alongBoundaries, joins, unjoined, loose, warnings, marks, tabs, groundAt: top, ...(byCoast ? { coastline: true } : {}) };
 }
 
 /**
