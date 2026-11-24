@@ -215,11 +215,14 @@ const num = (v: number) => String(Math.round(v * 1e5) / 1e5);
 const objectSettings = (settings?: Readonly<Record<string, string>>) =>
   Object.entries(settings ?? {}).map(([key, value]) => `    <metadata key="${xmlEscape(key)}" value="${xmlEscape(value)}"/>`);
 
-/** Filament numbers for the parts. */
-export const FILAMENT = { rock: 1, snow: 2 } as const;
+/** Filament numbers for the parts (the breakaway layer's slot is chosen in the window; 3 unless said). */
+export const FILAMENT = { rock: 1, snow: 2, breakaway: 3 } as const;
+
+/** Which filament each kind of part uses. */
+export type Filaments = Readonly<Record<keyof typeof FILAMENT, number>>;
 
 /** The 3MF files' text parts for one plate: the model and Bambu's settings. */
-export function plateFiles(plate: Plate, title: string, settings?: Readonly<Record<string, string>>): { model: string; config: string } {
+export function plateFiles(plate: Plate, title: string, settings?: Readonly<Record<string, string>>, filaments: Filaments = FILAMENT): { model: string; config: string } {
   const lines: string[] = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<model unit="millimeter" xml:lang="en-GB" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">',
@@ -232,7 +235,7 @@ export function plateFiles(plate: Plate, title: string, settings?: Readonly<Reco
   const instances: string[] = [];
   let id = 1;
   for (const { piece, move } of plate.pieces) {
-    const parts: { id: number; part: "rock" | "snow" }[] = [];
+    const parts: { id: number; part: keyof typeof FILAMENT }[] = [];
     for (const b of piece.bodies) {
       const m = weld(b.vertices, b.triangles);
       if (!m.triangles.length) continue;
@@ -250,13 +253,13 @@ export function plateFiles(plate: Plate, title: string, settings?: Readonly<Reco
     for (const p of parts) lines.push(`    <component objectid="${p.id}"/>`);
     lines.push("   </components>", "  </object>");
     items.push(`  <item objectid="${objectId}" transform="1 0 0 0 1 0 0 0 1 ${move.map(num).join(" ")}" printable="1"/>`);
-    config.push(`  <object id="${objectId}">`, `    <metadata key="name" value="${xmlEscape(piece.name)}"/>`, `    <metadata key="extruder" value="${FILAMENT.rock}"/>`, ...objectSettings(settings));
+    config.push(`  <object id="${objectId}">`, `    <metadata key="name" value="${xmlEscape(piece.name)}"/>`, `    <metadata key="extruder" value="${filaments[parts[0].part === "breakaway" ? "breakaway" : "rock"]}"/>`, ...objectSettings(settings));
     for (const p of parts)
       config.push(
         `    <part id="${p.id}" subtype="normal_part">`,
         `      <metadata key="name" value="${xmlEscape(`${piece.name} ${p.part}`)}"/>`,
         '      <metadata key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>',
-        `      <metadata key="extruder" value="${FILAMENT[p.part]}"/>`,
+        `      <metadata key="extruder" value="${filaments[p.part]}"/>`,
         "    </part>",
       );
     config.push("  </object>");
@@ -281,8 +284,8 @@ const RELS = `<?xml version="1.0" encoding="UTF-8"?>
 `;
 
 /** One plate as a .3mf file. */
-export function plate3mf(plate: Plate, title: string, settings?: Readonly<Record<string, string>>): Uint8Array {
-  const { model, config } = plateFiles(plate, title, settings);
+export function plate3mf(plate: Plate, title: string, settings?: Readonly<Record<string, string>>, filaments?: Filaments): Uint8Array {
+  const { model, config } = plateFiles(plate, title, settings, filaments);
   return zipStored([
     { name: "[Content_Types].xml", data: CONTENT_TYPES },
     { name: "_rels/.rels", data: RELS },
@@ -292,8 +295,8 @@ export function plate3mf(plate: Plate, title: string, settings?: Readonly<Record
 }
 
 /** Every plate's .3mf in one .zip. */
-export function allPlatesZip(plates: Plate[], name: string, settings?: Readonly<Record<string, string>>): Uint8Array {
-  return zipStored(plates.map((p, i) => ({ name: `${name} - plate ${i + 1} of ${plates.length}.3mf`, data: plate3mf(p, `${name} - plate ${i + 1}`, settings) })));
+export function allPlatesZip(plates: Plate[], name: string, settings?: Readonly<Record<string, string>>, filaments?: Filaments): Uint8Array {
+  return zipStored(plates.map((p, i) => ({ name: `${name} - plate ${i + 1} of ${plates.length}.3mf`, data: plate3mf(p, `${name} - plate ${i + 1}`, settings, filaments) })));
 }
 
 // ---------------------------------------------------------------------------------------------------------------

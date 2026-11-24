@@ -255,7 +255,8 @@ export function mountainChecks(spec: MountainSpec, layout?: MountainLayout): { p
 // Meshes
 
 export interface Body {
-  part: "rock" | "snow";
+  /** Rock and snow are the puzzle; "breakaway" is the thin support-filament layer between layers printed together. */
+  part: "rock" | "snow" | "breakaway";
   vertices: number[];
   triangles: number[];
 }
@@ -297,7 +298,7 @@ export interface MountainPuzzle {
   neck: number;
 }
 
-class Mesh {
+export class Mesh {
   v: number[] = [];
   t: number[] = [];
   point(x: number, y: number, z: number): number {
@@ -335,7 +336,7 @@ class Mesh {
       }
     }
   }
-  body(part: "rock" | "snow"): Body {
+  body(part: Body["part"]): Body {
     return { part, vertices: this.v, triangles: this.t };
   }
 }
@@ -525,13 +526,13 @@ interface BlockShape {
 }
 
 /** The key's outline at height `up` above its foot (its sides slope in). */
-function keyAt(k: Key, g: KeySizes, up: number): P2[] {
+export function keyAt(k: Key, g: KeySizes, up: number): P2[] {
   const inset = (g.slope * up) / g.h;
   return keyLoop(k.c, k.half - inset, Math.max(0.5, 2 - inset), k.cut);
 }
 
 /** The pocket's outline at height `up` above its mouth: the key's shape, the fit gap bigger all round. */
-function pocketAt(k: Key, g: KeySizes, up: number): P2[] {
+export function pocketAt(k: Key, g: KeySizes, up: number): P2[] {
   const inset = (g.slope * up) / g.h;
   return keyLoop(k.c, k.half + g.fit - inset, Math.max(0.5, 2 + g.fit - inset), k.cut);
 }
