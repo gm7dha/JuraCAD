@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.109.1 — Island puzzle: the coastline put together too, and fetched more reliably
+
+- **Printed put together** now uses the same OpenStreetMap coastline as laid out (it was being dropped, bringing back
+  filled-in sea lochs).
+- **Fetching the coastline tries again** by itself, on a second map server if the first is busy, and a **Try again** button
+  appears if it still can't be had. The note under the area picture says what's happening.
+- Small, steep-cliffed islands no longer fail the coastline's check against the heights.
+
 ## v0.109 — Map puzzles start in colour, with your filaments
 
 - **Island and Mountain puzzles open in colour bands**, set for **8 filament slots** on every printer (a 4-slot
