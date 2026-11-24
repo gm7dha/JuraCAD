@@ -156,14 +156,14 @@ describe("band edges", () => {
   });
 
   it("offers the usual colours", () => {
-    expect(islandBands(500).map((b) => b.name)).toEqual(["Sand", "Green", "Brown", "Grey"]);
-    expect(mountainBands(300, 1300, 1000).map((b) => b.name)).toEqual(["Green", "Brown", "Grey rock", "Snow"]);
-    expect(mountainBands(300, 1300, 1000)[3]).toMatchObject({ from: 1000, snow: true });
-    // Island: base and water share the sea blue, so one filament.
-    expect(filaments(islandSpec("bands")).map((f) => f.uses.join("+"))).toEqual(["Base+Water", "Sand", "Green", "Brown", "Grey"]);
+    expect(islandBands(500).map((b) => b.name)).toEqual(["Lowland", "Upland", "Snow"]);
+    expect(mountainBands(300, 1300, 1000).map((b) => b.name)).toEqual(["Lowland", "Upland", "Snow"]);
+    expect(mountainBands(300, 1300, 1000)[2]).toMatchObject({ from: 1000, snow: true });
+    // Base and water the same colour here, so one filament.
+    expect(filaments(islandSpec("bands")).map((f) => f.uses.join("+"))).toEqual(["Base+Water", "Lowland", "Upland", "Snow"]);
     expect(colourProblems(islandSpec("bands"))).toEqual([]);
     expect(colourProblems({ ...islandSpec("bands"), bands: islandBands(500).slice(0, 1) })[0]).toMatch(/between 2 and 8/);
-    const many = { ...islandSpec("bands"), bands: [...islandBands(500), ...islandBands(500).map((b, i) => ({ ...b, from: 600 + i * 10, colour: `#00000${i}` }))].slice(0, 8), water: "#123456" };
+    const many = { ...islandSpec("bands"), bands: Array.from({ length: 8 }, (_, i) => ({ name: `Band ${i + 1}`, colour: `#00000${i}`, from: i * 50 })), water: "#123456" };
     expect(colourProblems(many).some((p) => /at most 8/.test(p))).toBe(true);
   });
 });
@@ -414,7 +414,7 @@ describe("colour-band plates", () => {
     expect((model.match(/paint_color="4"/g) ?? []).length).toBe(painted);
     expect(painted).toBeGreaterThan(0);
     expect(config).toContain('<metadata key="extruder" value="2"/>');
-    expect(model).toContain("Sand (filament 2)");
+    expect(model).toContain("Lowland (filament 2)");
   });
 
   it("the plain plates' writer is unchanged, byte for byte", () => {
@@ -501,7 +501,7 @@ describe("review fixes", () => {
   });
 
   it("warns past one AMS's four filaments, and when no band starts within the ground", () => {
-    expect(colourWarnings(islandSpec("bands"), true).some((w) => /one AMS holds 4/.test(w))).toBe(true);
+    expect(colourWarnings({ ...islandSpec("bands"), paths: PATH_RED }, true).some((w) => /one AMS holds 4/.test(w))).toBe(true);
     const four = { ...islandSpec("bands"), bands: islandBands(500).slice(0, 3) };
     expect(colourWarnings(four, true).some((w) => /AMS/.test(w))).toBe(false);
     const high = { ...four, bands: islandBands(5000) };
@@ -564,10 +564,10 @@ describe("red paths and black roads", () => {
     expect(raster.roads).toBe(true);
     expect(raster.water).toBe(false);
     const fs = filaments(spec("bands"), raster);
-    expect(fs.map((f) => f.uses.join("+"))).toEqual(["Base", "Sand", "Green", "Brown", "Grey", "Paths", "Roads"]);
+    expect(fs.map((f) => f.uses.join("+"))).toEqual(["Base", "Lowland", "Upland", "Snow", "Paths", "Roads"]);
     expect(filaments(spec("bands"), { water: true, paths: false, roads: false }).some((f) => f.uses.includes("Paths"))).toBe(false);
     expect(filaments({ ...spec("bands"), paths: null }, raster).some((f) => f.uses.includes("Paths"))).toBe(false);
-    expect(colourWarnings(spec("bands"), raster).some((w) => /7 filaments/.test(w))).toBe(true);
+    expect(colourWarnings(spec("bands"), raster).some((w) => /6 filaments/.test(w))).toBe(true);
   });
 
   it("paints only the grooves: path triangles on the footpath and track, road triangles on the road", () => {

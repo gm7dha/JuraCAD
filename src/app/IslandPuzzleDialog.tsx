@@ -15,8 +15,8 @@ import { TIDY_MARKS, type MarkChoice } from "../terrain/mapMarks";
 import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
 import { boundariesOnGrid, boundaryLevels, featuresOnGrid, featureSummary, levelName, MAX_OSM_BYTES, NO_FEATURES, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
 import { allPlatesZip, IN_PLACE_SETTINGS, plate3mf, platesByLevel, platesFor, platesInPlace, TOWER_ROOM, towerWhere, type BedRect } from "../terrain/puzzle3mf";
-import { islandBands, mapOnPuzzle, mapRaster, NO_MAP, PLAIN_COLOUR, SEA_BLUE, type ColourSpec, type HeightScale } from "../terrain/colour";
-import { ColourDownloads, ColourPanel, useColoured } from "./PuzzleColour";
+import { GROUND_BROWN, islandBands, mapOnPuzzle, mapRaster, NO_MAP, SEA_BLUE, type HeightScale } from "../terrain/colour";
+import { ColourDownloads, ColourPanel, useBandsFollow, useColoured, useUsualColour } from "./PuzzleColour";
 import { downloadFile, safeFileName } from "./download";
 import type { IslandJob, IslandReply } from "./islandPuzzle.worker";
 import { Modal } from "./Modal";
@@ -148,7 +148,10 @@ export function IslandPuzzleDialog() {
   const builder = useRef(new IslandBuilder());
   const [buildError, setBuildError] = useState<string | null>(null);
   const [explode, setExplode] = useState(0);
-  const [colour, setColour] = useState<ColourSpec>(PLAIN_COLOUR);
+  // Colour bands with the usual colours to start with (the owner's wish); the bands follow the ground until changed.
+  const usualBands = islandBands(puzzle?.high ?? 500);
+  const [colour, setColour, autoBands] = useUsualColour(usualBands, SEA_BLUE);
+  useBandsFollow(colour, setColour, autoBands, usualBands);
   // Put together in colour: the prime tower will be turned off in Bambu Studio, so no room is kept for it.
   const [towerOff, setTowerOff] = useState(false);
   const colourOn = colour.mode !== "plain";
@@ -711,10 +714,10 @@ export function IslandPuzzleDialog() {
           <ColourPanel
             spec={colour}
             setSpec={setColour}
-            usual={(n) => islandBands(puzzle?.high ?? 500, n)}
+            usual={() => islandBands(puzzle?.high ?? 500)}
             slots={amsSlotsOf(printer)}
             setSlots={(n) => setPrinter(savePrinter({ amsSlots: n }))}
-            usualBase={SEA_BLUE}
+            usualBase={GROUND_BROWN}
             usualWater={SEA_BLUE}
             has={paintMap}
             roadsAsked={detail === "all"}

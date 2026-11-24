@@ -13,7 +13,7 @@
  * piece. Without caps it just divides the triangles where they cross the planes (full colour, so the sides can change
  * colour at a band's height).
  */
-import { bambu, spoolFor, spoolLabel } from "./bambuColours";
+import { bambu, bambuCode, spoolFor, spoolLabel } from "./bambuColours";
 import { weld } from "../geometry/threeMf";
 import { grooveOf, GROOVES, isChannel, THIN_FLAT, THIN_GROOVE, WATER_DROP } from "./groundMarks";
 import { GrooveIndex } from "./grooveCut";
@@ -86,72 +86,35 @@ const hasOf = (h: MapHas) => (typeof h === "boolean" ? { water: h, paths: h, roa
 /** A mountain's lochs: PLA Basic Cyan. */
 export const WATER_BLUE = bambu("PLA Basic", "Cyan");
 
-const SAND = bambu("PLA Matte", "Desert Tan");
-const LOWLAND = bambu("PLA Matte", "Grass Green");
-const GREEN = bambu("PLA Basic", "Mistletoe Green");
-const OLIVE = bambu("PLA Matte", "Dark Green");
-const BROWN = bambu("PLA Basic", "Cocoa Brown");
-const GREY = bambu("PLA Basic", "Gray");
+/** The usual ground (the base and sides under the land): PLA Matte Dark Brown (the owner's choice). */
+export const GROUND_BROWN = bambu("PLA Matte", "Dark Brown");
+/** The usual land bands (the owner's choice): Lowland Dark Green, Upland Nardo Grey, Snow Ivory White — all PLA Matte. */
+export const LOWLAND_GREEN = bambu("PLA Matte", "Dark Green");
+export const UPLAND_GREY = bambu("PLA Matte", "Nardo Gray");
+export const SNOW_IVORY = bambu("PLA Matte", "Ivory White");
+/** Ivory White shares #ffffff with PLA Basic Jade White, so the usual colours name its spool. */
+export const USUAL_SPOOLS: Record<string, string> = { [SNOW_IVORY]: bambuCode("PLA Matte", "Ivory White") };
 
-/**
- * The usual island colours: sand at the coast, green, brown, grey on the tops — with the sea-blue base and water, five
- * filaments (olive is first among the spare colours, for a sixth). All Bambu Lab PLA.
- */
+/** The usual island bands: Lowland from the coast, Upland from 45% of the highest ground, Snow from 75%. */
 export const ISLAND_COLOURS: [string, string, number][] = [
-  ["Sand", SAND, 0],
-  ["Green", GREEN, 0.06],
-  ["Brown", BROWN, 0.45],
-  ["Grey", GREY, 0.75],
+  ["Lowland", LOWLAND_GREEN, 0],
+  ["Upland", UPLAND_GREY, 0.45],
+  ["Snow", SNOW_IVORY, 0.75],
 ];
 
-/** More island bands for two AMS units (8 filaments): five, then six (with olive). */
-export const ISLAND_COLOURS_5: [string, string, number][] = [
-  ["Sand", SAND, 0],
-  ["Lowland green", LOWLAND, 0.03],
-  ["Green", GREEN, 0.15],
-  ["Brown", BROWN, 0.45],
-  ["Grey", GREY, 0.75],
-];
-export const ISLAND_COLOURS_6: [string, string, number][] = [
-  ["Sand", SAND, 0],
-  ["Lowland green", LOWLAND, 0.03],
-  ["Green", GREEN, 0.12],
-  ["Olive", OLIVE, 0.3],
-  ["Brown", BROWN, 0.5],
-  ["Grey", GREY, 0.75],
-];
-
-const SNOW_WHITE = bambu("PLA Basic", "Jade White");
-const ROCK = bambu("PLA Basic", "Gray");
-const MOUNTAIN_BROWN = bambu("PLA Matte", "Dark Brown");
-
-/** The usual mountain colours: green low down, brown, grey rock, white snow (Bambu Lab PLA). */
+/** The usual mountain bands: Lowland from the lowest ground, Upland from 30% of the way up, Snow from the snow line. */
 export const MOUNTAIN_COLOURS: [string, string, number][] = [
-  ["Green", GREEN, 0],
-  ["Brown", MOUNTAIN_BROWN, 0.3],
-  ["Grey rock", ROCK, 0.6],
-  ["Snow", SNOW_WHITE, 0.8],
-];
-/** More mountain bands for two AMS units: lowland green below, then pale scree under the snow. */
-export const MOUNTAIN_COLOURS_5: [string, string, number][] = [
-  ["Lowland green", LOWLAND, 0],
-  ["Green", GREEN, 0.15],
-  ["Brown", MOUNTAIN_BROWN, 0.3],
-  ["Grey rock", ROCK, 0.6],
-  ["Snow", SNOW_WHITE, 0.8],
-];
-export const MOUNTAIN_COLOURS_6: [string, string, number][] = [
-  ["Lowland green", LOWLAND, 0],
-  ["Green", GREEN, 0.15],
-  ["Brown", MOUNTAIN_BROWN, 0.3],
-  ["Grey rock", ROCK, 0.55],
-  ["Scree", bambu("PLA Basic", "Light Gray"), 0.7],
-  ["Snow", SNOW_WHITE, 0.8],
+  ["Lowland", LOWLAND_GREEN, 0],
+  ["Upland", UPLAND_GREY, 0.3],
+  ["Snow", SNOW_IVORY, 0.8],
 ];
 
 /** More colours offered when bands are added: the next unused one (Bambu Lab PLA). */
 export const SPARE_COLOURS = [
-  OLIVE,
+  bambu("PLA Basic", "Mistletoe Green"),
+  bambu("PLA Basic", "Cocoa Brown"),
+  bambu("PLA Matte", "Desert Tan"),
+  bambu("PLA Matte", "Grass Green"),
   bambu("PLA Matte", "Caramel"),
   bambu("PLA Basic", "Bronze"),
   bambu("PLA Matte", "Ash Gray"),
@@ -162,30 +125,31 @@ export const SPARE_COLOURS = [
   bambu("PLA Basic", "Beige"),
 ];
 
-/**
- * How many usual bands to offer: 4 with one AMS; with more slots as many as fit (up to 6) beside the other filaments the
- * map needs (`others`: the base/water, paths, roads — distinct colours).
- */
-export const usualBandCount = (slots: number, others: number) => (slots <= AMS_SLOTS ? 4 : Math.max(4, Math.min(6, slots - others)));
-
 const nice = (m: number) => (Math.abs(m) < 50 ? Math.round(m) : Math.round(m / 10) * 10);
 
-/** An island's bands for ground up to `high` m. */
-export function islandBands(high: number, count = 4): ColourBand[] {
-  const set = count >= 6 ? ISLAND_COLOURS_6 : count === 5 ? ISLAND_COLOURS_5 : ISLAND_COLOURS;
-  return set.map(([name, colour, f]) => ({ name, colour, from: nice(f * Math.max(high, 10)) }));
+/** An island's usual bands for ground up to `high` m. */
+export function islandBands(high: number): ColourBand[] {
+  return ISLAND_COLOURS.map(([name, colour, f]) => ({ name, colour, from: nice(f * Math.max(high, 10)) }));
 }
 
-/** A mountain's bands from `low` to `high` m, the snow starting at `snowline` when given. */
-export function mountainBands(low: number, high: number, snowline: number | null = null, count = 4): ColourBand[] {
+/** A mountain's usual bands from `low` to `high` m, the snow starting at `snowline` when given. */
+export function mountainBands(low: number, high: number, snowline: number | null = null): ColourBand[] {
   const r = Math.max(high - low, 10);
-  const set = count >= 6 ? MOUNTAIN_COLOURS_6 : count === 5 ? MOUNTAIN_COLOURS_5 : MOUNTAIN_COLOURS;
-  return set.map(([name, colour, f], i) => ({
+  const last = MOUNTAIN_COLOURS.length - 1;
+  return MOUNTAIN_COLOURS.map(([name, colour, f], i) => ({
     name,
     colour,
-    from: i === set.length - 1 && snowline !== null ? snowline : nice(low + f * r),
-    ...(name === "Snow" ? { snow: true } : {}),
+    from: i === last && snowline !== null ? snowline : nice(low + f * r),
+    ...(i === last ? { snow: true } : {}),
   }));
+}
+
+/**
+ * The colours a puzzle window starts with (the owner's wish): colour bands, the usual land bands, the base and sides in
+ * Dark Brown, water in its own blue, paths red and roads black.
+ */
+export function usualColour(bands: ColourBand[], water: string): ColourSpec {
+  return { mode: "bands", bands, base: GROUND_BROWN, water, paths: PATH_RED, roads: ROAD_BLACK, layer: LAYER_DEFAULT, spools: { ...USUAL_SPOOLS } };
 }
 
 export const PLAIN_COLOUR: ColourSpec = { mode: "plain", bands: [], base: null, water: null, layer: LAYER_DEFAULT };

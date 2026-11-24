@@ -22,7 +22,8 @@ import {
   type MapHas,
   PATH_RED,
   ROAD_BLACK,
-  usualBandCount,
+  USUAL_SPOOLS,
+  usualColour,
 } from "../terrain/colour";
 import { SpoolPick } from "./SpoolPick";
 import type { ColourJob, ColourReply } from "../terrain/colourJob";
@@ -59,8 +60,8 @@ export function ColourPanel({
 }: {
   spec: ColourSpec;
   setSpec: (s: ColourSpec) => void;
-  /** The usual bands for the ground loaded now, `count` of them (4, or up to 6 with two AMS units). */
-  usual: (count: number) => ColourBand[];
+  /** The usual bands for the ground loaded now (Lowland, Upland, Snow). */
+  usual: () => ColourBand[];
   usualBase: string | null;
   usualWater: string;
   /** What the map loaded now has to colour: lochs and rivers, footpaths and tracks, roads. */
@@ -73,20 +74,14 @@ export function ColourPanel({
   slots: 4 | 8;
   setSlots: (n: 4 | 8) => void;
 }) {
-  // As many usual bands as fit beside the base, water, paths and roads the map needs.
-  const usualCount = (s: ColourSpec) => {
-    const others = new Set<string>();
-    if (s.base) others.add(s.base.toLowerCase());
-    if (s.water && has.water) others.add(s.water.toLowerCase());
-    if (s.paths && has.paths) others.add(s.paths.toLowerCase());
-    if (s.roads && has.roads) others.add(s.roads.toLowerCase());
-    return usualBandCount(slots, others.size);
-  };
   const choose = (mode: ColourMode) => {
     if (mode === "plain" || spec.bands.length) return setSpec({ ...spec, mode });
-    const next: ColourSpec = { ...spec, mode, base: usualBase, water: usualWater, paths: PATH_RED, roads: ROAD_BLACK };
-    setSpec({ ...next, bands: usual(usualCount(next)) });
+    const next: ColourSpec = { ...spec, mode, base: usualBase, water: usualWater, paths: PATH_RED, roads: ROAD_BLACK, spools: { ...spec.spools, ...USUAL_SPOOLS } };
+    setSpec({ ...next, bands: usual() });
   };
+  /** "Usual colours and heights": the usual bands, and the base back to its usual colour (if it has one). */
+  const usualAgain = () =>
+    setSpec({ ...spec, bands: usual(), base: spec.base !== null ? usualBase ?? spec.base : null, spools: { ...spec.spools, ...USUAL_SPOOLS } });
   /** A colour picked from Bambu's list (code) or your own (no code). */
   const picked = (s: ColourSpec, hex: string, code?: string): ColourSpec => {
     const spools = { ...s.spools };
@@ -177,7 +172,7 @@ export function ColourPanel({
                 + Add a band
               </button>
             )}
-            <button className="text-button" onClick={() => setSpec({ ...spec, bands: usual(usualCount(spec)) })}>
+            <button className="text-button" onClick={usualAgain}>
               Usual colours and heights
             </button>
           </div>
@@ -331,6 +326,29 @@ const mapIdOf = new WeakMap<PuzzleMap, number>();
  * The pieces coloured for the choices, worked out in a worker a moment after the last change — or null while there's
  * nothing to colour. `map` is the map on the puzzle (`mapSize` mm); keep it the same object while it doesn't change.
  */
+/**
+ * The colour choices a puzzle window starts with: colour bands with the usual colours (`usualColour`). The third value
+ * holds the bands made automatically; `useBandsFollow` keeps them in step with the ground until they're changed by hand.
+ */
+export function useUsualColour(bands: ColourBand[], water: string): [ColourSpec, (s: ColourSpec) => void, { current: ColourBand[] }] {
+  const [spec, setSpec] = useState<ColourSpec>(() => usualColour(bands, water));
+  const auto = useRef<ColourBand[]>(spec.bands);
+  return [spec, setSpec, auto];
+}
+
+/** While the bands are still the ones made automatically, they follow `usual` (the usual bands for the ground now). */
+export function useBandsFollow(spec: ColourSpec, setSpec: (s: ColourSpec) => void, auto: { current: ColourBand[] }, usual: ColourBand[]) {
+  const now = useRef(spec);
+  now.current = spec;
+  const key = JSON.stringify(usual);
+  useEffect(() => {
+    if (now.current.bands !== auto.current || JSON.stringify(auto.current) === key) return;
+    auto.current = usual;
+    setSpec({ ...now.current, bands: usual });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+}
+
 export function useColoured(
   pieces: PuzzlePiece[] | null,
   spec: ColourSpec,
