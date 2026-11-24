@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.108 — Island puzzle: the coastline from OpenStreetMap
+
+- **Land and sea now come from OpenStreetMap's coastline**, fetched by itself when an island is loaded; the heights only
+  give the ground its height. Sea lochs and bays with narrow mouths stay sea — Loch Tarbert and Small Isles Bay on Jura,
+  Lamlash Bay on Arran — instead of being filled in as land.
+- A line under the area picture says when the coastline is used, or why not (then the puzzle is made from the heights as before).
+- Tiny pools of sea too small to print are still filled, so pieces don't get pinholes.
+
 ## v0.107.0 — Mountain puzzle: print it put together
 
 - The Mountain puzzle (and the Photo relief puzzle) has a new choice under **2. Size**: how to print it.
@@ -22,14 +30,6 @@ The point in the history for each version is the commit shown (see https://githu
   printer's no-print corner and leaves the back-left corner free for the prime tower — or tick "I'll turn the prime tower
   off" to make it bigger. Each piece comes with no brim and elephant-foot compensation on, so the gaps stay open.
 - Not yet tried on a real printer: print a small test first.
-
-## v0.107 — Island puzzle: the coastline from OpenStreetMap
-
-- **Land and sea now come from OpenStreetMap's coastline**, fetched by itself when an island is loaded; the heights only
-  give the ground its height. Sea lochs and bays with narrow mouths stay sea — Loch Tarbert and Small Isles Bay on Jura,
-  Lamlash Bay on Arran — instead of being filled in as land.
-- A line under the area picture says when the coastline is used, or why not (then the puzzle is made from the heights as before).
-- Tiny pools of sea too small to print are still filled, so pieces don't get pinholes.
 
 ## v0.106.1 — Island puzzle: Arran without Holy Isle · commit `123323e`
 
