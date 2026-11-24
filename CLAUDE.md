@@ -2030,6 +2030,17 @@
   `src/app/puzzleLockState.ts` (`usePuzzleLock`, re-read each time the library opens, `syncPuzzleLock`; unlocked for the tab even
   without storage); locked, the tab shows `UnlockBox` and the search hides them (`shownTools(unlocked)`); `openMountain` opens nothing
   while locked. The maze box and burr stay under 3D printing › Puzzles. The smoke test unlocks by setting the kept hash.
+- Mountain puzzle printed put together (`src/terrain/mountainInPlace.ts`, pure; tests/mountainInPlace): the window's
+  "How it's printed" (`PrintWay` apart | layers | together; session only). "layers" = `layerPlates` (a plate per layer, the
+  whole puzzle centred so every layer sits in the same place, each piece standing on the bed); "together" = `stackWithBreakaway`
+  — each layer lifted (`liftsFor`) so its underside is on a print layer boundary (`FIRST_LAYER` 0.2 + k × the chosen layer
+  height, `boundaryAtOrAbove`) one to two print layers above the layer below; one "Breakaway layer L" piece per joint (Body part
+  "breakaway": each piece's outline less its pocket's mouth across the gap, plus a cap from the key's top to the pocket's ceiling,
+  `capLoop` = the smaller of the two less `CAP_CLEAR`) — then `togetherPlate` (heights kept). plateFiles/plate3mf/allPlatesZip take
+  `filaments` (`Filaments`; FILAMENT.breakaway 3 unless chosen; the object's extruder is its first part's). Put together the layout
+  is fitted to a centred room of the slicer's bed (keepOut: no-print corner, one-nozzle strips, and the prime tower's corner when
+  several filaments unless "I'll turn the prime tower off") and gets IN_PLACE_SETTINGS; scale ≤ 100%. Colour modes can't use
+  "together" (they print layers).
 - Mountain puzzle (a card in the Design library's Map puzzles tab — `src/library/tools.ts` `LIBRARY_TOOLS`:
   cards that open their own window instead of inserting features, found by the search via `searchTools`/`searchWords`;
   LibraryDialog's `ToolCards` — then `src/app/MountainPuzzleDialog.tsx`; `mountainState.kind` "photo" = the Photo relief

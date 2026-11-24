@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { CUSTOM_PRINTER, PRINTERS } from "../model/printBed";
+import { CUSTOM_PRINTER, PRINTERS, printerOf } from "../model/printBed";
 import { areaProblem, heightAt, readHeights, type HeightGrid } from "../terrain/elevation";
 import {
   baseFor,
@@ -30,7 +30,8 @@ import { HILL_RULE, PATH_CHOICES, ROAD_CHOICES, TIDY_MARKS, WATER_CHOICES, WATER
 import { featuresAtScale, featuresOnGrid, featureSummary, NO_FEATURES, osmArea, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail, type OsmLineKind } from "../terrain/osm";
 import { PEAKS } from "../terrain/peaks";
 import { blurred, greyFromRgba, photoGrid, photoReadSize, type PhotoPixels } from "../terrain/photoRelief";
-import { allPlatesZip, bandPlate3mf, plate3mf, platesByLevel, platesFor, type BandPartFile } from "../terrain/puzzle3mf";
+import { allPlatesZip, bandPlate3mf, bestRoom, centredRooms, FILAMENT, IN_PLACE_SETTINGS, plate3mf, platesByLevel, platesFor, towerCorner, type BandPartFile, type BedRect } from "../terrain/puzzle3mf";
+import { breakawaySwaps, LAYER_HEIGHTS, layerPlates, stackWithBreakaway, togetherPlate, type PrintWay } from "../terrain/mountainInPlace";
 import { weld, zipStored } from "../geometry/threeMf";
 import { mapOnPuzzle, mapRaster, mountainBands, NO_MAP, PLAIN_COLOUR, WATER_BLUE, type ColourSpec, type HeightScale, type PreviewMesh } from "../terrain/colour";
 import { ColourDownloads, ColourPanel, useColoured } from "./PuzzleColour";
@@ -238,11 +239,19 @@ export function MountainPuzzleDialog() {
   const [printer, setPrinter] = useState(() => loadPrinter());
   const bed = printerBed(printer);
   const [spec, setSpec] = useState<Omit<MountainSpec, "bed" | "snowline">>(() => ({ ...MOUNTAIN_DEFAULTS }));
+  // How it's printed: pieces laid out (the usual), each layer put together, or all in one go with breakaway layers.
+  const [printWay, setPrintWay] = useState<PrintWay>("apart");
+  const [layerHeight, setLayerHeight] = useState(0.2);
+  const [breakSlot, setBreakSlot] = useState(3);
+  const [towerOff, setTowerOff] = useState(false);
   const [snowOn, setSnowOn] = useState(true);
   const [snowline, setSnowline] = useState<number | null>(null);
   const [colour, setColour] = useState<ColourSpec>(PLAIN_COLOUR);
   // Colour bands and full colour bring their own snow; the photo puzzle is always plain.
   const colourOn = !photoMode && colour.mode !== "plain";
+  // The breakaway way is for one colour (or snow caps); colour bands and full colour print a layer at a time instead.
+  const way: PrintWay = printWay === "together" && colourOn ? "layers" : printWay;
+  const together = way !== "apart";
 
   const [mapLoaded, setLoaded] = useState<{ area: Area; grid: HeightGrid } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -256,16 +265,28 @@ export function MountainPuzzleDialog() {
   // The words on the border's front: null = the usual ones for this mountain.
   const [borderText, setBorderText] = useState<string | null>(null);
 
+  // Printed put together, the puzzle is sized on Bambu Studio's own bed (it centres the file there), keeps out of the
+  // printer's no-print corner and, in several filaments, leaves the back-left corner for the prime tower (unless the user
+  // turns the tower off). The layout then fills that room as it fills the bed otherwise.
+  const printerInfo = printerOf(printer.printer);
+  const placeBed: [number, number, number] = together ? (printerInfo?.slicerBed ?? bed) : bed;
+  const multi = way === "together" || colourOn || (!photoMode && snowOn);
+  const keepOut: BedRect[] = together ? [...(printerInfo?.bedExclude ?? []), ...(printerInfo?.oneNozzleOnly ?? []), ...(multi && !towerOff ? [towerCorner(placeBed)] : [])] : [];
+  const aspect: [number, number] = photoMode && photo ? [photo.pixels.width, photo.pixels.height] : mapLoaded ? [mapLoaded.area.width, mapLoaded.area.height] : [1, 1];
+  const rooms = together ? centredRooms(placeBed, keepOut) : [];
+  const room: BedRect = rooms.length ? bestRoom(rooms, aspect[0], aspect[1]) : [0, 0, placeBed[0], placeBed[1]];
+  const layoutBed: [number, number, number] = together ? [room[2] - room[0], room[3] - room[1], bed[2]] : bed;
+
   // A photo's heights depend on the puzzle's size (its relief is set in mm), so they're worked out again as that changes.
   const photoLoaded = useMemo(() => {
     if (!photoMode || !photo) return null;
     const { width: w, height: h } = photo.pixels;
     // Trimmed first, so the relief is the asked-for height on what's left; the grid keeps its place in the picture.
     const cut = cropPixels(blurred(photo.pixels, smooth), trim);
-    const made = photoGrid(cut.pixels, { ...spec, bed, snowline: null }, relief, invert);
+    const made = photoGrid(cut.pixels, { ...spec, bed: layoutBed, snowline: null }, relief, invert);
     const grid = cut.west || cut.south ? { ...made, e0: cut.west, n0: cut.south } : made;
     return { area: { sw: { e: 0, n: 0 }, width: w - 1, height: h - 1, name: photo.name }, grid, used: { grid, width: cut.pixels.width - 1, height: cut.pixels.height - 1 } };
-  }, [photoMode, photo, smooth, relief, invert, spec.cube, spec.scale, bed[0], bed[1], trim]);
+  }, [photoMode, photo, smooth, relief, invert, spec.cube, spec.scale, layoutBed[0], layoutBed[1], trim]);
   const loaded = photoMode ? photoLoaded : mapLoaded;
   // The heights the puzzle is made from: the area as loaded, less what's trimmed off each side.
   const mapUsed = useMemo(() => (mapLoaded ? cropGrid(mapLoaded.grid, mapLoaded.area.width, mapLoaded.area.height, trim) : null), [mapLoaded, trim]);
@@ -302,8 +323,8 @@ export function MountainPuzzleDialog() {
     }
   };
 
-  const fullSpec: MountainSpec = photoMode ? { ...spec, bed, exaggeration: 1, snowline: null } : { ...spec, bed, snowline: snowOn && !colourOn ? snowline : null };
-  const layout = useMemo(() => (used ? layoutFor(used.grid, used.width, used.height, { ...spec, bed, snowline: null }) : null), [used, spec, bed[0], bed[1], bed[2]]);
+  const fullSpec: MountainSpec = photoMode ? { ...spec, bed: layoutBed, exaggeration: 1, snowline: null } : { ...spec, bed: layoutBed, snowline: snowOn && !colourOn ? snowline : null };
+  const layout = useMemo(() => (used ? layoutFor(used.grid, used.width, used.height, { ...spec, bed: layoutBed, snowline: null }) : null), [used, spec, layoutBed[0], layoutBed[1], layoutBed[2]]);
   const checks = mountainChecks(fullSpec, layout ?? undefined);
 
   // Make the puzzle a moment after the last change (it takes a second or two for big ones).
@@ -331,7 +352,23 @@ export function MountainPuzzleDialog() {
 
   // Colour bands: pieces at different heights get plates of their own, so a plate changes colour on the same layers.
   const byLevel = colourOn && colour.mode === "bands";
-  const plates = useMemo(() => (puzzle ? (byLevel ? platesByLevel : platesFor)(puzzle.pieces, bed) : []), [puzzle, bed[0], bed[1], bed[2], byLevel]);
+  // Put together: a plate per layer, or everything on one plate with the breakaway layers (must fit the bed less margins).
+  const stacked = useMemo(() => (puzzle && way === "together" ? stackWithBreakaway(puzzle, layerHeight) : null), [puzzle, way, layerHeight]);
+  const placed = useMemo(
+    () => (!puzzle || !together ? null : stacked ? togetherPlate(stacked, placeBed, room) : layerPlates(puzzle.pieces, placeBed, room)),
+    [puzzle, stacked, together, placeBed[0], placeBed[1], placeBed[2], room.join(",")],
+  );
+  const plates = useMemo(
+    () => (!puzzle ? [] : placed ? (placed.fits ? placed.plates : []) : (byLevel ? platesByLevel : platesFor)(puzzle.pieces, bed)),
+    [puzzle, placed, bed[0], bed[1], bed[2], byLevel],
+  );
+  const settings = together ? IN_PLACE_SETTINGS : undefined;
+  const filaments = { ...FILAMENT, breakaway: breakSlot };
+  const slotClash = way === "together" && (breakSlot === FILAMENT.rock || (snowOn && !photoMode && breakSlot === FILAMENT.snow));
+  const chooseWay = (w: PrintWay) => {
+    setPrintWay(w);
+    if (w !== "apart") setSpec((s) => ({ ...s, scale: Math.min(s.scale, 1) }));
+  };
   // How ground heights sit in the puzzle, and the map drawn over it, for colouring.
   const scaleKey = puzzle ? [baseFor(puzzle.spec), puzzle.layout.low, puzzle.layout.k * puzzle.spec.exaggeration].join(",") : "";
   const scale: HeightScale | null = useMemo(() => (puzzle ? { z0: baseFor(puzzle.spec), h0: puzzle.layout.low, mmPerM: puzzle.layout.k * puzzle.spec.exaggeration } : null), [scaleKey]);
@@ -578,11 +615,71 @@ export function MountainPuzzleDialog() {
               {printer.printer === CUSTOM_PRINTER && <option value={CUSTOM_PRINTER}>My own size</option>}
             </select>
           </label>
+          <div className="mountain-choices" role="radiogroup" aria-label="How it's printed">
+            <label>
+              <input type="radio" name="mountain-print" checked={printWay === "apart"} onChange={() => chooseWay("apart")} /> Pieces laid out on plates
+            </label>
+            <label>
+              <input type="radio" name="mountain-print" checked={printWay === "layers"} onChange={() => chooseWay("layers")} /> Each layer put together (a plate per layer)
+            </label>
+            <label title={colourOn ? "With colour bands or full colour, each layer is printed put together instead." : undefined}>
+              <input type="radio" name="mountain-print" checked={printWay === "together"} disabled={colourOn} onChange={() => chooseWay("together")} /> All in one go, with
+              breakaway layers between
+            </label>
+          </div>
+          <p className="muted small">
+            {way === "apart"
+              ? "Pieces are laid out apart on as many plates as they need."
+              : way === "layers"
+                ? "Each layer prints on its own plate with every piece where it sits, so it comes off the bed as a ready-made jigsaw: print them in order and stack them. Only the side gaps keep the pieces apart, so print a small test first; if pieces come off stuck together, raise the fit gap."
+                : "The whole mountain prints in one go, put together. Between each layer the printer lays a thin layer of breakaway support filament (Bambu's Support for PLA) that doesn't stick to PLA, and fills each key's pocket with it, so the layers lift apart afterwards. Print a small test first."}
+            {printWay === "together" && colourOn && " With colour bands or full colour, each layer is printed put together instead."}
+          </p>
+          {way === "together" && (
+            <>
+              <label className="mountain-row">
+                <span>Layer height</span>
+                <span>
+                  <select value={layerHeight} onChange={(e) => setLayerHeight(Number(e.target.value))}>
+                    {LAYER_HEIGHTS.map((h) => (
+                      <option key={h} value={h}>
+                        {h.toFixed(2)} mm
+                      </option>
+                    ))}
+                  </select>
+                  <span className="muted small"> slice with this, so the breakaway layers line up with the print's own</span>
+                </span>
+              </label>
+              <label className="mountain-row">
+                <span>Breakaway filament</span>
+                <span>
+                  <select value={breakSlot} onChange={(e) => setBreakSlot(Number(e.target.value))}>
+                    {Array.from({ length: Math.max(4, amsSlotsOf(printer)) }, (_, i) => i + 1).map((n) => (
+                      <option key={n} value={n}>
+                        Filament {n}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="muted small"> load Support for PLA here</span>
+                </span>
+              </label>
+              {slotClash && <p className="error-text small">That filament is already the puzzle's {breakSlot === FILAMENT.rock ? "rock" : "snow"} — choose another for the breakaway layers.</p>}
+            </>
+          )}
+          {together && multi && (
+            <label className="mountain-check">
+              <input type="checkbox" checked={towerOff} onChange={(e) => setTowerOff(e.target.checked)} /> I'll turn the prime tower off in Bambu Studio (the puzzle can then be bigger)
+            </label>
+          )}
           <div className="mountain-row">
             <span>Scale</span>
             <span>
-              {numberBox(Math.round(spec.scale * 100), (v) => set("scale", v / 100), 10, 20, 1000, "%")}
-              <span className="muted small"> 100% = the finished puzzle covers the bed ({bed[0]} × {bed[1]} mm)</span>
+              {numberBox(Math.round(spec.scale * 100), (v) => set("scale", v / 100), 10, 20, together ? 100 : 1000, "%")}
+              <span className="muted small">
+                {together
+                  ? ` 100% = the finished puzzle fills the bed (${placeBed[0]} × ${placeBed[1]} mm, less 5 mm round the edge${keepOut.length ? ", the parts kept free" : ""}${multi && !towerOff ? " and the back-left corner for the prime tower" : ""}), in the middle, where Bambu Studio puts it; it can't be bigger`
+                  : ` 100% = the finished puzzle covers the bed (${bed[0]} × ${bed[1]} mm)`}
+              </span>
             </span>
           </div>
           {loaded && (
@@ -778,10 +875,25 @@ export function MountainPuzzleDialog() {
               )}
               {colourOn && colouring && <p className="muted small">Colouring the pieces…</p>}
               {colourOn && colourError && <p className="error-text small">{colourError}</p>}
-              {colourOn && puzzle && coloured && scale && plates.length > 0 && (
-                <ColourDownloads spec={colour} coloured={coloured} plates={plates} scale={scale} map={paintMap} fileName={fileName} bedWidth={bed[0]} />
+              {placed && !placed.fits && (
+                <p className="error-text small">
+                  Put together it's {Math.round(placed.size[0])} × {Math.round(placed.size[1])} mm, which doesn't fit the bed in one piece. Lower the scale.
+                </p>
               )}
-              {!colourOn && puzzle && plates.length > 0 && (
+              {puzzle && placed?.fits && (
+                <p className="muted small">
+                  {way === "layers"
+                    ? `${plates.length} plates, one per layer: plate 1 is the bottom layer. Print them in order and stack each on the one before.`
+                    : `One plate, ${Math.round(stacked!.height)} mm tall. Slice with ${layerHeight.toFixed(2)} mm layers (the first layer 0.20 mm) and supports off — the breakaway layers are already in the file, on filament ${breakSlot}. About ${breakawaySwaps(stacked!, layerHeight, puzzle.keys)} filament changes for them.`}{" "}
+                  Each piece has no brim and elephant-foot compensation on, so the first layer doesn't close the gaps; don't press Arrange in Bambu Studio.
+                  {multi && !towerOff && " For several filaments Bambu Studio adds a prime tower at the back left, which is kept free for it."}
+                  {multi && towerOff && " Turn the prime tower off in Bambu Studio (Others › Prime tower) before slicing."}
+                </p>
+              )}
+              {colourOn && puzzle && coloured && scale && plates.length > 0 && (
+                <ColourDownloads spec={colour} coloured={coloured} plates={plates} scale={scale} map={paintMap} fileName={fileName} bedWidth={bed[0]} settings={settings} />
+              )}
+              {!colourOn && puzzle && plates.length > 0 && !slotClash && (
                 <div className="mountain-downloads">
                   <span className="small">
                     {plates.length} {plates.length === 1 ? "plate" : "plates"} for Bambu Studio:
@@ -790,13 +902,13 @@ export function MountainPuzzleDialog() {
                     <button
                       key={i}
                       className="text-button"
-                      onClick={() => downloadFile(blobOf(plate3mf(p, `${fileName} - plate ${i + 1}`), "model/3mf"), `${fileName} - plate ${i + 1} of ${plates.length}.3mf`)}
+                      onClick={() => downloadFile(blobOf(plate3mf(p, `${fileName} - plate ${i + 1}`, settings, filaments), "model/3mf"), `${fileName} - plate ${i + 1} of ${plates.length}.3mf`)}
                       title={p.pieces.map((x) => x.piece.name).join(", ")}
                     >
-                      Plate {i + 1} ({p.pieces.length})
+                      {way === "layers" ? `Layer ${i + 1}` : `Plate ${i + 1}`} ({p.pieces.filter((x) => x.piece.col >= 0).length})
                     </button>
                   ))}
-                  <button className="primary-button" onClick={() => downloadFile(blobOf(allPlatesZip(plates, fileName), "application/zip"), `${fileName}.zip`)}>
+                  <button className="primary-button" onClick={() => downloadFile(blobOf(allPlatesZip(plates, fileName, settings, filaments), "application/zip"), `${fileName}.zip`)}>
                     All plates (.zip)
                   </button>
                 </div>

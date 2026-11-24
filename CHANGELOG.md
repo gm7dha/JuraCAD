@@ -8,7 +8,22 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
-## v0.106.1 — Island puzzle: Arran without Holy Isle
+## v0.107.0 — Mountain puzzle: print it put together
+
+- The Mountain puzzle (and the Photo relief puzzle) has a new choice under **2. Size**: how to print it.
+  - **Pieces laid out on plates** — as before.
+  - **Each layer put together** — a plate per layer, every piece where it sits in the finished puzzle, so each layer
+    comes off the bed as a ready-made jigsaw. Print them in order and stack them. Works with snow caps and colour too.
+  - **All in one go, with breakaway layers** — the whole mountain on one plate, put together. Between each layer the
+    printer lays a thin layer of breakaway support filament (Bambu's Support for PLA, in a spare AMS slot you choose), and
+    fills each key's pocket with it, so the layers lift apart afterwards. Choose the layer height you'll slice with, so
+    the breakaway layers line up with the print's own. For one colour or snow caps (not colour bands or full colour).
+- Printed put together, the puzzle is sized to the middle of the bed (where Bambu Studio puts it), keeps out of the
+  printer's no-print corner and leaves the back-left corner free for the prime tower — or tick "I'll turn the prime tower
+  off" to make it bigger. Each piece comes with no brim and elephant-foot compensation on, so the gaps stay open.
+- Not yet tried on a real printer: print a small test first.
+
+## v0.106.1 — Island puzzle: Arran without Holy Isle · commit `123323e`
 
 - **Isle of Arran** now keeps only the main island: Holy Isle and Pladda are cut away, and Lamlash Bay stays sea
   instead of being filled in as land.
