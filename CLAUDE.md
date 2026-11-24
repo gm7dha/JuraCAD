@@ -2009,7 +2009,15 @@
   none given = byte for byte as before. `IslandPuzzle.coastline` when used. Dialog: `coastQuery` (Overpass, area + 2 km,
   ≤ `COAST_MOST` 130 km) fetched automatically once heights load (module `coastCache` by area; a map-file area uses the
   file's coastline), the build waits for it (≤ `COAST_WAIT_MS` 60 s, then the heights); a line under the area view says "Coastline from OpenStreetMap…" / failed /
-  none. Lochs inland aren't coastline (land, at their heights). Tests: tests/coastline (pure + a Jura-like loch, a pool filled, a height gap), coastlineReal (wiggly coasts crossing
+  none. Judged ONCE on the whole area loaded: `coastFits(grid, sw, w, h, coast)` (~1000 cells a side; landByCoast's `trusted`
+  skips coastAgrees after that) → makeIslandPuzzle's `coastOk` (missing = judged on its own area), trimmedIsland's
+  `rule.coastOk`, the worker's `coastOk` — put together (cut down to the island) re-judged on its own box used to fail
+  (the island's blurred shore alone > 10%) and went back to the heights' shape. Fetches go through pure
+  `src/terrain/overpass.ts` `askOverpass` (OVERPASS_SERVERS overpass-api.de then overpass.kumi.systems, OVERPASS_TRIES
+  de → kumi after 1 s → de after 3 s, `tryLimit` per try, the caller's signal for the whole; busy/unreachable/timed-out
+  answers tried again, 400 and out of memory not) — coast (25 s a try, 60 s in all), boundaries and marks (40/90 s);
+  failures are never cached and the note offers "Try again" (`coastTry`); the note says COAST_UNUSED when the puzzle
+  didn't use it. Tests: tests/overpass. Lochs inland aren't coastline (land, at their heights). Tests: tests/coastline (pure + a Jura-like loch, a pool filled, a height gap), coastlineReal (wiggly coasts crossing
   the box's sides/corners exactly, ways shuffled, doubled points, islands touching the edge, every cell vs the true land).
   Plugs and pinholes (v0.75): a hole in a piece's outline is given to it whole — thin cells of others, a bit of another
   piece cut off from its body (`mainBody`), sea that isn't kept (`FilledHoles.keptCells`), a pinhole — unless it's kept
