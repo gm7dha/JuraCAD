@@ -73,10 +73,14 @@ const browserAsk = (tryLimit: number, signal?: AbortSignal, retrying?: (attempt:
   sleep: (ms) =>
     new Promise<void>((done) => {
       const t = setTimeout(done, ms);
-      signal?.addEventListener("abort", () => {
-        clearTimeout(t);
-        done();
-      });
+      signal?.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(t);
+          done();
+        },
+        { once: true },
+      );
     }),
   ...(signal ? { signal } : {}),
   ...(retrying ? { retrying } : {}),
@@ -100,7 +104,7 @@ async function overpassMap(query: string, what: string): Promise<OsmData> {
 /** How long (ms) the puzzle waits for the coastline before it's made from the heights alone. */
 const COAST_WAIT_MS = 60_000;
 /** One try at the coastline before the other server is asked (see overpass.ts). */
-const COAST_TRY_MS = 25_000;
+const COAST_TRY_MS = 35_000;
 
 /** Coastlines fetched this session, by area: fetched once, used again when the same island is loaded again. */
 const coastCache = new Map<string, Coast>();
@@ -539,7 +543,9 @@ export function IslandPuzzleDialog() {
                     ? `${coastState.message} For now the heights decide where the sea is (narrow sea lochs may come out filled in). `
                     : !coast
                       ? "No coastline here on OpenStreetMap, so the heights decide where the sea is."
-                      : working || !puzzle
+                      : coastOk === false
+                        ? COAST_UNUSED
+                        : working || !puzzle
                         ? `Coastline from OpenStreetMap${coastState?.status === "ready" && coastState.from === "file" ? " (your map file)" : ""}${working ? ": the puzzle is being made with it…" : "."}`
                         : puzzle.coastline
                           ? `Coastline from OpenStreetMap${coastState?.status === "ready" && coastState.from === "file" ? " (your map file)" : ""}: it decides where the sea is, so sea lochs and narrow straits stay open${spec.inPlace ? " — printed put together too" : ""}.`

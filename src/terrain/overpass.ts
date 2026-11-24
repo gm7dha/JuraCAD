@@ -59,7 +59,7 @@ export interface OverpassAsk {
   retrying?: (attempt: number) => void;
   tries?: { server: number; wait: number }[];
   servers?: string[];
-  /** The longest (ms) one try may take before the next server is asked (missing: no limit but `signal`). */
+  /** The longest (ms) one try may take before the next server is asked (missing: no limit but `signal`; the last try has only `signal`'s). */
   tryLimit?: number;
 }
 
@@ -82,7 +82,7 @@ export async function askOverpass(query: string, what: string, ask: OverpassAsk)
     ask.signal?.addEventListener("abort", stopOne);
     let slow = false;
     const timer =
-      ask.tryLimit !== undefined
+      ask.tryLimit !== undefined && t + 1 < tries.length
         ? setTimeout(() => {
             slow = true;
             one.abort();

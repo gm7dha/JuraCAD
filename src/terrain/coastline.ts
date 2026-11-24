@@ -298,19 +298,72 @@ export function coastMask(ways: XY[][], sw: GridPoint, cellM: number, nx: number
 /** Height (m) above which ground is certainly land, for checking the coastline against the heights. */
 const SURE_LAND = 20;
 
+/** Ground this close (m) to the coastline isn't used to judge it: height tiles blur a steep shore out into the sea. */
+export const SHORE_BLUR = 150;
+
 /**
  * Does the coastline agree with the heights? Of the cells the heights put well above the sea, at most a tenth may be
- * sea by the coastline (a coastline the wrong way round, or for somewhere else, would make most of them sea).
+ * sea by the coastline (a coastline the wrong way round, or for somewhere else, would make most of them sea). Given the
+ * grid (`grid`: cells across, up and their size in m), cells within SHORE_BLUR of the coastline (where the mask changes)
+ * aren't counted — a small island with sheer cliffs (Ailsa Craig) would otherwise be judged by its blurred shore alone;
+ * if every high cell is that close, at most half of them may be sea.
  */
-export function coastAgrees(mask: Uint8Array, heightOf: (c: number) => number): boolean {
+export function coastAgrees(mask: Uint8Array, heightOf: (c: number) => number, grid?: { nx: number; ny: number; cellM: number }): boolean {
+  const near = grid ? nearCoast(mask, grid.nx, grid.ny, Math.max(1, Math.ceil(SHORE_BLUR / grid.cellM))) : null;
   let high = 0;
   let wet = 0;
+  let farHigh = 0;
+  let farWet = 0;
   for (let c = 0; c < mask.length; c++)
     if (heightOf(c) > SURE_LAND) {
       high++;
       if (!mask[c]) wet++;
+      if (near && near[c]) continue;
+      farHigh++;
+      if (!mask[c]) farWet++;
     }
-  return high === 0 || wet <= 0.1 * high;
+  if (!near) return high === 0 || wet <= 0.1 * high;
+  return farHigh > 0 ? farWet <= 0.1 * farHigh : high === 0 || wet <= 0.5 * high;
+}
+
+/** Cells within `r` cells (chessboard) of a cell where the mask changes from land to sea (1 = near). */
+function nearCoast(mask: Uint8Array, nx: number, ny: number, r: number): Uint8Array {
+  const BIG = 1 << 20;
+  const d = new Int32Array(nx * ny).fill(BIG);
+  for (let j = 0; j < ny; j++)
+    for (let i = 0; i < nx; i++) {
+      const c = j * nx + i;
+      const m = mask[c];
+      if ((i > 0 && mask[c - 1] !== m) || (i + 1 < nx && mask[c + 1] !== m) || (j > 0 && mask[c - nx] !== m) || (j + 1 < ny && mask[c + nx] !== m)) d[c] = 0;
+    }
+  // Two passes of a chessboard distance transform.
+  for (let j = 0; j < ny; j++)
+    for (let i = 0; i < nx; i++) {
+      const c = j * nx + i;
+      let v = d[c];
+      if (i > 0) v = Math.min(v, d[c - 1] + 1);
+      if (j > 0) {
+        v = Math.min(v, d[c - nx] + 1);
+        if (i > 0) v = Math.min(v, d[c - nx - 1] + 1);
+        if (i + 1 < nx) v = Math.min(v, d[c - nx + 1] + 1);
+      }
+      d[c] = v;
+    }
+  for (let j = ny - 1; j >= 0; j--)
+    for (let i = nx - 1; i >= 0; i--) {
+      const c = j * nx + i;
+      let v = d[c];
+      if (i + 1 < nx) v = Math.min(v, d[c + 1] + 1);
+      if (j + 1 < ny) {
+        v = Math.min(v, d[c + nx] + 1);
+        if (i + 1 < nx) v = Math.min(v, d[c + nx + 1] + 1);
+        if (i > 0) v = Math.min(v, d[c + nx - 1] + 1);
+      }
+      d[c] = v;
+    }
+  const near = new Uint8Array(nx * ny);
+  for (let c = 0; c < near.length; c++) if (d[c] <= r) near[c] = 1;
+  return near;
 }
 
 /** A height the land left out of a trimmed island is lowered to when the coastline decides the land (see trimmedIsland). */

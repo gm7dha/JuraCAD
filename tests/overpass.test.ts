@@ -98,3 +98,28 @@ describe("a server that doesn't answer", () => {
     expect(asked).toEqual([OVERPASS_SERVERS[0], OVERPASS_SERVERS[1]]);
   });
 });
+
+describe("the last try", () => {
+  it("isn't cut short by the time one try may take (only the whole ask's limit stops it)", async () => {
+    const asked: string[] = [];
+    const ask: OverpassAsk = {
+      fetch: (url, init) => {
+        asked.push(url);
+        if (asked.length < 3) return Promise.resolve({ status: 504, text: async () => "" });
+        // Slower than tryLimit, but it gets there.
+        return new Promise((done, fail) => {
+          const t = setTimeout(() => done({ status: 200, text: async () => MAP }), 80);
+          init.signal.addEventListener("abort", () => {
+            clearTimeout(t);
+            fail(new Error("aborted"));
+          });
+        });
+      },
+      sleep: async () => {},
+      tryLimit: 20,
+    };
+    const d = await askOverpass("q", "coastline", ask);
+    expect(d.coastline?.length).toBe(1);
+    expect(asked.length).toBe(3);
+  });
+});

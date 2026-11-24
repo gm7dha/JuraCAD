@@ -535,7 +535,7 @@ export function landByCoast(
   trusted = false,
 ): Uint8Array | null {
   const mask = coastMask(coast, sw, cellM, nx, ny);
-  if (!mask || (!trusted && !coastAgrees(mask, heightOf))) return null;
+  if (!mask || (!trusted && !coastAgrees(mask, heightOf, { nx, ny, cellM }))) return null;
   for (let c = 0; c < mask.length; c++) if (mask[c] && heightOf(c) < LEFT_OUT_BELOW) mask[c] = 0;
   return mask;
 }
