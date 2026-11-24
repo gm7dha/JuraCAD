@@ -10,6 +10,7 @@ import {
   colourProblems,
   colourWarnings,
   filaments,
+  followedBands,
   islandBands,
   ISLAND_COLOURS,
   mapOnPuzzle,
@@ -21,7 +22,8 @@ import {
   ROAD_BLACK,
   SEA_BLUE,
   SPARE_COLOURS,
-  usualBandCount,
+  GROUND_BROWN,
+  usualColour,
   WATER_BLUE,
   type ColourSpec,
   type HeightScale,
@@ -30,6 +32,7 @@ import { allItems, bandPlateFile, bandPuzzle, colour3mfModel, colourPuzzle } fro
 import { gridFrom } from "../src/terrain/elevation";
 import { ISLAND_DEFAULTS, makeIslandPuzzle } from "../src/terrain/islandPuzzle";
 import { platesFor } from "../src/terrain/puzzle3mf";
+import { amsSlotsOf } from "../src/app/printerSetting";
 
 const BED: [number, number, number] = [256, 256, 256];
 const IW = 6000;
@@ -99,16 +102,17 @@ describe("Bambu Lab's PLA colours", () => {
   it("make up the usual colour sets, so the preview looks like the print", () => {
     const ours = new Set(BAMBU_COLOURS.map((c) => c.hex));
     for (const hex of [SEA_BLUE, WATER_BLUE, PATH_RED, ROAD_BLACK, ...SPARE_COLOURS, ...ISLAND_COLOURS.map((c) => c[1]), ...MOUNTAIN_COLOURS.map((c) => c[1])]) expect(ours.has(hex), hex).toBe(true);
-    for (const n of [4, 5, 6]) {
-      for (const b of islandBands(500, n)) expect(ours.has(b.colour), `island ${n}: ${b.name}`).toBe(true);
-      for (const b of mountainBands(200, 1200, 1000, n)) expect(ours.has(b.colour), `mountain ${n}: ${b.name}`).toBe(true);
-    }
+    for (const b of islandBands(500)) expect(ours.has(b.colour), `island: ${b.name}`).toBe(true);
+    for (const b of mountainBands(200, 1200, 1000)) expect(ours.has(b.colour), `mountain: ${b.name}`).toBe(true);
+    expect(ours.has(GROUND_BROWN)).toBe(true);
+    // Spare colours aren't the usual ones (so "+ Add a band" offers something new).
+    for (const hex of SPARE_COLOURS) expect([GROUND_BROWN, ...ISLAND_COLOURS.map((c) => c[1])]).not.toContain(hex);
   });
   it("name the spools in the filament list", () => {
     const spec: ColourSpec = { mode: "bands", bands: islandBands(500), base: SEA_BLUE, water: SEA_BLUE, layer: 0.2 };
     const fs = filaments(spec);
     expect(fs[0].spool).toBe("Marine Blue (PLA Matte)");
-    expect(fs[1].spool).toBe("Desert Tan (PLA Matte)");
+    expect(fs[1].spool).toBe("Dark Green (PLA Matte)");
     // A spool picked where two share a colour; your own colour has none.
     const black = filaments({ ...spec, bands: [...spec.bands, { name: "Peat", colour: "#000000", from: 450 }], spools: { "#000000": "11101" } });
     expect(black.find((f) => f.colour === "#000000")!.spool).toBe("Charcoal (PLA Matte)");
@@ -117,26 +121,33 @@ describe("Bambu Lab's PLA colours", () => {
 });
 
 describe("Eight filaments", () => {
-  it("offer more usual bands with two AMS units, as many as fit beside the base, water, paths and roads", () => {
-    expect(usualBandCount(4, 3)).toBe(4);
-    expect(usualBandCount(8, 3)).toBe(5);
-    expect(usualBandCount(8, 1)).toBe(6);
-    expect(usualBandCount(8, 0)).toBe(6);
-    expect(islandBands(500, 5).map((b) => b.name)).toEqual(["Sand", "Lowland green", "Green", "Brown", "Grey"]);
-    expect(islandBands(500, 6).map((b) => b.name)).toEqual(["Sand", "Lowland green", "Green", "Olive", "Brown", "Grey"]);
-    // The four of one AMS are as before.
-    expect(islandBands(500, 4).map((b) => [b.name, b.from])).toEqual(islandBands(500).map((b) => [b.name, b.from]));
-    const m6 = mountainBands(200, 1200, 1000, 6);
-    expect(m6.map((b) => b.name)).toEqual(["Lowland green", "Green", "Brown", "Grey rock", "Scree", "Snow"]);
-    expect(m6[m6.length - 1]).toMatchObject({ from: 1000, snow: true });
-    for (const n of [5, 6]) {
-      const b = islandBands(500, n);
-      for (let i = 1; i < b.length; i++) expect(b[i].from).toBeGreaterThan(b[i - 1].from);
-    }
+  it("start with the owner's colours: Dark Brown ground, Lowland Dark Green, Upland Nardo Grey, Snow Ivory White", () => {
+    const usual = usualColour(islandBands(500), SEA_BLUE);
+    expect(usual.mode).toBe("bands");
+    expect(usual.bands.map((b) => [b.name, b.from])).toEqual([["Lowland", 0], ["Upland", 230], ["Snow", 380]]);
+    const fs = filaments(usual, raster);
+    expect(fs.map((f) => [f.uses.join("+"), f.spool])).toEqual([
+      ["Base", "Dark Brown (PLA Matte)"],
+      ["Lowland", "Dark Green (PLA Matte)"],
+      ["Upland", "Nardo Gray (PLA Matte)"],
+      ["Snow", "Ivory White (PLA Matte)"],
+      ["Water", "Marine Blue (PLA Matte)"],
+      ["Paths", "Red (PLA Basic)"],
+      ["Roads", "Black (PLA Basic)"],
+    ]);
+    // Seven filaments: nothing to warn about with eight slots, the usual now.
+    expect(colourWarnings(usual, raster, null, 8)).toEqual([]);
+    expect(colourWarnings(usual, raster, null, 4).join(" ")).toMatch(/7 filaments, and one AMS holds 4/);
+    const m = mountainBands(200, 1200, 1000);
+    expect(m.map((b) => [b.name, b.from])).toEqual([["Lowland", 200], ["Upland", 500], ["Snow", 1000]]);
+    expect(m[2]).toMatchObject({ snow: true });
+    expect(filaments(usualColour(m, WATER_BLUE), true).map((f) => f.colour)).toEqual([GROUND_BROWN, ...m.map((b) => b.colour), WATER_BLUE, PATH_RED, ROAD_BLACK]);
   });
 
-  const spec: ColourSpec = { mode: "bands", bands: islandBands(island.high, usualBandCount(8, 3)), base: SEA_BLUE, water: SEA_BLUE, paths: PATH_RED, roads: ROAD_BLACK, layer: 0.2 };
-  it("fit in eight: five bands, sea blue, red paths and black roads — warned about with one AMS only", () => {
+  // The usual colours plus a sand band at the coast: eight filaments.
+  const usual = usualColour(islandBands(island.high), SEA_BLUE);
+  const spec: ColourSpec = { ...usual, bands: [usual.bands[0], { name: "Grass", colour: bambu("PLA Matte", "Grass Green"), from: Math.round(island.high * 0.2) }, ...usual.bands.slice(1)] };
+  it("fit in eight: four bands, brown ground, sea blue, red paths and black roads — warned about with one AMS only", () => {
     expect(raster.paths && raster.roads && raster.water).toBe(true);
     const fs = filaments(spec, raster);
     expect(fs.length).toBe(MOST_FILAMENTS);
@@ -176,5 +187,27 @@ describe("Eight filaments", () => {
     const colours = [...model.matchAll(/<m:color color="#([0-9A-F]{6})"\/>/g)].map((m) => [0, 2, 4].map((k) => parseInt(m[1].slice(k, k + 2), 16)));
     expect(colours.some(([r, g, b]) => r > 120 && g < 70 && b < 70)).toBe(true);
     expect(colours.some(([r, g, b]) => Math.max(r, g, b) < 40)).toBe(true);
+  });
+});
+
+describe("The usual bands follow the ground", () => {
+  it("while they're still the usual ones, never once changed by hand", () => {
+    const first = islandBands(500);
+    const later = islandBands(900);
+    // Untouched: the new ground's bands.
+    expect(followedBands(first, first, later)).toBe(later);
+    // The same ground again (a rebuild): nothing to do.
+    expect(followedBands(first, first, islandBands(500))).toBeNull();
+    // Changed by hand (a height or a colour): left alone.
+    expect(followedBands([first[0], { ...first[1], from: 300 }, first[2]], first, later)).toBeNull();
+    expect(followedBands([first[0], first[1], { ...first[2], colour: "#123456" }], first, later)).toBeNull();
+    // Put back with "Usual colours and heights" (a new array, the same bands): they follow again.
+    expect(followedBands(islandBands(500), first, later)).toBe(later);
+  });
+  it("8 filament slots unless 4 were chosen, on every printer", () => {
+    expect(amsSlotsOf({ printer: "bambu-a1-mini" })).toBe(8);
+    expect(amsSlotsOf({ printer: "bambu-x2d" })).toBe(8);
+    expect(amsSlotsOf({ printer: "bambu-x2d", amsSlots: 4 })).toBe(4);
+    expect(amsSlotsOf({ printer: "bambu-p1s", amsSlots: 4 })).toBe(4);
   });
 });

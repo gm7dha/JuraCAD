@@ -2192,10 +2192,14 @@
   "bands" | "full", 2–8 `ColourBand`s (name, colour, `from` m — the first's ignored; `snow` marks the mountain's top band), `base`
   (the side under the ground in its own colour), `water`, `layer` (0.2). Plain = exactly the old files (`plate3mf` untouched; its
   hash is pinned in tests/puzzleColour). In bands/full the mountain is built with `snowline: null` (the snow band replaces it).
-  `HeightScale` (z = z0 + (h − h0)·mmPerM: island base / 0 / relief÷high; mountain `baseFor` / low / k·exaggeration). Defaults
-  `islandBands` (sand, green, brown, grey at fractions of the highest — olive is the first spare; base and water `SEA_BLUE`, one
-  filament, so five in all) and
-  `mountainBands` (green, brown, grey rock, snow at the snow line). Bands: `bandLevels` (with a base colour, levels clamped to ≥ z0;
+  `HeightScale` (z = z0 + (h − h0)·mmPerM: island base / 0 / relief÷high; mountain `baseFor` / low / k·exaggeration). Defaults (the owner's choice, all PLA Matte): base
+  `GROUND_BROWN` Dark Brown, bands Lowland `LOWLAND_GREEN` Dark Green, Upland `UPLAND_GREY` Nardo Gray, Snow `SNOW_IVORY` Ivory
+  White (`USUAL_SPOOLS` names its spool, as Jade White shares #ffffff) — `islandBands(high)` (Upland 0.45, Snow 0.75 of the
+  highest) and `mountainBands(low, high, snowline)` (Upland 0.3 of the range, Snow from the snow line, `snow: true`). Both
+  windows START in colour bands: `usualColour(bands, water)` (+ water — island SEA_BLUE, mountain WATER_BLUE —, red paths,
+  black roads: 7 filaments) via `useUsualColour`; `useBandsFollow` keeps the bands following the ground as it loads until
+  they're changed by hand (pure `followedBands`: still equal to the last usual set — so "Usual colours and heights", which puts the
+  bands and base back, starts the following again; the island's from its last built `high`, the mountain's from `layout`). Bands: `bandLevels` (with a base colour, levels clamped to ≥ z0;
   sorted lowest first, stably) → per piece `snappedCuts` (sorted again; each edge on a layer boundary of the piece AS PRINTED, from its
   own z0: `firstLayer` then every `layer`; edges on the bed dropped; same layer → the later band wins) → `sliceMesh`
   (weld, planes moved ≥ `PLANE_CLEAR` 1e-4 off every corner to the nearest free height, each triangle clipped to each slab with
@@ -2244,9 +2248,9 @@
   Bambu PLA (SEA_BLUE Matte Marine Blue, WATER_BLUE Basic Cyan, PATH_RED Basic Red, ROAD_BLACK Basic Black, ISLAND_/MOUNTAIN_COLOURS,
   SPARE_COLOURS). `ColourSpec.spools` (hex → code, where two spools share a colour) → `Filament.spool` ("Charcoal (PLA Matte)"),
   shown in the Load list. `src/app/SpoolPick.tsx` (PlacedPopup of named swatches + your own colour) for every band, base, water,
-  paths, roads. Filament slots 4/8: `PrinterSetting.amsSlots` (`amsSlotsOf`: missing = 8 on the X2D, else 4; panel row "Filament
-  slots"), `colourWarnings(…, slots)`, `usualBandCount(slots, others)` = 4, or up to 6 beside the base/water/paths/roads;
-  `islandBands(high, n)` / `mountainBands(…, n)` (5: + lowland green; 6: + olive / scree). Modal ignores Esc while a
+  paths, roads. Filament slots 4/8: `PrinterSetting.amsSlots` (`amsSlotsOf`: missing = 8 on every printer; panel row "Filament
+  slots"), `colourWarnings(…, slots)`; the usual bands are always the three above (the old 5/6-band sets and
+  `usualBandCount` are gone). Modal ignores Esc while a
   `[data-keeps-escape]` element is up (the spool popup, the enlarged 3D view). `Mountain3D` is taller (clamp 380 px–62vh) with
   "⤢ Enlarge" (fixed, inset 12 px; Esc or the button back); puzzle windows 1280 wide. `fullColours` pushes corners one by one
   (a spread overflowed the stack on big pieces). Tests: tests/puzzleColour8 (8 filaments in the 3MF, paint codes 4C/5C, spools).

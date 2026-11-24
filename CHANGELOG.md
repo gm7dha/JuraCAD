@@ -8,6 +8,15 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.109 — Map puzzles start in colour, with your filaments
+
+- **Island and Mountain puzzles open in colour bands**, set for **8 filament slots** on every printer (a 4-slot
+  setting you chose is kept).
+- **The usual colours** (Bambu PLA Matte): ground (base and sides) Dark Brown, Lowland Dark Green, Upland Nardo Grey,
+  Snow Ivory White; water blue, paths red, roads black — 7 filaments in all.
+- The bands follow the ground when an area loads; bands you change stay as you set them, and "Usual colours and heights"
+  puts these back.
+
 ## v0.108 — Island puzzle: the coastline from OpenStreetMap
 
 - **Land and sea now come from OpenStreetMap's coastline**, fetched by itself when an island is loaded; the heights only

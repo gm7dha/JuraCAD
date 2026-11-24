@@ -33,8 +33,8 @@ import { blurred, greyFromRgba, photoGrid, photoReadSize, type PhotoPixels } fro
 import { allPlatesZip, bandPlate3mf, bestRoom, centredRooms, FILAMENT, IN_PLACE_SETTINGS, plate3mf, platesByLevel, platesFor, towerCorner, type BandPartFile, type BedRect } from "../terrain/puzzle3mf";
 import { breakawaySwaps, LAYER_HEIGHTS, layerPlates, stackWithBreakaway, togetherPlate, type PrintWay } from "../terrain/mountainInPlace";
 import { weld, zipStored } from "../geometry/threeMf";
-import { mapOnPuzzle, mapRaster, mountainBands, NO_MAP, PLAIN_COLOUR, WATER_BLUE, type ColourSpec, type HeightScale, type PreviewMesh } from "../terrain/colour";
-import { ColourDownloads, ColourPanel, useColoured } from "./PuzzleColour";
+import { GROUND_BROWN, mapOnPuzzle, mapRaster, mountainBands, NO_MAP, WATER_BLUE, type HeightScale, type PreviewMesh } from "../terrain/colour";
+import { ColourDownloads, ColourPanel, useBandsFollow, useColoured, useUsualColour } from "./PuzzleColour";
 import { downloadFile, safeFileName } from "./download";
 import { Modal } from "./Modal";
 import { openMountain, useMountain } from "./mountainState";
@@ -246,7 +246,8 @@ export function MountainPuzzleDialog() {
   const [towerOff, setTowerOff] = useState(false);
   const [snowOn, setSnowOn] = useState(true);
   const [snowline, setSnowline] = useState<number | null>(null);
-  const [colour, setColour] = useState<ColourSpec>(PLAIN_COLOUR);
+  // Colour bands with the usual colours to start with (the owner's wish); the bands follow the ground until changed.
+  const [colour, setColour, autoBands] = useUsualColour(mountainBands(0, 1000), WATER_BLUE);
   // Colour bands and full colour bring their own snow; the photo puzzle is always plain.
   const colourOn = !photoMode && colour.mode !== "plain";
   // The breakaway way is for one colour (or snow caps); colour bands and full colour print a layer at a time instead.
@@ -376,7 +377,9 @@ export function MountainPuzzleDialog() {
   const mapSize: [number, number] = puzzle ? [puzzle.layout.cols * puzzle.spec.cube, puzzle.layout.rows * puzzle.spec.cube] : [1, 1];
   const paintMap = useMemo(() => mapRaster(puzzleMap, mapSize[0], mapSize[1]), [puzzleMap]);
   const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap);
-  const usualBands = (n = 4) => (puzzle ? mountainBands(puzzle.layout.low, puzzle.layout.high, snowline, n) : mountainBands(0, 1000, snowline, n));
+  // From the layout (worked out before the puzzle is made, and kept while it's remade), so the bands don't jump.
+  const usualBands = () => (layout ? mountainBands(layout.low, layout.high, snowline) : mountainBands(0, 1000, snowline));
+  useBandsFollow(colour, setColour, autoBands, usualBands());
   const fileName = safeFileName(`${loaded?.area.name ?? "Mountain"} puzzle`, "Mountain puzzle");
   // The frame round the finished puzzle: its words are the mountain's name, height, grid reference and scale unless typed.
   const usualWords = useMemo(() => {
@@ -736,7 +739,7 @@ export function MountainPuzzleDialog() {
             usual={usualBands}
             slots={amsSlotsOf(printer)}
             setSlots={(n) => setPrinter(savePrinter({ amsSlots: n }))}
-            usualBase={null}
+            usualBase={GROUND_BROWN}
             usualWater={WATER_BLUE}
             has={paintMap}
             roadsAsked={detail === "all"}
