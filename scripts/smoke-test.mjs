@@ -204,6 +204,23 @@ try {
     annotate(spare < 40 ? "warning" : "notice", "Toolbar room", `${toolbarReport} (${sizes[1]} px wide)`);
   }
 
+  step = "every top-bar button is on screen at laptop and tablet widths";
+  for (const width of [1024, 1100, 1180, 1280, 1366]) {
+    await page.setViewportSize({ width, height: 760 });
+    await page.waitForTimeout(100);
+    const cut = await page.evaluate(() => {
+      const bar = document.querySelector(".topbar").getBoundingClientRect();
+      return [...document.querySelectorAll(".topbar button")]
+        .filter((b) => {
+          const r = b.getBoundingClientRect();
+          return r.width > 0 && (r.right > bar.right + 0.5 || r.left < bar.left - 0.5);
+        })
+        .map((b) => b.getAttribute("aria-label") || b.textContent.trim());
+    });
+    if (cut.length) throw new Error(`at ${width} px the top bar cuts off: ${cut.join(", ")}`);
+  }
+  await page.setViewportSize({ width: 1180, height: 760 });
+
   step = "drilling a hole with a cylinder";
   await page.locator('.tool-split-arrow[data-items*="|Cylinder|"]').click();
   await page.waitForSelector('[role="menu"] >> text=Coil');

@@ -1108,7 +1108,7 @@ export function AssemblyPanel({ assembly }: { assembly: Assembly }) {
   const flexProblems = useSolvedAssembly().solved?.flexErrors;
 
   return (
-    <aside className="side-panel" aria-label="Assembly">
+    <aside className="side-panel assembly-panel" aria-label="Assembly">
       <section className="panel-section features">
         <h3>
           Instances <span className="count">({assembly.instances.length})</span>

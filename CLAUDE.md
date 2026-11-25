@@ -2418,6 +2418,14 @@
   (`SKETCH_TOOLBAR_TOOLS` each in one place: `SKETCH_SINGLE_TOOLS`, families — Point under Spline, Round + Chamfer their own
   "round" family —, 5 main relations; Construction icon-only; Extrude/Revolve one ▾, Copy/Paste/Delete one compact ▾; long
   tool names get a `short` button label so the width doesn't change with the tool shown). Smoke: click tools with `tool(name)` (opens the ▾ when needed).
+  Top bar: its buttons never shrink (`.topbar > *`); the name and save state give way (ellipsis), labels go in steps
+  (`early-label` Install/New/Open/Save ≤ 1260 px, the rest ≤ 1120 bar Claude's, all ≤ 1000); each button has an aria-label so
+  it keeps its name (the smoke test checks nothing is cut off at 1024–1366). Fonts differ, so the bar also
+  measures itself (`src/app/topBarFit.ts` `watchTopBar`: ResizeObserver + MutationObserver; classes `tight-1..3`, the first step
+  at which nothing overflows and the name box isn't squeezed to its minimum). Bottom-right corner: Measure/Mass
+  (`.readout-stack`) moves left of a right-hand panel (`:has(> .laser-panel)`…); panels end above the status line; the touch bar
+  sets `--touch-bar-room` on its parent (ResizeObserver) so the status line, readouts and panels sit above it. The 3D print /
+  Laser panels scroll (children `flex-shrink: 0`), Laser's Save buttons are a sticky footer; the assembly panel scrolls as a whole.
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
   fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);

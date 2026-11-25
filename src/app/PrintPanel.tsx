@@ -250,7 +250,7 @@ function PrintPanelBody() {
       className="section-panel print-panel"
       role="region"
       aria-label="3D print"
-      style={bedPanelHeight ? { maxHeight: `max(140px, calc(100% - 170px - ${bedPanelHeight + 12}px))` } : undefined}
+      style={bedPanelHeight ? { maxHeight: `max(140px, calc(100% - 194px - var(--touch-bar-room, 0px) - ${bedPanelHeight + 12}px))` } : undefined}
     >
       <div className="section-header">
         <strong>3D print</strong>
