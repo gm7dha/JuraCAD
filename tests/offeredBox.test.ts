@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { emptyDocument, historyOf } from "../src/model/document";
 import { useStore } from "../src/model/store";
 import { SketchController, type SketchPointer } from "../src/sketch/controller";
-import { couldStartName, offeredBoxKey } from "../src/sketch/offeredBox";
+import { BOX_WORDS, couldStartName, noteTyped, offeredBoxKey } from "../src/sketch/offeredBox";
 import { viewportApi } from "../src/viewport/Viewport";
 import { sketchEscape } from "../src/app/sketchActions";
 import type { SketchData } from "../src/sketch/types";
@@ -57,6 +57,15 @@ describe("keys in an offered size's box", () => {
     expect(offeredBoxKey({ key: "c", ctrl: true }, offered, [])).toBe(null);
     for (const key of ["4", ".", "-", "(", " "]) expect(offeredBoxKey({ key }, offered, [])).toBe(null);
   });
+
+  it("keeps every letter once the box was clicked, so a function or any name can be typed", () => {
+    for (const key of ["l", "s", "c", "r"]) expect(offeredBoxKey({ key }, { ...offered, engaged: true }, [])).toBe(null);
+    // Function names don't hold letters back by themselves (they'd swallow L, C, R, A, S, T and M): only pi and variables.
+    expect(BOX_WORDS).toEqual(["pi"]);
+    expect(offeredBoxKey({ key: "s" }, offered, [])).toBe("shortcut");
+    expect(couldStartName("s", [], ["sqrt"])).toBe(true);
+    expect(couldStartName("s", [])).toBe(false);
+  });
 });
 
 describe("the offering in the store", () => {
@@ -93,6 +102,31 @@ describe("the offering in the store", () => {
     // A later Esc drops nothing that was kept.
     sketchEscape();
     expect([w, h].every((id) => sizes().includes(id))).toBe(true);
+  });
+
+  it("carrying on drawing keeps a size typed in its box, and never brings back one that wasn't", () => {
+    s().setSketchTool("line");
+    const c = new SketchController();
+    viewportApi.sketch = c;
+    click(c, 0, 0);
+    click(c, 30, 0);
+    // Not typed: the next click drops the first line's length (it used to come back with the second line).
+    click(c, 30, 20);
+    expect(lines()).toHaveLength(2);
+    expect(sizes()).toEqual(s().sketch!.provisional);
+    // Typed (not confirmed), then the next click: the size is set and kept, and the chain goes on from the line's end.
+    const [typedId] = s().sketch!.provisional;
+    noteTyped(typedId, "12");
+    click(c, 60, 20);
+    expect(lines()).toHaveLength(3);
+    const kept = d().constraints.find((k) => k.id === typedId);
+    expect(kept?.value).toBe("12");
+    expect(s().sketch!.provisional).not.toContain(typedId);
+    // Esc never keeps what was typed.
+    const [last] = s().sketch!.provisional;
+    noteTyped(last, "5");
+    sketchEscape();
+    expect(sizes()).toEqual([typedId]);
   });
 
   it("one Esc with a line's length offered drops it and ends the chain", () => {

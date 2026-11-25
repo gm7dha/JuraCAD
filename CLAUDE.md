@@ -234,7 +234,10 @@
   `src/sketch/offeredBox.ts` `offeredBoxKey` (Onshape's): anything typed (`typed` ref, even the size already drawn) + Tab/Enter =
   kept; Tab with nothing typed moves on unkept; Enter = `keepOfferedDimension(id, true)` (the rest offered dropped, no box
   reopens); Esc = `sketchEscape` (drops what's offered AND `cancel`s the chain, one press); a letter before anything is typed
-  that no variable (or pi) starts with (`couldStartName`) goes to the tool keys (blur + re-sent keydown). Tests: tests/offeredBox. Use on a face: pure
+  that no variable or `BOX_WORDS` word (pi) starts with (`couldStartName`) goes to the tool keys (blur + re-sent keydown) —
+  not once the box was clicked/tapped (`engaged`: every key typed; function names deliberately don't hold letters back, they'd
+  swallow L C R A S T M); drawing on keeps a typed, unconfirmed size (`noteTyped` → `discardOfferedDimensions(true)`, the
+  controller's pointerDown, which then re-reads the sketch so dropped sizes don't come back); Esc never keeps it. Tests: tests/offeredBox. Use on a face: pure
   `src/model/faceEdges.ts` `edgesOfFace(mesh, face)` (every polyline point — and a straight edge's middle — on the face's
   triangles, within 1/2000 of its size, 1 µm…0.05 mm) → `src/app/sketchUseFace.ts` `takeWholeFace` (each edge the way a click
   does it — curved ones read first through `readCurvedEdge` (sketchUseCurve.ts), flat and curved linked together through

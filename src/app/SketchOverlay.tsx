@@ -16,7 +16,7 @@ import { canSwitchRound } from "../sketch/dimensionKinds";
 import { setSketchLit, useSketchView } from "./sketchViewState";
 import { openSketchMenuOn, switchSketchRoundDimension } from "./sketchMenuActions";
 import { sketchEscape } from "./sketchActions";
-import { offeredBoxKey } from "../sketch/offeredBox";
+import { noteTyped, offeredBoxKey } from "../sketch/offeredBox";
 
 const RELATION_NAMES: Partial<Record<SketchConstraint["type"], string>> = {
   coincident: "Coincident",
@@ -294,6 +294,7 @@ function DimensionLabel({
     if (editing) {
       tabbing.current = false;
       typed.current = false;
+      engaged.current = false;
       setText(shownValue);
       setError(null);
       setHideHints(true);
@@ -304,6 +305,10 @@ function DimensionLabel({
   const offered = () => useStore.getState().sketch?.provisional.includes(c.id) ?? false;
   // Something typed since the box opened: Tab or Enter then keeps the size, even the one it already had.
   const typed = useRef(false);
+  // Clicked or tapped since it opened: every key is then the box's own (no tool keys), so a function can be typed.
+  const engaged = useRef(false);
+  // What's typed, for drawing on to keep (offeredBox.ts noteTyped); forgotten when the box closes.
+  useEffect(() => (editing ? () => noteTyped(c.id, null) : undefined), [editing, c.id]);
   /** `close`: Enter — the sizes offered but not kept go too (Onshape's Enter ends the offering). */
   const done = (close: boolean) => {
     const s = useStore.getState();
@@ -315,7 +320,14 @@ function DimensionLabel({
     const s = useStore.getState();
     const current = s.editing?.draft.sketch?.data;
     if (!current) return false;
-    if (text.trim() === shownValue.trim()) {
+    // (Read from the sketch as it is now: drawing on may have just set the typed size, or dropped the dimension.)
+    const now = current.constraints.find((x) => x.id === c.id);
+    if (!now) {
+      done(close);
+      return true;
+    }
+    const nowShown = isAngleDimension(now) ? now.value ?? "" : showLength(now.value ?? "", unit);
+    if (text.trim() === nowShown.trim()) {
       done(close);
       return true;
     }
@@ -342,6 +354,7 @@ function DimensionLabel({
           onChange={(e) => {
             typed.current = true;
             setText(e.target.value);
+            if (offered()) noteTyped(c.id, isAngleDimension(c) ? e.target.value.trim() : storeLength(e.target.value.trim(), unit));
             setCaret(e.target.selectionStart ?? e.target.value.length);
             setPick(0);
             setHideHints(false);
@@ -376,7 +389,7 @@ function DimensionLabel({
             const target = offered() ? nextOffered(provisional, c.id, e.shiftKey) : null;
             const act = offeredBoxKey(
               { key: e.key, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey },
-              { offered: offered(), typed: typed.current, hasNext: !!target },
+              { offered: offered(), typed: typed.current, hasNext: !!target, engaged: engaged.current },
               variables.map((v) => v.name),
             );
             if (act === "shortcut") {
@@ -416,6 +429,9 @@ function DimensionLabel({
             // Esc in an offered size's box: as Esc anywhere else in the sketch — the sizes offered go, and so does a chain of lines.
             if (act === "escape") sketchEscape();
             if (act === "cancel") useStore.getState().setEditingDimension(null);
+          }}
+          onPointerDown={() => {
+            engaged.current = true;
           }}
           onBlur={() => {
             if (tabbing.current) return;
