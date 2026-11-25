@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.114 — Insert SVG into a sketch
+
+- **Insert SVG** in the sketch toolbar, beside Insert DXF: an SVG's lines, circles, arcs, ellipses and curves come in as
+  exact sketch shapes at their true size — Inkscape (mm), Illustrator (points), Cricut and JuraCAD's own laser files.
+- Hidden layers are skipped and copies filled in; text can't come in (turn it into paths first — Inkscape:
+  Path › Object to Path). Very big drawings (300+ shapes) say that extruding them all at once is slow.
+- Sketches with thousands of shapes are much quicker to work in.
+
 ## v0.113 — Import 3MF and OBJ files
 
 - **Import** (and drag-and-drop) now takes **.3mf** and **.obj** files as well as STEP and STL. They come in as
