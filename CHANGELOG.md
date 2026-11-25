@@ -8,6 +8,60 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.117.1 — Everything fits on screen
+
+- **Top bar**: Export, Settings and Help no longer disappear between about 1000 and 1235 px wide (iPad on its side
+  too) — the buttons turn into icons (with their names on hover) instead, and the bar checks it really fits.
+- **3D print and Laser panels** scroll instead of squashing; the Laser panel's Save buttons stay at its foot.
+- The status line, Measure/Mass, the iPad touch bar, the feature list's heading and the assembly panel no longer
+  overlap each other or the side panels.
+
+## v0.117 — Remove cuts into the part, holes by clicking, Accept waits for picks
+
+- **Remove (and Intersect) from a sketch on a face now point into the part** instead of out into the air; flip it if
+  you like and your choice is kept. A feature that changes nothing (a cut that misses, an add inside the part) says so.
+- **Accept waits until you've picked what a feature needs** (edges for a Fillet, faces to leave open for an open
+  Shell…) — hover the ✓ to see what to click. Features you're editing that already lacked a pick can still be accepted.
+- **Hole: click a flat face to place holes there** (a sketch is made for you, one undo step with the hole). A new Hole
+  no longer grabs an old, already-used sketch.
+- **Nothing stays highlighted after Accept**, and a **linear pattern's spacing starts just past the part's size**
+  (a 60 mm part → 72 mm) so the copies don't overlap.
+
+## v0.116 — Drawings, sketch editing and the rollback bar
+
+- **A new drawing shows the part you've picked**, else the biggest part in the Part Studio (not a pattern copy).
+- **Editing an earlier sketch shows the model as it was then**: parts made later are hidden and parts changed later are
+  see-through. Edges that didn't exist yet at that sketch (a later fillet's, a later hole's) can't be used, and it says so.
+- **A slim rollback line always sits under the last feature** — drag it up to roll back.
+
+## v0.115 — Sketch fixes: sizes, Esc and the toolbar
+
+- **Typed sizes stick**: a size you type is kept — even the same as drawn, and when you click or tap on to keep
+  drawing (iPad too). Enter finishes; a later Esc never removes a kept size. Line chains no longer pick up lengths you
+  didn't type.
+- **One Esc ends a chain of lines** (a second goes back to Select).
+- **Tool keys work while a size box is offered** (L, C, R…) until you start typing; click into the box first to type
+  a function like sqrt(.
+- **The sketch toolbar fits at 1280 px** with nothing removed (Perpendicular, Tangent and Fix are under More relations).
+- **Round has Shift+F**, as in Onshape, beside Chamfer.
+
+## v0.113 — Import 3MF and OBJ files
+
+- **Import** (and drag-and-drop) now takes **.3mf** and **.obj** files as well as STEP and STL. They come in as
+  triangles, like an STL: Simplify, big-file reducing, Scale and File units all work.
+- 3MFs from Bambu Studio and PrusaSlicer are read with their parts where the file put them (a Bambu part sits at the
+  plate's middle — use Move to bring it to the origin); slicer-only parts (modifiers, negative parts, supports) are
+  left out and a message says how many. A 3MF's own units are kept; OBJ files are read as millimetres.
+- Not yet: 3MF colours, and OBJ files saved "Y up" (Blender's default) come in lying on their back.
+
+## v0.112 — Maths in number boxes
+
+- **Functions in every size box, sketch dimension and variable**: sin, cos, tan, asin, acos, atan, atan2, sqrt, abs,
+  min, max, round, floor, ceil, log, log10, exp and pow — e.g. `40 * sin(30)` or `sqrt(2) * 10`.
+- **Angles**: as in Onshape, trig works in degrees (`sin(30)` = 0.5); write `0.5 rad` for radians. Angle boxes and
+  variables take `30 deg`, `30°` or `asin(0.5)`; a length box says so plainly if given an angle.
+- Function names are offered as you type. Everything you've typed before works exactly as it did.
+
 ## v0.111 — Big STL files
 
 - **STL files up to 2,000,000 triangles (250 MB)** can now be imported. Over 50,000 triangles, a file is reduced as it

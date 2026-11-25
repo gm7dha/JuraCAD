@@ -5,7 +5,7 @@
  */
 import { mapAllFeatures } from "./studios";
 import { solveSketch } from "../sketch/solver";
-import { evaluate, namesIn, RESERVED_NAMES, setCurrentScope, type Scope } from "./expr";
+import { ANGLE_KEY, evaluate, namesIn, RESERVED_NAMES, setCurrentScope, type Scope } from "./expr";
 import type { JuraCADDocument } from "./types";
 
 export interface Variable {
@@ -28,7 +28,7 @@ export function checkName(name: string, otherNames: string[]): string | null {
 }
 
 export interface ResolvedVariables {
-  /** Values in mm by name (only the ones that worked out). */
+  /** Values in mm by name (only the ones that worked out); an angle's in degrees, marked by `ANGLE_KEY(name)`. */
   values: Record<string, number>;
   /** Problems by variable id. */
   errors: Record<string, string>;
@@ -58,15 +58,21 @@ export function resolveVariables(variables: readonly Variable[] = []): ResolvedV
       continue;
     }
     values[v.name] = r.value;
+    if (r.angle) values[ANGLE_KEY(v.name)] = 1;
   }
   return { values, errors };
 }
 
-/** Replace a whole-word variable name in an expression (leaves "2 in" and longer names alone). */
+/** True when variable `name` in these values is an angle (its value is in degrees). */
+export function isAngleVariable(values: Scope, name: string): boolean {
+  return Object.prototype.hasOwnProperty.call(values, ANGLE_KEY(name));
+}
+
+/** Replace a whole-word variable name in an expression (leaves "2 in", longer names and function calls alone). */
 export function renameInExpression(src: string, from: string, to: string): string {
   if (!from || from === to) return src;
   const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return src.replace(new RegExp(`(?<![A-Za-z0-9_.])${escaped}(?![A-Za-z0-9_])`, "g"), to);
+  return src.replace(new RegExp(`(?<![A-Za-z0-9_.])${escaped}(?![A-Za-z0-9_])(?!\\s*\\()`, "g"), to);
 }
 
 /** Every expression in the document, with a way to replace it. */

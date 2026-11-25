@@ -311,7 +311,7 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     type: "import",
     label: "Import",
     namePrefix: "Import",
-    description: "A STEP or STL file from another program, brought in as a part.",
+    description: "A STEP, STL, 3MF or OBJ file from another program, brought in as a part.",
     params: [{ key: "scale", label: "Scale", defaultValue: "1", positive: true, group: "size", unit: "", lazy: true }],
   },
   draft: {
@@ -767,6 +767,7 @@ export function resolveParams(feature: Pick<Feature, "type" | "params"> & Partia
     const check = (src: string): string | number => {
       const r = scope ? evaluate(src, scope) : evaluate(src);
       if (!r.ok) return r.error;
+      if (r.angle && p.unit !== "°") return "That's an angle (deg or rad) — this box doesn't take one";
       if (p.positive && r.value <= 0) return `${p.label} must be more than 0`;
       if (p.integer && !Number.isInteger(r.value)) return "Must be a whole number";
       if (p.min !== undefined && r.value < p.min) return `Must be at least ${p.min}`;

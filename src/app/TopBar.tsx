@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { activeAssembly, activeDrawing, useDocument, useLengthUnit, useStore } from "../model/store";
 import { exportDrawing } from "./DrawingUI";
@@ -13,6 +13,7 @@ import { versionIsNew } from "./WhatsNewDialog";
 import { detectPlatform, shortcut } from "./platform";
 import { LiveButton } from "./LiveButton";
 import { currentDesign } from "./versionActions";
+import { watchTopBar } from "./topBarFit";
 
 export function TopBar() {
   const doc = useDocument();
@@ -37,9 +38,12 @@ export function TopBar() {
   const [name, setName] = useState(doc.name);
 
   useEffect(() => setName(doc.name), [doc.name]);
+  // Fonts differ between computers: the bar also measures itself and drops button words when they don't fit (topBarFit.ts).
+  const barRef = useRef<HTMLElement>(null);
+  useEffect(() => (barRef.current ? watchTopBar(barRef.current) : undefined), []);
 
   return (
-    <header className="topbar">
+    <header ref={barRef} className="topbar">
       <div className="brand" title="JuraCAD">
         <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" width={24} height={24} />
         <span>JuraCAD</span>
@@ -96,8 +100,8 @@ export function TopBar() {
       <div className="topbar-spacer" />
       <LiveButton />
       {!installed && (
-        <button className="text-button" onClick={() => (canInstall ? void installApp() : setInstallHelp(true))} title="Install JuraCAD as an app on this computer — it then opens in its own window and works offline">
-          <Icons.Export size={18} style={{ transform: "rotate(180deg)" }} /> <span className="button-label">Install</span>
+        <button className="text-button" aria-label="Install" onClick={() => (canInstall ? void installApp() : setInstallHelp(true))} title="Install JuraCAD as an app on this computer — it then opens in its own window and works offline">
+          <Icons.Export size={18} style={{ transform: "rotate(180deg)" }} /> <span className="button-label early-label">Install</span>
         </button>
       )}
       <button
@@ -108,19 +112,21 @@ export function TopBar() {
             forgetFile();
           }
         }}
+        aria-label="New"
         title="Start a new empty part"
       >
-        <Icons.New size={18} /> <span className="button-label">New</span>
+        <Icons.New size={18} /> <span className="button-label early-label">New</span>
       </button>
-      <button className="text-button" onClick={() => void openFromFile()} title={`Open a .juracad file (${shortcut(platform, "O")})`}>
-        <Icons.Open size={18} /> <span className="button-label">Open</span>
+      <button className="text-button" aria-label="Open" onClick={() => void openFromFile()} title={`Open a .juracad file (${shortcut(platform, "O")})`}>
+        <Icons.Open size={18} /> <span className="button-label early-label">Open</span>
       </button>
       <button
         className="text-button"
         onClick={() => void saveToFile()}
+        aria-label="Save"
         title={`Save to a .juracad file on your computer (${shortcut(platform, "S")}). ${shortcut(platform, "S", { shift: true })} saves a copy under a new name.`}
       >
-        <Icons.Save size={18} /> <span className="button-label">Save</span>
+        <Icons.Save size={18} /> <span className="button-label early-label">Save</span>
       </button>
       <button
         className="text-button"
@@ -130,13 +136,14 @@ export function TopBar() {
       >
         <Icons.Versions size={18} /> <span className="button-label versions-label">Versions</span>
       </button>
-      <button className="text-button" onClick={() => openDialog("check")} disabled={!hasParts || inDrawing} title={inAssembly ? "Check the assembly: do any parts clash, and are all the mates working?" : "Check the model is a sound, closed solid before you export it"}>
+      <button className="text-button" aria-label="Check model" onClick={() => openDialog("check")} disabled={!hasParts || inDrawing} title={inAssembly ? "Check the assembly: do any parts clash, and are all the mates working?" : "Check the model is a sound, closed solid before you export it"}>
         <Icons.Check size={18} /> <span className="button-label">Check model</span>
       </button>
       <button
         className="primary-button"
         onClick={() => (inDrawing ? exportDrawing("pdf") : openDialog("export"))}
         disabled={!hasParts}
+        aria-label="Export"
         title={inDrawing ? "Save this drawing as a PDF (the toolbar also offers SVG)" : "Download a STEP or STL file to send to a manufacturer or 3D printer"}
       >
         <Icons.Export size={18} /> <span className="button-label">Export</span>

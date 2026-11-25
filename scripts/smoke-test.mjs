@@ -204,6 +204,23 @@ try {
     annotate(spare < 40 ? "warning" : "notice", "Toolbar room", `${toolbarReport} (${sizes[1]} px wide)`);
   }
 
+  step = "every top-bar button is on screen at laptop and tablet widths";
+  for (const width of [1024, 1100, 1180, 1280, 1366]) {
+    await page.setViewportSize({ width, height: 760 });
+    await page.waitForTimeout(100);
+    const cut = await page.evaluate(() => {
+      const bar = document.querySelector(".topbar").getBoundingClientRect();
+      return [...document.querySelectorAll(".topbar button")]
+        .filter((b) => {
+          const r = b.getBoundingClientRect();
+          return r.width > 0 && (r.right > bar.right + 0.5 || r.left < bar.left - 0.5);
+        })
+        .map((b) => b.getAttribute("aria-label") || b.textContent.trim());
+    });
+    if (cut.length) throw new Error(`at ${width} px the top bar cuts off: ${cut.join(", ")}`);
+  }
+  await page.setViewportSize({ width: 1180, height: 760 });
+
   step = "drilling a hole with a cylinder";
   await page.locator('.tool-split-arrow[data-items*="|Cylinder|"]').click();
   await page.waitForSelector('[role="menu"] >> text=Coil');
@@ -3157,13 +3174,11 @@ try {
       });
       throw new Error(`centre rectangle made ${now.join(",")} — ${why}`);
     }
-    // Type its width as soon as it's drawn (Enter), then skip the height (Esc).
+    // Type its width as soon as it's drawn: Enter keeps it and ends the offering (the height isn't kept, no box reopens).
     const sizeBox = page.locator(".dimension-editor input");
     await sizeBox.waitFor({ timeout: 5_000 });
     await sizeBox.fill("30");
     await sizeBox.press("Enter");
-    await sizeBox.waitFor({ timeout: 5_000 });
-    await page.keyboard.press("Escape");
     await page.locator(".dimension-editor").waitFor({ state: "detached", timeout: 5_000 });
     const kept = await page.evaluate(() => window.juracadStore.getState().editing.draft.sketch.data.constraints.filter((c) => c.value !== undefined).map((c) => c.value));
     if (kept.length !== 1 || !/^30( in)?$/.test(kept[0])) throw new Error(`typing the width straight after drawing kept ${JSON.stringify(kept)}`);
@@ -3317,6 +3332,8 @@ try {
       });
     const typed = await rectBox();
     if (Math.abs(typed.w - 30.48) > 0.01 || Math.abs(typed.h - 12.7) > 0.01) throw new Error(`typing 1.2, Tab, 0.5 made a ${typed.w} × ${typed.h} mm rectangle`);
+    // Both typed sizes kept, and Enter closed the offering (no box reopened to swallow the next key).
+    await page.locator(".dimension-editor").waitFor({ state: "detached", timeout: 5_000 });
     step = "sketch: turning a rectangle with the Move / copy ring";
     await tool("Move / copy");
     await page.evaluate((ids) => window.juracadStore.getState().setSketchSelection(ids), typed.ids);

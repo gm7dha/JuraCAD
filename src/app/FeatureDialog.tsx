@@ -1,4 +1,5 @@
 import { BoundaryOptions, FaceBlendOptions } from "./BoundaryBlendOptions";
+import { acceptBlocker } from "../model/draftReady";
 import { FinalToggle } from "./FinalToggle";
 import { MergeScopeField } from "./MergeScopeField";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -37,7 +38,7 @@ import { MoveFaceOptions } from "./MoveFaceOptions";
 import { Icons } from "./icons";
 import { FASTENER_KINDS, FASTENER_LABELS, FASTENER_SIZES, type FastenerKind } from "../model/fasteners";
 import { ISO_COARSE } from "../kernel/thread";
-import { importedSize, reducedNote, REDUCE_CHOICES, SOLID_STL_TRIANGLES, storedTriangles } from "../model/importFile";
+import { importedSize, importKind, reducedNote, REDUCE_CHOICES, SOLID_STL_TRIANGLES, storedTriangles } from "../model/importFile";
 import { originalOf, reduceStlFile } from "./stlReduce";
 import { SIMPLIFY_LABELS, SIMPLIFY_LEVELS } from "../model/simplify";
 import { chooseImportFile } from "./fileActions";
@@ -63,7 +64,7 @@ function ParamField({ def, value, autoFocus }: { def: ParamDef; value: string; a
   // Lengths are shown and typed in the design's units (see units.ts).
   const shown = isLength ? showLength(value, unit) : value;
   const r = evaluate(value);
-  const error = !r.ok ? r.error : def.positive && r.value <= 0 ? "Must be more than 0" : null;
+  const error = !r.ok ? r.error : r.angle && def.unit !== "°" ? "That's an angle (deg or rad) — this box doesn't take one" : def.positive && r.value <= 0 ? "Must be more than 0" : null;
   // Show the worked-out value when the user typed maths or units.
   const showsWorking = r.ok && !error && shown.trim() !== (isLength ? lengthNumber(r.value, unit, 4) : String(r.value));
   const id = `param-${def.key}`;
@@ -1396,10 +1397,15 @@ function ImportOptions() {
         <strong>{file.fileName}</strong>
         <span className="muted small">
           {" "}
-          — {file.format === "step" ? "STEP" : "STL"}, {importedSize(file)}
+          — {importKind(file)}, {importedSize(file)}
         </span>
       </p>
       {!!file.reducedFrom && <ReducedStlChoice />}
+      {file.from && (
+        <p className="dialog-hint field-hint">
+          Brought in as triangles, as an STL would be{file.from === "3mf" ? " (colours aren't brought in)" : ""}.
+        </p>
+      )}
       {file.format === "stl" && file.data.length > 1_000_000 && (
         <p className="dialog-hint field-hint">This is a detailed file, so the preview can take up to a minute to appear.</p>
       )}
@@ -1445,7 +1451,7 @@ function ReducedStlChoice() {
     try {
       const again = await reduceStlFile(file.fileName, original, target);
       const s = useStore.getState();
-      if (s.editing?.draft?.type === "import" && s.editing.draft.import?.fileName === file.fileName) setDraftField({ import: { ...again, units: file.units } });
+      if (s.editing?.draft?.type === "import" && s.editing.draft.import?.fileName === file.fileName) setDraftField({ import: { ...again, units: file.units, ...(file.from ? { from: file.from } : {}), ...(file.unitMm ? { unitMm: file.unitMm } : {}) } });
     } catch (e) {
       showToast(e instanceof Error ? e.message : String(e), "error");
     } finally {
@@ -1494,10 +1500,19 @@ function ImportUnitsChoice() {
   if (!draft || draft.type !== "import" || !draft.import) return null;
   const file = draft.import;
   const own = fileUnitOf(file);
-  const ownName = file.format === "stl" ? "millimetres" : own ? IMPORT_UNITS.find((u) => u.unit === own)!.label.toLowerCase() : "as it says";
-  const value = draft.importUnits ?? (file.format === "stl" && file.units === "in" ? "in" : "file");
+  // 3MF and OBJ files' numbers are kept in millimetres (a 3MF's turned from the unit it says), so their File units only
+  // ever scale the part after reading, measured against that unit; a plain STL keeps its millimetres/inches on the file.
+  const ownName =
+    file.format === "stl" && !file.from
+      ? "millimetres"
+      : own
+        ? IMPORT_UNITS.find((u) => u.unit === own)!.label.toLowerCase()
+        : file.unitMm === 0.001
+          ? "micrometres"
+          : "as it says";
+  const value = draft.importUnits ?? (file.format === "stl" && !file.from && file.units === "in" ? "in" : "file");
   const choose = (v: string) => {
-    if (file.format === "stl") {
+    if (file.format === "stl" && !file.from) {
       // Millimetres and inches as before (on the file); the rest scale the part after reading.
       const units = v === "in" ? "in" : "mm";
       setDraftField({ import: { ...file, units }, importUnits: v === "file" || v === "mm" || v === "in" ? undefined : (v as ImportUnit) });
@@ -1522,7 +1537,11 @@ function ImportUnitsChoice() {
         ))}
       </select>
       <p className="dialog-hint field-hint">
-        {file.format === "stl"
+        {file.from === "3mf"
+          ? `3MF files say what units they use (this one: ${ownName}), and it's brought in at that size. Choose others only if the part comes in the wrong size.`
+          : file.from === "obj"
+          ? "OBJ files don't say what units they use, so it's read as millimetres. If the part looks 25 times too small, choose inches."
+          : file.format === "stl"
           ? "STL files don't say what units they use. If the part looks 25 times too small, choose inches."
           : "STEP files say what units they use. Choose others only if the part comes in the wrong size."}{" "}
         Use Scale below to make it bigger or smaller (2 = twice the size).
@@ -1625,8 +1644,11 @@ function HoleOptions() {
   return (
     <fieldset className="param-group">
       <legend>Where and what</legend>
+      {mode === "create" && (
+        <p className="dialog-hint field-hint">Click a flat face where a hole goes (each click adds one; drag the sketch's points later to move them) — or choose a sketch with points.</p>
+      )}
       {sketches.length === 0 ? (
-        <p className="dialog-error">There are no sketches yet. Cancel, then sketch on the face and place points (P) where the holes go.</p>
+        mode === "create" ? null : <p className="dialog-error">There are no sketches yet. Sketch on the face and place points (P) where the holes go.</p>
       ) : (
         <select className="full-select" aria-label="Sketch with the hole positions" value={h.sketchRef ?? ""} onChange={(e) => update({ sketchRef: e.target.value || undefined })}>
           {!h.sketchRef && <option value="">Choose a sketch…</option>}
@@ -2616,6 +2638,8 @@ export function FeatureDialog() {
   const buildWarning = useStore((s) => (s.editing ? s.featureWarnings[s.editing.draft.id] : undefined));
   const buildNote = useStore((s) => (s.editing ? s.featureNotes[s.editing.draft.id] : undefined));
   const busy = useStore((s) => s.rebuildBusy);
+  // The feature as saved (editing): what it was already missing doesn't stop Accept.
+  const original = useStore((s) => (s.editing?.mode === "edit" ? activeFeatures(s).find((f) => f.id === s.editing!.draft.id) ?? null : null));
   // Move / copy's triad being dragged: its boxes follow it live.
   const live = useStore((s) => s.transformLive);
   const ref = useRef<HTMLFormElement>(null);
@@ -2643,6 +2667,8 @@ export function FeatureDialog() {
   // A mirror or pattern with no plane, axis or direction chosen yet can't be accepted (its box says what to click).
   const needsRef = draft.type === "mirror" ? !!draft.mirror?.unset : (draft.type === "circularPattern" || draft.type === "linearPattern") && !!draft.pattern?.unset;
   const refHint = draft.type === "mirror" ? "Choose the mirror plane first" : draft.type === "circularPattern" ? "Choose the axis first" : "Choose the direction first";
+  // Nothing picked yet where something must be (a fillet with no edges): the ✓ waits, saying what to click.
+  const missing = needsRef ? null : acceptBlocker(draft, mode === "edit" ? original : null);
   const groups: { title: string; params: ParamDef[] }[] = [
     { title: draft.type === "plane" ? "Placement" : draft.type === "extrude" ? "Depth" : draft.type === "revolve" ? "How far round" : draft.type === "shell" ? "Walls" : isPatternFeature(draft.type) ? "Copies" : draft.type === "transform" ? "Turn" : "Size", params: def.params.filter((p) => p.group === "size") },
     { title: draft.type === "transform" ? "Move" : draft.type === "circularPattern" ? "Axis goes through" : "Position", params: def.params.filter((p) => p.group === "position") },
@@ -2655,7 +2681,7 @@ export function FeatureDialog() {
       aria-label={`${def.label} feature`}
       onSubmit={(e) => {
         e.preventDefault();
-        if (!needsRef) commitDraft();
+        if (!needsRef && !missing) commitDraft();
       }}
     >
       <header className="feature-dialog-header">
@@ -2665,8 +2691,8 @@ export function FeatureDialog() {
           <button
             type="submit"
             className="dialog-ok"
-            disabled={hasErrors || needsRef}
-            title={hasErrors ? "Fix the highlighted values first" : needsRef ? refHint : "Accept (Enter)"}
+            disabled={hasErrors || needsRef || !!missing}
+            title={hasErrors ? "Fix the highlighted values first" : needsRef ? refHint : missing ?? "Accept (Enter)"}
             aria-label="Accept"
           >
             <Icons.Tick size={18} />

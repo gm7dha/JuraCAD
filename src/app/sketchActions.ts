@@ -167,6 +167,8 @@ export function sketchEscape() {
   if (!s.sketch) return;
   if (s.sketch.provisional.length) {
     s.discardOfferedDimensions();
+    // One Esc also ends a chain of lines (Onshape's): the next click starts a new line.
+    viewportApi.sketch?.cancel();
     return;
   }
   if (s.sketch.editingDimension) {

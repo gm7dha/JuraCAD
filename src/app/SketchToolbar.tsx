@@ -15,18 +15,20 @@ import { setSketchView, useSketchView } from "./sketchViewState";
 import { toggleSketchConstructionShown } from "./sketchMenuActions";
 import { applySketchRelation, deleteSketchSelection, insertImageFile, pickFile, setSketchTool, toggleSketchConstruction } from "./sketchActions";
 
-const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hint: string }[] = [
+// `short`: the name on the toolbar button when a family shows that tool (the list and tooltip keep `label`), so the
+// sketch toolbar stays the same width whichever tool a family shows.
+const TOOLS: { tool: SketchTool; label: string; short?: string; key: string; icon: ReactNode; hint: string }[] = [
   { tool: "select", label: "Select", key: "Esc", icon: <Icons.Select />, hint: "Click to select, drag to move" },
   { tool: "line", label: "Line", key: "L", icon: <Icons.Line />, hint: "Click to start, keep clicking to chain lines (or drag out one line), Esc to stop. Shift+A — or back onto the last end and away — carries on with an arc" },
-  { tool: "midpointLine", label: "Midpoint line", key: "", icon: <Icons.MidpointLine />, hint: "Click the middle of the line, then one end — the other end goes as far the other way" },
+  { tool: "midpointLine", short: "Midpoint", label: "Midpoint line", key: "", icon: <Icons.MidpointLine />, hint: "Click the middle of the line, then one end — the other end goes as far the other way" },
   { tool: "rectangle", label: "Rectangle", key: "R", icon: <Icons.Rectangle />, hint: "Click two opposite corners" },
-  { tool: "centreRectangle", label: "Centre rect", key: "", icon: <Icons.CentreRectangle />, hint: "Click the centre, then a corner" },
-  { tool: "alignedRectangle", label: "Aligned rect", key: "", icon: <Icons.AlignedRectangle />, hint: "Click two corners along one side (at any angle), then move out to set the width" },
+  { tool: "centreRectangle", short: "Centre", label: "Centre rect", key: "", icon: <Icons.CentreRectangle />, hint: "Click the centre, then a corner" },
+  { tool: "alignedRectangle", short: "Aligned", label: "Aligned rect", key: "", icon: <Icons.AlignedRectangle />, hint: "Click two corners along one side (at any angle), then move out to set the width" },
   { tool: "circle", label: "Circle", key: "C", icon: <Icons.Circle />, hint: "Click the centre, then a point on the edge" },
-  { tool: "circle3", label: "3-point circle", key: "", icon: <Icons.Circle3 />, hint: "Click three points the circle passes through" },
+  { tool: "circle3", short: "3-point", label: "3-point circle", key: "", icon: <Icons.Circle3 />, hint: "Click three points the circle passes through" },
   { tool: "arc", label: "Arc", key: "A", icon: <Icons.Arc />, hint: "Click both ends, then a point the arc passes through" },
-  { tool: "centreArc", label: "Centre arc", key: "", icon: <Icons.CentreArc />, hint: "Click the centre, then where the arc starts, then where it ends" },
-  { tool: "tangentArc", label: "Tangent arc", key: "", icon: <Icons.TangentArc />, hint: "Click the end of a line or arc, then where the arc should finish — it carries on smoothly" },
+  { tool: "centreArc", short: "Centre", label: "Centre arc", key: "", icon: <Icons.CentreArc />, hint: "Click the centre, then where the arc starts, then where it ends" },
+  { tool: "tangentArc", short: "Tangent", label: "Tangent arc", key: "", icon: <Icons.TangentArc />, hint: "Click the end of a line or arc, then where the arc should finish — it carries on smoothly" },
   { tool: "spline", label: "Spline", key: "", icon: <Icons.Spline />, hint: "Click points for a smooth curve to pass through. Click the first point again to close it, or Esc to finish. Afterwards, select it and drag the green handles at its points to reshape it" },
   { tool: "conic", label: "Conic", key: "", icon: <Icons.Conic />, hint: "Click both ends, then the corner the curve bends towards. Set how full it is (0.5 = a parabola) in the sketch panel" },
   { tool: "ellipse", label: "Ellipse", key: "", icon: <Icons.Ellipse />, hint: "Click the centre, then the end of its length, then how wide it is" },
@@ -34,20 +36,20 @@ const TOOLS: { tool: SketchTool; label: string; key: string; icon: ReactNode; hi
   { tool: "polygon", label: "Polygon", key: "G", icon: <Icons.Polygon />, hint: "Click the centre, then a corner (set the number of sides in the sketch panel)" },
   { tool: "point", label: "Point", key: "P or Shift+S", icon: <Icons.Point />, hint: "Click to place a point" },
   { tool: "dimension", label: "Dimension", key: "D", icon: <Icons.Dimension />, hint: "Click a line or circle (or two things), then where the value goes — where you put it picks across, up or straight" },
-  { tool: "sketchFillet", label: "Round", key: "", icon: <Icons.CornerRound />, hint: "Click a corner where two lines or arcs meet to round it (set the radius in the sketch panel)" },
+  { tool: "sketchFillet", label: "Round", key: "Shift+F", icon: <Icons.CornerRound />, hint: "Click a corner where two lines or arcs meet to round it (set the radius in the sketch panel)" },
   { tool: "extend", label: "Extend", key: "X", icon: <Icons.Extend />, hint: "Click near the end of a line, arc, spline or part of an ellipse to lengthen it up to the next curve it meets" },
   { tool: "split", label: "Split", key: "", icon: <Icons.SplitLine />, hint: "Click a line, arc, spline or part of an ellipse where you want to break it into two (the pieces keep exactly the same shape)" },
   { tool: "trim", label: "Trim", key: "T", icon: <Icons.Trim />, hint: "Click a piece of a line, arc, circle, spline or ellipse to cut it away up to where other curves cross it" },
   { tool: "offset", label: "Offset", key: "O", icon: <Icons.Offset />, hint: "Click a shape's edge on the side to offset towards — a copy that far away that follows the original (set the distance in the sketch panel). Splines and ellipses too" },
   { tool: "mirror", label: "Mirror", key: "M", icon: <Icons.Mirror />, hint: "Click the line to mirror about, then the shapes to copy across (or select the shapes first). The copies follow the originals" },
-  { tool: "sketchTransform", label: "Move / copy", key: "", icon: <Icons.Move />, hint: "Click shapes, then drag the handles on them to move, turn or scale them (or type amounts in the sketch panel). Tick Make a copy to leave the originals" },
+  { tool: "sketchTransform", short: "Move", label: "Move / copy", key: "", icon: <Icons.Move />, hint: "Click shapes, then drag the handles on them to move, turn or scale them (or type amounts in the sketch panel). Tick Make a copy to leave the originals" },
   { tool: "sketchPattern", label: "Pattern", key: "", icon: <Icons.SketchPattern />, hint: "Click shapes to repeat them in a row or round a centre (set how many and how far apart in the sketch panel). The copies follow the originals" },
   { tool: "useEdge", label: "Use", key: "U", icon: <Icons.UseEdge />, hint: "Click edges of a part (or a face, for its whole outline), or another sketch's lines and curves, to copy them into the sketch (they follow the original if it changes)" },
   { tool: "intersect", label: "Intersect", key: "", icon: <Icons.Intersect />, hint: "Click a face of a part the sketch passes through: where the sketch cuts it comes in as dashed lines that follow the part" },
   { tool: "text", label: "Text", key: "", icon: <Icons.Text />, hint: "Type the words in the sketch panel, then click where they go. Their letters are shapes you can extrude" },
   { tool: "sketchChamfer", label: "Chamfer", key: "", icon: <EditToolIcons.Chamfer />, hint: "Click a corner where two lines meet, or two lines, to cut the corner off straight (set Equal, Two distances or Distance + angle in the sketch panel)" },
-  { tool: "slotAlong", label: "Slot on a curve", key: "", icon: <EditToolIcons.SlotAlong />, hint: "Click a line, arc, circle, spline or ellipse to draw a slot along it that follows it (set the width in the sketch panel)" },
-  { tool: "ellipticalArc", label: "Elliptical arc", key: "", icon: <EditToolIcons.EllipticalArc />, hint: "Click the centre, the end of the long axis, where the arc starts (this sets how wide it is), then where it ends" },
+  { tool: "slotAlong", short: "Slot", label: "Slot on a curve", key: "", icon: <EditToolIcons.SlotAlong />, hint: "Click a line, arc, circle, spline or ellipse to draw a slot along it that follows it (set the width in the sketch panel)" },
+  { tool: "ellipticalArc", short: "Elliptic", label: "Elliptical arc", key: "", icon: <EditToolIcons.EllipticalArc />, hint: "Click the centre, the end of the long axis, where the arc starts (this sets how wide it is), then where it ends" },
 ];
 
 /** Replaces the main toolbar while a sketch is open, like Onshape's sketch toolbar. */
@@ -86,6 +88,7 @@ export function SketchToolbar() {
                   return {
                     key: d.tool,
                     label: d.label,
+                    short: d.short,
                     icon: d.icon,
                     title: `${d.label}${d.key ? ` (${d.key})` : ""} — ${d.hint}`,
                     shortcut: d.key || undefined,
@@ -154,6 +157,7 @@ export function SketchToolbar() {
           icon={<Icons.Construction />}
           active={construction}
           disabled={!hasPlane}
+          iconOnly
           onClick={toggleSketchConstruction}
           title="Construction (Q) — dashed helper geometry that isn't extruded. Toggles the selection, or new shapes if nothing is selected. Shift+P hides or shows it all."
         />
@@ -232,32 +236,65 @@ export function SketchToolbar() {
       </div>
       <div className="toolbar-spacer" />
       <div className="tool-group">
-        <ToolBtn
-          label="Extrude"
-          icon={<Icons.Extrude />}
-          onClick={() => finishSketchInto("extrude")}
-          disabled={!hasPlane}
-          title="Extrude — finish the sketch and extrude its closed shapes (as Onshape's sketch toolbar does)"
-        />
-        <ToolBtn
-          label="Revolve"
-          icon={<Icons.Revolve />}
-          onClick={() => finishSketchInto("revolve")}
-          disabled={!hasPlane}
-          title="Revolve — finish the sketch and turn its closed shapes round a line"
+        <ToolGroupButton
+          id="sketch-finish"
+          name="finish the sketch into"
+          items={[
+            {
+              key: "extrude",
+              label: "Extrude",
+              icon: <Icons.Extrude />,
+              title: "Extrude — finish the sketch and extrude its closed shapes (as Onshape's sketch toolbar does)",
+              disabled: !hasPlane,
+              onClick: () => finishSketchInto("extrude"),
+            },
+            {
+              key: "revolve",
+              label: "Revolve",
+              icon: <Icons.Revolve />,
+              title: "Revolve — finish the sketch and turn its closed shapes round a line",
+              disabled: !hasPlane,
+              onClick: () => finishSketchInto("revolve"),
+            },
+          ]}
         />
       </div>
       <div className="tool-divider" />
       <div className="tool-group">
-        <ToolBtn
-          label="Copy"
-          icon={<Icons.Duplicate />}
-          onClick={() => copySketchSelection()}
-          disabled={!hasSelection}
-          title="Copy the selection, with the relations and dimensions between them (Ctrl+C). Ctrl+D makes a copy straight away."
+        <ToolGroupButton
+          id="sketch-edit"
+          name="copy, paste and delete"
+          compact
+          items={[
+            {
+              key: "copy",
+              label: "Copy",
+              icon: <Icons.Duplicate />,
+              title: "Copy the selection, with the relations and dimensions between them (Ctrl+C). Ctrl+D makes a copy straight away.",
+              shortcut: shortcut(platform, "C"),
+              disabled: !hasSelection,
+              onClick: () => void copySketchSelection(),
+            },
+            {
+              key: "paste",
+              label: "Paste",
+              icon: <Icons.Insert />,
+              title: "Paste what was copied: it follows the pointer until you click (Ctrl+V)",
+              shortcut: shortcut(platform, "V"),
+              disabled: !hasPlane,
+              onClick: () => void pasteIntoSketch(),
+            },
+            {
+              key: "delete",
+              label: "Delete",
+              icon: <Icons.Trash />,
+              title: "Delete the selection (Delete)",
+              shortcut: "Delete",
+              disabled: !hasSelection,
+              onClick: () => void deleteSketchSelection(),
+            },
+          ]}
         />
-        <ToolBtn label="Paste" icon={<Icons.Insert />} onClick={() => pasteIntoSketch()} disabled={!hasPlane} title="Paste what was copied: it follows the pointer until you click (Ctrl+V)" />
-        <ToolBtn label="Delete" icon={<Icons.Trash />} onClick={deleteSketchSelection} disabled={!hasSelection} title="Delete the selection (Delete)" />
       </div>
     </div>
   );
