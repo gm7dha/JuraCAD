@@ -8,6 +8,15 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.123 — Isle of Mull, just Mull
+
+- **The Island puzzle's Isle of Mull is mainland Mull only**: Ulva, Gometra, Inch Kenneth, Iona, Erraid, Calve Island and
+  the Treshnish Isles are left out, as are Morvern and Coll.
+- **Its sea lochs stay sea**: Loch Spelve, Loch Don, Loch na Keal and Loch Scridain are never filled in as land, laid out,
+  put together or trimmed.
+- **Isle of Wight and Anglesey** are kept whole and on their own even if the height data joins them to the mainland
+  across the Solent or the Menai Strait.
+
 ## v0.122 — As many puzzle pieces as will print well
 
 - **New tick box in the Island and Mountain puzzle windows: "As many pieces as will print well".** It tries piece (or
