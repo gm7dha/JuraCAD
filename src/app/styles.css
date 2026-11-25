@@ -2659,6 +2659,16 @@ kbd {
     display: none;
   }
 }
+/* The same steps when the bar measures that it still doesn't fit (other fonts, a longer version or save note): topBarFit.ts. */
+.topbar.tight-1 .early-label,
+.topbar.tight-2 > :not(.live-connect):not(.live-badge) .button-label,
+.topbar.tight-3 .button-label,
+.topbar.tight-3 .badge-extra {
+  display: none;
+}
+.topbar.tight-3 > .save-state {
+  display: none;
+}
 
 
 .install-steps {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { activeAssembly, activeDrawing, useDocument, useLengthUnit, useStore } from "../model/store";
 import { exportDrawing } from "./DrawingUI";
@@ -13,6 +13,7 @@ import { versionIsNew } from "./WhatsNewDialog";
 import { detectPlatform, shortcut } from "./platform";
 import { LiveButton } from "./LiveButton";
 import { currentDesign } from "./versionActions";
+import { watchTopBar } from "./topBarFit";
 
 export function TopBar() {
   const doc = useDocument();
@@ -37,9 +38,12 @@ export function TopBar() {
   const [name, setName] = useState(doc.name);
 
   useEffect(() => setName(doc.name), [doc.name]);
+  // Fonts differ between computers: the bar also measures itself and drops button words when they don't fit (topBarFit.ts).
+  const barRef = useRef<HTMLElement>(null);
+  useEffect(() => (barRef.current ? watchTopBar(barRef.current) : undefined), []);
 
   return (
-    <header className="topbar">
+    <header ref={barRef} className="topbar">
       <div className="brand" title="JuraCAD">
         <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" width={24} height={24} />
         <span>JuraCAD</span>
