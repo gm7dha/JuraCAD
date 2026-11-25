@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.117.1 — Everything fits on screen
+
+- **Top bar**: Export, Settings and Help no longer disappear between about 1000 and 1235 px wide (iPad on its side
+  too) — the buttons turn into icons (with their names on hover) instead, and the bar checks it really fits.
+- **3D print and Laser panels** scroll instead of squashing; the Laser panel's Save buttons stay at its foot.
+- The status line, Measure/Mass, the iPad touch bar, the feature list's heading and the assembly panel no longer
+  overlap each other or the side panels.
+
 ## v0.117 — Remove cuts into the part, holes by clicking, Accept waits for picks
 
 - **Remove (and Intersect) from a sketch on a face now point into the part** instead of out into the air; flip it if
