@@ -31,7 +31,7 @@ function holedPlate(holes: { x: number; y: number; r: number }[], seg: number, r
     const mid = [(m.at(cb[k])[0] + m.at(cb[j])[0]) / 2 - 30, (m.at(cb[k])[1] + m.at(cb[j])[1]) / 2 - 20, 0] as V;
     m.quad(cb[k], cb[j], ct[j], ct[k], mid);
   }
-  holes.forEach((h, hi) => {
+  holes.forEach((_, hi) => {
     for (let k = 0; k < rings; k++)
       for (let i = 0; i < seg; i++) {
         const j = (i + 1) % seg;
