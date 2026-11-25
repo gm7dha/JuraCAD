@@ -61,6 +61,8 @@ export interface SvgDrawing {
   unitMm: number;
   /** True when the file says its size in real units (mm, in…), false when it's read at 96 px to the inch. */
   sized: boolean;
+  /** Made in Adobe Illustrator and not sized in real units: read in points (72 to the inch). */
+  illustrator?: boolean;
   /** The page's size in mm, when the file gives one. */
   page: [number, number] | null;
   /** Kinds of thing that were left out (text, pictures…), with how many of each. */
@@ -74,6 +76,8 @@ interface XmlElement {
   name: string;
   attrs: Record<string, string>;
   children: XmlElement[];
+  /** A <style> element's text (its CSS). */
+  text?: string;
 }
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
@@ -166,6 +170,13 @@ function parseXml(text: string): XmlElement {
       if (k === i && !attr) i++; // never stand still on a stray character
     }
     stack[stack.length - 1].children.push(el);
+    if (!selfClosing && el.name.replace(/^.*:/, "") === "style") {
+      // Keep the CSS (Illustrator hides layers and shapes with classes in it).
+      const close = text.indexOf("</", i);
+      const end = close < 0 ? n : close;
+      el.text = text.slice(i, end).replace(/<!\[CDATA\[|\]\]>/g, "");
+      i = end;
+    }
     if (!selfClosing) stack.push(el);
   }
   return root;
@@ -536,14 +547,64 @@ const SKIP = new Set(["defs", "clipPath", "mask", "symbol", "marker", "pattern",
 /** Things left out, by the name the summary gives them. */
 const NOTED: Record<string, string> = { text: "text", image: "pictures", foreignObject: "embedded pages", use: "copies whose original is missing" };
 
-function hidden(el: XmlElement): boolean {
+/** CSS declarations ("a: b; c: d") as a map. */
+function declarations(text: string): Record<string, string> {
   const css: Record<string, string> = {};
-  for (const part of (el.attrs.style ?? "").split(";")) {
+  for (const part of text.split(";")) {
     const k = part.indexOf(":");
-    if (k > 0) css[part.slice(0, k).trim().toLowerCase()] = part.slice(k + 1).trim();
+    if (k > 0) css[part.slice(0, k).trim().toLowerCase()] = part.slice(k + 1).replace(/!important/i, "").trim();
   }
-  const get = (name: string) => (css[name] ?? el.attrs[name])?.trim();
+  return css;
+}
+
+/** One simple rule from a <style> element: `.class`, `#id` or a tag name (no combinators). */
+interface CssRule {
+  kind: "class" | "id" | "tag";
+  name: string;
+  css: Record<string, string>;
+}
+
+/** The simple rules of every <style> element (other selectors are ignored). */
+function styleRules(svg: XmlElement): CssRule[] {
+  const rules: CssRule[] = [];
+  const visit = (el: XmlElement) => {
+    if (el.text !== undefined) {
+      const text = el.text.replace(/\/\*[\s\S]*?\*\//g, "");
+      const re = /([^{}]+)\{([^}]*)\}/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(text))) {
+        const css = declarations(m[2]);
+        if (!("display" in css) && !("visibility" in css)) continue;
+        for (const sel of m[1].split(",").map((x) => x.trim())) {
+          const r = /^([.#]?)([A-Za-z_][\w-]*)$/.exec(sel);
+          if (r) rules.push({ kind: r[1] === "." ? "class" : r[1] === "#" ? "id" : "tag", name: r[2], css });
+        }
+      }
+    }
+    el.children.forEach(visit);
+  };
+  visit(svg);
+  return rules;
+}
+
+function hidden(el: XmlElement, rules: CssRule[]): boolean {
+  const own = declarations(el.attrs.style ?? "");
+  // Rules from <style>, ids over classes over tag names; the element's own style over them all.
+  let fromRules: Record<string, string> = {};
+  if (rules.length) {
+    const classes = (el.attrs.class ?? "").split(/\s+/).filter(Boolean);
+    const tag = el.name.replace(/^.*:/, "");
+    for (const kind of ["tag", "class", "id"] as const)
+      for (const r of rules)
+        if (r.kind === kind && (kind === "tag" ? r.name === tag : kind === "id" ? r.name === el.attrs.id : classes.includes(r.name))) fromRules = { ...fromRules, ...r.css };
+  }
+  const get = (name: string) => (own[name] ?? fromRules[name] ?? el.attrs[name])?.trim();
   return get("display") === "none" || get("visibility") === "hidden";
+}
+
+/** Adobe Illustrator's user unit is the point (72 to the inch), though it writes px or no unit at all. */
+function fromIllustrator(text: string, svg: XmlElement): boolean {
+  return /Generator:\s*Adobe Illustrator/i.test(text.slice(0, 4000)) || Object.keys(svg.attrs).some((k) => /^xmlns:(x|i|graph)$/.test(k) && /ns_ai|ns_extend|adobe/i.test(svg.attrs[k])) || (svg.attrs["data-name"] !== undefined && /^Layer_\d+$/.test(svg.attrs.id ?? ""));
 }
 
 /** Read an SVG file's text. Throws a plain-English `SvgError` when it isn't an SVG drawing or is too big. */
@@ -567,8 +628,12 @@ export function parseSvg(text: string): SvgDrawing {
     unitMm = h.mm / vb[3];
     sized = h.real;
   }
+  // Illustrator writes points but calls them px (or gives no unit): read them as the points they are.
+  const illustrator = !sized && fromIllustrator(text, svg);
+  if (illustrator) unitMm *= 96 / 72;
+  const pageMm = (l: { mm: number }) => (illustrator ? (l.mm * 96) / 72 : l.mm);
   // The page in user units: the viewBox, else the width and height.
-  const page: [number, number, number, number] | null = hasBox ? [vb[0], vb[1], vb[2], vb[3]] : w && h ? [0, 0, w.mm / unitMm, h.mm / unitMm] : null;
+  const page: [number, number, number, number] | null = hasBox ? [vb[0], vb[1], vb[2], vb[3]] : w && h ? [0, 0, pageMm(w) / unitMm, pageMm(h) / unitMm] : null;
   // User units → mm, y up, the page's bottom-left corner on (0, 0).
   const base: M = page ? [unitMm, 0, 0, -unitMm, -unitMm * page[0], unitMm * (page[1] + page[3])] : [unitMm, 0, 0, -unitMm, 0, 0];
 
@@ -578,6 +643,7 @@ export function parseSvg(text: string): SvgDrawing {
     el.children.forEach(index);
   };
   index(svg);
+  const rules = styleRules(svg);
 
   const shapes: SvgShape[] = [];
   const skipped: Record<string, number> = {};
@@ -594,7 +660,7 @@ export function parseSvg(text: string): SvgDrawing {
   const walk = (el: XmlElement, m: M, depth: number, children = false) => {
     const name = el.name.replace(/^.*:/, "");
     if (SKIP.has(name) && !children) return;
-    if (hidden(el)) return;
+    if (hidden(el, rules)) return;
     let mm = mul(m, parseTransform(el.attrs.transform));
     const a = el.attrs;
     if (children) {
@@ -717,7 +783,7 @@ export function parseSvg(text: string): SvgDrawing {
   // Shapes with broken numbers in them are left out (and counted).
   const good = shapes.filter((s) => JSON.stringify(s.pieces).indexOf("null") < 0 && s.pieces.every((p) => Object.values(p).every((v) => typeof v === "string" || (Array.isArray(v) ? v.every(Number.isFinite) : Number.isFinite(v)))));
   if (good.length < shapes.length) skipped["shapes with unreadable numbers"] = shapes.length - good.length;
-  return { shapes: good, unitMm, sized, page: page ? [page[2] * unitMm, page[3] * unitMm] : null, skipped };
+  return { shapes: good, unitMm, sized, ...(illustrator ? { illustrator } : {}), page: page ? [page[2] * unitMm, page[3] * unitMm] : null, skipped };
 }
 
 // ---------------------------------------------------------------------------
@@ -777,6 +843,7 @@ export function insertSvg(s: SketchData, drawing: SvgDrawing, scale: number, con
       if (p.kind === "bezier" && !straight({ ...p, a: K(p.a), c1: K(p.c1), c2: K(p.c2), b: K(p.b) }, tol)) {
         // Curves end to end are one spline, with exactly their shape.
         const run: [Pt, Pt, Pt, Pt][] = [];
+        const runStart = i;
         while (i < list.length) {
           const q = list[i];
           if (q.kind !== "bezier") break;
@@ -786,7 +853,8 @@ export function insertSvg(s: SketchData, drawing: SvgDrawing, scale: number, con
           i++;
         }
         if (!run.length) continue;
-        const closed = allCurves && shape.closed && run.length === list.length && near(run[run.length - 1][3], run[0][0], tol);
+        // The whole shape (less any pieces of no length) back where it started, with or without a Z.
+        const closed = allCurves && runStart === 0 && i === list.length && near(run[run.length - 1][3], run[0][0], tol);
         // A closed spline needs three points or more: the longest pieces are cut in half (exactly) until it has them.
         while (closed && run.length < 3) {
           let k = 0;
@@ -842,13 +910,18 @@ export function insertSvg(s: SketchData, drawing: SvgDrawing, scale: number, con
   return { sketch: { ...s, points: [...s.points, ...points], curves: [...s.curves, ...curves] }, curveIds: curves.map((c) => c.id), count };
 }
 
+/** The words for one of each kind of thing left out. */
+const ONE: Record<string, string> = { pictures: "picture", "embedded pages": "embedded page", "copies whose original is missing": "copy whose original is missing", "shapes with unreadable numbers": "shape with unreadable numbers" };
+
 /** A plain-English note of what was brought in and what was left out. */
 export function svgSummary(drawing: SvgDrawing, count: number, scale: number): string {
   const scaled = scale !== 1 ? `, scaled × ${scale}` : "";
   const size = drawing.sized
     ? ` It's at the size the file gives${scaled}.`
-    : ` The file doesn't give its size in mm or inches, so it's read at 96 pixels to the inch (as Inkscape and web browsers do)${scaled}.`;
+    : drawing.illustrator
+      ? ` It was made in Adobe Illustrator, so its sizes are read as points (72 to the inch)${scaled}.`
+      : ` The file doesn't give its size in mm or inches, so it's read at 96 pixels to the inch (as Inkscape and web browsers do)${scaled}.`;
   const left = Object.entries(drawing.skipped);
-  const skipped = left.length ? ` Left out: ${left.map(([t, n]) => `${n} ${t}`).join(", ")}.${drawing.skipped.text ? " To bring text in, turn it into paths first (in Inkscape: Path › Object to Path)." : ""}` : "";
+  const skipped = left.length ? ` Left out: ${left.map(([t, n]) => `${n} ${n === 1 ? (ONE[t] ?? t) : t}`).join(", ")}.${drawing.skipped.text ? " To bring text in, turn it into paths first (in Inkscape: Path › Object to Path)." : ""}` : "";
   return `Brought in ${count} shape${count === 1 ? "" : "s"}.${size}${skipped}`;
 }

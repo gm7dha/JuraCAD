@@ -48,4 +48,28 @@ describe("an inserted SVG extrudes", () => {
     expect(lens.curves).toHaveLength(1);
     expect(relativeError(volumeOf(lens), 2 * 210 * 5)).toBeLessThan(1e-6);
   });
+
+  it("curves meeting at sharp corners, a pulled-in handle and no Z: still one exact solid", () => {
+    // Two arches meeting at a point (50, 50) and a bottom curve whose first handle sits on its end point.
+    const pieces: [number, number][][] = [
+      [[10, 50], [10, 20], [40, 20], [50, 50]],
+      [[50, 50], [60, 20], [90, 20], [90, 50]],
+      [[90, 50], [90, 50], [50, 90], [10, 50]],
+    ];
+    const d = "M10 50 " + pieces.map((b) => `C${b[1].join(" ")} ${b[2].join(" ")} ${b[3].join(" ")}`).join(" ");
+    const s = sketchOf(`<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100"><path d="${d}"/></svg>`);
+    expect(s.curves).toHaveLength(1);
+    // The area by the shoelace over very many points along the exact curves.
+    let area = 0;
+    const N = 20000;
+    for (const [a, c1, c2, b] of pieces)
+      for (let i = 0; i < N; i++) {
+        const P = (t: number) => [0, 1].map((k) => (1 - t) ** 3 * a[k] + 3 * (1 - t) ** 2 * t * c1[k] + 3 * (1 - t) * t * t * c2[k] + t ** 3 * b[k]);
+        const [x0, y0] = P(i / N);
+        const [x1, y1] = P((i + 1) / N);
+        area += (x0 * y1 - x1 * y0) / 2;
+      }
+    expect(relativeError(volumeOf(s), Math.abs(area) * 5)).toBeLessThan(1e-6);
+  });
 });
+

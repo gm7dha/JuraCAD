@@ -66,7 +66,7 @@ describe("Insert SVG: shapes", () => {
   it("text and pictures are left out and said so", () => {
     const { d, r } = insert(svg('<text x="1" y="1">Hi</text><image href="a.png"/><rect width="5" height="5"/>'));
     expect(d.skipped).toEqual({ text: 1, pictures: 1 });
-    expect(svgSummary(d, r.count, 1)).toMatch(/Brought in 1 shape\. It's at the size the file gives\. Left out: 1 text, 1 pictures\..*Object to Path/);
+    expect(svgSummary(d, r.count, 1)).toMatch(/Brought in 1 shape\. It's at the size the file gives\. Left out: 1 text, 1 picture\..*Object to Path/);
     const only = parseSvg(svg("<text>Hi</text>"));
     expect(insertSvg(emptySketch(), only, 1).error).toMatch(/only has text.*Object to Path/);
   });
@@ -184,7 +184,7 @@ describe("Insert SVG: groups, transforms, copies and units", () => {
     );
     expect(r.count).toBe(3);
     expect(kinds(s)).toBe("circle,line,line,line,line,line,line,line,line");
-    expect(svgSummary(parseSvg(svg('<use href="#missing"/><rect width="1" height="1"/>')), 1, 1)).toMatch(/1 copies whose original is missing/);
+    expect(svgSummary(parseSvg(svg('<use href="#missing"/><rect width="1" height="1"/>')), 1, 1)).toMatch(/1 copy whose original is missing/);
   });
 
   it("a use that uses itself stops", () => {

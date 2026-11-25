@@ -42,4 +42,21 @@ describe("Insert SVG into the open sketch", () => {
     expect(insertDrawingText("dxf", dxf)).toBe(true);
     expect(s().sketch!.message?.text).toMatch(/Brought in 1 shape\. The file doesn't say its units/);
   });
+
+  it("a Cricut-style file of 5,000 little shapes goes in as one step, without a long wait", () => {
+    const paths: string[] = [];
+    for (let k = 0; k < 5000; k++) {
+      const x = (k % 71) * 12;
+      const y = Math.floor(k / 71) * 12;
+      paths.push(`<path d="M${x + 1},${y + 5}C${x + 3},${y + 1} ${x + 7},${y + 1} ${x + 9},${y + 5}C${x + 7},${y + 9} ${x + 3},${y + 9} ${x + 1},${y + 5}z"/>`);
+    }
+    const t = performance.now();
+    expect(insertDrawingText("svg", `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 860">${paths.join("")}</svg>`)).toBe(true);
+    const ms = performance.now() - t;
+    console.log(`5000 shapes into the open sketch: ${ms.toFixed(0)} ms`);
+    expect(draftData().curves).toHaveLength(5000);
+    expect(s().sketch!.message?.text).toMatch(/Brought in 5000 shapes/);
+    // Generous (CI machines are busy); about a second here.
+    expect(ms).toBeLessThan(60000);
+  });
 });
