@@ -64,7 +64,7 @@ function ParamField({ def, value, autoFocus }: { def: ParamDef; value: string; a
   // Lengths are shown and typed in the design's units (see units.ts).
   const shown = isLength ? showLength(value, unit) : value;
   const r = evaluate(value);
-  const error = !r.ok ? r.error : def.positive && r.value <= 0 ? "Must be more than 0" : null;
+  const error = !r.ok ? r.error : r.angle && def.unit !== "°" ? "That's an angle (deg or rad) — this box doesn't take one" : def.positive && r.value <= 0 ? "Must be more than 0" : null;
   // Show the worked-out value when the user typed maths or units.
   const showsWorking = r.ok && !error && shown.trim() !== (isLength ? lengthNumber(r.value, unit, 4) : String(r.value));
   const id = `param-${def.key}`;
