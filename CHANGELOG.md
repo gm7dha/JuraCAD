@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.112 — Maths in number boxes
+
+- **Functions in every size box, sketch dimension and variable**: sin, cos, tan, asin, acos, atan, atan2, sqrt, abs,
+  min, max, round, floor, ceil, log, log10, exp and pow — e.g. `40 * sin(30)` or `sqrt(2) * 10`.
+- **Angles**: as in Onshape, trig works in degrees (`sin(30)` = 0.5); write `0.5 rad` for radians. Angle boxes and
+  variables take `30 deg`, `30°` or `asin(0.5)`; a length box says so plainly if given an angle.
+- Function names are offered as you type. Everything you've typed before works exactly as it did.
+
 ## v0.111 — Big STL files
 
 - **STL files up to 2,000,000 triangles (250 MB)** can now be imported. Over 50,000 triangles, a file is reduced as it
