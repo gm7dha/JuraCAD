@@ -8,6 +8,15 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.110 — Mountain puzzle: a border that follows the land
+
+- **The frame round a mountain puzzle now follows the land** in one smooth line all the way round — lower where the
+  ground is low, taller where it rises, always at least 2 mm above the puzzle's edge — instead of each side being one
+  flat height.
+- **No steps**: every joint between frame pieces and every corner meets at exactly the same height. The front stays
+  tall enough for the raised name and details, blending in and out.
+- The window gives each side's height as a range, e.g. "15–26 mm tall at the front".
+
 ## v0.109.1 — Island puzzle: the coastline put together too, and fetched more reliably
 
 - **Printed put together** now uses the same OpenStreetMap coastline as laid out (it was being dropped, bringing back

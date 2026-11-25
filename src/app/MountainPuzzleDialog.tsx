@@ -116,6 +116,9 @@ const SNOW = "#f3f5f9";
 const FRAME = "#6f7f95";
 const WORDS = "#c8a02a";
 
+/** A wall's height from its lowest to its tallest, in whole mm ("12–30 mm", or "18 mm" when it hardly changes). */
+const heightRange = (low: number, high: number): string => (Math.round(high) - Math.round(low) < 1 ? `${Math.round(high)} mm` : `${Math.round(low)}–${Math.round(high)} mm`);
+
 /** A border piece's parts for its 3MF: the frame on filament 1, the words on filament 2. */
 const borderParts = (p: { name: string }): BandPartFile[] => {
   const b = p as BorderPiece;
@@ -925,8 +928,9 @@ export function MountainPuzzleDialog() {
                   ))}
                   {!border.problems.length && (
                     <p>
-                      <strong>Border: {border.pieces.length} pieces</strong> — walls {border.heights.S} mm tall at the front, {border.heights.E} mm on the
-                      east, {border.heights.N} mm at the back and {border.heights.W} mm on the west (the corners as tall as the taller side),{" "}
+                      <strong>Border: {border.pieces.length} pieces</strong> — its top follows the land round the edge in one smooth line, a little
+                      above it: {heightRange(border.lows.S, border.heights.S)} tall at the front, {heightRange(border.lows.E, border.heights.E)} on the
+                      east, {heightRange(border.lows.N, border.heights.N)} at the back and {heightRange(border.lows.W, border.heights.W)} on the west,{" "}
                       {(BORDER_WALL - 2 * puzzle!.spec.fit).toFixed(1)} mm thick.
                       {border.caps.length > 0 && ` Words ${border.caps.map((c) => c.toFixed(1)).join(" and ")} mm tall.`}
                     </p>
