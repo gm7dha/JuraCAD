@@ -230,7 +230,11 @@
   `pasteSnap` — the copy's middle snaps like a drawn point (points, line middles, origin, part-edge corners, lining up with points
   passed over; never onto curves; Shift = none). Offered sizes after drawing: Tab / Shift+Tab in the box → pure `nextOffered` /
   `nextOfferedDimension` (a changed value is kept first, then the next or previous one opens; the last one left stays open;
-  `tabbing` ref stops the box's blur dropping the offer, reset on focus or a refused value). Use on a face: pure
+  `tabbing` ref stops the box's blur dropping the offer, reset on focus or a refused value). The box's keys are pure
+  `src/sketch/offeredBox.ts` `offeredBoxKey` (Onshape's): anything typed (`typed` ref, even the size already drawn) + Tab/Enter =
+  kept; Tab with nothing typed moves on unkept; Enter = `keepOfferedDimension(id, true)` (the rest offered dropped, no box
+  reopens); Esc = `sketchEscape` (drops what's offered AND `cancel`s the chain, one press); a letter before anything is typed
+  that no variable (or pi) starts with (`couldStartName`) goes to the tool keys (blur + re-sent keydown). Tests: tests/offeredBox. Use on a face: pure
   `src/model/faceEdges.ts` `edgesOfFace(mesh, face)` (every polyline point — and a straight edge's middle — on the face's
   triangles, within 1/2000 of its size, 1 µm…0.05 mm) → `src/app/sketchUseFace.ts` `takeWholeFace` (each edge the way a click
   does it — curved ones read first through `readCurvedEdge` (sketchUseCurve.ts), flat and curved linked together through
@@ -253,7 +257,7 @@
   (construction curves + points only they use, not picked) is neither drawn nor picked/snapped/boxed (`controller.setHidden` →
   `notHidden`, snaps.ts `pickAt`'s `ignore`) nor in the menu's Select other; `lit` goes by `SceneManager.setSketchLit` (redraws
   only the open sketch, so hovering a label stays cheap). Keys `SKETCH_KEYS` (`sketchKeyFor(code, shift, key)`: the letter of
-  `e.key` when it is one — any layout, as the plain letters — else `e.code`; a key closes an open menu: I E B X, Shift+L/O/M/Q/J/U/G/S/P; Shift+A left free;
+  `e.key` when it is one — any layout, as the plain letters — else `e.code`; a key closes an open menu: I E B X, Shift+L/O/M/Q/J/U/G/S/P, Shift+F (Round, Onshape's sketch fillet); Shift+A left free;
   tooltips via `relationKey`), run in App's sketchShortcut before its Shift check. Dimensions: pure `src/sketch/dimensionKinds.ts`
   `switchRoundDimension` (value halved/doubled, `scaledValue`; also the ⌀/R button in the value box) and `setCentrelineDimension`
   (`SketchConstraint.doubled` on a pointLineDistance to a construction line: solver uses value/2, `measure` ×2, layout runs to the
@@ -2346,7 +2350,10 @@
   list scrolls when taller than the window, `max-height` from its top; the ▾ is 26 px wide (22 on a narrow tablet) under
   `(pointer: coarse)`). Undo/Redo, Section, Fit, Views and Pick are icon-only
   (`.tool-button.icon-only`) on every toolbar. Sketch families, the relations under "More relations ▾" (`MORE_RELATIONS`) and
-  the Text / Insert DXF / Insert image group are listed there too. Smoke: click tools with `tool(name)` (opens the ▾ when needed).
+  the Text / Insert DXF / Insert image group are listed there too. The sketch toolbar fits 1280 px with ~60 px to spare
+  (`SKETCH_TOOLBAR_TOOLS` each in one place: `SKETCH_SINGLE_TOOLS`, families — Point under Spline, Round + Chamfer their own
+  "round" family —, 5 main relations; Construction icon-only; Extrude/Revolve one ▾, Copy/Paste/Delete one compact ▾; long
+  tool names get a `short` button label so the width doesn't change with the tool shown). Smoke: click tools with `tool(name)` (opens the ▾ when needed).
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
   fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);

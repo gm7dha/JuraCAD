@@ -15,6 +15,8 @@ import { expressionText, tiedIds } from "../sketch/sketchView";
 import { canSwitchRound } from "../sketch/dimensionKinds";
 import { setSketchLit, useSketchView } from "./sketchViewState";
 import { openSketchMenuOn, switchSketchRoundDimension } from "./sketchMenuActions";
+import { sketchEscape } from "./sketchActions";
+import { offeredBoxKey } from "../sketch/offeredBox";
 
 const RELATION_NAMES: Partial<Record<SketchConstraint["type"], string>> = {
   coincident: "Coincident",
@@ -291,6 +293,7 @@ function DimensionLabel({
   useEffect(() => {
     if (editing) {
       tabbing.current = false;
+      typed.current = false;
       setText(shownValue);
       setError(null);
       setHideHints(true);
@@ -299,18 +302,21 @@ function DimensionLabel({
 
   // A size offered just after drawing (Enter keeps it, Esc drops it).
   const offered = () => useStore.getState().sketch?.provisional.includes(c.id) ?? false;
-  const done = () => {
+  // Something typed since the box opened: Tab or Enter then keeps the size, even the one it already had.
+  const typed = useRef(false);
+  /** `close`: Enter — the sizes offered but not kept go too (Onshape's Enter ends the offering). */
+  const done = (close: boolean) => {
     const s = useStore.getState();
-    if (offered()) s.keepOfferedDimension(c.id);
+    if (offered()) s.keepOfferedDimension(c.id, close);
     else s.setEditingDimension(null);
   };
   /** Set the typed size (true when it was taken, or nothing changed). */
-  const apply = (): boolean => {
+  const apply = (close: boolean): boolean => {
     const s = useStore.getState();
     const current = s.editing?.draft.sketch?.data;
     if (!current) return false;
     if (text.trim() === shownValue.trim()) {
-      done();
+      done(close);
       return true;
     }
     const r = setDimensionValue(current, c.id, isAngleDimension(c) ? text.trim() : storeLength(text.trim(), unit));
@@ -319,7 +325,7 @@ function DimensionLabel({
       return false;
     }
     s.updateSketch(r.sketch, { record: true });
-    done();
+    done(close);
     return true;
   };
 
@@ -334,6 +340,7 @@ function DimensionLabel({
           aria-invalid={!!error}
           aria-autocomplete="list"
           onChange={(e) => {
+            typed.current = true;
             setText(e.target.value);
             setCaret(e.target.selectionStart ?? e.target.value.length);
             setPick(0);
@@ -364,39 +371,57 @@ function DimensionLabel({
               setHideHints(true);
               return;
             }
-            // Tab / Shift+Tab: on to the other size offered for the shape just drawn (its width, then its height…),
-            // keeping a size typed here. The last one left stays open (Tab never drops it, as leaving the box would).
-            if (e.key === "Tab" && offered()) {
+            // Tab / Shift+Tab, Enter, Esc and tool keys in an offered size's box: src/sketch/offeredBox.ts.
+            const provisional = useStore.getState().sketch?.provisional ?? [];
+            const target = offered() ? nextOffered(provisional, c.id, e.shiftKey) : null;
+            const act = offeredBoxKey(
+              { key: e.key, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey },
+              { offered: offered(), typed: typed.current, hasNext: !!target },
+              variables.map((v) => v.name),
+            );
+            if (act === "shortcut") {
+              // Nothing typed yet: the letter is a tool's key (L, C, R…). Leaving the box drops the size offered.
               e.preventDefault();
-              const target = nextOffered(useStore.getState().sketch?.provisional ?? [], c.id, e.shiftKey);
-              if (!target) {
-                if (text.trim() !== shownValue.trim()) apply();
-                return;
-              }
+              const { key, code, shiftKey } = e;
+              input.current?.blur();
+              document.body.dispatchEvent(new KeyboardEvent("keydown", { key, code, shiftKey, bubbles: true, cancelable: true }));
+              return;
+            }
+            if (act === "stay") {
+              e.preventDefault();
+              return;
+            }
+            if (act === "skipNext") {
+              e.preventDefault();
               tabbing.current = true;
-              if (text.trim() === shownValue.trim()) {
-                useStore.getState().nextOfferedDimension(c.id, e.shiftKey);
-                return;
-              }
-              if (!apply()) {
+              useStore.getState().nextOfferedDimension(c.id, e.shiftKey);
+              return;
+            }
+            if (act === "keepNext") {
+              e.preventDefault();
+              tabbing.current = true;
+              if (!apply(false)) {
                 tabbing.current = false;
                 return;
               }
               // Kept: go on to the one chosen (Shift+Tab: the one before), if it's still offered.
-              if (useStore.getState().sketch?.provisional.includes(target)) useStore.getState().setEditingDimension(target);
+              if (target && useStore.getState().sketch?.provisional.includes(target)) useStore.getState().setEditingDimension(target);
               return;
             }
-            if (e.key === "Enter") apply();
-            if (e.key === "Escape") {
-              if (offered()) useStore.getState().discardOfferedDimensions();
-              else useStore.getState().setEditingDimension(null);
+            if (act === "keepClose") {
+              if (e.key === "Tab") e.preventDefault();
+              apply(true);
+              return;
             }
+            // Esc in an offered size's box: as Esc anywhere else in the sketch — the sizes offered go, and so does a chain of lines.
+            if (act === "escape") sketchEscape();
+            if (act === "cancel") useStore.getState().setEditingDimension(null);
           }}
           onBlur={() => {
             if (tabbing.current) return;
             // Leaving an offered size without typing anything drops it.
-            if (offered() && text.trim() === shownValue.trim()) useStore.getState().discardOfferedDimensions();
-            else if (!error) apply();
+            if (offered() && !typed.current) useStore.getState().discardOfferedDimensions();
+            else if (!error) apply(false);
           }}
         />
         <span className="unit">{isAngleDimension(c) ? "°" : unit}</span>

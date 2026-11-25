@@ -465,8 +465,8 @@ export interface AppState {
   setEditingDimension: (id: string | null) => void;
   /** Offer these new dimensions (see SketchSession.provisional); the first one's box opens. */
   offerDimensions: (ids: string[]) => void;
-  /** Keep the offered dimension being edited, and move on to the next one offered (if any). */
-  keepOfferedDimension: (id: string) => void;
+  /** Keep the offered dimension being edited, and move on to the next one offered (if any); `close` (Enter): drop the rest. */
+  keepOfferedDimension: (id: string, close?: boolean) => void;
   /** Tab in an offered size's box: open the next one offered (Shift+Tab: the one before), as Onshape does while drawing. */
   nextOfferedDimension: (id: string, back?: boolean) => void;
   /** Drop any offered dimensions not kept yet. */
@@ -1328,12 +1328,15 @@ export const useStore = create<AppState>((set, get) => {
         const next = nextOffered(s.sketch?.provisional ?? [], id, back);
         return s.sketch && next ? { sketch: { ...s.sketch, editingDimension: next } } : {};
       }),
-    keepOfferedDimension: (id) =>
+    keepOfferedDimension: (id, close = false) => {
       set((s) => {
         if (!s.sketch) return {};
         const provisional = s.sketch.provisional.filter((x) => x !== id);
-        return { sketch: { ...s.sketch, provisional, editingDimension: provisional[0] ?? null } };
-      }),
+        return { sketch: { ...s.sketch, provisional, editingDimension: close ? null : provisional[0] ?? null } };
+      });
+      // Enter: the offering ends — the sizes not kept go (Onshape's), so no box opens again to take the next key.
+      if (close) get().discardOfferedDimensions();
+    },
     discardOfferedDimensions: () => {
       const s = get();
       const data = s.editing?.draft.sketch?.data;
