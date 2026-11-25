@@ -311,7 +311,7 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
     type: "import",
     label: "Import",
     namePrefix: "Import",
-    description: "A STEP or STL file from another program, brought in as a part.",
+    description: "A STEP, STL, 3MF or OBJ file from another program, brought in as a part.",
     params: [{ key: "scale", label: "Scale", defaultValue: "1", positive: true, group: "size", unit: "", lazy: true }],
   },
   draft: {

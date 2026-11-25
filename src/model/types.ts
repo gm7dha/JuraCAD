@@ -296,6 +296,8 @@ export interface ImportedFile {
   units: "mm" | "in";
   /** STL files too detailed to be a solid are reduced when imported: how many triangles the file had (missing = as it was). */
   reducedFrom?: number;
+  /** A 3MF or OBJ file, read as triangles and kept as a binary STL (`format` "stl"; missing = the file was an STL itself). */
+  from?: "3mf" | "obj";
 }
 
 /** Import's "File units" (Onshape's): what one unit in the file is taken to be, instead of what the file says. */

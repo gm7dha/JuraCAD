@@ -12,6 +12,7 @@ import { useStore } from "../model/store";
 import { downloadFile, safeFileName } from "./download";
 import { IMPORT_ACCEPT, readImport, USUAL_REDUCE } from "../model/importFile";
 import { reduceStlFile } from "./stlReduce";
+import { meshFileToStl, meshFormatOf } from "../model/meshImport";
 import type { ImportedFile } from "../model/types";
 
 // The File System Access API isn't in TypeScript's built-in types yet.
@@ -39,19 +40,21 @@ const FILE_TYPES = [{ description: "JuraCAD design", accept: { [FILE_MIME]: [FIL
 // Opening also accepts .partsmith files saved before the app was renamed.
 const OPEN_TYPES = [
   {
-    description: "JuraCAD design, or a STEP or STL model to import",
+    description: "JuraCAD design, or a STEP, STL, 3MF or OBJ model to import",
     accept: {
       [FILE_MIME]: [FILE_EXTENSION],
       [OLD_FILE_MIME]: [OLD_FILE_EXTENSION],
       "application/json": DESIGN_EXTENSIONS,
       "model/step": [".step", ".stp"],
       "model/stl": [".stl"],
+      "model/3mf": [".3mf"],
+      "model/obj": [".obj"],
     },
   },
 ];
 
-/** STEP and STL files are imported into the design rather than opened. */
-const isModelFile = (name: string) => /\.(step|stp|stl)$/i.test(name);
+/** STEP, STL, 3MF and OBJ files are imported into the design rather than opened. */
+const isModelFile = (name: string) => /\.(step|stp|stl|3mf|obj)$/i.test(name);
 
 /** The file the design was last saved to or opened from (Chrome/Edge only). */
 let currentHandle: FileHandle | null = null;
@@ -135,7 +138,7 @@ export async function openFile(file: File): Promise<boolean> {
     s.showToast("Finish or cancel the open feature first, then open a file.", "error");
     return false;
   }
-  // A STEP or STL file dropped or opened here is imported into the current design.
+  // A STEP, STL, 3MF or OBJ file dropped or opened here is imported into the current design.
   if (isModelFile(file.name)) return importFile(file);
   const result = readDocumentFile(await file.text(), file.name);
   if (!result.ok) {
@@ -155,7 +158,7 @@ export function forgetFile(): void {
 }
 
 /**
- * Import a STEP or STL file: ask for one, then open the Import dialog with a
+ * Import a STEP, STL, 3MF or OBJ file: ask for one, then open the Import dialog with a
  * preview. With `replace`, the file swaps in for the one in the open Import dialog.
  */
 export function chooseImportFile(replace = false): void {
@@ -172,7 +175,7 @@ export function chooseImportFile(replace = false): void {
   input.click();
 }
 
-/** Read a STEP or STL file and start importing it. Returns true if it worked. */
+/** Read a STEP, STL, 3MF or OBJ file and start importing it. Returns true if it worked. */
 export async function importFile(file: File, replace = false): Promise<boolean> {
   const s = useStore.getState();
   const draft = s.editing?.draft;
@@ -180,8 +183,19 @@ export async function importFile(file: File, replace = false): Promise<boolean> 
     s.showToast("Finish or cancel the open feature first, then import.", "error");
     return false;
   }
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const result = readImport(file.name, bytes);
+  let bytes = new Uint8Array(await file.arrayBuffer());
+  // 3MF and OBJ files are read as triangles and brought in as an STL would be (model/meshImport.ts).
+  const meshKind = meshFormatOf(file.name);
+  if (meshKind) {
+    const mesh = await meshFileToStl(file.name, bytes, meshKind);
+    if (!mesh.ok) {
+      useStore.getState().showToast(mesh.error, "error");
+      return false;
+    }
+    bytes = mesh.stl;
+  }
+  const from = meshKind ?? undefined;
+  const result = readImport(file.name, bytes, from);
   if (!result.ok) {
     useStore.getState().showToast(result.error, "error");
     return false;
@@ -197,6 +211,7 @@ export async function importFile(file: File, replace = false): Promise<boolean> 
       );
     try {
       imported = await reduceStlFile(file.name, bytes, USUAL_REDUCE);
+      if (from) imported = { ...imported, from };
     } catch (e) {
       useStore.getState().showToast(e instanceof Error ? e.message : String(e), "error");
       return false;

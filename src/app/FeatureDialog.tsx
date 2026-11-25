@@ -37,7 +37,7 @@ import { MoveFaceOptions } from "./MoveFaceOptions";
 import { Icons } from "./icons";
 import { FASTENER_KINDS, FASTENER_LABELS, FASTENER_SIZES, type FastenerKind } from "../model/fasteners";
 import { ISO_COARSE } from "../kernel/thread";
-import { importedSize, reducedNote, REDUCE_CHOICES, SOLID_STL_TRIANGLES, storedTriangles } from "../model/importFile";
+import { importedSize, importKind, reducedNote, REDUCE_CHOICES, SOLID_STL_TRIANGLES, storedTriangles } from "../model/importFile";
 import { originalOf, reduceStlFile } from "./stlReduce";
 import { SIMPLIFY_LABELS, SIMPLIFY_LEVELS } from "../model/simplify";
 import { chooseImportFile } from "./fileActions";
@@ -1396,10 +1396,15 @@ function ImportOptions() {
         <strong>{file.fileName}</strong>
         <span className="muted small">
           {" "}
-          — {file.format === "step" ? "STEP" : "STL"}, {importedSize(file)}
+          — {importKind(file)}, {importedSize(file)}
         </span>
       </p>
       {!!file.reducedFrom && <ReducedStlChoice />}
+      {file.from && (
+        <p className="dialog-hint field-hint">
+          Brought in as triangles, as an STL would be{file.from === "3mf" ? " (colours aren't brought in)" : ""}.
+        </p>
+      )}
       {file.format === "stl" && file.data.length > 1_000_000 && (
         <p className="dialog-hint field-hint">This is a detailed file, so the preview can take up to a minute to appear.</p>
       )}
@@ -1445,7 +1450,7 @@ function ReducedStlChoice() {
     try {
       const again = await reduceStlFile(file.fileName, original, target);
       const s = useStore.getState();
-      if (s.editing?.draft?.type === "import" && s.editing.draft.import?.fileName === file.fileName) setDraftField({ import: { ...again, units: file.units } });
+      if (s.editing?.draft?.type === "import" && s.editing.draft.import?.fileName === file.fileName) setDraftField({ import: { ...again, units: file.units, ...(file.from ? { from: file.from } : {}) } });
     } catch (e) {
       showToast(e instanceof Error ? e.message : String(e), "error");
     } finally {
@@ -1494,7 +1499,7 @@ function ImportUnitsChoice() {
   if (!draft || draft.type !== "import" || !draft.import) return null;
   const file = draft.import;
   const own = fileUnitOf(file);
-  const ownName = file.format === "stl" ? "millimetres" : own ? IMPORT_UNITS.find((u) => u.unit === own)!.label.toLowerCase() : "as it says";
+  const ownName = file.from === "3mf" ? "as it says" : file.format === "stl" ? "millimetres" : own ? IMPORT_UNITS.find((u) => u.unit === own)!.label.toLowerCase() : "as it says";
   const value = draft.importUnits ?? (file.format === "stl" && file.units === "in" ? "in" : "file");
   const choose = (v: string) => {
     if (file.format === "stl") {
@@ -1522,8 +1527,10 @@ function ImportUnitsChoice() {
         ))}
       </select>
       <p className="dialog-hint field-hint">
-        {file.format === "stl"
-          ? "STL files don't say what units they use. If the part looks 25 times too small, choose inches."
+        {file.from === "3mf"
+          ? "3MF files say what units they use. Choose others only if the part comes in the wrong size."
+          : file.format === "stl"
+          ? `${file.from === "obj" ? "OBJ" : "STL"} files don't say what units they use. If the part looks 25 times too small, choose inches.`
           : "STEP files say what units they use. Choose others only if the part comes in the wrong size."}{" "}
         Use Scale below to make it bigger or smaller (2 = twice the size).
       </p>

@@ -23,7 +23,7 @@ export const REDUCE_CHOICES = [10_000, 25_000, SOLID_STL_TRIANGLES] as const;
 /** The usual choice: detailed enough for most models, and quick to work with. */
 export const USUAL_REDUCE = 25_000;
 
-export const IMPORT_ACCEPT = ".step,.stp,.stl";
+export const IMPORT_ACCEPT = ".step,.stp,.stl,.3mf,.obj";
 
 /** Bytes → base64, in chunks so large files don't overflow the call stack. */
 export function toBase64(bytes: Uint8Array): string {
@@ -68,7 +68,7 @@ export function countStlTriangles(bytes: Uint8Array): number {
 
 /** "Bracket v2.step" → "Bracket v2". */
 export function importName(fileName: string): string {
-  return fileName.replace(/\.(step|stp|stl)$/i, "").trim() || "Imported part";
+  return fileName.replace(/\.(step|stp|stl|3mf|obj)$/i, "").trim() || "Imported part";
 }
 
 export type ImportReadResult =
@@ -80,16 +80,19 @@ export type ImportReadResult =
 const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(0)} MB`;
 const count = (n: number) => n.toLocaleString("en-GB");
 
-/** Check a file's bytes and package them for the design, or explain in plain words why not. */
-export function readImport(fileName: string, bytes: Uint8Array): ImportReadResult {
+/**
+ * Check a file's bytes and package them for the design, or explain in plain words why not. `from`: the bytes are a
+ * 3MF/OBJ file's triangles already turned into a binary STL (model/meshImport.ts), kept with the original's name.
+ */
+export function readImport(fileName: string, bytes: Uint8Array, from?: "3mf" | "obj"): ImportReadResult {
   if (bytes.length === 0) return { ok: false, error: `${fileName} is empty.` };
-  const format = detectFormat(fileName, bytes);
+  const format = from ? "stl" : detectFormat(fileName, bytes);
   // STL files too big to keep may still be reduced (only the reduced one is kept), so they're allowed bigger.
   if (bytes.length > (format === "stl" ? MAX_STL_BYTES : MAX_IMPORT_BYTES)) {
     const most = format === "stl" ? MAX_STL_BYTES : MAX_IMPORT_BYTES;
     return { ok: false, error: `${fileName} is ${mb(bytes.length)} — JuraCAD can import ${format === "stl" ? "STL files" : "files"} up to ${mb(most)}.` };
   }
-  if (!format) return { ok: false, error: `${fileName} isn't a STEP or STL file, so it can't be imported.` };
+  if (!format) return { ok: false, error: `${fileName} isn't a STEP, STL, 3MF or OBJ file, so it can't be imported.` };
   if (format === "step") {
     return { ok: true, file: { fileName, format, data: new TextDecoder().decode(bytes), units: "mm" } };
   }
@@ -102,7 +105,7 @@ export function readImport(fileName: string, bytes: Uint8Array): ImportReadResul
     };
   }
   if (triangles > SOLID_STL_TRIANGLES || bytes.length > MAX_IMPORT_BYTES) return { ok: "reduce", fileName, triangles };
-  return { ok: true, file: { fileName, format, data: toBase64(bytes), units: "mm" } };
+  return { ok: true, file: { fileName, format, data: toBase64(bytes), units: "mm", ...(from ? { from } : {}) } };
 }
 
 /**
@@ -129,6 +132,13 @@ export function storedTriangles(file: ImportedFile): number {
 let lastCounted: { data: string; n: number } | undefined;
 
 /** What the Import dialog says about a reduced STL. */
+/** What the Import dialog calls the file's kind. */
+export function importKind(file: ImportedFile): string {
+  if (file.from === "3mf") return "3MF";
+  if (file.from === "obj") return "OBJ";
+  return file.format === "step" ? "STEP" : "STL";
+}
+
 export function reducedNote(file: ImportedFile): string | undefined {
   if (!file.reducedFrom) return undefined;
   return `Reduced from ${count(file.reducedFrom)} triangles to ${count(storedTriangles(file))}, so it can be worked with as a solid. Only the reduced shape is kept in your design.`;

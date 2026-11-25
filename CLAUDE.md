@@ -874,6 +874,15 @@
   decimateMore (a plate with Ø8/Ø3 holes at 25k and 10k: corners on their faces, Simplify still finds both holes and 6 planes; a 1 mm
   walled cup down to 3k: volume within 0.2%, no triangles crossing; small raised letters kept; two bodies, duplicate/flipped triangles and
   a hole in the mesh), importFile (limits, reducing), engineStlReduce (heavy: 300k → 25k built, volume within 1%).
+  3MF and OBJ imports (Onshape's): pure `src/geometry/meshFiles.ts` — `zipEntries` (stored/deflated, no zip64) + `inflateRaw`
+  (DecompressionStream "deflate-raw", Node too), a tiny tag reader, `parseModel3mf`/`read3mfMeshes` (main model from
+  `_rels/.rels`; build items × component transforms, rows p·M, `composeTransforms`; `p:path` components in other .model files
+  as Bambu/Prusa save them; a mirroring transform walks triangles the other way; `type` support skipped; `UNITS_3MF` → mm;
+  colours/materials not read), `readObj` (v/f, a/t/n forms, negative indices, faces fanned, `\` continuations; numbers as mm).
+  `src/model/meshImport.ts` `meshFileToStl` turns them into a binary STL; fileActions passes it to `readImport(…, from)`, so the
+  design keeps `format: "stl"` + `ImportedFile.from` ("3mf"/"obj"; missing = an STL; parsed only for stl) and everything after
+  (reduce, Simplify, File units, Scale, cache) is the STL path. A 3MF's own unit is applied when read (File units says "as it says").
+  Dialog `importKind`. Tests: meshImport (pure; fixtures in tests/support/meshFixtures.ts), engineMeshImport.
 - Move / copy (Onshape's Transform): `Feature.transform` (`TransformDef` in types.ts). `mode` (missing = "free": turns about
   X, then Y, then Z, then the move — the original way) or "xyz" (Translate by XYZ: moves only), "distance" (`distance` box along
   `along`: the triad's X/Y/Z or a clicked `{dir, through}`), "line" (`line` {a, b}: a clicked straight edge, from the end nearer the

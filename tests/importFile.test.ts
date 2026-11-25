@@ -44,7 +44,7 @@ describe("importing files", () => {
     const empty = readImport("a.stl", new Uint8Array(0));
     expect(!empty.ok && empty.error).toMatch(/empty/);
     const notModel = readImport("photo.jpg", enc("hello there"));
-    expect(!notModel.ok && notModel.error).toMatch(/isn't a STEP or STL/);
+    expect(!notModel.ok && notModel.error).toMatch(/isn't a STEP, STL, 3MF or OBJ file/);
     const huge = readImport("big.stl", binaryStl(MAX_STL_TRIANGLES + 1));
     expect(!huge.ok && huge.error).toMatch(/too detailed even to reduce/);
     // Up to the old limit, exactly as before.
