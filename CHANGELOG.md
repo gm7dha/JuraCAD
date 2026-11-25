@@ -8,6 +8,17 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.117 — Remove cuts into the part, holes by clicking, Accept waits for picks
+
+- **Remove (and Intersect) from a sketch on a face now point into the part** instead of out into the air; flip it if
+  you like and your choice is kept. A feature that changes nothing (a cut that misses, an add inside the part) says so.
+- **Accept waits until you've picked what a feature needs** (edges for a Fillet, faces to leave open for an open
+  Shell…) — hover the ✓ to see what to click. Features you're editing that already lacked a pick can still be accepted.
+- **Hole: click a flat face to place holes there** (a sketch is made for you, one undo step with the hole). A new Hole
+  no longer grabs an old, already-used sketch.
+- **Nothing stays highlighted after Accept**, and a **linear pattern's spacing starts just past the part's size**
+  (a 60 mm part → 72 mm) so the copies don't overlap.
+
 ## v0.116 — Drawings, sketch editing and the rollback bar
 
 - **A new drawing shows the part you've picked**, else the biggest part in the Part Studio (not a pattern copy).
