@@ -75,11 +75,13 @@ function unzip(bytes: Uint8Array): Map<string, string> {
 
 describe("Bambu Lab's PLA colours", () => {
   it("are Bambu Studio's own list: PLA Basic, then Matte, then Silk+, named, with codes and colours", () => {
-    expect(BAMBU_LINES).toEqual(["PLA Basic", "PLA Matte", "PLA Silk+"]);
+    expect(BAMBU_LINES.slice(0, 3)).toEqual(["PLA Basic", "PLA Matte", "PLA Silk+"]);
     expect(BAMBU_COLOURS.length).toBeGreaterThan(60);
     const lines = BAMBU_COLOURS.map((c) => c.line);
     expect(lines.indexOf("PLA Matte")).toBeGreaterThan(lines.lastIndexOf("PLA Basic"));
     expect(lines.indexOf("PLA Silk+")).toBeGreaterThan(lines.lastIndexOf("PLA Matte"));
+    // The other materials come after them, so a colour is named after a PLA Basic/Matte/Silk+ spool first.
+    expect(lines.findIndex((l) => !["PLA Basic", "PLA Matte", "PLA Silk+"].includes(l))).toBeGreaterThan(lines.lastIndexOf("PLA Silk+"));
     for (const c of BAMBU_COLOURS) {
       expect(c.hex, c.name).toMatch(/^#[0-9a-f]{6}$/);
       expect(c.code, c.name).toMatch(/^\d{5}$/);

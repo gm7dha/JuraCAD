@@ -1166,7 +1166,7 @@ export class SceneManager {
         this.rendering = true;
         for (const [id, p] of this.parts) {
           p.mesh.material = this.faceMaterialsFor(id);
-          p.mesh.geometry.groups.forEach((g) => (g.materialIndex = 0));
+          p.mesh.geometry.groups.forEach((g, i) => (g.materialIndex = this.faceSlot(id, i)));
           p.lines.geometry.groups.forEach((g) => (g.materialIndex = 0));
           p.lines.visible = p.mesh.visible && opts.edges;
           p.mesh.castShadow = true;
@@ -1235,14 +1235,49 @@ export class SceneManager {
   }
   private transparent = new Set<string>();
 
-  /** Normal, hover and selected materials for a part: its own colour and finish, then the shared highlights. */
+  /** Normal, hover and selected materials for a part: its own colour and finish, then the shared highlights; then one per colour its faces have of their own (see `faceMaterial`). */
   private faceMaterialsFor(partId: string): THREE.Material[] {
+    const own = this.faceColours[partId];
+    const base = this.partMaterialsFor(partId);
+    const slots = new Map<number, number>();
+    if (own) {
+      const byColour = new Map<string, number>();
+      for (const [face, colour] of Object.entries(own)) {
+        let at = byColour.get(colour);
+        if (at === undefined) {
+          at = base.length;
+          byColour.set(colour, at);
+          base.push(this.colourMaterial(colour, partId));
+        }
+        slots.set(Number(face), at);
+      }
+    }
+    this.faceSlots.set(partId, slots);
+    return base;
+  }
+
+  /** The material a face drawn normally uses (its own colour's, else the part's: 0). */
+  private faceSlot(partId: string, face: number): number {
+    return this.faceSlots.get(partId)?.get(face) ?? 0;
+  }
+  private faceSlots = new Map<string, Map<number, number>>();
+  private faceColours: Record<string, Record<number, string>> = {};
+
+  /**
+   * Faces with colours of their own (mesh id → face index → "#rrggbb"), drawn over the part's colour in the part's own
+   * finish. Faces not listed keep the part's colour.
+   */
+  setFaceColours(colours: Record<string, Record<number, string>>): void {
+    this.faceColours = colours;
+    for (const [id, p] of this.parts) p.mesh.material = this.faceMaterialsFor(id);
+    this.applyHighlights();
+  }
+
+  /** A colour in the part's own finish and see-through-ness (for faces with a colour of their own). */
+  private colourMaterial(colour: string, partId: string): THREE.Material {
     const see = this.transparent.has(partId);
     const finish = this.finishes[partId];
     const physical = this.nice || this.rendering;
-    const colour = this.colours[partId] ?? (see || finish || physical ? COLOURS.part : undefined);
-    // Grey, matte and quick: the shared material, exactly as before finishes.
-    if (!colour) return this.materials.faces;
     const key = [colour, see ? "see" : "", finish ?? "", physical ? "pbr" : ""].join("|");
     let m = this.colourMaterials.get(key);
     if (!m) {
@@ -1257,6 +1292,18 @@ export class SceneManager {
       m.side = this.section ? THREE.FrontSide : THREE.DoubleSide;
       this.colourMaterials.set(key, m);
     }
+    return m;
+  }
+
+  /** Normal, hover and selected materials for a part: its own colour and finish, then the shared highlights. */
+  private partMaterialsFor(partId: string): THREE.Material[] {
+    const see = this.transparent.has(partId);
+    const finish = this.finishes[partId];
+    const physical = this.nice || this.rendering;
+    const colour = this.colours[partId] ?? (see || finish || physical ? COLOURS.part : undefined);
+    // Grey, matte and quick: the shared material, exactly as before finishes.
+    if (!colour) return [...this.materials.faces];
+    const m = this.colourMaterial(colour, partId);
     if (see) return [m, m, this.materials.faces[2]];
     // A see-through finish stays see-through when hovered or selected (just tinted), so it never suddenly looks solid.
     if (m.opacity < 1) return [m, this.seeThroughHighlight(1, m.opacity), this.seeThroughHighlight(2, m.opacity)];
@@ -2787,7 +2834,7 @@ export class SceneManager {
         if (listed === null || (kind === "face" && listed?.includes(index))) return 1;
         return 0;
       };
-      p.mesh.geometry.groups.forEach((g, i) => (g.materialIndex = state("face", i)));
+      p.mesh.geometry.groups.forEach((g, i) => (g.materialIndex = state("face", i) || this.faceSlot(id, i)));
       p.lines.geometry.groups.forEach((g, i) => (g.materialIndex = state("edge", i)));
     }
     this.drawCornerDots();

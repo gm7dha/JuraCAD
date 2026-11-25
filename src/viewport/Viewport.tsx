@@ -1,3 +1,4 @@
+import { shownFaceColours } from "../model/faceColours";
 import { partsAfterSketch } from "../model/finalPreview";
 import { edgesOfFace } from "../model/faceEdges";
 import { cornerThen, edgeThen, meshSize, NOT_THERE_YET } from "../sketch/rolledBack";
@@ -1320,6 +1321,13 @@ export function Viewport() {
     hadNothing.current = display.length === 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [display]);
+  // Faces with colours of their own, found on the meshes as shown (an assembly's copies look like their parts).
+  const faceAppearance = useStore((s) => s.history.present.faceAppearance);
+  useEffect(() => {
+    const byKey = assembly ? new Map(leaves.map((l) => [l.key, l.instance.partId])) : null;
+    viewportApi.current?.setFaceColours(shownFaceColours(display, faceAppearance, byKey ? (id) => byKey.get(id) : undefined));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [display, faceAppearance]);
   useEffect(() => viewportApi.current?.setPlacements(placements), [placements]);
   useEffect(
     () =>

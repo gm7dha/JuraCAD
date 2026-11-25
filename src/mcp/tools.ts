@@ -42,6 +42,7 @@ import { ASSEMBLY_TOOLS, assemblyViews, exportAssemblyBytes, findAssembly, insta
 import { DRAWING_TOOLS } from "./drawingTools";
 import { LASER_TOOLS } from "./laserTools";
 import { libraryTools } from "./libraryTools";
+import { faceColoursForExport } from "../model/faceColours";
 import { chooseFinish, exportColours, finishFromWords, finishOf, FINISHES, setColourIn } from "../model/finishes";
 import { colourFromWords, PART_COLOURS } from "../model/colours";
 import { cornersOf } from "../geometry/vertexRef";
@@ -988,8 +989,8 @@ export const TOOLS: ToolDef[] = [
       await s.checkpoint();
       const bytes = await s.withEngine(async (e) => {
         if (format === "stl") return new Uint8Array(e.exportStl(ids, "normal").stl);
-        if (format === "3mf") return new Uint8Array(e.export3mf(ids, "normal", s.doc.name, exportColours(s.doc)).data);
-        return new Uint8Array((await e.exportStep(ids, exportColours(s.doc))).step);
+        if (format === "3mf") return new Uint8Array(e.export3mf(ids, "normal", s.doc.name, exportColours(s.doc), undefined, faceColoursForExport(s.doc)).data);
+        return new Uint8Array((await e.exportStep(ids, exportColours(s.doc), undefined, undefined, faceColoursForExport(s.doc))).step);
       });
       writeOut(s, path, bytes);
       return say(`Exported ${ids.length ? "the part" : `${b.parts.length} part(s)`} to ${path} (${Math.max(1, Math.round(bytes.length / 1024))} KB).`);

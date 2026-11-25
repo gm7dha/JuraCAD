@@ -560,6 +560,34 @@ try {
     throw new Error(`the 3MF file doesn't look right (${mfDownload.suggestedFilename()})`);
   }
 
+  step = "colouring a face and exporting a multi-colour 3MF";
+  {
+    // Right-click the block's top face: "Colour this face…", PETG, a Bambu PETG HF colour.
+    const top = await page.evaluate(() => {
+      const s = window.juracadStore.getState();
+      const part = s.parts.find((p) => p.name === "Part 1");
+      const i = part.faceRefs.findIndex((f) => f.surface === "PLANE" && f.normal[2] > 0.99);
+      return window.juracadViewport.current.screenPointOnFace(part.id, i);
+    });
+    if (!top) throw new Error("couldn't find the block's top face on screen");
+    const vb = await page.locator(".viewport canvas").first().boundingBox();
+    await page.mouse.click(vb.x + top.x, vb.y + top.y, { button: "right" });
+    await page.getByRole("menuitem", { name: "Colour this face…" }).click();
+    const pop = page.getByRole("dialog", { name: "Colour this face" });
+    await pop.getByRole("tab", { name: "PETG" }).click();
+    await pop.locator(".spool-line", { hasText: "PETG HF" }).locator(".spool-choice", { hasText: "Black" }).first().click();
+    await page.waitForFunction(() => Object.values(window.juracadStore.getState().history.present.faceAppearance ?? {}).flat().length === 1);
+    await page.getByRole("button", { name: "Export", exact: true }).click();
+    await page.getByRole("radio", { name: /3MF/ }).check();
+    await page.waitForSelector(".dialog-note >> text=multi-colour print");
+    const painted = page.waitForEvent("download", { timeout: 60_000 });
+    await page.getByRole("button", { name: "Check & export" }).click();
+    const paintedText = readFileSync(await (await painted).path()).toString("latin1");
+    if (!/paint_color="8"/.test(paintedText) || !/key="extruder" value="1"/.test(paintedText)) throw new Error("the multi-colour 3MF has no painted face or no filament for the part");
+    await page.evaluate(() => window.juracadStore.getState().undo());
+    await page.waitForFunction(() => !window.juracadStore.getState().history.present.faceAppearance);
+  }
+
   step = "checking the block for 3D printing";
   await tool("3D print");
   // The print bed step above left a 10 mm wide custom printer chosen: the check uses the same printer setting.

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type CSSProperties } from "react";
 import { addHeld } from "../viewport/touchKeys";
 
 import { DEFAULT_PART_COLOUR, PART_COLOURS } from "../model/colours";
@@ -15,6 +15,9 @@ import { clickRow, dragRows } from "../model/listSelection";
 import { featuresOfParts, groupByPart, partsOfFeature } from "../model/partLinks";
 import { framesOf, planeAsSketchPlane } from "../sketch/planeFeature";
 import { DEFAULT_FINISH, FINISHES } from "../model/finishes";
+import { facesColoured, faceColourWords } from "../model/faceColours";
+import { spoolFor, spoolLabel } from "../terrain/bambuColours";
+import { SpoolChoices } from "./SpoolPick";
 import { copyFromMenu, pasteFromMenu } from "./featureClipboardApp";
 import { matchingFeatures, rollbackBarAfter } from "../model/featureSearch";
 import { setHoveredFeature } from "../viewport/featureFaces";
@@ -228,18 +231,28 @@ function ColourSwatch({ partId, name }: { partId: string; name: string }) {
   const setPartsFinish = useStore((s) => s.setPartsFinish);
   // With several parts picked, colouring one of them colours them all.
   const group = useStore((s) => (s.selectedParts.length > 1 && s.selectedParts.includes(partId) ? s.selectedParts : null));
-  const colourAll = (c: string | null) => (group ?? [partId]).forEach((id) => setPartColour(id, c));
+  const colourAll = (c: string | null, spool?: string) => (group ?? [partId]).forEach((id) => setPartColour(id, c, spool));
+  const spool = useStore((s) => s.history.present.partSpools?.[partId]);
+  // Faces of this part with colours of their own (and any that can't be found on it now).
+  const faceList = useStore((s) => s.history.present.faceAppearance?.[partId]);
+  const mesh = useStore((s) => (faceList ? studioParts(s).find((p) => p.id === partId) : undefined));
+  const faces = faceList && mesh ? facesColoured(faceList, mesh) : null;
   const [open, setOpen] = useState(false);
+  const [bambu, setBambu] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
+  const named = spoolFor(colour, spool);
+  const faceNote = faces
+    ? ` ${faceColourWords(faces.colours.size)} on its faces${faces.lost ? `; ${faceColourWords(faces.lost)} can't be found on it since the last change (those faces show the part's colour)` : ""}.`
+    : "";
   return (
     <span className="swatch-wrap">
       <button
         ref={button}
         type="button"
-        className="colour-swatch"
-        style={{ background: colour }}
+        className={`colour-swatch${faceList?.length ? " swatch-faces" : ""}`}
+        style={{ backgroundColor: colour, ...(faceList?.length ? ({ "--face-dot": faceList[faceList.length - 1].colour } as CSSProperties) : {}) }}
         onClick={() => setOpen((o) => !o)}
-        title={group ? `Colour of the ${group.length} selected parts — click to change` : `Colour of ${name} — click to change`}
+        title={(group ? `Colour of the ${group.length} selected parts — click to change` : `Colour of ${name}${spool && named ? `: ${spoolLabel(named)}` : ""} — click to change`) + faceNote}
         aria-label={`Colour of ${name}`}
         aria-expanded={open}
       />
@@ -266,6 +279,31 @@ function ColourSwatch({ partId, name }: { partId: string; name: string }) {
             Other…
             <input type="color" value={colour} onChange={(e) => colourAll(e.target.value)} />
           </label>
+          <button type="button" className="text-button bambu-toggle" aria-expanded={bambu} onClick={() => setBambu((b) => !b)}>
+            {bambu ? "Hide Bambu Lab filaments" : "Bambu Lab filaments…"}
+          </button>
+          {bambu && (
+            <SpoolChoices
+              value={colour}
+              chosen={spool}
+              label={name}
+              custom={false}
+              onPick={(hex, code) => {
+                colourAll(hex, code);
+                setOpen(false);
+              }}
+            />
+          )}
+          {faceList?.length ? (
+            <div className="face-colour-actions">
+              <span className="muted small">
+                {faceColourWords(faceList.length)} on its faces{faces?.lost ? ` (${faces.lost} not found now)` : ""}
+              </span>
+              <button type="button" className="text-button" onClick={() => (group ?? [partId]).forEach((id) => useStore.getState().clearFaceColours(id))}>
+                Clear face colours
+              </button>
+            </div>
+          ) : null}
           <div className="finish-heading">Finish</div>
           <div className="finish-list" role="radiogroup" aria-label={`Finish of ${name}`}>
             {FINISHES.map((f) => (

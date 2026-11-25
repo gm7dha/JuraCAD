@@ -1586,7 +1586,32 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   document.body, `position: fixed`, placed by the pure `placePopup` in popupPlace.ts — below, else above, else beside the swatch,
   scrolling inside only when taller than the window; closes on a click elsewhere or Escape) so no panel clips it; swatch size via
   `--swatch-size`, bigger under `(pointer: coarse)`; the smoke test's `popoverFits` checks it at several window sizes and in dark mode); store `setPartFinish`/`setPartsFinish`. Drawings ignore it (line
-  drawings). No colour per face (face indices aren't stable across rebuilds). Claude's `set_appearance` (colour and/or finish).
+  drawings). Claude's `set_appearance` (colour and/or finish; parts only).
+  Face colours (Onshape's face Appearance): `doc.faceAppearance` (part id → `FaceColour[]` {face: FaceRef as picked, colour, spool?};
+  missing = none, old files byte-identical) + `doc.partSpools` (part id → Bambu code the part's colour was picked from). Pure
+  `src/model/faceColours.ts`: `resolveFaceColours` = strictMatch of each ref on the mesh's faceRefs (later wins; not found = `lost`,
+  never an error — the face shows the part's colour), `facesColoured` (cached per mesh + list), `setFaceColoursIn(doc, part, faces,
+  colour|null, mesh, spool?)` (an entry already landing on a chosen face is replaced; ones not found now are kept), `clearFaceColoursIn`,
+  `setPartSpoolIn`, `shownFaceColours` (meshes shown → face index → colour; assembly copies via their part), `filamentsFor` /
+  `filamentsNote`, `faceColoursForExport`. Store `setPartColour(id, c, spool?)`, `setFaceColours`, `clearFaceColours` (undoable).
+  View: SceneManager `setFaceColours` — `faceMaterialsFor` appends a material per face colour after [normal, hover, selected]
+  (`colourMaterial`, the part's finish/see-through), `faceSlot` is the face's normal index (applyHighlights, pictures); Viewport passes
+  `shownFaceColours(display, …)`. UI: Select other's "Colour this face…" / "Colour the N picked faces…" (the picked faces when the
+  one under the pointer is among them; Part Studios only) → `src/app/FaceColourMenu.tsx` (usual colours, `SpoolChoices`, back to
+  the part's colour, clear); "Clear face colours on this part"; the Parts list swatch gets a corner of the face colour
+  (`.swatch-faces`), a tooltip counting them (and any lost), "Clear face colours" and "Bambu Lab filaments…" (`SpoolChoices`, sets
+  `partSpools`). Export: `FilamentColours` on export3mf/exportStep (app, Claude's export_model). 3MF with face colours on any part
+  chosen = `src/geometry/filament3mf.ts` `writeFilament3mf` (each distinct colour one filament, parts' own first then faces'
+  — `planFilaments`; Bambu `extruder` per object/part in Metadata/model_settings.config + `paint_color` = `paintCode` (now
+  src/geometry/paintCode.ts, re-exported by terrain/colour.ts) on other-coloured triangles; core `basematerials` + `pid`/`p1` for other
+  slicers — Bambu ignores those once a file has painting, Plater.cpp `has_painting`); else the old write3mf byte for byte. Engine
+  `facePainting` finds the colours on the part's own faces (`faceRefOf`, as the app) and carries them by explorer index to the
+  shape written (placed/mirrored copies; a cut copy with other faces stays plain), triangles kept with `keptTriangles` (meshCheck).
+  `ThreeMfResult.filaments`/`lostFaces` → the Export dialog's toast ("2 filaments, load them in this order: …"); the dialog notes it
+  first. STEP: `colouredFaces` → `StepPart.faces` → XCAF `AddSubShape` + surface colour (both writers; cut copies skipped).
+  Tests: tests/faceColours (pure), engineFaceColours (a side and top followed as the box grows 40 → 80 and after a fillet; lost
+  quietly; the 3MF's painted triangles are exactly the face's; STEP face style); the smoke test colours the block's top face
+  PETG HF Black and checks the 3MF's paint, then undoes. Not done: Claude colouring faces, the print-layout 3MF (PrintPanel) painting faces.
   3D view: `src/viewport/studio.ts` (`finishMaterial`: matte in the quick view is still the original Phong material and grey
   matte parts share the old one, so the everyday view is unchanged; `studioEnvironment`: three's RoomEnvironment made in code,
   turned Z-up, through PMREM — no downloaded assets; `studioRig`: four slightly spread shadow-casting key lights = a soft
@@ -2363,10 +2388,13 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   order with a base and a band below the ground; first-layer snapping; plates by level ≤ bands − 1 changes each; warnings; the
   cache not re-cutting for a colour change).
   Bambu colours and 8 slots: `src/terrain/bambuColours.ts` (pure; Bambu Studio's filaments_color_codes.json, PLA Basic, Matte,
-  Silk+ single colours: code/line/name/hex; `bambu(line, name)`, `spoolFor(hex, code?)`, `spoolLabel`). Every usual colour is a
+  Silk+ single colours, then every other material's in `bambuFilaments.ts` (generated from the same file at 930fe93: PLA Silk/
+  Translucent/Glow/…, PETG HF/Basic/Matte/Translucent, ABS, ASA, TPU, PC, nylons; support/PVA/2.85 mm left out) — `BAMBU_MATERIALS`
+  (material → lines, the picker's order), `materialOfLine`, `coloursOfMaterial`; PLA's first so `spoolFor(hex)` still names PLA Basic
+  first: code/line/name/hex; `bambu(line, name)`, `spoolFor(hex, code?)`, `spoolLabel`). Every usual colour is a
   Bambu PLA (SEA_BLUE Matte Marine Blue, WATER_BLUE Basic Cyan, PATH_RED Basic Red, ROAD_BLACK Basic Black, ISLAND_/MOUNTAIN_COLOURS,
   SPARE_COLOURS). `ColourSpec.spools` (hex → code, where two spools share a colour) → `Filament.spool` ("Charcoal (PLA Matte)"),
-  shown in the Load list. `src/app/SpoolPick.tsx` (PlacedPopup of named swatches + your own colour) for every band, base, water,
+  shown in the Load list. `src/app/SpoolPick.tsx` (`SpoolChoices`: material tabs, then each line's named swatches + your own colour; `SpoolPick` = its PlacedPopup) for every band, base, water,
   paths, roads. Filament slots 4/8: `PrinterSetting.amsSlots` (`amsSlotsOf`: missing = 8 on every printer; panel row "Filament
   slots"), `colourWarnings(…, slots)`; the usual bands are always the three above (the old 5/6-band sets and
   `usualBandCount` are gone). Modal ignores Esc while a

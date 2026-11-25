@@ -35,6 +35,27 @@ function isDegenerate(a: number, b: number, c: number, doubleArea: number): bool
   return a === b || b === c || a === c || doubleArea < DEGENERATE_DOUBLE_AREA;
 }
 
+/** The numbers of the triangles withoutDegenerateTriangles keeps (same test), so per-triangle data can follow them. */
+export function keptTriangles(vertices: ArrayLike<number>, triangles: ArrayLike<number>, weldTolerance = 1e-4): number[] {
+  const q = 1 / weldTolerance;
+  const key = (i: number) => `${Math.round(vertices[3 * i] * q)},${Math.round(vertices[3 * i + 1] * q)},${Math.round(vertices[3 * i + 2] * q)}`;
+  const out: number[] = [];
+  for (let t = 0; t + 2 < triangles.length; t += 3) {
+    const i = triangles[t], j = triangles[t + 1], k = triangles[t + 2];
+    const ki = key(i), kj = key(j), kk = key(k);
+    const ux = vertices[3 * j] - vertices[3 * i];
+    const uy = vertices[3 * j + 1] - vertices[3 * i + 1];
+    const uz = vertices[3 * j + 2] - vertices[3 * i + 2];
+    const vx = vertices[3 * k] - vertices[3 * i];
+    const vy = vertices[3 * k + 1] - vertices[3 * i + 1];
+    const vz = vertices[3 * k + 2] - vertices[3 * i + 2];
+    const doubleArea = Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+    if (ki === kj || kj === kk || ki === kk || doubleArea < DEGENERATE_DOUBLE_AREA) continue;
+    out.push(t / 3);
+  }
+  return out;
+}
+
 /**
  * Returns the triangle index list without zero-area triangles.
  * Used before writing STL files so slicers receive a clean surface.

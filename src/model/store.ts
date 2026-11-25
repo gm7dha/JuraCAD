@@ -72,6 +72,7 @@ import { setPartProperties as setPartPropertiesIn } from "../assembly/properties
 import { moveFeature as moveFeatureIn } from "./reorder";
 import { DEFAULT_MATERIAL } from "./materials";
 import { chooseFinish, setColourIn, type FinishId } from "./finishes";
+import { clearFaceColoursIn, setFaceColoursIn, setPartSpoolIn } from "./faceColours";
 import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameDrawing as renameDrawingIn, updateDrawing, numberInspections } from "../drawing/drawing";
 import { withDragChange, type DragChange } from "../assembly/drag";
 import type { Placement } from "../assembly/math";
@@ -539,7 +540,11 @@ export interface AppState {
   /** A part's number, description and own properties, for parts lists (blank ones are dropped). */
   setPartProperties: (partId: string, props: PartProperties) => void;
   /** Colour a part (null = back to the default grey). One undo step. */
-  setPartColour: (partId: string, colour: string | null) => void;
+  setPartColour: (partId: string, colour: string | null, spool?: string) => void;
+  /** Colour some faces of a part (face indices of its mesh as shown; colour null = back to the part's colour), one undo step. */
+  setFaceColours: (partId: string, faces: number[], colour: string | null, spool?: string) => void;
+  /** Take off all of a part's face colours (one undo step). */
+  clearFaceColours: (partId: string) => void;
   /** A part's finish (matte, glossy, metal, clear…); null = the usual matte look. Undoable, saved in the file. A grey part also gets a colour that suits the finish (`chooseFinish`). */
   setPartFinish: (partId: string, finish: FinishId | null) => void;
   /** Several parts at once, as one undo step. */
@@ -1703,7 +1708,13 @@ export const useStore = create<AppState>((set, get) => {
         return Object.keys(materials).length ? { ...rest, materials } : rest;
       }),
 
-    setPartColour: (partId, colour) => change((doc) => setColourIn(doc, partId, colour)),
+    setPartColour: (partId, colour, spool) => change((doc) => setPartSpoolIn(setColourIn(doc, partId, colour), partId, colour ? (spool ?? null) : null)),
+    setFaceColours: (partId, faces, colour, spool) => {
+      const part = get().parts.find((p) => p.id === partId);
+      if (!part) return;
+      change((doc) => setFaceColoursIn(doc, partId, faces, colour, part, spool));
+    },
+    clearFaceColours: (partId) => change((doc) => clearFaceColoursIn(doc, partId)),
 
     setPartFinish: (partId, finish) => change((doc) => chooseFinish(doc, [partId], finish)),
     setPartsFinish: (partIds, finish) => change((doc) => chooseFinish(doc, partIds, finish)),
