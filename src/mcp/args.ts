@@ -39,6 +39,7 @@ export function amount(v: unknown, where: string, scope: Scope, opts: { positive
   } else if (typeof v === "string" && v.trim()) {
     const r = evaluate(v, scope);
     if (!r.ok) throw new InputError(`${where}: "${v}" can't be worked out (${r.error}). Give a number${unit === "mm" ? " in millimetres" : ""}, e.g. 10.`);
+    if (r.angle && unit !== "°") throw new InputError(`${where}: "${v}" is an angle — give ${unit === "mm" ? "a length in millimetres" : "a plain number"} here.`);
     a = { value: r.value, text: v.trim() };
   } else {
     throw new InputError(`${where} is missing: give a number${unit === "mm" ? " in millimetres" : unit === "°" ? " of degrees" : ""}, e.g. ${unit === "°" ? 90 : 10}.`);
