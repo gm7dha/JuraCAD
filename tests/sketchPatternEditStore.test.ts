@@ -67,7 +67,7 @@ describe("chamfer and round with arcs and circles, clicked", () => {
     click(c, 5, 0);
     expect(s().sketch!.message?.text).toMatch(/other line or arc/);
     click(c, 7.0710678, 7.0710678);
-    expect(s().sketch!.message?.kind).not.toBe("error");
+    expect(s().sketch!.message?.tone).not.toBe("error");
     const arc = draftData().curves.find((k): k is SketchArc => k.type === "arc")!;
     const ends = [arc.start, arc.end].map((p) => pointPos(draftData(), p));
     expect(ends.some(([x, y]) => Math.abs(Math.hypot(x - 10, y) - 2) < 1e-6)).toBe(true);
