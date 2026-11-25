@@ -9,7 +9,7 @@
  */
 import { evaluate, namesIn } from "../model/expr";
 import { curveById, curvePoints, measure, pointPos, sketchId } from "./ops";
-import { solveSketch } from "./solver";
+import { patternAmount, solveSketch } from "./solver";
 import { parseSketchData } from "./validate";
 import { isDimension, ORIGIN_ID, type SketchConstraint, type SketchCurve, type SketchData, type SketchPoint, type SketchText } from "./types";
 
@@ -68,7 +68,9 @@ export function copySketchItems(s: SketchData, ids: readonly string[]): SketchCl
     points.push(withoutLink(p));
   }
   const inside = new Set<string>([...points.map((p) => p.id).filter((id) => id !== ORIGIN_ID), ...curves.map((c) => c.id)]);
-  const constraints = s.constraints.filter((c) => !LEFT_BEHIND.has(c.type) && c.refs.length > 0 && c.refs.every((r) => inside.has(r)));
+  const constraints = s.constraints
+    .filter((c) => !LEFT_BEHIND.has(c.type) && c.refs.length > 0 && c.refs.every((r) => inside.has(r)))
+    .map((c) => (c.pattern ? plainCopy(c) : c));
   // An offset copy without its offset dimension is just a curve.
   const offsetKept = new Set(constraints.filter((c) => c.type === "offset").flatMap((c) => c.refs));
   const copied = curves.map((c) => {
@@ -282,4 +284,12 @@ export function dragSelection(start: SketchData, ids: readonly string[], dx: num
     return Math.hypot(x1 - x0 - dx, y1 - y0 - dy) < 1e-3;
   });
   return rigid ? r.sketch : start;
+}
+
+/** A copy of an editable pattern's constraint, pasted as a plain one: moved by its amount now (the copies aren't the pattern's). */
+function plainCopy(c: SketchConstraint): SketchConstraint {
+  const { pattern: _p, value: _v, ...rest } = c;
+  void _p;
+  void _v;
+  return { ...rest, extra: [patternAmount(c), ...(c.extra?.slice(1) ?? [])] };
 }

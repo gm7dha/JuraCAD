@@ -7,7 +7,7 @@ import { assembleWire, basicFaceExtrusion, type Wire, cast, makePolygon, Vector,
 
 import { analyzeMesh, estimateThickness, keptTriangles, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
-import { matchRefs, refDistance, relativeTo, roundVec, sameRef, strictMatch, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
+import { matchRefs, refDistance, relativeTo, roundVec, sameRef, strictMatch, type EdgeRef, type FaceRef, type TopoPick, type TopoRef, type Vec3 } from "../geometry/topoRef";
 import { applyPoint, applyVec, isClassicTransform, isStill, scaleOf, toAxisAngle, transformMode, transformMotion, type Rigid } from "../model/transformMath";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams, visibleParamKeys } from "../model/features";
 import { planeFrame, toSketch, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
@@ -92,6 +92,7 @@ import { simplifyReport, type SimplifyLevel, type SimplifySummary } from "../mod
 import { edgesOf, facesOf, seamEdgeIds, shellsOf, solidsOf } from "./topology";
 export { seamEdgeIds };
 import { findCorner, shapeCorners } from "./corners";
+import { placedPoint, placedRef } from "../assembly/asmMeasure";
 import { matchVertex, type VertexPick } from "../geometry/vertexRef";
 import { radiusPointPick, VariableFilletError } from "../model/variableFillet";
 import { variableFillet, type EdgeRadiusPoint } from "./variableFillet";
@@ -8058,63 +8059,35 @@ export class GeometryEngine {
     }
   }
 
-  /** Measure one or two picked edges/faces: lengths, areas, round sizes, and the gap and angle between them. */
-  measure(picks: (TopoPick | VertexPick)[]): Measurement {
-    const found: { item: MeasuredItem; shape: Edge | Face | Vertex }[] = [];
-    for (const pick of picks.slice(0, 2)) {
-      const part = this.parts.find((p) => p.id === pick.partId);
+  /**
+   * Measure one or two picked edges/faces/corners: lengths, areas, round sizes, and the gap and angle between them.
+   * In an assembly (`instances` + `copies`: the copy each pick is on, by InstanceInput id) each pick is found on its
+   * copy's part as the assembly's features cut it, then measured where the copy is placed (mirrored, turned, moved).
+   */
+  measure(picks: (TopoPick | VertexPick)[], instances?: InstanceInput[], copies?: string[]): Measurement {
+    const found: { item: MeasuredItem; shape: Edge | Face | Vertex; ref?: TopoRef }[] = [];
+    const list = picks.slice(0, 2);
+    for (let k = 0; k < list.length; k++) {
+      const pick = list[k];
+      const inst = instances && copies ? instances.find((i) => i.id === copies[k]) : undefined;
+      if (instances && !inst) continue;
+      const wanted = inst ? inst.partId : pick.partId;
+      const part = this.parts.find((p) => p.id === wanted) ?? (inst ? this.parts.find((p) => p.id === wanted.split("@")[0]) : undefined);
       if (!part) continue;
-      if (pick.ref.kind === "vertex") {
-        // A corner: a point.
-        const corner = findCorner(this.parts, pick as VertexPick);
-        if (typeof corner === "string") continue;
-        found.push({ item: { label: "Corner", point: corner }, shape: makeVertex(corner) });
-        continue;
-      }
-      const pickT = pick as TopoPick;
-      const bounds = boundsOf(part.shape);
-      const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
-      const item = describePick(pickT.ref);
-      if (pickT.ref.kind === "edge") {
-        const edges = edgesOf(part.shape);
-        const [i] = matchRefs([pickT.ref], edges.map((e) => edgeRefOf(e, bounds)), size);
-        if (i === null) continue;
-        const edge = edges[i];
-        edges.forEach((e, j) => j !== i && e.delete());
-        item.length = measureLength(edge);
-        if (pickT.ref.curve === "CIRCLE") {
-          const c = circleThrough3D(take(edge.pointAt(0)), take(edge.pointAt(1 / 3)), take(edge.pointAt(2 / 3)));
-          if (c) Object.assign(item, { radius: c.radius, centre: c.centre });
+      // A copy in an assembly: its part as the assembly's own features cut it (in the part's own coordinates).
+      const cut = inst?.cuts?.length && !part.surface ? this.cutCopy(part, inst.cuts).shape : null;
+      try {
+        const hit = this.measuredPick({ id: part.id, name: part.name, shape: cut ?? part.shape }, pick);
+        if (!hit) continue;
+        if (inst) {
+          hit.shape = placedCopy(hit.shape, inst);
+          if (hit.item.centre) hit.item.centre = placedPoint(inst, hit.item.centre);
+          if (hit.item.point) hit.item.point = placedPoint(inst, hit.item.point);
+          if (hit.ref) hit.ref = placedRef(hit.ref, inst);
         }
-        found.push({ item, shape: edge });
-      } else {
-        const faces = facesOf(part.shape);
-        const [i] = matchRefs([pickT.ref], faces.map((f) => faceRefOf(f, bounds)), size);
-        if (i === null) continue;
-        const face = faces[i];
-        faces.forEach((f, j) => j !== i && f.delete());
-        item.area = measureArea(face);
-        if (pickT.ref.surface === "CYLINDRE") {
-          // A round face's size comes from one of its round edges.
-          for (const e of edgesOf(face)) {
-            if (!item.radius && e.geomType === "CIRCLE") {
-              const c = circleThrough3D(take(e.pointAt(0)), take(e.pointAt(1 / 3)), take(e.pointAt(2 / 3)));
-              if (c) Object.assign(item, { radius: c.radius, centre: c.centre });
-            }
-            e.delete();
-          }
-          // No round edge (a slanted hole between two elliptical rims): from the surface itself.
-          if (!item.radius) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const oc = getOC() as any;
-            const surf = new oc.BRepAdaptor_Surface(face.wrapped, true);
-            const cyl = surf.Cylinder();
-            item.radius = cyl.Radius();
-            cyl.delete();
-            surf.delete();
-          }
-        }
-        found.push({ item, shape: face });
+        found.push(hit);
+      } finally {
+        cut?.delete();
       }
     }
     const result: Measurement = { items: found.map((f) => f.item) };
@@ -8124,13 +8097,74 @@ export class GeometryEngine {
         result.distance = near.distance;
         result.closest = [near.a, near.b];
       }
-      const angle = picks[0].ref.kind === "vertex" || picks[1].ref.kind === "vertex" ? null : angleBetween((picks[0] as TopoPick).ref, (picks[1] as TopoPick).ref);
+      const [ra, rb] = [found[0].ref, found[1].ref];
+      const angle = ra && rb ? angleBetween(ra, rb) : null;
       if (angle !== null) result.angle = angle;
       const [a, b] = found.map((f) => f.item.centre ?? f.item.point);
       if (a && b && (found[0].item.centre || found[1].item.centre)) result.centreDistance = centreGap(a, b);
     }
     found.forEach((f) => f.shape.delete());
     return result;
+  }
+
+  /** One picked edge, face or corner found on a part's shape, with what can be measured of it alone (null if it isn't there). */
+  private measuredPick(part: { id: string; name: string; shape: Shape3D }, pick: TopoPick | VertexPick): { item: MeasuredItem; shape: Edge | Face | Vertex; ref?: TopoRef } | null {
+    if (pick.ref.kind === "vertex") {
+      // A corner: a point.
+      const corner = findCorner([part], { ...(pick as VertexPick), partId: part.id });
+      if (typeof corner === "string") return null;
+      return { item: { label: "Corner", point: corner }, shape: makeVertex(corner) };
+    }
+    const pickT = pick as TopoPick;
+    const bounds = boundsOf(part.shape);
+    const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
+    const item = describePick(pickT.ref);
+    if (pickT.ref.kind === "edge") {
+      const edges = edgesOf(part.shape);
+      const [i] = matchRefs([pickT.ref], edges.map((e) => edgeRefOf(e, bounds)), size);
+      if (i === null) {
+        edges.forEach((e) => e.delete());
+        return null;
+      }
+      const edge = edges[i];
+      edges.forEach((e, j) => j !== i && e.delete());
+      item.length = measureLength(edge);
+      if (pickT.ref.curve === "CIRCLE") {
+        const c = circleThrough3D(take(edge.pointAt(0)), take(edge.pointAt(1 / 3)), take(edge.pointAt(2 / 3)));
+        if (c) Object.assign(item, { radius: c.radius, centre: c.centre });
+      }
+      return { item, shape: edge, ref: pickT.ref };
+    }
+    const faces = facesOf(part.shape);
+    const [i] = matchRefs([pickT.ref], faces.map((f) => faceRefOf(f, bounds)), size);
+    if (i === null) {
+      faces.forEach((f) => f.delete());
+      return null;
+    }
+    const face = faces[i];
+    faces.forEach((f, j) => j !== i && f.delete());
+    item.area = measureArea(face);
+    if (pickT.ref.surface === "CYLINDRE") {
+      // A round face's size comes from one of its round edges.
+      for (const e of edgesOf(face)) {
+        if (!item.radius && e.geomType === "CIRCLE") {
+          const c = circleThrough3D(take(e.pointAt(0)), take(e.pointAt(1 / 3)), take(e.pointAt(2 / 3)));
+          if (c) Object.assign(item, { radius: c.radius, centre: c.centre });
+        }
+        e.delete();
+      }
+      // No round edge (a slanted hole between two elliptical rims): from the surface itself.
+      if (!item.radius) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const oc = getOC() as any;
+        const surf = new oc.BRepAdaptor_Surface(face.wrapped, true);
+        const cyl = surf.Cylinder();
+        item.radius = cyl.Radius();
+        cyl.delete();
+        surf.delete();
+      }
+    }
+    return { item, shape: face, ref: pickT.ref };
   }
 
   /**
@@ -8237,8 +8271,27 @@ export class GeometryEngine {
     });
   }
 
-  /** Mass properties of whole parts (all solid parts when none are named), exactly from the solid model. */
-  massProperties(partIds: string[]): PartMassProps[] {
+  /**
+   * Mass properties of whole parts (all solid parts when none are named), exactly from the solid model. In an
+   * assembly (`instances`): one entry per copy (by its InstanceInput id), placed and cut as the assembly has it.
+   */
+  massProperties(partIds: string[], instances?: InstanceInput[]): PartMassProps[] {
+    if (instances?.length) {
+      const placed = this.placeInstances(instances);
+      try {
+        const out: PartMassProps[] = [];
+        for (const p of placed) {
+          try {
+            out.push(massPropsOf(p.id, p.name, p.shape, !!p.surface));
+          } catch {
+            // leave it out
+          }
+        }
+        return out;
+      } finally {
+        placed.forEach((p) => p.shape.delete());
+      }
+    }
     const chosen = partIds.length ? partIds.map((id) => this.parts.find((p) => p.id === id)).filter((p): p is BuiltPart => !!p) : this.parts.filter((p) => !p.configured);
     const out: PartMassProps[] = [];
     for (const p of chosen) {
@@ -8251,43 +8304,20 @@ export class GeometryEngine {
     return out;
   }
 
-  /** Measure whole parts: each one's size, and between two of them the gap (0 if touching) and any overlap. */
-  measureParts(partIds: string[]): Measurement {
-    const chosen = partIds.slice(0, 2).map((id) => this.parts.find((p) => p.id === id)).filter((p): p is BuiltPart => !!p);
-    const items: MeasuredItem[] = chosen.map((p) => {
-      const b = boundsOf(p.shape);
-      const centre: Vec3 = [(b[0][0] + b[1][0]) / 2, (b[0][1] + b[1][1]) / 2, (b[0][2] + b[1][2]) / 2];
-      let volume: number | undefined;
+  /**
+   * Measure whole parts: each one's size, and between two of them the gap (0 if touching) and any overlap. In an
+   * assembly (`instances`): `partIds` are copies (InstanceInput ids), measured where they're placed.
+   */
+  measureParts(partIds: string[], instances?: InstanceInput[]): Measurement {
+    if (instances?.length) {
+      const placed = this.placeInstances(partIds.slice(0, 2).map((id) => instances.find((i) => i.id === id)).filter((i): i is InstanceInput => !!i));
       try {
-        volume = measureVolume(p.shape);
-      } catch {
-        // leave it out
+        return wholeMeasure(placed);
+      } finally {
+        placed.forEach((p) => p.shape.delete());
       }
-      return { label: p.name, centre, ...(volume !== undefined ? { volume } : {}) };
-    });
-    const result: Measurement = { items };
-    if (chosen.length === 2) {
-      try {
-        result.distance = measureDistanceBetween(chosen[0].shape, chosen[1].shape);
-      } catch {
-        // leave it out
-      }
-      if (result.distance !== undefined && result.distance < 1e-6) {
-        try {
-          const common = chosen[0].shape.intersect(chosen[1].shape) as Shape3D;
-          try {
-            result.overlap = Math.max(0, measureVolume(common));
-          } finally {
-            common.delete();
-          }
-        } catch {
-          // leave it out
-        }
-      }
-      const [a, b] = items.map((i) => i.centre!);
-      result.centreDistance = centreGap(a, b);
     }
-    return result;
+    return wholeMeasure(partIds.slice(0, 2).map((id) => this.parts.find((p) => p.id === id)).filter((p): p is BuiltPart => !!p));
   }
 
   /** One 3MF file with each chosen part as a separate, named object. */
@@ -9428,4 +9458,54 @@ export function noChangeMessage(operation: Feature["operation"]): string {
   if (operation === "add") return "This doesn't change anything — everything it adds is inside the part already. Check the direction (Flip), the depth and where the sketch is.";
   if (operation === "intersect") return "This doesn't change anything — the parts it reaches are wholly inside it. Check the direction (Flip), the depth and where the sketch is.";
   return "This doesn't change anything — it removes no material. Check the direction (Flip), the depth and where the sketch is.";
+}
+
+/** Whole parts (or placed copies) measured: each one's size, and between two the gap (0 if touching) and any overlap. */
+function wholeMeasure(chosen: { name: string; shape: Shape3D }[]): Measurement {
+  const items: MeasuredItem[] = chosen.map((p) => {
+    const b = boundsOf(p.shape);
+    const centre: Vec3 = [(b[0][0] + b[1][0]) / 2, (b[0][1] + b[1][1]) / 2, (b[0][2] + b[1][2]) / 2];
+    let volume: number | undefined;
+    try {
+      volume = Math.abs(measureVolume(p.shape));
+    } catch {
+      // leave it out
+    }
+    return { label: p.name, centre, ...(volume !== undefined ? { volume } : {}) };
+  });
+  const result: Measurement = { items };
+  if (chosen.length === 2) {
+    try {
+      result.distance = measureDistanceBetween(chosen[0].shape, chosen[1].shape);
+    } catch {
+      // leave it out
+    }
+    if (result.distance !== undefined && result.distance < 1e-6) {
+      try {
+        const common = chosen[0].shape.intersect(chosen[1].shape) as Shape3D;
+        try {
+          result.overlap = Math.max(0, Math.abs(measureVolume(common)));
+        } finally {
+          common.delete();
+        }
+      } catch {
+        // leave it out
+      }
+    }
+    const [a, b] = items.map((i) => i.centre!);
+    result.centreDistance = centreGap(a, b);
+  }
+  return result;
+}
+
+/** A face, edge or corner of a part's own coordinates moved as an assembly copy is placed (as placeInstances places the part). The given shape is used up. */
+function placedCopy<T extends Edge | Face | Vertex>(shape: T, i: InstanceInput): T {
+  let out = shape;
+  if (i.mirrored) out = out.mirror("YZ", [0, 0, 0]) as T;
+  const [x, y, z, w] = i.rotation;
+  const s = Math.sqrt(Math.max(0, 1 - w * w));
+  const angle = (2 * Math.acos(Math.max(-1, Math.min(1, w))) * 180) / Math.PI;
+  if (s > 1e-9 && Math.abs(angle) > 1e-9) out = out.rotate(angle, [0, 0, 0], [x / s, y / s, z / s]) as T;
+  if (Math.abs(i.position[0]) + Math.abs(i.position[1]) + Math.abs(i.position[2]) > 0) out = out.translate(i.position) as T;
+  return out;
 }

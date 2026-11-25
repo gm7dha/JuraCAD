@@ -18,6 +18,8 @@ export interface EditToolOptions {
   pattern2Count: number;
   pattern2Spacing: string;
   pattern2Angle: string;
+  /** The pattern whose settings the sketch panel is showing to change (Edit pattern…), or null. */
+  editingPattern: string | null;
   set: (patch: Partial<Omit<EditToolOptions, "set">>) => void;
 }
 
@@ -31,5 +33,6 @@ export const useEditToolOptions = create<EditToolOptions>((set) => ({
   pattern2Count: 2,
   pattern2Spacing: "10",
   pattern2Angle: "90",
+  editingPattern: null,
   set: (patch) => set(patch),
 }));

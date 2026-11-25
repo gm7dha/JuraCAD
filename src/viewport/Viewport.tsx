@@ -32,6 +32,7 @@ import { SketchController } from "../sketch/controller";
 import { intersectWith } from "../app/sketchIntersect";
 import { bringInCurvedEdge } from "../app/sketchUseCurve";
 import { cutMeshFor, useAssemblyCuts, useAsmFeatures, useShownContextParts } from "../app/assemblyFeatureState";
+import { asmMeasureClick, asmPicksNow, asmSelectionAfterClick, livePicks, useAsmPicks } from "../app/asmMeasureState";
 import { asmCutPick } from "../app/AssemblyFeaturesUI";
 import { isContextPartId } from "../assembly/inContext";
 import { planeFrame, planeOnFace, type PlaneFrame, type SketchPlane } from "../sketch/planes";
@@ -128,10 +129,16 @@ function connectorItems(parts: PartMesh[], assembly: Assembly, assemblies: reado
 }
 
 /** Selected instances, as every face of each (so the whole part lights up; a sub-assembly, all its parts). */
-function instanceSelection(display: PartMesh[], ids: string[]): SelectionItem[] {
+function instanceSelection(display: PartMesh[], ids: string[], picks: SelectionItem[] = []): SelectionItem[] {
   const items: SelectionItem[] = [];
   // (In an exploded view a part inside a sub-assembly can be selected on its own: its "top/inner/part" key.)
-  for (const p of display) if (ids.includes(topOfKey(p.id)) || ids.includes(p.id)) p.faceGroups.forEach((_, index) => items.push({ partId: p.id, kind: "face", index }));
+  // A copy with faces, edges or corners clicked on it (for Measure) shows just those, as Onshape does.
+  for (const p of display) {
+    if (!(ids.includes(topOfKey(p.id)) || ids.includes(p.id))) continue;
+    const own = picks.filter((x) => x.partId === p.id);
+    if (own.length) items.push(...own);
+    else p.faceGroups.forEach((_, index) => items.push({ partId: p.id, kind: "face", index }));
+  }
   return items;
 }
 
@@ -199,13 +206,15 @@ function handleAssemblyPick(target: PickTarget | null, additive: boolean) {
   // where it selects just that part, so an exploded view step can move it on its own.
   const exploded = activeAssembly(s)?.explode !== undefined;
   const id = target?.kind === "part" ? (exploded ? target.item.partId : topOfKey(target.item.partId)) : null;
+  // The face, edge or corner clicked is kept for Measure. A click on another one of a copy already selected keeps
+  // the copy selected (so two faces of one copy can be measured); the same one again selects / lets go as before.
+  const again = asmMeasureClick(target, additive);
   if (!id) {
     if (!additive) s.setAsmSelection([]);
     return;
   }
-  const current = s.asmSelection;
-  if (additive) s.setAsmSelection(current.includes(id) ? current.filter((x) => x !== id) : [...current, id]);
-  else s.setAsmSelection(current.length === 1 && current[0] === id ? [] : [id]);
+  const next = asmSelectionAfterClick(s.asmSelection, id, additive, again, asmPicksNow());
+  if (next !== s.asmSelection) s.setAsmSelection(next);
 }
 
 /** Lets keyboard shortcuts and toolbar buttons reach the 3D view. */
@@ -1046,6 +1055,7 @@ export function Viewport() {
 
   const assembly = useStore(activeAssembly);
   const asmSelection = useStore((s) => s.asmSelection);
+  const asmPicks = useAsmPicks();
   const hiddenInstances = useStore((s) => s.hiddenInstances);
   // In an assembly the meshes only change when parts are rebuilt or instances added/removed, not when they move.
   const leaves = useAssemblyLeaves();
@@ -1237,7 +1247,9 @@ export function Viewport() {
   }, [assembly, listFeatures, builtCurves, pickedFeatureForPlanes, openDraft]);
   const wantsConnector = useStore((s) => connectorWanted(s, !!activeAssembly(s)));
   useEffect(() => viewportApi.current?.setConnectorPicking(wantsConnector), [wantsConnector]);
-  const wantsCorners = useStore((s) => cornerWanted(s, !!activeAssembly(s)));
+  // (Not while an assembly's Hole / Cut / Fillet takes faces or edges.)
+  const asmCutOpen = useAsmFeatures((a) => !!a.draft);
+  const wantsCorners = useStore((s) => cornerWanted(s, !!activeAssembly(s))) && !(assembly && asmCutOpen);
   useEffect(() => viewportApi.current?.setCornerPicking(wantsCorners), [wantsCorners]);
   const selectedParts = useStore((s) => s.selectedParts);
   const pickedFeature = useStore((s) => s.selectedFeatureId);
@@ -1337,12 +1349,12 @@ export function Viewport() {
             ? connectorItems(parts, assembly, allAssemblies ?? [], [mateDraft.a, mateDraft.b])
             : mirrorFace
               ? connectorItems(parts, assembly, allAssemblies ?? [], [mirrorFace])
-              : instanceSelection(display, asmSelection)
+              : instanceSelection(display, asmSelection, livePicks(asmPicks, asmSelection))
           : pickList
             ? itemsForPicks(parts, pickList)
             : selection,
       ),
-    [selection, pickList, parts, assembly, display, asmSelection, mateDraft, allAssemblies, mirrorFace],
+    [selection, pickList, parts, assembly, display, asmSelection, mateDraft, allAssemblies, mirrorFace, asmPicks],
   );
   useEffect(
     () => viewportApi.current?.setDatums({ selected: selectedPlane, listHover: listHoverPlane, hidden: hiddenDatums }),

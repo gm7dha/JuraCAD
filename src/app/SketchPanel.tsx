@@ -13,6 +13,7 @@ import { lostLinkIds, lostLinksMessage } from "../sketch/links";
 import { isDimension } from "../sketch/types";
 import { setConicRho } from "../sketch/tools";
 import { SketchExtrasPanel } from "./SketchExtrasPanel";
+import { PatternEditor } from "./PatternEditor";
 import { setSketchView, useSketchView } from "./sketchViewState";
 import { setSketchCentreline } from "./sketchMenuActions";
 import { canBeCentreline } from "../sketch/dimensionKinds";
@@ -277,6 +278,7 @@ export function SketchPanel() {
           </div>
         )}
         <SketchEditOptions tool={tool} />
+        <PatternEditor data={data} selection={selection} />
         <SketchExtrasPanel data={data} />
         {DRAWING_TOOLS.has(tool) && <p className="dialog-hint muted">Hold Shift while you click or drag to place it exactly there, without snapping.</p>}
         {tool === "useEdge" && <p className="dialog-hint">Click edges of a part (or a face, for all its edges at once), or another sketch's lines and curves, to copy them into this sketch. They follow the original if it changes.</p>}

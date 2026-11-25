@@ -5,10 +5,11 @@
  * the part that was clicked.
  */
 import { evaluate } from "../model/expr";
-import { curveById, deleteItems, pointPos, radiusOf, sketchId, type EditResult } from "./ops";
+import { curveById, deleteItems, onCurveType, pointPos, radiusOf, sketchId, type EditResult } from "./ops";
+import { crossings, curveParam } from "./curves";
 import { solveSketch } from "./solver";
 import { filletCorner, mergeCoincident, sizeOfRound } from "./tools";
-import { ORIGIN_ID, type SketchArc, type SketchConstraint, type SketchCurve, type SketchData, type SketchLine, type SketchPoint } from "./types";
+import { ORIGIN_ID, type SketchArc, type SketchCircle, type SketchConstraint, type SketchCurve, type SketchData, type SketchLine, type SketchPoint } from "./types";
 
 type P2 = [number, number];
 const TAU = Math.PI * 2;
@@ -23,12 +24,12 @@ const norm = (a: number) => ((a % TAU) + TAU) % TAU;
 
 const con = (type: SketchConstraint["type"], refs: string[], extra?: number[]): SketchConstraint => ({ id: sketchId("c"), type, refs, ...(extra ? { extra } : {}) });
 
-type Round = SketchLine | SketchArc;
+type Round = SketchLine | SketchArc | SketchCircle;
 type Side = { kind: "line"; a: P2; d: P2 } | { kind: "circle"; c: P2; r: number };
 
 /** The end both curves share (after joining points held together), if any. */
-function sharedEnd(s: SketchData, a: Round, b: Round): { sketch: SketchData; point: string } | null {
-  const ends = (k: Round) => (k.type === "line" ? [k.p1, k.p2] : [k.start, k.end]);
+export function sharedEnd(s: SketchData, a: Round, b: Round): { sketch: SketchData; point: string } | null {
+  const ends = (k: Round) => (k.type === "line" ? [k.p1, k.p2] : k.type === "arc" ? [k.start, k.end] : []);
   for (const p of ends(a)) {
     if (p === ORIGIN_ID) continue;
     const merged = mergeCoincident(s, p);
@@ -56,8 +57,9 @@ export function filletBetween(s: SketchData, idA: string, atA: P2, idB: string, 
   const ka = curveById(s, idA);
   const kb = curveById(s, idB);
   if (!ka || !kb || idA === idB) return fail("Click two different lines or arcs to round between.");
-  if ((ka.type !== "line" && ka.type !== "arc") || (kb.type !== "line" && kb.type !== "arc"))
-    return fail("Round between two curves works on lines and arcs — trim a circle into an arc first, or round a corner where they meet.");
+  const roundable = (k: SketchCurve): k is Round => k.type === "line" || k.type === "arc" || k.type === "circle";
+  if (!roundable(ka) || !roundable(kb)) return fail("Round between two curves works on lines, arcs and circles.");
+  if ((ka.type === "circle" && ka.link) || (kb.type === "circle" && kb.link)) return fail("That circle follows a part's edge, so it can't be cut — round onto a copy of it instead.");
   const shared = sharedEnd(s, ka, kb);
   if (shared) {
     const made = filletCorner(shared.sketch, shared.point, radiusText, equalTo);
@@ -108,6 +110,53 @@ export function filletBetween(s: SketchData, idA: string, atA: P2, idB: string, 
     const c = P(k.center);
     return add(c, mul(unit(sub(f, c)), radiusOf(s, k)));
   };
+  /** Where a circle and the other curve (carried on: a whole line, a whole circle) cross. */
+  const crossingsWith = (k: SketchCircle, o: Round): P2[] => {
+    const side: Side = o.type === "line" ? { kind: "line", a: P(o.p1), d: unit(sub(P(o.p2), P(o.p1))) } : { kind: "circle", c: P(o.center), r: radiusOf(s, o) };
+    return meet({ kind: "circle", c: P(k.center), r: k.radius }, side);
+  };
+  /**
+   * What's kept of a circle the round touches at T (the round centred at f, its other end at Tother): the circle
+   * carries on smoothly from the round, away from the corner, to the next place another curve of the sketch crosses
+   * it (`end`; none = it stays whole). `holds`: the click on the circle is on the part kept.
+   */
+  const circleKeep = (k: SketchCircle, at: P2, T: P2, Tother: P2, rf: P2, other: Round): { anticlockwise: boolean; end: { p: P2; on: SketchCurve } | null; holds: boolean } => {
+    const c = P(k.center);
+    const corner = crossingsWith(k, other);
+    if (!corner.length) return { anticlockwise: true, end: null, holds: true };
+    const ang = (p: P2) => Math.atan2(p[1] - c[1], p[0] - c[0]);
+    const aT = ang(T);
+    const ccwFrom = (p: P2) => norm(ang(p) - aT);
+    // The crossing the round sits in the corner of.
+    const X1 = corner.reduce((m, q) => (len(sub(q, T)) < len(sub(m, T)) ? q : m));
+    // The circle goes on the way the round arrives at T (from its other end), so the two join smoothly.
+    const rT = sub(T, rf);
+    const arrive: P2 = [-rT[1], rT[0]];
+    const sign = dot(arrive, sub(T, Tother)) >= 0 ? 1 : -1;
+    const ccwTangent: P2 = [-(T[1] - c[1]), T[0] - c[0]];
+    const d = dot(ccwTangent, mul(arrive, sign));
+    const anticlockwise = Math.abs(d) > 1e-9 * len(ccwTangent) * len(arrive) ? d > 0 : ccwFrom(at) < ccwFrom(X1);
+    const along = (p: P2) => (anticlockwise ? ccwFrom(p) : norm(aT - ang(p)));
+    const limit = along(X1);
+    const circleRun = curveParam(s, k);
+    let end: { p: P2; on: SketchCurve; a: number } | null = null;
+    for (const q of s.curves) {
+      if (q.id === k.id || q.construction) continue;
+      let found: P2[] = [];
+      try {
+        found = crossings(circleRun, curveParam(s, q)).map((x) => x.p);
+      } catch {
+        continue;
+      }
+      for (const p of found) {
+        if (len(sub(p, X1)) < 1e-6) continue;
+        const a = along(p);
+        if (a > 1e-6 && a < limit - 1e-6 && (!end || a < end.a)) end = { p, on: q, a };
+      }
+    }
+    if (!end) return { anticlockwise, end: null, holds: true };
+    return { anticlockwise, end: { p: end.p, on: end.on }, holds: along(at) < end.a };
+  };
   let best: { f: P2; t1: P2; t2: P2; cost: number } | null = null;
   for (const s1 of [1, -1])
     for (const s2 of [1, -1])
@@ -115,8 +164,11 @@ export function filletBetween(s: SketchData, idA: string, atA: P2, idB: string, 
         const t1 = foot(ka, f);
         const t2 = foot(kb, f);
         if (len(sub(t1, t2)) < 1e-9) continue;
-        // The round nearest where the curves were clicked (it joins the parts kept).
-        const cost = len(sub(t1, atA)) + len(sub(t2, atB));
+        // The round nearest where the curves were clicked (it joins the parts kept). A circle is clicked on the part
+        // to keep, often far from the corner: a round that would cut away the place clicked comes last.
+        let cost = len(sub(t1, atA)) + len(sub(t2, atB));
+        if (ka.type === "circle" && !circleKeep(ka, atA, t1, t2, f, kb).holds) cost += 1e9;
+        if (kb.type === "circle" && !circleKeep(kb, atB, t2, t1, f, ka).holds) cost += 1e9;
         if (!best || cost < best.cost) best = { f, t1, t2, cost };
       }
   if (!best) return fail("A round of that radius can't touch both of those — try another radius.");
@@ -138,6 +190,7 @@ export function filletBetween(s: SketchData, idA: string, atA: P2, idB: string, 
     }
     const c = P(k.center);
     const ang = (p: P2) => Math.atan2(p[1] - c[1], p[0] - c[0]);
+    if (k.type === "circle") return k;
     const a0 = ang(P(k.start));
     const sweep = norm(ang(P(k.end)) - a0) || TAU;
     const ac = norm(ang(at) - a0);
@@ -150,15 +203,35 @@ export function filletBetween(s: SketchData, idA: string, atA: P2, idB: string, 
   const nb = trimmed(kb, atB, T2, p2.id);
   if (typeof na === "string") return fail(na);
   if (typeof nb === "string") return fail(nb);
+  // A circle the other curve crosses becomes an arc (Onshape's): from where the round touches it, round the way
+  // away from that corner (past the part clicked) to the next place another line or curve of the sketch crosses it.
+  // A circle the other doesn't cross, or nothing else crosses on the way round, stays whole, the round just touching it.
+  const extraPoints: SketchPoint[] = [];
+  const extraCons: SketchConstraint[] = [];
+  const opened = (k: SketchCurve, at: P2, T: P2, Tother: P2, to: string, other: Round): SketchCurve => {
+    if (k.type !== "circle") return k;
+    const { anticlockwise, end } = circleKeep(k, at, T, Tother, f, other);
+    if (!end) return k;
+    const e: SketchPoint = { id: sketchId("p"), x: end.p[0], y: end.p[1] };
+    extraPoints.push(e);
+    extraCons.push(con(onCurveType(end.on), [e.id, end.on.id]));
+    const { radius: _r, ...rest } = k;
+    void _r;
+    return { ...rest, type: "arc", start: anticlockwise ? to : e.id, end: anticlockwise ? e.id : to } as SketchArc;
+  };
+  const fa = opened(na, atA, T1, T2, p1.id, kb);
+  const fb = opened(nb, atB, T2, T1, p2.id, ka);
   const resized = new Set(["length", "arcLength", "arcAngle"]);
   const constraints = s.constraints.filter((k) => !(resized.has(k.type) && (k.refs[0] === idA || k.refs[0] === idB)));
   const tangentTo = (k: Round, T: P2): SketchConstraint =>
-    k.type === "arc" ? con("tangent", [k.id, arcId], [dot(sub(P(k.center), T), sub(f, T)) > 0 ? 1 : 0]) : con("tangent", [k.id, arcId]);
-  constraints.push(tangentTo(ka, T1), tangentTo(kb, T2), sizeOfRound(s, arcId, radiusText, equalTo));
+    k.type !== "line" ? con("tangent", [k.id, arcId], [dot(sub(P(k.center), T), sub(f, T)) > 0 ? 1 : 0]) : con("tangent", [k.id, arcId]);
+  constraints.push(tangentTo(ka, T1), tangentTo(kb, T2), sizeOfRound(s, arcId, radiusText, equalTo), ...extraCons);
+  // A circle left whole has the round's touch point held on it.
+  for (const [k, p, n] of [[ka, p1, fa], [kb, p2, fb]] as const) if (k.type === "circle" && n.type === "circle") constraints.push(con("pointOnCircle", [p.id, k.id]));
   const changed: SketchData = {
     ...s,
-    points: [...s.points, p1, p2, pc],
-    curves: [...s.curves.map((k) => (k.id === idA ? na : k.id === idB ? nb : k)), fillet],
+    points: [...s.points, p1, p2, pc, ...extraPoints],
+    curves: [...s.curves.map((k) => (k.id === idA ? fa : k.id === idB ? fb : k)), fillet],
     constraints,
   };
   // Ends no longer used by anything are dropped.

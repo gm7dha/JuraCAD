@@ -224,8 +224,29 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   `src/sketch/ellipticalArc.ts`: centre, axis end, start — sets the width —, end; an ellipse with start/end, short way round; its ends keep their clicks' snaps via placePoint).
   Linear pattern's second direction (rows × columns; `src/sketch/patternGrid.ts` `patternGrid` = patternCurves, then all of
   it again along the second; previewed). Settings in `src/sketch/editToolOptions.ts` (own zustand store, session only; panel
-  `src/app/SketchEditOptions.tsx`, which also has the tools' icons). Not done: editing a pattern's count after it's made;
-  chamfers next to arcs; rounds with circles. Tests: tests/sketchEditTools, sketchPatternGrid (pure), sketchEditToolsStore, engineSketchEditTools (outlines extruded).
+  `src/app/SketchEditOptions.tsx`, which also has the tools' icons). Tests: tests/sketchEditTools, sketchPatternGrid (pure), sketchEditToolsStore, engineSketchEditTools (outlines extruded).
+  Editable sketch patterns (Onshape's Edit pattern): new patterns are kept in `SketchData.patterns` (`SketchPatternDef`: kind,
+  `sources`, `count`, centre/full/line/reverse, `second` count; `value`/`angle` only a fallback) and their patternMove/patternCopy
+  carry `SketchConstraint.pattern` (`PatternStep` {id, n (signed along a line), of (circular share), second}) + `value` = the
+  spacing / whole angle AS TYPED, so variables rename and re-solve it (variables.ts already maps every `value`); the solver's
+  `patternAmount` = value × n / of (untagged = extra[0], exactly as before; extra[0] is still kept in step). Pure
+  `src/sketch/patternEdit.ts`: `patternIdOf` (a copy, its point, an original or a rule), `readPattern`, `editPattern` (fewer =
+  the last copies' points deleted with their second-direction copies; more = new copies after the last (`copyCurvesWith`, now
+  exported), a grid's rows found by mapping source curves through each row's copy points; copies that stay keep their ids,
+  values/extras/`of` rewritten). Copies the user deleted aren't made again unless the count grows past them. keepSketchExtras
+  carries `patterns`; withoutEmptyExtras drops defs with no tagged rule left; validate.ts parses both; the clipboard pastes
+  tagged rules as plain ones (`plainCopy`); transformSelection scales a tagged plain-number value (a variable refused).
+  UI `src/app/PatternEditor.tsx` (panel: "Edit pattern…" when a pattern item is picked, or the menu's "Edit pattern…" →
+  `editToolOptions.editingPattern`; Apply → `applyPatternChange`, one undo step). Tests: sketchPatternEdit (pure),
+  sketchPatternEditStore, engineSketchPatternArcs.
+  Chamfer next to arcs: `chamferCorner` takes line–arc and arc–arc corners (`leaving`, `cutPoint`: straight distance d from the
+  corner round the arc, 2·asin(d/2r); the sharp held `pointOnCircle` on the arc; arcLength/arcAngle dims on it dropped; distance +
+  angle refused there); two picked curves with an arc must share an end (controller via filletCurves' exported `sharedEnd`).
+  Round with circles: `filletBetween` takes circles; a circle the other curve (carried on) crosses becomes an arc (same id) from
+  the round's touch point, carrying on the way the round arrives there (`circleKeep`: smooth, away from the corner crossing `X1`),
+  to the first place another solid curve of the sketch really crosses it (`crossings`; its end held on that curve with
+  `onCurveType`); none = the circle stays whole and the touch point is held on it. The circle is clicked on the part to keep:
+  rounds that would cut the click away come last, then the one nearest both clicks.
   Move / copy handles (Onshape's sketch Transform): pure `src/sketch/transformSelection.ts` — `transformSelection(s, ids,
   {dx, dy, angle, scale}, about?)` (about = `selectionCentre`: the box middle of the picked shapes as drawn — `curveOutline`: arcs
   by their curve, circles' full size, splines' paths; a centre or axis point counts only when picked itself): points
@@ -285,7 +306,9 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   (`SketchConstraint.doubled` on a pointLineDistance to a construction line: solver uses value/2, `measure` ×2, layout runs to the
   mirror point, ⌀ label, validate keeps it; `measureToOf` null). Sketch toolbar Extrude / Revolve → `finishSketchInto` (commit, then
   startCreate on the sketch just finished; no closed shape = refused, sketch stays open). Tests: sketchMenu (pure), sketchMenuStore.
-  Not done: the Dimension tool making centreline dimensions by where the number is put (use the menu/panel).
+  The Dimension tool makes the centreline (doubled) dimension when a point + construction line's number is put on the line's
+  far side (`dimensionSpecAt(…, centreline)` → `acrossCentreline`; `placedLabelOffset` re-measures the label from the line;
+  `addDimension(…, true)`; the preview shows ⌀) — only the controller passes `centreline`, so library/Claude sketches are unchanged.
 - Visibility (the eye in the feature list): `src/model/visibility.ts`. Sketches and Plane features have `Feature.visible`
   (missing = automatic: planes shown; a sketch shown until an unsuppressed feature uses it, `usedSketches` — as Onshape
   hides consumed sketches). The Origin and Top/Front/Right hidden per Part Studio: `doc.hiddenDatums` (first studio) /
@@ -1310,6 +1333,20 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   `src/viewport/featureFaces.ts`: hovered row (`setHoveredFeature`) → Viewport `setListHover` (its faces, else its parts; a
   hidden sketch shown — only that id is a dep of the sketch scene; cleared when the list unmounts); double-click a face (`SceneCallbacks.onDoubleClick` → `editFeatureAt`) or Select other's "Edit <feature>…"
   opens it. Parts list "Show only this part"/"Show all parts" were already there. Tests: tests/massProps (pure), engineMassProps.
+  In assemblies (Onshape's): the readout stack (Measure, Mass) shows there too (App.tsx, outside the studio-only block). Engine
+  `massProperties(ids, instances)` / `measureParts(ids, instances)` / `measure(picks, instances, copies)` (optional protocol
+  `instances`/`copies`): copies placed by `placeInstances` (cut, mirrored, solved — never exploded); a pick is found on its copy's
+  part as cut (`measuredPick`, in part coordinates) then moved (`placedCopy`; centre/point/ref via pure `src/assembly/asmMeasure.ts`
+  `placedPoint`/`placedRef`, so angles work across copies). Pure: `copiesToWeigh` (picked tops — a sub-assembly = its parts — else
+  all not hidden; suppressed already out), `materialPartOf` (a configured part's material). App: `src/app/asmReadouts.ts`
+  (`useAssemblyInputs` = instancesForKernel of the solve; `asmPickFor` reads refs off the copy as shown, `cutMeshFor` first,
+  corners by `cornersOf`), `src/app/asmMeasureState.ts` (session-only picks, keys as partId; `asmMeasureClick` from
+  handleAssemblyPick — a click on another face of an already-selected copy keeps it selected; the same face again toggles as
+  before, and Shift taking one of a copy's two picks off keeps the copy — pure `asmSelectionAfterClick`; `livePicks` = picks whose copy is still selected; let go on tab change); the view highlights a copy's picks instead of
+  the whole copy (`instanceSelection`); `cornerWanted` is on in assemblies unless a mirror wants a face (and not while an
+  assembly Hole/Cut/Fillet is open, Viewport). Mass panel weighs copies by their part's material; exploded = weighed put
+  together, no centre dot, said. Tests: asmMeasure (pure), engineAsmMeasure (gap between placed copies, a turned copy's angle
+  and corner, sum + centre of mass, mirrored copy positive, a drilled copy lighter and its hole measured, sub-assembly).
   Feature list (Onshape's): several features picked — `store.featureSelection` (counts only while it holds
   `selectedFeatureId`, the main one; read with the selector-safe `pickedFeatures`; `selectFeatures(ids, primary)`; reset by
   selectFeature/startCreate/startEdit) via `src/app/featureListState.ts` (`clickFeatureRow` over listSelection's `clickRow` on

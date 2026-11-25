@@ -384,9 +384,9 @@ export type KernelRequest =
   | { type: "clashes"; instances: InstanceInput[]; tolerance?: number; withGaps?: boolean; fitRange?: number; fitPairs?: [string, string][] }
   | { type: "assemblyCuts"; instances: InstanceInput[] }
   | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sections?: SectionRequest[]; breakouts?: BreakOutRequest[]; tangent?: boolean }
-  | { type: "measure"; picks: (TopoPick | import("../geometry/vertexRef").VertexPick)[] }
-  | { type: "measureParts"; partIds: string[] }
-  | { type: "massProperties"; partIds: string[] }
+  | { type: "measure"; picks: (TopoPick | import("../geometry/vertexRef").VertexPick)[]; instances?: InstanceInput[]; copies?: string[] }
+  | { type: "measureParts"; partIds: string[]; instances?: InstanceInput[] }
+  | { type: "massProperties"; partIds: string[]; instances?: InstanceInput[] }
   | { type: "unfold"; partId: string }
   | { type: "laserOutlines"; sources: LaserSource[] }
   | { type: "intersect"; partId: string; plane: SketchPlane; face?: FaceRef }

@@ -109,13 +109,13 @@ ctx.onmessage = (event) => {
           body = { type: "useEdge", result: engine.useEdge(request.partId, request.ref, request.plane) };
           break;
         case "measureParts":
-          body = { type: "measure", result: engine.measureParts(request.partIds) };
+          body = { type: "measure", result: engine.measureParts(request.partIds, request.instances) };
           break;
         case "massProperties":
-          body = { type: "massProperties", result: engine.massProperties(request.partIds) };
+          body = { type: "massProperties", result: engine.massProperties(request.partIds, request.instances) };
           break;
         case "measure":
-          body = { type: "measure", result: engine.measure(request.picks) };
+          body = { type: "measure", result: engine.measure(request.picks, request.instances, request.copies) };
           break;
         case "exportStep": {
           const result = await engine.exportStep(request.partIds, request.colours, request.instances, request.tree, request.faces);

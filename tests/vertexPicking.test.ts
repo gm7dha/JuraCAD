@@ -131,7 +131,7 @@ describe("clicks on a corner", () => {
   it("corners can be picked only with nothing open, or while what's open takes a point", () => {
     const draft = (f: Partial<Feature>) => ({ editing: { draft: { id: "d", name: "d", type: "fillet", operation: "new", suppressed: false, params: {}, ...f } as Feature }, sketch: null });
     expect(cornerWanted({ editing: null, sketch: null }, false)).toBe(true);
-    expect(cornerWanted({ editing: null, sketch: null }, true)).toBe(false);
+    expect(cornerWanted({ editing: null, sketch: null }, true)).toBe(true); // an assembly: corners of copies, for Measure
     expect(cornerWanted({ editing: null, sketch: {} }, false)).toBe(false);
     expect(cornerWanted(draft({}), false)).toBe(false);
     expect(cornerWanted(draft({ type: "extrude", extrude: { end: "upToVertex", flip: false } }), false)).toBe(true);

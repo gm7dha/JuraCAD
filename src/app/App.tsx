@@ -402,12 +402,15 @@ export function App() {
               <ContextBar />
               <FeatureDialog />
               <SketchPanel />
-              <div className="readout-stack">
-                <MassPanel />
-                <MeasurePanel />
-                <MassButton />
-              </div>
             </>
+          )}
+          {!drawing && (
+            // Measure and Mass properties, bottom right — in Part Studios and assemblies alike (Onshape's).
+            <div className="readout-stack">
+              <MassPanel />
+              <MeasurePanel />
+              <MassButton />
+            </div>
           )}
           <EngineStatus />
           <TouchBar />

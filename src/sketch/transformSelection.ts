@@ -195,6 +195,12 @@ export function transformSelection(s: SketchData, ids: readonly string[], m: Sel
     } else if (con.type === "patternMove" && con.extra && con.extra.length >= 2) {
       const [dist, deg, ...rest] = con.extra;
       next = { ...con, extra: [dist * k, con.refs.length >= 3 ? deg : deg + turn, ...rest] };
+      // An editable pattern's spacing as typed is scaled too (a variable or sum can't be).
+      if (k !== 1 && con.pattern && con.value !== undefined) {
+        const v = scaledValue(con.value, k);
+        if (v === null) return { sketch: s, ids: [], error: VARIABLE_SIZE_MESSAGE };
+        next = { ...next, value: v };
+      }
     }
     if (k !== 1 && isDimension(next) && !next.driven && LENGTHS.has(next.type)) {
       const v = scaledValue(next.value ?? "", k);

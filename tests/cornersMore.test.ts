@@ -21,7 +21,7 @@ const draft = (d: Partial<Feature>) => ({ editing: { draft: { id: "d", name: "d"
 
 describe("when corners can be clicked", () => {
   it("in an assembly only while a mate is made or a mirror's connector placed", () => {
-    expect(cornerWanted({ editing: null, sketch: null }, true)).toBe(false);
+    expect(cornerWanted({ editing: null, sketch: null }, true)).toBe(true); // corners of copies, for Measure
     expect(cornerWanted({ editing: null, sketch: null, mateDraft: { mode: "create" } }, true)).toBe(true);
     expect(cornerWanted({ editing: null, sketch: null, mirrorFacePick: true }, true)).toBe(false);
     expect(cornerWanted({ editing: null, sketch: null, mirrorFacePick: "connector" }, true)).toBe(true);
