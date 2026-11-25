@@ -1586,7 +1586,7 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   document.body, `position: fixed`, placed by the pure `placePopup` in popupPlace.ts — below, else above, else beside the swatch,
   scrolling inside only when taller than the window; closes on a click elsewhere or Escape) so no panel clips it; swatch size via
   `--swatch-size`, bigger under `(pointer: coarse)`; the smoke test's `popoverFits` checks it at several window sizes and in dark mode); store `setPartFinish`/`setPartsFinish`. Drawings ignore it (line
-  drawings). Claude's `set_appearance` (colour and/or finish; parts only).
+  drawings). Claude's `set_appearance` (colour and/or finish; `faces` for face colours).
   Face colours (Onshape's face Appearance): `doc.faceAppearance` (part id → `FaceColour[]` {face: FaceRef as picked, colour, spool?};
   missing = none, old files byte-identical) + `doc.partSpools` (part id → Bambu code the part's colour was picked from). Pure
   `src/model/faceColours.ts`: `resolveFaceColours` = strictMatch of each ref on the mesh's faceRefs (later wins; not found = `lost`,
@@ -1611,7 +1611,9 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   first. STEP: `colouredFaces` → `StepPart.faces` → XCAF `AddSubShape` + surface colour (both writers; cut copies skipped).
   Tests: tests/faceColours (pure), engineFaceColours (a side and top followed as the box grows 40 → 80 and after a fillet; lost
   quietly; the 3MF's painted triangles are exactly the face's; STEP face style); the smoke test colours the block's top face
-  PETG HF Black and checks the 3MF's paint, then undoes. Not done: Claude colouring faces, the print-layout 3MF (PrintPanel) painting faces.
+  PETG HF Black and checks the 3MF's paint, then undoes. The 3D print panel's 3MF (`exportPrint3mf(…, faces)`) paints faces the same way, laid on
+  the bed (filament words in its sent message); Claude's `set_appearance` takes `faces` (list_faces' names; with a colour, not a finish)
+  (tests/mcpAppearance, engineFaceColours). `filamentsFor` = 0 unless a chosen part has face colours (the dialog's note), `lostFacesNote`.
   3D view: `src/viewport/studio.ts` (`finishMaterial`: matte in the quick view is still the original Phong material and grey
   matte parts share the old one, so the everyday view is unchanged; `studioEnvironment`: three's RoomEnvironment made in code,
   turned Z-up, through PMREM — no downloaded assets; `studioRig`: four slightly spread shadow-casting key lights = a soft

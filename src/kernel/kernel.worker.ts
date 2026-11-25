@@ -70,7 +70,7 @@ ctx.onmessage = (event) => {
           break;
         }
         case "exportPrint3mf": {
-          const result = engine.exportPrint3mf(request.parts, request.bed, request.gap, request.quality, request.title, request.colours);
+          const result = engine.exportPrint3mf(request.parts, request.bed, request.gap, request.quality, request.title, request.colours, request.faces);
           transfer.push(result.data);
           body = { type: "exportPrint3mf", result };
           break;

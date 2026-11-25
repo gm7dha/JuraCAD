@@ -14,7 +14,7 @@ import { solveWithParts } from "../assembly/mates";
 import { stepTree } from "../assembly/stepTree";
 import { cutsInsideSubAssemblies, FLAT_STEP_NOTE } from "../assembly/placed";
 import { exportColours } from "../model/finishes";
-import { faceColoursForExport, filamentsFor, filamentsNote } from "../model/faceColours";
+import { faceColoursForExport, filamentsFor, filamentsNote, lostFacesNote } from "../model/faceColours";
 
 const QUALITY: { value: MeshQuality; label: string; hint: string }[] = [
   { value: "coarse", label: "Coarse", hint: "Small file, visible facets on curves" },
@@ -96,7 +96,7 @@ export function ExportDialog() {
         const { data, triangleCount, cutNotes, filaments, lostFaces } = await getKernel().export3mf(partIds, quality, doc.name, exportColours(doc), chosenInstances, faceColours);
         const name = `${safeFileName(fileName, "juracad")}.3mf`;
         downloadFile(data, name, "model/3mf");
-        const colourNote = filaments ? `. ${filamentsNote(filaments)}${lostFaces ? ` ${lostFaces === 1 ? "1 face colour couldn't be found on its part and was left in the part's colour." : `${lostFaces} face colours couldn't be found on their parts and were left in the parts' colours.`}` : ""}` : "";
+        const colourNote = filaments ? `. ${filamentsNote(filaments)}${lostFaces ? ` ${lostFacesNote(lostFaces)}` : ""}` : "";
         showToast(`Saved ${name} (${triangleCount.toLocaleString()} triangles)${colourNote}${cutNotes?.length ? `. Problem: ${cutNotes.join(" ")}` : ""}`, cutNotes?.length ? "error" : "success");
       } else {
         const { stl, triangleCount, cutNotes } = await getKernel().exportStl(partIds, quality, chosenInstances);

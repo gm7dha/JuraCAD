@@ -8421,7 +8421,7 @@ export class GeometryEngine {
    * object, turned so its "down" faces the bed, standing on it, and laid out
    * on a bed of `bed` (X × Y mm) without overlapping. The model isn't changed.
    */
-  exportPrint3mf(parts: PrintCheckPart[], bed: [number, number], gap: number, quality: MeshQuality, title: string, colours: Record<string, string> = {}): PrintExportResult {
+  exportPrint3mf(parts: PrintCheckPart[], bed: [number, number], gap: number, quality: MeshQuality, title: string, colours: Record<string, string> = {}, faces?: FilamentColours): PrintExportResult {
     const tol = MESH_TOLERANCES[quality];
     const chosen = parts.map((r) => ({ r, p: this.parts.find((x) => x.id === r.partId) })).filter((x): x is { r: PrintCheckPart; p: BuiltPart } => !!x.p && !x.p.surface);
     if (!chosen.length) throw new Error("There's no solid part to export. Surfaces can't be printed — thicken them first.");
@@ -8431,7 +8431,20 @@ export class GeometryEngine {
       const v = new Float64Array(m.vertices.length);
       for (let i = 0; i < m.vertices.length; i += 3) v.set(rotate(R, [m.vertices[i], m.vertices[i + 1], m.vertices[i + 2]]), i);
       const ext = bedExtents(v, [0, 0, -1]);
-      return { p, v, triangles: withoutDegenerateTriangles(m.vertices, m.triangles), ext };
+      // Faces coloured: each kept triangle's paint goes with it (a multi-colour file below); else as before.
+      const list = faces?.faceAppearance[p.id];
+      if (list?.length) {
+        const painting = this.facePainting(p.shape, p.shape, m.faceGroups, m.triangles.length / 3, list);
+        const kept = keptTriangles(m.vertices, m.triangles);
+        const triangles: number[] = [];
+        const paint: number[] = [];
+        for (const t of kept) {
+          triangles.push(m.triangles[3 * t], m.triangles[3 * t + 1], m.triangles[3 * t + 2]);
+          paint.push(painting?.paint[t] ?? 0);
+        }
+        return { p, v, triangles, ext, painted: { paint, filaments: painting?.filaments ?? [], lost: painting?.lost ?? 0 } };
+      }
+      return { p, v, triangles: withoutDegenerateTriangles(m.vertices, m.triangles), ext, painted: undefined };
     });
     const layout = arrangeOnBed(turned.map((t) => ({ id: t.p.id, size: [t.ext.size[0], t.ext.size[1]] })), bed, gap);
     const meshes = turned.map((t, i) => {
@@ -8450,10 +8463,22 @@ export class GeometryEngine {
       }
       return { name: t.p.name, vertices: v, triangles: t.triangles, colour: colours[t.p.id], move: [place.x, place.y, 0] as [number, number, number] };
     });
+    const triangleCount = meshes.reduce((n, m) => n + m.triangles.length / 3, 0);
+    // Some part has faces coloured: the same multi-colour file as Export's 3MF, laid out on the bed.
+    if (turned.some((t) => t.painted)) {
+      const painted: PaintedPart[] = meshes.map((m, i) => {
+        const t = turned[i];
+        const spool = faces?.partSpools?.[t.p.id];
+        return { name: m.name, vertices: m.vertices, triangles: m.triangles, move: m.move, own: { colour: m.colour ?? DEFAULT_PART_COLOUR, ...(spool ? { spool } : {}) }, faceFilaments: t.painted?.filaments ?? [], paint: t.painted?.paint ?? [] };
+      });
+      const lost = turned.reduce((n, t) => n + (t.painted?.lost ?? 0), 0);
+      const { bytes, filaments } = writeFilament3mf(painted, title);
+      return { data: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, triangleCount, layout, filaments, ...(lost ? { lostFaces: lost } : {}) };
+    }
     const bytes = write3mf(meshes, title);
     return {
       data: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
-      triangleCount: meshes.reduce((n, m) => n + m.triangles.length / 3, 0),
+      triangleCount,
       layout,
     };
   }

@@ -395,7 +395,7 @@ export type KernelRequest =
   | { type: "sketchCandidates"; studioId: string; sketchId: string; known?: number }
   | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string; colours?: Record<string, string>; instances?: InstanceInput[]; faces?: FilamentColours }
   | { type: "printCheck"; parts: PrintCheckPart[]; settings: PrintCheckSettings }
-  | { type: "exportPrint3mf"; parts: PrintCheckPart[]; bed: [number, number]; gap: number; quality: MeshQuality; title: string; colours?: Record<string, string> };
+  | { type: "exportPrint3mf"; parts: PrintCheckPart[]; bed: [number, number]; gap: number; quality: MeshQuality; title: string; colours?: Record<string, string>; faces?: FilamentColours };
 
 export type KernelResponseBody =
   | { type: "rebuild"; result: RebuildResult }

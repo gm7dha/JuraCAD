@@ -139,4 +139,34 @@ describe("face colours on real parts", () => {
     expect(styled).toMatch(/ADVANCED_FACE/);
     e.dispose();
   });
+  it("paint the 3D print panel's 3MF too, laid on the bed, and leave it plain without face colours", () => {
+    const e = new GeometryEngine();
+    const p = e.rebuild([box(40)]).parts[0];
+    const top = faceFacing(p, [0, 0, 1]);
+    const d = setFaceColoursIn(doc(), "box", [top], "#c12e1f", p, "10200");
+    // Printed on its side (+Y face down): the coloured top face is then upright, at x = its far end.
+    const parts = [{ partId: "box", down: [0, 1, 0] as [number, number, number] }];
+    const plain = unzip(new Uint8Array(e.exportPrint3mf(parts, [256, 256], 5, "normal", "t", {}).data));
+    expect(plain.has("Metadata/model_settings.config")).toBe(false);
+    const r = e.exportPrint3mf(parts, [256, 256], 5, "normal", "t", {}, { faceAppearance: d.faceAppearance! });
+    expect(r.filaments).toEqual([{ colour: "#a8b4c0" }, { colour: "#c12e1f", spool: "10200" }]);
+    expect(r.layout.places[0].onBed).toBe(true);
+    const files = unzip(new Uint8Array(r.data));
+    const model = files.get("3D/3dmodel.model")!;
+    expect(files.get("Metadata/model_settings.config")).toContain('<metadata key="extruder" value="1"/>');
+    const vertices = [...model.matchAll(/<vertex x="([^"]+)" y="([^"]+)" z="([^"]+)"\/>/g)].map((m) => [Number(m[1]), Number(m[2]), Number(m[3])]);
+    const triangles = [...model.matchAll(/<triangle v1="(\d+)" v2="(\d+)" v3="(\d+)"([^/]*)\/>/g)];
+    // The part stands at z 0; the old top (now facing −Y or +Y) is the only face painted.
+    expect(Math.min(...vertices.map((v) => v[2]))).toBeCloseTo(0, 6);
+    let painted = 0;
+    for (const t of triangles) {
+      if (!/ paint_color="8"/.test(t[4])) continue;
+      painted++;
+      const ys = [t[1], t[2], t[3]].map((i) => vertices[Number(i)][1]);
+      expect(Math.max(...ys) - Math.min(...ys)).toBeLessThan(1e-6);
+    }
+    expect(painted).toBeGreaterThanOrEqual(2);
+    expect(triangles.length).toBe(12);
+    e.dispose();
+  });
 });

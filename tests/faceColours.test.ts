@@ -125,6 +125,12 @@ describe("the Export dialog's filament words", () => {
     const { filamentsFor, filamentsNote } = await import("../src/model/faceColours");
     const d = setFaceColoursIn({ ...doc(), appearance: { p: "#ffffff" } }, "p", [1, 3], "#c12e1f", mesh());
     expect(filamentsFor(d, ["p"])).toBe(2);
+    // Parts of different colours but no face colours: the plain file, so no filament count (the dialog says nothing).
+    expect(filamentsFor({ ...d, appearance: { p: "#ffffff", q: "#000000" } }, ["q"])).toBe(0);
+    expect(filamentsFor({ ...d, appearance: { p: "#ffffff", q: "#000000" } }, ["p", "q"])).toBe(3);
+    const { lostFacesNote } = await import("../src/model/faceColours");
+    expect(lostFacesNote(0)).toBe("");
+    expect(lostFacesNote(2)).toMatch(/^2 face colours couldn't be found/);
     expect(filamentsNote([{ colour: "#ffffff" }, { colour: "#000000", spool: "11101" }, { colour: "#123456" }])).toBe(
       "3 filaments, load them in this order: 1 Jade White (PLA Basic), 2 Charcoal (PLA Matte), 3 your own colour #123456.",
     );

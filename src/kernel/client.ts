@@ -119,8 +119,8 @@ export class KernelClient {
   }
 
   /** A 3MF ready for the slicer: parts turned onto the bed and laid out on it. */
-  exportPrint3mf(parts: PrintCheckPart[], bed: [number, number], gap: number, quality: MeshQuality, title: string, colours?: Record<string, string>): Promise<PrintExportResult> {
-    return this.send({ type: "exportPrint3mf", parts, bed, gap, quality, title, colours }).then((body) => body.result as PrintExportResult);
+  exportPrint3mf(parts: PrintCheckPart[], bed: [number, number], gap: number, quality: MeshQuality, title: string, colours?: Record<string, string>, faces?: FilamentColours): Promise<PrintExportResult> {
+    return this.send({ type: "exportPrint3mf", parts, bed, gap, quality, title, colours, ...(faces ? { faces } : {}) }).then((body) => body.result as PrintExportResult);
   }
 
   /** Whole parts: their sizes, and the gap and overlap between two of them. */

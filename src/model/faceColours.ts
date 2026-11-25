@@ -192,8 +192,12 @@ export function shownFaceColours(
   return out;
 }
 
-/** How many filaments a multi-colour 3MF of these parts will use (each distinct colour: parts' own, then their faces'). */
+/**
+ * How many filaments a multi-colour 3MF of these parts will use (each distinct colour: parts' own, then their faces'),
+ * or 0 when none of them has a face colour (the file is then the plain one).
+ */
 export function filamentsFor(doc: Pick<JuraCADDocument, "appearance" | "faceAppearance">, partIds: readonly string[]): number {
+  if (!partIds.some((id) => doc.faceAppearance?.[id]?.length)) return 0;
   const colours = new Set<string>();
   for (const id of partIds) colours.add((doc.appearance?.[id] ?? DEFAULT_PART_COLOUR).toLowerCase());
   for (const id of partIds) for (const f of doc.faceAppearance?.[id] ?? []) colours.add(f.colour.toLowerCase());
@@ -207,6 +211,12 @@ export function filamentsNote(filaments: readonly { colour: string; spool?: stri
     return `${i + 1} ${s ? spoolLabel(s) : f.colour.toLowerCase() === DEFAULT_PART_COLOUR ? "the usual grey (any filament you like)" : `your own colour ${f.colour}`}`;
   });
   return `${filaments.length === 1 ? "1 filament" : `${filaments.length} filaments`}, load them in this order: ${named.join(", ")}.`;
+}
+
+/** Said after a multi-colour 3MF when some face colours couldn't be found on their parts ("" when none). */
+export function lostFacesNote(n: number | undefined): string {
+  if (!n) return "";
+  return n === 1 ? "1 face colour couldn't be found on its part and was left in the part's colour." : `${n} face colours couldn't be found on their parts and were left in the parts' colours.`;
 }
 
 /** What exports are given for face colours (none = undefined: the plain files, as before). */
