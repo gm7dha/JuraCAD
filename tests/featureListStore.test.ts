@@ -76,6 +76,8 @@ describe("dialogs remember their last options", () => {
   it("starts the next new fillet at the radius the last one was made with", () => {
     s().startCreate("fillet");
     s().setDraftParam("radius", "4");
+    // (Something to round: a fillet with nothing picked can't be accepted.)
+    s().setDraftField({ picks: [{ partId: "b1", ref: { kind: "edge", curve: "LINE", a: [0, 0, 0], b: [1, 0, 0], mid: [0.5, 0, 0] } }] });
     s().commitDraft();
     s().startCreate("fillet");
     expect(s().editing?.draft.params.radius).toBe("4");

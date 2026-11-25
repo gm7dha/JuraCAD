@@ -1293,6 +1293,22 @@
   its whole build (`parked`, `sourceBuild`), so Derived/context studios aren't rebuilt, later features' errors/warnings/notes
   stay on their rows, and closing unchanged or ticking Final takes it back without building (only meshed). Sketches are left
   as before (their snap list and "ref:<n>" ids come from the whole build). Tests: tests/finalPreview, engineFinalPreview.
+  Dialog starting values and Accept (Onshape's): pure `src/model/newFeatureDefaults.ts` — `withAutoValues` keeps a NEW
+  feature's self-worked-out values up to date only while they still equal the last value set (`AutoValues`, store closure
+  `autoValues`, reset by startCreate; `autoParts` = the parts when the dialog opened, before its preview): an Extrude's `flip`
+  (`aimedFlip`: a sketch on a part's face — `materialBehind`, its plane normal vs the face pick's outward normal — Remove/
+  Intersect point in, New/Add out; plain planes unknown = left), a Linear pattern's `spacing`/`spacing2` (`suggestedSpacing`:
+  the repeated parts' box along the direction × 1.2, rounded up; parts picked, or the parts its sources made), run from
+  startCreate, setDraftField, toggleDraftPart/Source. Edits never change. A new Hole's sketch: `holeSketchFor` (highlighted,
+  else the last feature if an unused sketch with points, else none). Hole face clicks (Viewport handlePick, create mode):
+  `placeHoleAt(plane, point)` puts a standalone point in a sketch on that face made for the hole (store closure `holeSketch`:
+  written into `history.present` without an undo step; Cancel/startCreate/startEdit put `before` back; Accept inserts it just
+  before the hole in ONE step; another face is refused). Accept waits: pure `src/model/draftReady.ts` `missingPick` (fillet/
+  chamfer with no picks, Shell Open with no face, face features, split face, part lists, part/face patterns, a hole with no
+  sketch…) — the ✓ disabled with it as the tooltip, commitDraft refuses with a toast. After Accept nothing is selected (a
+  sketch stays highlighted). Engine: solid Extrude/Revolve/Sweep/Loft Add/Remove/Intersect (not a pattern/mirror source) that
+  leaves every solid part's id and volume as it was gets the `noChangeMessage` warning ("This doesn't change anything — …";
+  `watchChange`/`noChangeNote`, volumes cached per shape object). Tests: featureDialogDefaults, engineNoChange.
 - Corners (vertices, Onshape's): pure `src/geometry/vertexRef.ts` — `VertexRef` {p, rel (share of the part's box), dirs (unit
   directions its edges leave in)} / `VertexPick` {partId, ref}; `cornersFromEnds` groups edge ends (`SAME_CORNER` 1 µm; closed
   edges have none), `meshCorners`/`cornersOf` (cached per PartMesh: ends from `edgeRefs`, directions from the drawn lines — no
