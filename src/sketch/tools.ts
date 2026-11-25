@@ -7,7 +7,7 @@ import { evaluate } from "../model/expr";
 import { solveSketch } from "./solver";
 import { addArc, addCircle, addRectangle, circleThrough, curveById, deleteItems, ellipsePoints, isPointId, mirrorPoint, onCurveType, placePoint, pointPos, radiusOf, settle, sketchId, splinePath, type EditResult, type Placed } from "./ops";
 import { minorPointFor } from "./ellipse";
-import { ORIGIN_ID, type SketchEllipse, type SketchSpline, type SketchArc, type SketchCircle, type SketchConstraint, type SketchCurve, type SketchData, type SketchLine, type SketchPoint } from "./types";
+import { ORIGIN_ID, type SketchEllipse, type SketchSpline, type SketchArc, type SketchCircle, type SketchConstraint, type SketchCurve, type SketchData, type SketchLine, type SketchPoint, type SketchPatternDef } from "./types";
 import { toSketch, type PlaneFrame, type Vec3 } from "./planes";
 import type { EdgeRef } from "../geometry/topoRef";
 import { crossings, curveParam } from "./curves";
@@ -1060,11 +1060,12 @@ export function addTangentArc(s: SketchData, startId: string, end: Placed, const
 export type SketchPatternOptions =
   /**
    * `count` copies in a row (including the original), `spacing` mm apart, heading `angle` degrees from the X direction —
-   * or along the line `lineId` (the other way if `reverse`), following it if it turns.
+   * or along the line `lineId` (the other way if `reverse`), following it if it turns. `value`: the spacing as typed
+   * (it may use variables; missing = the number).
    */
-  | { kind: "linear"; count: number; spacing: number; angle: number; lineId?: string; reverse?: boolean }
-  /** `count` copies (including the original) spread over `angle` degrees around `centre` (360 = all the way round). */
-  | { kind: "circular"; count: number; angle: number; centre: P2; centreId?: string };
+  | { kind: "linear"; count: number; spacing: number; angle: number; lineId?: string; reverse?: boolean; value?: string }
+  /** `count` copies (including the original) spread over `angle` degrees around `centre` (360 = all the way round). `value`: the angle as typed. */
+  | { kind: "circular"; count: number; angle: number; centre: P2; centreId?: string; value?: string };
 
 /** Where each copy of a point goes: copy i (1 … count-1). */
 export function patternTransform(opts: SketchPatternOptions, i: number): (p: P2) => P2 {
@@ -1085,9 +1086,16 @@ export function patternTransform(opts: SketchPatternOptions, i: number): (p: P2)
   };
 }
 
-/** Copy lines, arcs and circles in a row or around a centre (Onshape's sketch linear / circular pattern). */
-export function patternCurves(s: SketchData, curveIds: string[], opts: SketchPatternOptions): EditResult & { curveIds: string[] } {
-  const fail = (error: string) => ({ sketch: s, error, curveIds: [] });
+/** Is a circular pattern's angle a whole turn (so the count shares it out, rather than count − 1)? */
+export const fullTurn = (angle: number) => Math.abs(Math.abs(angle) - 360) < 1e-9;
+
+/**
+ * Copy lines, arcs and circles in a row or around a centre (Onshape's sketch linear / circular pattern). The
+ * pattern is kept (`SketchData.patterns`) so its count and spacing can be changed later. `into`: copies made as the
+ * second direction of that (grid) pattern instead of a pattern of their own.
+ */
+export function patternCurves(s: SketchData, curveIds: string[], opts: SketchPatternOptions, into?: { id: string }): EditResult & { curveIds: string[]; patternId: string } {
+  const fail = (error: string) => ({ sketch: s, error, curveIds: [], patternId: "" });
   const sources = curveIds.map((id) => curveById(s, id)).filter((c): c is SketchCurve => !!c);
   if (!sources.length) return fail("Click the lines, arcs and circles to repeat first.");
   const count = Math.round(opts.count);
@@ -1099,25 +1107,40 @@ export function patternCurves(s: SketchData, curveIds: string[], opts: SketchPat
   const constraints: SketchConstraint[] = [];
   const centreId = opts.kind === "circular" && opts.centreId && isPointId(s, opts.centreId) ? opts.centreId : null;
   const lineId = opts.kind === "linear" && opts.lineId && curveById(s, opts.lineId)?.type === "line" ? opts.lineId : null;
+  const id = into?.id ?? sketchId("pt");
+  const value = opts.value?.trim() || String(opts.kind === "linear" ? opts.spacing : opts.angle);
+  const full = opts.kind === "circular" && fullTurn(opts.angle);
+  const of = opts.kind === "circular" ? (full ? count : count - 1) : 1;
+  const tag = (n: number) => ({ id, n, ...(of !== 1 ? { of } : {}), ...(into ? { second: true as const } : {}) });
+  let tagged = false;
   for (let i = 1; i < count; i++) {
     const before = curves.length;
     const copies = copyCurvesWith(s, sources, patternTransform(opts, i), points, curves);
     if (opts.kind === "linear") {
       // In a row: each copy stays the original moved along (along the line, if one was picked), so the copies follow when the originals or the line move.
-      const along = opts.spacing * i * (lineId && opts.reverse ? -1 : 1);
-      for (const [from, to] of copies) constraints.push(con("patternMove", lineId ? [to, from, lineId] : [to, from], undefined, [along, opts.angle]));
+      const sign = lineId && opts.reverse ? -1 : 1;
+      const along = opts.spacing * i * sign;
+      for (const [from, to] of copies) constraints.push({ ...con("patternMove", lineId ? [to, from, lineId] : [to, from], value, [along, opts.angle]), pattern: tag(i * sign) });
     } else if (centreId) {
       // Round a point of the sketch: each copy stays turned round it, so the copies follow when the centre or the originals move.
       const turn = patternStep(opts) * i;
-      for (const [from, to] of copies) constraints.push(con("patternCopy", [to, from, centreId], undefined, [turn]));
+      for (const [from, to] of copies) constraints.push({ ...con("patternCopy", [to, from, centreId], value, [turn]), pattern: tag(i) });
     } else continue;
+    tagged = true;
     sources.forEach((c, k) => {
       const copy = curves[before + k];
       // The copy's size follows the original's (an equal marked as the pattern's, extra [1]).
       if (c.type === "circle" && copy?.type === "circle") constraints.push(con("equal", [copy.id, c.id], undefined, [1]));
     });
   }
-  return { ...settle({ points: [...s.points, ...points], curves: [...s.curves, ...curves], constraints: [...s.constraints, ...constraints] }), curveIds: curves.map((c) => c.id) };
+  const patterns = tagged && !into ? [...(s.patterns ?? []), patternDef(id, sources.map((c) => c.id), count, opts, value, centreId, lineId)] : s.patterns;
+  const out = settle({ ...s, points: [...s.points, ...points], curves: [...s.curves, ...curves], constraints: [...s.constraints, ...constraints], ...(patterns ? { patterns } : {}) });
+  return { ...out, curveIds: curves.map((c) => c.id), patternId: tagged ? id : "" };
+}
+
+function patternDef(id: string, sources: string[], count: number, opts: SketchPatternOptions, value: string, centre: string | null, line: string | null): SketchPatternDef {
+  if (opts.kind === "circular") return { id, kind: "circular", sources, count, ...(centre ? { centre } : {}), ...(fullTurn(opts.angle) ? { full: true } : {}), value, angle: opts.angle };
+  return { id, kind: "linear", sources, count, ...(line ? { line } : {}), ...(line && opts.reverse ? { reverse: true } : {}), value, angle: opts.angle };
 }
 
 /** How far round each copy of a circular pattern turns from the one before (degrees). */
@@ -1130,7 +1153,7 @@ function patternStep(opts: Extract<SketchPatternOptions, { kind: "circular" }>):
  * Copies of `sources` with every point moved by `move` (points that don't move are shared); added to `points` and `curves`.
  * Returns which point each new point is a copy of. Copies don't follow part edges (they aren't linked).
  */
-function copyCurvesWith(s: SketchData, sources: SketchCurve[], move: (p: P2) => P2, points: SketchPoint[], curves: SketchCurve[]): Map<string, string> {
+export function copyCurvesWith(s: SketchData, sources: SketchCurve[], move: (p: P2) => P2, points: SketchPoint[], curves: SketchCurve[]): Map<string, string> {
   {
     const copies = new Map<string, string>();
     const copyOf = (id: string): string => {
@@ -1228,13 +1251,13 @@ export function readPatternSettings(s: SketchData, set: PatternSettings): Sketch
       const lineAngle = (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI;
       const off = (((angle.value - lineAngle) % 360) + 360) % 360;
       const near = (v: number) => Math.min(Math.abs(off - v), 360 - Math.abs(off - v)) < 0.01;
-      if (near(0) || near(180)) return { kind: "linear", count: set.patternCount, spacing: spacing.value, angle: angle.value, lineId: line.id, reverse: near(180) };
+      if (near(0) || near(180)) return { kind: "linear", count: set.patternCount, spacing: spacing.value, angle: angle.value, lineId: line.id, reverse: near(180), value: set.patternSpacing };
     }
-    return { kind: "linear", count: set.patternCount, spacing: spacing.value, angle: angle.value };
+    return { kind: "linear", count: set.patternCount, spacing: spacing.value, angle: angle.value, value: set.patternSpacing };
   }
   const known = set.patternCentre === ORIGIN_ID || s.points.some((p) => p.id === set.patternCentre);
   const centreId = known ? set.patternCentre : ORIGIN_ID;
-  return { kind: "circular", count: set.patternCount, angle: angle.value, centre: pointPos(s, centreId), centreId };
+  return { kind: "circular", count: set.patternCount, angle: angle.value, centre: pointPos(s, centreId), centreId, value: set.patternAngle };
 }
 
 // ---------------------------------------------------------------------------
