@@ -183,7 +183,7 @@ export async function importFile(file: File, replace = false): Promise<boolean> 
     s.showToast("Finish or cancel the open feature first, then import.", "error");
     return false;
   }
-  let bytes = new Uint8Array(await file.arrayBuffer());
+  let bytes: Uint8Array = new Uint8Array(await file.arrayBuffer());
   // 3MF and OBJ files are read as triangles and brought in as an STL would be (model/meshImport.ts).
   const meshKind = meshFormatOf(file.name);
   if (meshKind) {
