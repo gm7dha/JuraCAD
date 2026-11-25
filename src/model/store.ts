@@ -3,7 +3,8 @@ import { sketchFromDxf, type LinkedSketch } from "../link/receive";
 import { clickRadiusPoint, tidyRadiusPoints } from "./variableFillet";
 import { defaultTemplate } from "../drawing/templateStorage";
 import { applyTemplate } from "../drawing/templates";
-import { addPoint, deleteItems } from "../sketch/ops";
+import { addPoint, deleteItems, setDimensionValue } from "../sketch/ops";
+import { takeTyped } from "../sketch/offeredBox";
 import { followLinks, pruneReferences, type RefEdge, type SketchLinkInfo } from "../sketch/links";
 import { isExtraId, keepSketchExtras, withoutEmptyExtras } from "../sketch/sketchText";
 import { create } from "zustand";
@@ -88,6 +89,7 @@ import { holeSketchFor, withAutoValues, type AutoContext, type AutoValues } from
 import { holePositionCount } from "../sketch/holePositions";
 import { acceptBlocker } from "./draftReady";
 import { editRollback } from "./finalPreview";
+import { mainPart } from "../drawing/defaultPart";
 
 /** Which instances show a symmetric part, or a symmetric sub-assembly (for mirrors that show such things as themselves). */
 const symmetricIn = (parts: readonly PartMesh[], assemblies: readonly Assembly[] = []) => (i: Instance) => {
@@ -469,12 +471,12 @@ export interface AppState {
   setEditingDimension: (id: string | null) => void;
   /** Offer these new dimensions (see SketchSession.provisional); the first one's box opens. */
   offerDimensions: (ids: string[]) => void;
-  /** Keep the offered dimension being edited, and move on to the next one offered (if any). */
-  keepOfferedDimension: (id: string) => void;
+  /** Keep the offered dimension being edited, and move on to the next one offered (if any); `close` (Enter): drop the rest. */
+  keepOfferedDimension: (id: string, close?: boolean) => void;
   /** Tab in an offered size's box: open the next one offered (Shift+Tab: the one before), as Onshape does while drawing. */
   nextOfferedDimension: (id: string, back?: boolean) => void;
-  /** Drop any offered dimensions not kept yet. */
-  discardOfferedDimensions: () => void;
+  /** Drop any offered dimensions not kept yet; `keepTyped` (drawing carries on): a size typed in its box is set and kept. */
+  discardOfferedDimensions: (keepTyped?: boolean) => void;
   setSketchOptions: (patch: Partial<Pick<SketchSession, "polygonSides" | "polygonAcross" | "conicRho" | "filletRadius" | "offsetDistance" | "patternKind" | "patternCount" | "patternSpacing" | "patternAngle" | "patternCentre" | "patternDirectionPick" | "patternLine" | "moveDx" | "moveDy" | "moveAngle" | "moveCopy" | "moveScale" | "textValue" | "textSize" | "textAngle" | "textFont" | "textAnchorAt" | "textFocus" | "intersectWhole" | "dxfOpen" | "dxfScale">>) => void;
   commitDraft: () => boolean;
   cancelDraft: () => void;
@@ -1382,19 +1384,34 @@ export const useStore = create<AppState>((set, get) => {
         const next = nextOffered(s.sketch?.provisional ?? [], id, back);
         return s.sketch && next ? { sketch: { ...s.sketch, editingDimension: next } } : {};
       }),
-    keepOfferedDimension: (id) =>
+    keepOfferedDimension: (id, close = false) => {
       set((s) => {
         if (!s.sketch) return {};
         const provisional = s.sketch.provisional.filter((x) => x !== id);
-        return { sketch: { ...s.sketch, provisional, editingDimension: provisional[0] ?? null } };
-      }),
-    discardOfferedDimensions: () => {
+        return { sketch: { ...s.sketch, provisional, editingDimension: close ? null : provisional[0] ?? null } };
+      });
+      // Enter: the offering ends — the sizes not kept go (Onshape's), so no box opens again to take the next key.
+      if (close) get().discardOfferedDimensions();
+    },
+    discardOfferedDimensions: (keepTyped = false) => {
       const s = get();
-      const data = s.editing?.draft.sketch?.data;
+      let data = s.editing?.draft.sketch?.data;
+      const typed = takeTyped(s.sketch?.provisional ?? []);
       if (!s.sketch || !data || s.sketch.provisional.length === 0) return;
-      const gone = s.sketch.provisional.filter((id) => data.constraints.some((c) => c.id === id));
+      // Typed in its box, then drawing carried on: the size is set and kept (a value that can't be used is dropped).
+      const kept = new Set<string>();
+      if (keepTyped) {
+        for (const [id, value] of typed) {
+          const r = setDimensionValue(data, id, value);
+          if (r.error) continue;
+          data = r.sketch;
+          kept.add(id);
+        }
+      }
+      const gone = s.sketch.provisional.filter((id) => !kept.has(id) && data!.constraints.some((c) => c.id === id));
       set({ sketch: { ...s.sketch, provisional: [], editingDimension: null } });
-      if (gone.length) get().updateSketch(deleteItems(data, gone), { record: false });
+      if (kept.size) get().updateSketch(gone.length ? deleteItems(data, gone) : data, { record: true });
+      else if (gone.length) get().updateSketch(deleteItems(data, gone), { record: false });
     },
 
     setDraftParam: (key, value) =>
@@ -1863,9 +1880,9 @@ export const useStore = create<AppState>((set, get) => {
     addDrawing: () => {
       const s = get();
       if (s.editing) return;
-      // Draw the part that's selected, else the last part of the Part Studio on show, else any part.
+      // Draw the part that's selected, else the main (biggest) part of the Part Studio on show, else any part.
       const shown = studioParts(s);
-      const partId = s.selection[0]?.partId ?? shown[shown.length - 1]?.id ?? s.parts[s.parts.length - 1]?.id;
+      const partId = s.selection[0]?.partId ?? s.selectedParts[0] ?? mainPart(shown) ?? s.parts[s.parts.length - 1]?.id;
       const asm = activeAssembly(s);
       const source = asm ? { kind: "assembly" as const, id: asm.id } : partId ? { kind: "part" as const, id: partId } : null;
       const id = newId("d");

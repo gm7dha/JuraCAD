@@ -869,7 +869,7 @@ export class SketchController {
   // Pointer events
 
   pointerDown(e: SketchPointer): void {
-    const d = this.data;
+    let d = this.data;
     if (!d) return;
     const tool = this.tool;
     this.press = null;
@@ -926,8 +926,10 @@ export class SketchController {
       return;
     }
 
-    // Drawing on: any size offered for the last shape and not typed is dropped.
-    this.state.discardOfferedDimensions();
+    // Drawing on: any size offered for the last shape and not typed is dropped (one typed in its box is kept). The
+    // sketch is read again after: drawing on the copy from before would bring the dropped sizes back.
+    this.state.discardOfferedDimensions(true);
+    d = this.data ?? d;
     const p = this.placeAt(e);
     // Something from a sketch further down the list can't be used (they'd depend on each other).
     if (p.snap?.kind === "ref" && p.snap.edge.source?.later) {

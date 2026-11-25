@@ -1,3 +1,6 @@
+import { partsAfterSketch } from "../model/finalPreview";
+import { edgesOfFace } from "../model/faceEdges";
+import { cornerThen, edgeThen, meshSize, NOT_THERE_YET } from "../sketch/rolledBack";
 import { useSketchView } from "../app/sketchViewState";
 import { hiddenConstruction } from "../sketch/sketchView";
 import { openSketchMenu } from "../app/sketchMenuActions";
@@ -260,6 +263,26 @@ const NO_LINES: PickableLine[] = [];
 const FACE_TOOLS = new Set(["thicken", "draft", "moveFace", "replaceFace", "deleteFace", "modifyFillet", "thread", "fullRound", "wrap", "enclose", "offsetSurface"]);
 
 /** Apply a click in the viewport to the selection, like Onshape. */
+/**
+ * Editing an early sketch: a part later features changed is drawn see-through with its finished shape, but the sketch
+ * follows it as it was at the sketch's point. True when the clicked edge(s) or corner weren't there yet then (the
+ * engine wouldn't find them again), so Use refuses them rather than making links that are lost at once.
+ */
+function notThereYet(s: ReturnType<typeof useStore.getState>, partId: string, check: { edges: number[] } | { corner: [number, number, number] }): boolean {
+  const id = s.editing?.draft.id;
+  const later = partsAfterSketch(activeFeatures(s), s.parts, s.editing);
+  const part = s.parts.find((p) => p.id === partId);
+  if (!id || !later?.seeThrough.includes(partId) || !part) return false;
+  const faceEdges = s.sketchLinks?.[id]?.edges ?? [];
+  const candidates = s.sketchCandidates?.id === id ? s.sketchCandidates.list : null;
+  const size = meshSize(part.vertices);
+  if ("corner" in check) return cornerThen(partId, check.corner, size, faceEdges, candidates) === false;
+  return check.edges.some((k) => {
+    const ref = part.edgeRefs[k];
+    return !!ref && edgeThen(partId, ref, size, faceEdges, candidates) === false;
+  });
+}
+
 function handlePick(target: PickTarget | null, additive: boolean) {
   const s = useStore.getState();
   if (activeAssembly(s)) return handleAssemblyPick(target, additive);
@@ -355,6 +378,7 @@ function handlePick(target: PickTarget | null, additive: boolean) {
       // A corner: a fixed point there that follows it.
       const corner = cornerPickFor(withContextParts(s.parts), target.item);
       if (!corner) return;
+      if (notThereYet(s, corner.partId, { corner: corner.ref.p })) return s.setSketchMessage(NOT_THERE_YET, "error");
       const r = linkCorner(s.editing.draft.sketch.data, planeFrame(s.editing.draft.sketch.plane), corner);
       if (r.error) s.setSketchMessage(r.error, "error");
       else {
@@ -366,11 +390,13 @@ function handlePick(target: PickTarget | null, additive: boolean) {
     if (target.item.kind !== "edge") {
       // A face: its whole outline (and its holes) at once.
       const face = withContextParts(s.parts).find((p) => p.id === target.item.partId);
+      if (face && notThereYet(s, face.id, { edges: edgesOfFace(face, target.item.index) })) return s.setSketchMessage(NOT_THERE_YET, "error");
       if (face) void takeWholeFace(face, target.item.index);
       return;
     }
     const ref = withContextParts(s.parts).find((p) => p.id === target.item.partId)?.edgeRefs?.[target.item.index];
     if (!ref) return;
+    if (notThereYet(s, target.item.partId, { edges: [target.item.index] })) return s.setSketchMessage(NOT_THERE_YET, "error");
     // Straight and round edges are copied in linked to the part (they follow it when it changes).
     const data = s.editing.draft.sketch.data;
     const seen = ref.curve === "UNKNOWN" ? null : projectEdge(planeFrame(s.editing.draft.sketch.plane), { partId: target.item.partId, ref });
@@ -1126,7 +1152,17 @@ export function Viewport() {
     manager.setMarkers(markers);
   }, [assembly, mateDraft, parts, solved, allAssemblies]);
 
-  useEffect(() => viewportApi.current?.setHidden(assembly ? hiddenMeshes(hiddenInstances, leaves) : hiddenParts), [hiddenParts, hiddenInstances, assembly, leaves]);
+  // Editing an existing sketch: what later features made is hidden (or see-through), as if rolled back to it.
+  const sketchEditId = useStore((s) => (s.editing?.mode === "edit" && s.editing.draft.type === "sketch" ? s.editing.draft.id : null));
+  const sketchFeatures = useStore(activeFeatures);
+  const afterSketch = useMemo(
+    () => (assembly || !sketchEditId ? null : partsAfterSketch(sketchFeatures, parts, { mode: "edit", draft: { id: sketchEditId, type: "sketch" } })),
+    [assembly, sketchFeatures, parts, sketchEditId],
+  );
+  useEffect(
+    () => viewportApi.current?.setHidden(assembly ? hiddenMeshes(hiddenInstances, leaves) : afterSketch ? [...hiddenParts, ...afterSketch.hidden] : hiddenParts),
+    [hiddenParts, hiddenInstances, assembly, leaves, afterSketch],
+  );
   // Comparing versions: the older one's parts, see-through over the design (Part Studios only).
   const compare = useStore((s) => s.versionCompare);
   const ghostStudio = useStore(activeStudioId);
@@ -1134,8 +1170,11 @@ export function Viewport() {
   useEffect(() => viewportApi.current?.setGhosts(ghosts), [ghosts]);
   const transparentParts = useStore((s) => s.transparentParts);
   useEffect(
-    () => viewportApi.current?.setTransparent(assembly ? NO_IDS : contextShown.length ? [...transparentParts, ...contextShown.map((p) => p.id)] : transparentParts),
-    [transparentParts, assembly, contextShown],
+    () =>
+      viewportApi.current?.setTransparent(
+        assembly ? NO_IDS : contextShown.length || afterSketch ? [...transparentParts, ...contextShown.map((p) => p.id), ...(afterSketch?.seeThrough ?? [])] : transparentParts,
+      ),
+    [transparentParts, assembly, contextShown, afterSketch],
   );
   // Plane features (and the one being made), drawn as squares you can click to sketch on.
   const planeDraft = useStore((s) => (s.editing?.draft.type === "plane" ? s.editing.draft : null));

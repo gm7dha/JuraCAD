@@ -230,7 +230,14 @@
   `pasteSnap` — the copy's middle snaps like a drawn point (points, line middles, origin, part-edge corners, lining up with points
   passed over; never onto curves; Shift = none). Offered sizes after drawing: Tab / Shift+Tab in the box → pure `nextOffered` /
   `nextOfferedDimension` (a changed value is kept first, then the next or previous one opens; the last one left stays open;
-  `tabbing` ref stops the box's blur dropping the offer, reset on focus or a refused value). Use on a face: pure
+  `tabbing` ref stops the box's blur dropping the offer, reset on focus or a refused value). The box's keys are pure
+  `src/sketch/offeredBox.ts` `offeredBoxKey` (Onshape's): anything typed (`typed` ref, even the size already drawn) + Tab/Enter =
+  kept; Tab with nothing typed moves on unkept; Enter = `keepOfferedDimension(id, true)` (the rest offered dropped, no box
+  reopens); Esc = `sketchEscape` (drops what's offered AND `cancel`s the chain, one press); a letter before anything is typed
+  that no variable or `BOX_WORDS` word (pi) starts with (`couldStartName`) goes to the tool keys (blur + re-sent keydown) —
+  not once the box was clicked/tapped (`engaged`: every key typed; function names deliberately don't hold letters back, they'd
+  swallow L C R A S T M); drawing on keeps a typed, unconfirmed size (`noteTyped` → `discardOfferedDimensions(true)`, the
+  controller's pointerDown, which then re-reads the sketch so dropped sizes don't come back); Esc never keeps it. Tests: tests/offeredBox. Use on a face: pure
   `src/model/faceEdges.ts` `edgesOfFace(mesh, face)` (every polyline point — and a straight edge's middle — on the face's
   triangles, within 1/2000 of its size, 1 µm…0.05 mm) → `src/app/sketchUseFace.ts` `takeWholeFace` (each edge the way a click
   does it — curved ones read first through `readCurvedEdge` (sketchUseCurve.ts), flat and curved linked together through
@@ -253,7 +260,7 @@
   (construction curves + points only they use, not picked) is neither drawn nor picked/snapped/boxed (`controller.setHidden` →
   `notHidden`, snaps.ts `pickAt`'s `ignore`) nor in the menu's Select other; `lit` goes by `SceneManager.setSketchLit` (redraws
   only the open sketch, so hovering a label stays cheap). Keys `SKETCH_KEYS` (`sketchKeyFor(code, shift, key)`: the letter of
-  `e.key` when it is one — any layout, as the plain letters — else `e.code`; a key closes an open menu: I E B X, Shift+L/O/M/Q/J/U/G/S/P; Shift+A left free;
+  `e.key` when it is one — any layout, as the plain letters — else `e.code`; a key closes an open menu: I E B X, Shift+L/O/M/Q/J/U/G/S/P, Shift+F (Round, Onshape's sketch fillet); Shift+A left free;
   tooltips via `relationKey`), run in App's sketchShortcut before its Shift check. Dimensions: pure `src/sketch/dimensionKinds.ts`
   `switchRoundDimension` (value halved/doubled, `scaledValue`; also the ⌀/R button in the value box) and `setCentrelineDimension`
   (`SketchConstraint.doubled` on a pointLineDistance to a construction line: solver uses value/2, `measure` ×2, layout runs to the
@@ -874,6 +881,22 @@
   decimateMore (a plate with Ø8/Ø3 holes at 25k and 10k: corners on their faces, Simplify still finds both holes and 6 planes; a 1 mm
   walled cup down to 3k: volume within 0.2%, no triangles crossing; small raised letters kept; two bodies, duplicate/flipped triangles and
   a hole in the mesh), importFile (limits, reducing), engineStlReduce (heavy: 300k → 25k built, volume within 1%).
+  3MF and OBJ imports (Onshape's): pure `src/geometry/meshFiles.ts` — `zipEntries` (stored/deflated, no zip64) + `inflateRaw`
+  (DecompressionStream "deflate-raw", Node too), a tiny tag reader, `parseModel3mf`/`read3mfMeshes` (main model from
+  `_rels/.rels`; build items × component transforms, rows p·M, `composeTransforms`; `p:path` components in other .model files
+  as Bambu/Prusa save them; a mirroring transform walks triangles the other way; `type` support skipped; `UNITS_3MF` → mm;
+  colours/materials not read), `readObj` (v/f, a/t/n forms, negative indices, faces fanned, `\` continuations; numbers as mm).
+  `src/model/meshImport.ts` `meshFileToStl` turns them into a binary STL; fileActions passes it to `readImport(…, from)`, so the
+  design keeps `format: "stl"` + `ImportedFile.from` ("3mf"/"obj"; missing = an STL; parsed only for stl) and everything after
+  (reduce, Simplify, File units, Scale, cache) is the STL path. A 3MF's own unit is applied when read and kept as
+  `ImportedFile.unitMm` (missing = mm; OBJ always mm), which `fileUnitMm` returns for `from` files, so File units are measured
+  against it (Inches on an inch 3MF = ×1, Millimetres = ÷25.4); `from` files never use the STL's on-the-file mm/in. Slicer projects:
+  `slicerSkips` leaves out Bambu/Orca `Metadata/model_settings.config` parts whose `subtype` isn't normal_part (part id = the root
+  object's component objectid) and PrusaSlicer `Slic3r_PE_model.config` volumes (triangle ranges) not ModelPart; `type="other"`
+  objects too (a toast counts them). Items keep the file's coordinates (Bambu plates centre at 128, 128; later plates further along).
+  Zip: central directory sizes (data descriptors fine), zip64 refused; no "deflate-raw" = "browser too old".
+  Not done: OBJ/STL "Y axis is up" (Onshape has it), negative parts subtracted, colours.
+  Dialog `importKind`. Tests: meshImport (pure; fixtures in tests/support/meshFixtures.ts), engineMeshImport.
 - Move / copy (Onshape's Transform): `Feature.transform` (`TransformDef` in types.ts). `mode` (missing = "free": turns about
   X, then Y, then Z, then the move — the original way) or "xyz" (Translate by XYZ: moves only), "distance" (`distance` box along
   `along`: the triad's X/Y/Z or a clicked `{dir, through}`), "line" (`line` {a, b}: a clicked straight edge, from the end nearer the
@@ -1313,6 +1336,15 @@
   leaves every solid part's id, volume (1e-8) and face count as it was gets the `noChangeMessage` warning ("This doesn't
   change anything — …"; `watchChange`/`noChangeNote`, `sizeOf` cached per shape object; the face count keeps a tiny hole in
   a big block from looking like nothing). No library design warns at insert. Tests: featureDialogDefaults, engineNoChange.
+  Editing an existing sketch shows the parts as rolled back to it WITHOUT a rebuild (candidates/ids untouched): pure
+  `partsAfterSketch` (finalPreview.ts) — parts whose making feature comes after the sketch hidden, parts made before but
+  changed later see-through; Viewport adds them to setHidden/setTransparent only (never `store.hiddenParts`). The snap list is
+  already as at the sketch (`snap.parts`), but a Use click (edge, face, corner) on a see-through part's FINISHED shape is checked
+  first (`notThereYet` in Viewport → pure `src/sketch/rolledBack.ts` `edgeThen`/`cornerThen`: strictMatch 0.3 among that part's
+  face edges + snap-list picks, as followSketch re-finds links; unknown list = allowed) and refused with `NOT_THERE_YET`. The rollback bar
+  at rest: `RollbackEnd` (FeaturePanel, `.rollback-end`, a slim draggable line under the last feature while not rolled back;
+  drops go through `dropRollbackAbove` as the rolled-back bar's). A new drawing (`addDrawing`) draws the picked part, else
+  `mainPart` (src/drawing/defaultPart.ts: the biggest solid, first of equals to 1e-6 — not a pattern copy). Tests: editRollbackView, rolledBackSketch.
 - Corners (vertices, Onshape's): pure `src/geometry/vertexRef.ts` — `VertexRef` {p, rel (share of the part's box), dirs (unit
   directions its edges leave in)} / `VertexPick` {partId, ref}; `cornersFromEnds` groups edge ends (`SAME_CORNER` 1 µm; closed
   edges have none), `meshCorners`/`cornersOf` (cached per PartMesh: ends from `edgeRefs`, directions from the drawn lines — no
@@ -2382,7 +2414,10 @@
   list scrolls when taller than the window, `max-height` from its top; the ▾ is 26 px wide (22 on a narrow tablet) under
   `(pointer: coarse)`). Undo/Redo, Section, Fit, Views and Pick are icon-only
   (`.tool-button.icon-only`) on every toolbar. Sketch families, the relations under "More relations ▾" (`MORE_RELATIONS`) and
-  the Text / Insert DXF / Insert image group are listed there too. Smoke: click tools with `tool(name)` (opens the ▾ when needed).
+  the Text / Insert DXF / Insert image group are listed there too. The sketch toolbar fits 1280 px with ~60 px to spare
+  (`SKETCH_TOOLBAR_TOOLS` each in one place: `SKETCH_SINGLE_TOOLS`, families — Point under Spline, Round + Chamfer their own
+  "round" family —, 5 main relations; Construction icon-only; Extrude/Revolve one ▾, Copy/Paste/Delete one compact ▾; long
+  tool names get a `short` button label so the width doesn't change with the tool shown). Smoke: click tools with `tool(name)` (opens the ▾ when needed).
 - Light/dark: `src/app/theme.ts` sets `data-theme` on <html> (CSS variables in styles.css; use variables, not
   fixed colours, for anything outside the drawing paper) and `store.theme` (the viewport recolours sketches).
 - Offline/installable: `public/manifest.webmanifest` + `public/sw.js` (registered in main.tsx, production only);
