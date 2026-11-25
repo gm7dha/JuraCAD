@@ -55,7 +55,7 @@ describe("Insert SVG into the open sketch", () => {
     const ms = performance.now() - t;
     console.log(`5000 shapes into the open sketch: ${ms.toFixed(0)} ms`);
     expect(draftData().curves).toHaveLength(5000);
-    expect(s().sketch!.message?.text).toMatch(/Brought in 5000 shapes/);
+    expect(s().sketch!.message?.text).toMatch(/Brought in 5000 shapes.*can take minutes, so pick just the areas you need/);
     // Generous (CI machines are busy); about a second here.
     expect(ms).toBeLessThan(60000);
   });

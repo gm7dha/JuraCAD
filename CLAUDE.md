@@ -182,7 +182,8 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   `insertDrawingText(kind, text)` (both DXF and SVG; the panel's `dxfScale`), sketch toolbar "Insert SVG" opens the same panel
   ("Insert DXF or SVG", two file buttons). The JuraCUT link still takes DXF only. Tests: svgInsert (pure), svgInsertStore,
   engineSvgInsert (square with a round hole, ellipse corners, a curve lens, sharp corners + a pulled-in handle — exact volumes),
-  svgInsertFiles (Inkscape / Illustrator / Cricut-style / JuraCAD laser-export fixtures; 5,000 pieces in ~1 s). `findAreas`
+  svgInsertFiles (Inkscape / Illustrator / Cricut-style / JuraCAD laser-export fixtures; 5,000 pieces in ~1 s). Over
+  `MANY_SHAPES` (300) the message warns that extruding them all is slow (the engine joins separate shapes one by one: 120 ≈ 17 s). `findAreas`
   (areas.ts) looks up nearby boxes through `boxGrid` (same answers; 5,000 shapes ~0.7 s instead of ~15 s).
   The sketch check (`analyzeSketch` → `analyzeWhole` in solver.ts) row-reduces the Jacobian block by block: unknowns joined
   (union–find) through the equations that read them (`dependencies`), entries from `jacobianEntries` (the same numbers as the

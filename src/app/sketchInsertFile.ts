@@ -18,6 +18,9 @@ function typedNumber(text: string | undefined, fallback: number): number | null 
   return r.ok && Number.isFinite(r.value) ? r.value : null;
 }
 
+/** More shapes than this brought in at once: the message says extruding them all will be slow. */
+export const MANY_SHAPES = 300;
+
 /** Files bigger than this (bytes) aren't read at all. */
 export function tooBig(kind: "dxf" | "svg", bytes: number): boolean {
   return bytes > (kind === "dxf" ? MAX_DXF_SIZE : MAX_SVG_SIZE);
@@ -63,6 +66,8 @@ export function insertDrawingText(kind: "dxf" | "svg", text: string): boolean {
     return false;
   }
   useStore.getState().updateSketch(r.sketch, { record: true, selection: r.curveIds });
-  useStore.getState().setSketchMessage(`${summary} It's selected: use Move / copy to place it, or Delete to take it out again.`, "info");
+  // Extruding hundreds of separate shapes at once is slow (each is joined on in turn).
+  const many = r.count > MANY_SHAPES ? ` That's a lot of shapes: extruding them all at once can take minutes, so pick just the areas you need.` : "";
+  useStore.getState().setSketchMessage(`${summary}${many} It's selected: use Move / copy to place it, or Delete to take it out again.`, "info");
   return true;
 }
