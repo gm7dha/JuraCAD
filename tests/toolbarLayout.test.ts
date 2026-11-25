@@ -7,6 +7,8 @@ import {
   MORE_RELATIONS,
   SKETCH_FAMILIES,
   SKETCH_INSERT_TOOLS,
+  SKETCH_SINGLE_TOOLS,
+  SKETCH_TOOLBAR_TOOLS,
   STUDIO_TOOLBAR,
   STUDIO_TOOLS,
   toolsIn,
@@ -69,5 +71,20 @@ describe("sketch toolbar layout", () => {
     const shown = [...MAIN_RELATIONS, ...MORE_RELATIONS];
     expect(new Set(shown).size).toBe(shown.length);
     expect([...shown].sort()).toEqual((Object.keys(RELATION_LABELS) as RelationTool[]).sort());
+  });
+
+  it("puts every drawing tool in exactly one place, with Round's own button", () => {
+    const placed = [...SKETCH_SINGLE_TOOLS, ...SKETCH_FAMILIES.flatMap((f) => f.tools), ...SKETCH_INSERT_TOOLS];
+    expect(placed.filter((t, i) => placed.indexOf(t) !== i)).toEqual([]);
+    expect([...placed].sort()).toEqual([...SKETCH_TOOLBAR_TOOLS].sort());
+    // Round shows on its own ▾ button (Shift+F), not hidden under Trim.
+    expect(SKETCH_FAMILIES.find((f) => f.tools.includes("sketchFillet"))?.tools[0]).toBe("sketchFillet");
+    expect(SKETCH_FAMILIES.find((f) => f.tools.includes("trim"))?.tools).not.toContain("sketchFillet");
+  });
+
+  it("is short enough to fit a 1280 px window", () => {
+    // Measured in the browser: ~1215 px at 1280 with these counts (it was 1449 with 8 families, 8 relations and 3 edit buttons).
+    expect(SKETCH_SINGLE_TOOLS.length + SKETCH_FAMILIES.length).toBeLessThanOrEqual(11);
+    expect(MAIN_RELATIONS.length).toBeLessThanOrEqual(5);
   });
 });
