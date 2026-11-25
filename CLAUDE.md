@@ -243,9 +243,10 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   corner round the arc, 2·asin(d/2r); the sharp held `pointOnCircle` on the arc; arcLength/arcAngle dims on it dropped; distance +
   angle refused there); two picked curves with an arc must share an end (controller via filletCurves' exported `sharedEnd`).
   Round with circles: `filletBetween` takes circles; a circle the other curve (carried on) crosses becomes an arc (same id) from
-  the round's touch point, away from that corner crossing (`X1`) the way the click lies, to the first place another solid curve
-  of the sketch really crosses it (`crossings`; its end held on that curve with `onCurveType`); none = the circle stays whole and
-  the touch point is held on it. Click the circle near the corner: the round nearest both clicks is chosen.
+  the round's touch point, carrying on the way the round arrives there (`circleKeep`: smooth, away from the corner crossing `X1`),
+  to the first place another solid curve of the sketch really crosses it (`crossings`; its end held on that curve with
+  `onCurveType`); none = the circle stays whole and the touch point is held on it. The circle is clicked on the part to keep:
+  rounds that would cut the click away come last, then the one nearest both clicks.
   Move / copy handles (Onshape's sketch Transform): pure `src/sketch/transformSelection.ts` — `transformSelection(s, ids,
   {dx, dy, angle, scale}, about?)` (about = `selectionCentre`: the box middle of the picked shapes as drawn — `curveOutline`: arcs
   by their curve, circles' full size, splines' paths; a centre or axis point counts only when picked itself): points
