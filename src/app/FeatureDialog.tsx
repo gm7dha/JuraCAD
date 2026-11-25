@@ -1,4 +1,5 @@
 import { BoundaryOptions, FaceBlendOptions } from "./BoundaryBlendOptions";
+import { acceptBlocker } from "../model/draftReady";
 import { FinalToggle } from "./FinalToggle";
 import { MergeScopeField } from "./MergeScopeField";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -1643,8 +1644,11 @@ function HoleOptions() {
   return (
     <fieldset className="param-group">
       <legend>Where and what</legend>
+      {mode === "create" && (
+        <p className="dialog-hint field-hint">Click a flat face where a hole goes (each click adds one; drag the sketch's points later to move them) — or choose a sketch with points.</p>
+      )}
       {sketches.length === 0 ? (
-        <p className="dialog-error">There are no sketches yet. Cancel, then sketch on the face and place points (P) where the holes go.</p>
+        mode === "create" ? null : <p className="dialog-error">There are no sketches yet. Sketch on the face and place points (P) where the holes go.</p>
       ) : (
         <select className="full-select" aria-label="Sketch with the hole positions" value={h.sketchRef ?? ""} onChange={(e) => update({ sketchRef: e.target.value || undefined })}>
           {!h.sketchRef && <option value="">Choose a sketch…</option>}
@@ -2634,6 +2638,8 @@ export function FeatureDialog() {
   const buildWarning = useStore((s) => (s.editing ? s.featureWarnings[s.editing.draft.id] : undefined));
   const buildNote = useStore((s) => (s.editing ? s.featureNotes[s.editing.draft.id] : undefined));
   const busy = useStore((s) => s.rebuildBusy);
+  // The feature as saved (editing): what it was already missing doesn't stop Accept.
+  const original = useStore((s) => (s.editing?.mode === "edit" ? activeFeatures(s).find((f) => f.id === s.editing!.draft.id) ?? null : null));
   // Move / copy's triad being dragged: its boxes follow it live.
   const live = useStore((s) => s.transformLive);
   const ref = useRef<HTMLFormElement>(null);
@@ -2661,6 +2667,8 @@ export function FeatureDialog() {
   // A mirror or pattern with no plane, axis or direction chosen yet can't be accepted (its box says what to click).
   const needsRef = draft.type === "mirror" ? !!draft.mirror?.unset : (draft.type === "circularPattern" || draft.type === "linearPattern") && !!draft.pattern?.unset;
   const refHint = draft.type === "mirror" ? "Choose the mirror plane first" : draft.type === "circularPattern" ? "Choose the axis first" : "Choose the direction first";
+  // Nothing picked yet where something must be (a fillet with no edges): the ✓ waits, saying what to click.
+  const missing = needsRef ? null : acceptBlocker(draft, mode === "edit" ? original : null);
   const groups: { title: string; params: ParamDef[] }[] = [
     { title: draft.type === "plane" ? "Placement" : draft.type === "extrude" ? "Depth" : draft.type === "revolve" ? "How far round" : draft.type === "shell" ? "Walls" : isPatternFeature(draft.type) ? "Copies" : draft.type === "transform" ? "Turn" : "Size", params: def.params.filter((p) => p.group === "size") },
     { title: draft.type === "transform" ? "Move" : draft.type === "circularPattern" ? "Axis goes through" : "Position", params: def.params.filter((p) => p.group === "position") },
@@ -2673,7 +2681,7 @@ export function FeatureDialog() {
       aria-label={`${def.label} feature`}
       onSubmit={(e) => {
         e.preventDefault();
-        if (!needsRef) commitDraft();
+        if (!needsRef && !missing) commitDraft();
       }}
     >
       <header className="feature-dialog-header">
@@ -2683,8 +2691,8 @@ export function FeatureDialog() {
           <button
             type="submit"
             className="dialog-ok"
-            disabled={hasErrors || needsRef}
-            title={hasErrors ? "Fix the highlighted values first" : needsRef ? refHint : "Accept (Enter)"}
+            disabled={hasErrors || needsRef || !!missing}
+            title={hasErrors ? "Fix the highlighted values first" : needsRef ? refHint : missing ?? "Accept (Enter)"}
             aria-label="Accept"
           >
             <Icons.Tick size={18} />

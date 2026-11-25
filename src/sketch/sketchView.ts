@@ -89,7 +89,7 @@ export function hiddenConstruction(s: SketchData, selection: readonly string[]):
 export interface SketchKey {
   code: string;
   shift: boolean;
-  action: { relation: RelationTool } | { tool: "extend" | "point" } | { toggle: "construction" };
+  action: { relation: RelationTool } | { tool: "extend" | "point" | "sketchFillet" } | { toggle: "construction" };
 }
 
 /**
@@ -109,6 +109,8 @@ export const SKETCH_KEYS: readonly SketchKey[] = [
   { code: "KeyU", shift: true, action: { relation: "curvature" } },
   { code: "KeyG", shift: true, action: { relation: "pierce" } },
   { code: "KeyS", shift: true, action: { tool: "point" } },
+  // Onshape's sketch fillet (cad.onshape.com/help, Sketch Fillet: "Shortcut: Shift+f").
+  { code: "KeyF", shift: true, action: { tool: "sketchFillet" } },
   { code: "KeyP", shift: true, action: { toggle: "construction" } },
 ];
 

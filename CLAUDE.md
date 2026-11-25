@@ -230,7 +230,14 @@
   `pasteSnap` — the copy's middle snaps like a drawn point (points, line middles, origin, part-edge corners, lining up with points
   passed over; never onto curves; Shift = none). Offered sizes after drawing: Tab / Shift+Tab in the box → pure `nextOffered` /
   `nextOfferedDimension` (a changed value is kept first, then the next or previous one opens; the last one left stays open;
-  `tabbing` ref stops the box's blur dropping the offer, reset on focus or a refused value). Use on a face: pure
+  `tabbing` ref stops the box's blur dropping the offer, reset on focus or a refused value). The box's keys are pure
+  `src/sketch/offeredBox.ts` `offeredBoxKey` (Onshape's): anything typed (`typed` ref, even the size already drawn) + Tab/Enter =
+  kept; Tab with nothing typed moves on unkept; Enter = `keepOfferedDimension(id, true)` (the rest offered dropped, no box
+  reopens); Esc = `sketchEscape` (drops what's offered AND `cancel`s the chain, one press); a letter before anything is typed
+  that no variable or `BOX_WORDS` word (pi) starts with (`couldStartName`) goes to the tool keys (blur + re-sent keydown) —
+  not once the box was clicked/tapped (`engaged`: every key typed; function names deliberately don't hold letters back, they'd
+  swallow L C R A S T M); drawing on keeps a typed, unconfirmed size (`noteTyped` → `discardOfferedDimensions(true)`, the
+  controller's pointerDown, which then re-reads the sketch so dropped sizes don't come back); Esc never keeps it. Tests: tests/offeredBox. Use on a face: pure
   `src/model/faceEdges.ts` `edgesOfFace(mesh, face)` (every polyline point — and a straight edge's middle — on the face's
   triangles, within 1/2000 of its size, 1 µm…0.05 mm) → `src/app/sketchUseFace.ts` `takeWholeFace` (each edge the way a click
   does it — curved ones read first through `readCurvedEdge` (sketchUseCurve.ts), flat and curved linked together through
@@ -253,7 +260,7 @@
   (construction curves + points only they use, not picked) is neither drawn nor picked/snapped/boxed (`controller.setHidden` →
   `notHidden`, snaps.ts `pickAt`'s `ignore`) nor in the menu's Select other; `lit` goes by `SceneManager.setSketchLit` (redraws
   only the open sketch, so hovering a label stays cheap). Keys `SKETCH_KEYS` (`sketchKeyFor(code, shift, key)`: the letter of
-  `e.key` when it is one — any layout, as the plain letters — else `e.code`; a key closes an open menu: I E B X, Shift+L/O/M/Q/J/U/G/S/P; Shift+A left free;
+  `e.key` when it is one — any layout, as the plain letters — else `e.code`; a key closes an open menu: I E B X, Shift+L/O/M/Q/J/U/G/S/P, Shift+F (Round, Onshape's sketch fillet); Shift+A left free;
   tooltips via `relationKey`), run in App's sketchShortcut before its Shift check. Dimensions: pure `src/sketch/dimensionKinds.ts`
   `switchRoundDimension` (value halved/doubled, `scaledValue`; also the ⌀/R button in the value box) and `setCentrelineDimension`
   (`SketchConstraint.doubled` on a pointLineDistance to a construction line: solver uses value/2, `measure` ×2, layout runs to the
@@ -1309,6 +1316,35 @@
   its whole build (`parked`, `sourceBuild`), so Derived/context studios aren't rebuilt, later features' errors/warnings/notes
   stay on their rows, and closing unchanged or ticking Final takes it back without building (only meshed). Sketches are left
   as before (their snap list and "ref:<n>" ids come from the whole build). Tests: tests/finalPreview, engineFinalPreview.
+  Dialog starting values and Accept (Onshape's): pure `src/model/newFeatureDefaults.ts` — `withAutoValues` keeps a NEW
+  feature's self-worked-out values up to date only while they still equal the last value set (`AutoValues`, store closure
+  `autoValues`, reset by startCreate; `autoParts` = the parts when the dialog opened, before its preview): an Extrude's `flip`
+  (`aimedFlip`: a sketch on a part's face — `materialBehind`, its plane normal vs the face pick's outward normal — Remove/
+  Intersect point in, New/Add out; plain planes unknown = left), a Linear pattern's `spacing`/`spacing2` (`suggestedSpacing`:
+  the repeated parts' box along the direction × 1.2, rounded up; parts picked, or the parts its sources made), run from
+  startCreate, setDraftField, toggleDraftPart/Source. Edits never change. A new Hole's sketch: `holeSketchFor` (highlighted,
+  else the last feature if an unused sketch with points, else none). Hole face clicks (Viewport handlePick, create mode):
+  `placeHoleAt(plane, point)` puts a standalone point in a sketch on that face made for the hole (store closure `holeSketch`:
+  written into `history.present` without an undo step; Cancel/startCreate/startEdit put `before` back only while nothing
+  else changed the design since the first click (`clean` + `placed`), else just take the sketch out — never an older design
+  back (a rename mid-dialog, New/Open); Accept inserts it just before the hole in ONE step; another face is refused; the
+  toolbar's Hole needs only a part). Accept waits: pure `src/model/draftReady.ts` `missingPick` (fillet/
+  chamfer with no picks, Shell Open with no face, face features, split face, part lists, part/face patterns, a hole with no
+  sketch…) — the ✓ disabled with it as the tooltip, commitDraft refuses with a toast; `acceptBlocker` lets an edited feature
+  that was already missing it when opened (picks lost upstream, an old Open shell with no face) be accepted, so no one's trapped. After Accept nothing is selected (a
+  sketch stays highlighted). Engine: solid Extrude/Revolve/Sweep/Loft Add/Remove/Intersect (not a pattern/mirror source) that
+  leaves every solid part's id, volume (1e-8) and face count as it was gets the `noChangeMessage` warning ("This doesn't
+  change anything — …"; `watchChange`/`noChangeNote`, `sizeOf` cached per shape object; the face count keeps a tiny hole in
+  a big block from looking like nothing). No library design warns at insert. Tests: featureDialogDefaults, engineNoChange.
+  Editing an existing sketch shows the parts as rolled back to it WITHOUT a rebuild (candidates/ids untouched): pure
+  `partsAfterSketch` (finalPreview.ts) — parts whose making feature comes after the sketch hidden, parts made before but
+  changed later see-through; Viewport adds them to setHidden/setTransparent only (never `store.hiddenParts`). The snap list is
+  already as at the sketch (`snap.parts`), but a Use click (edge, face, corner) on a see-through part's FINISHED shape is checked
+  first (`notThereYet` in Viewport → pure `src/sketch/rolledBack.ts` `edgeThen`/`cornerThen`: strictMatch 0.3 among that part's
+  face edges + snap-list picks, as followSketch re-finds links; unknown list = allowed) and refused with `NOT_THERE_YET`. The rollback bar
+  at rest: `RollbackEnd` (FeaturePanel, `.rollback-end`, a slim draggable line under the last feature while not rolled back;
+  drops go through `dropRollbackAbove` as the rolled-back bar's). A new drawing (`addDrawing`) draws the picked part, else
+  `mainPart` (src/drawing/defaultPart.ts: the biggest solid, first of equals to 1e-6 — not a pattern copy). Tests: editRollbackView, rolledBackSketch.
 - Corners (vertices, Onshape's): pure `src/geometry/vertexRef.ts` — `VertexRef` {p, rel (share of the part's box), dirs (unit
   directions its edges leave in)} / `VertexPick` {partId, ref}; `cornersFromEnds` groups edge ends (`SAME_CORNER` 1 µm; closed
   edges have none), `meshCorners`/`cornersOf` (cached per PartMesh: ends from `edgeRefs`, directions from the drawn lines — no
@@ -2378,7 +2414,10 @@
   list scrolls when taller than the window, `max-height` from its top; the ▾ is 26 px wide (22 on a narrow tablet) under
   `(pointer: coarse)`). Undo/Redo, Section, Fit, Views and Pick are icon-only
   (`.tool-button.icon-only`) on every toolbar. Sketch families, the relations under "More relations ▾" (`MORE_RELATIONS`) and
-  the Text / Insert DXF / Insert image group are listed there too. Smoke: click tools with `tool(name)` (opens the ▾ when needed).
+  the Text / Insert DXF / Insert image group are listed there too. The sketch toolbar fits 1280 px with ~60 px to spare
+  (`SKETCH_TOOLBAR_TOOLS` each in one place: `SKETCH_SINGLE_TOOLS`, families — Point under Spline, Round + Chamfer their own
+  "round" family —, 5 main relations; Construction icon-only; Extrude/Revolve one ▾, Copy/Paste/Delete one compact ▾; long
+  tool names get a `short` button label so the width doesn't change with the tool shown). Smoke: click tools with `tool(name)` (opens the ▾ when needed).
   Top bar: its buttons never shrink (`.topbar > *`); the name and save state give way (ellipsis), labels go in steps
   (`early-label` Install/New/Open/Save ≤ 1260 px, the rest ≤ 1120 bar Claude's, all ≤ 1000); each button has an aria-label so
   it keeps its name (the smoke test checks nothing is cut off at 1024–1366). Fonts differ, so the bar also

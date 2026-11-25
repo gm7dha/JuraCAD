@@ -43,3 +43,29 @@ export function finalChoice(features: readonly Feature[], editing: EditingLike |
   for (let i = at + 1; i < end; i++) if (!features[i].suppressed) return true;
   return false;
 }
+
+/**
+ * While an existing sketch is open, the parts as they'd be rolled back to just before it (Onshape rolls back while a
+ * sketch is edited). A sketch's own build and its snap list come from the whole design, so instead of rebuilding, the
+ * parts later features made are hidden, and parts made before it but changed later are drawn see-through. Null when
+ * there's nothing to do (not editing an existing sketch, or nothing comes after it).
+ */
+export function partsAfterSketch(
+  features: readonly Feature[],
+  parts: readonly { id: string; featureIds: readonly string[]; configuration?: string }[],
+  editing: EditingLike | null | undefined,
+): { hidden: string[]; seeThrough: string[] } | null {
+  if (!editing || editing.mode !== "edit" || editing.draft.type !== "sketch") return null;
+  const at = features.findIndex((f) => f.id === editing.draft.id);
+  if (at < 0) return null;
+  const later = new Set(features.slice(at + 1).map((f) => f.id));
+  if (!later.size) return null;
+  const hidden: string[] = [];
+  const seeThrough: string[] = [];
+  for (const p of parts) {
+    if (p.configuration || !p.featureIds.length) continue;
+    if (later.has(p.featureIds[0])) hidden.push(p.id);
+    else if (p.featureIds.some((id) => later.has(id))) seeThrough.push(p.id);
+  }
+  return hidden.length || seeThrough.length ? { hidden, seeThrough } : null;
+}

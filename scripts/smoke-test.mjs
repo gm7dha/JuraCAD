@@ -3174,13 +3174,11 @@ try {
       });
       throw new Error(`centre rectangle made ${now.join(",")} — ${why}`);
     }
-    // Type its width as soon as it's drawn (Enter), then skip the height (Esc).
+    // Type its width as soon as it's drawn: Enter keeps it and ends the offering (the height isn't kept, no box reopens).
     const sizeBox = page.locator(".dimension-editor input");
     await sizeBox.waitFor({ timeout: 5_000 });
     await sizeBox.fill("30");
     await sizeBox.press("Enter");
-    await sizeBox.waitFor({ timeout: 5_000 });
-    await page.keyboard.press("Escape");
     await page.locator(".dimension-editor").waitFor({ state: "detached", timeout: 5_000 });
     const kept = await page.evaluate(() => window.juracadStore.getState().editing.draft.sketch.data.constraints.filter((c) => c.value !== undefined).map((c) => c.value));
     if (kept.length !== 1 || !/^30( in)?$/.test(kept[0])) throw new Error(`typing the width straight after drawing kept ${JSON.stringify(kept)}`);
@@ -3334,6 +3332,8 @@ try {
       });
     const typed = await rectBox();
     if (Math.abs(typed.w - 30.48) > 0.01 || Math.abs(typed.h - 12.7) > 0.01) throw new Error(`typing 1.2, Tab, 0.5 made a ${typed.w} × ${typed.h} mm rectangle`);
+    // Both typed sizes kept, and Enter closed the offering (no box reopened to swallow the next key).
+    await page.locator(".dimension-editor").waitFor({ state: "detached", timeout: 5_000 });
     step = "sketch: turning a rectangle with the Move / copy ring";
     await tool("Move / copy");
     await page.evaluate((ids) => window.juracadStore.getState().setSketchSelection(ids), typed.ids);

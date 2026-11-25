@@ -5021,6 +5021,27 @@ kbd {
 .rollback-bar[draggable="true"] {
   cursor: grab;
 }
+/* The rollback bar at rest under the last feature (Onshape's): a slim line to drag up the list. */
+.rollback-end {
+  list-style: none;
+  margin: 4px 6px 2px;
+  height: 0;
+  border-top: 3px solid var(--accent);
+  opacity: 0.55;
+  position: relative;
+}
+.rollback-end::before {
+  /* A taller grab area than the line itself. */
+  content: "";
+  position: absolute;
+  inset: -6px 0 -4px;
+}
+.rollback-end[draggable="true"] {
+  cursor: grab;
+}
+.rollback-end:hover {
+  opacity: 1;
+}
 /* Move / copy's handles in a sketch win over the size labels and relation badges on top of them. */
 .sketch-overlay.handles-on .dimension-label,
 .sketch-overlay.handles-on .constraint-badge {

@@ -580,6 +580,26 @@ const VISIBILITY_MENU: MenuEntry[] = [
 
 const LIST_MENU: MenuEntry[] = [...VISIBILITY_MENU, "divider", { label: "Paste features (Ctrl+V)", action: pasteFromMenu }];
 
+/**
+ * Onshape's rollback bar at rest, under the last feature (not rolled back): drag it up the list to roll back.
+ * (Its own class, so the rolled-back bar — and what looks for it — is unchanged.)
+ */
+function RollbackEnd() {
+  return (
+    <li
+      className="rollback-end"
+      role="separator"
+      aria-label="Rollback bar (at the end)"
+      draggable={!TOUCH_SCREEN}
+      onDragStart={(e) => {
+        e.dataTransfer.setData(ROLLBACK_DRAG, "bar");
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      title={TOUCH_SCREEN ? "The rollback bar: right-click (or hold) a feature and choose Roll back to here" : "The rollback bar: drag it up the list to see the model as it was, and add features there"}
+    />
+  );
+}
+
 /** Onshape's rollback bar: the model is shown as it was at this point; new features go in here. */
 function RollbackBar() {
   const setRollback = useStore((s) => s.setRollback);
@@ -1110,6 +1130,7 @@ export function FeaturePanel() {
                 </li>,
               ];
             })}
+          {!grouped && !matches && !rollbackTo && features.length > 0 && <RollbackEnd key="rollback-end" />}
           {!grouped && !matches && features.length > 1 && (
             <li
               className="feature-drop-end"

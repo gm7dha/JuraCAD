@@ -185,7 +185,7 @@ describe("the app: picking state isn't kept, and later parts' flags survive the 
     expect("picking" in saved.pattern!).toBe(false);
     useStore.setState({ selection: [], selectedParts: [] });
     s().startCreate("mirror");
-    s().setDraftField({ mirror: { ...s().editing!.draft.mirror!, of: "face", picking: "faces" } });
+    s().setDraftField({ mirror: { ...s().editing!.draft.mirror!, of: "face", picking: "faces" }, picks: [{ partId: "a", ref: { kind: "face", surface: "PLANE", center: [0, 0, 1], normal: [0, 0, 1] } }] });
     s().commitDraft();
     expect("picking" in s().history.present.features.at(-1)!.mirror!).toBe(false);
   });
