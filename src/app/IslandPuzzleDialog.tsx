@@ -384,7 +384,8 @@ export function IslandPuzzleDialog() {
   const fullSpec: IslandSpec = {
     ...(spec.inPlace ? { ...spec, bed: placeBed, keepOut, tower: colourOn && !towerOff } : { ...spec, bed }),
     // Trimmed: the land was already chosen on the whole area (trimmedIsland), so build all that's left.
-    ...(used?.decided ? { land: "all" as const } : only ? { only } : {}),
+    // (Its sea lochs still stay sea: `only` with no keep points.)
+    ...(used?.decided ? { land: "all" as const, ...(only?.sea ? { only: { keep: [], sea: only.sea } } : {}) } : only ? { only } : {}),
   };
   const problems = islandChecks(fullSpec);
   const specKey = JSON.stringify(fullSpec);

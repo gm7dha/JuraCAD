@@ -21,7 +21,7 @@ export interface IslandPlace {
 
 type LatLon = [number, number];
 
-const around = (id: string, name: string, lat: number, lon: number, kmWide: number, kmTall: number, keep?: LatLon[], apart?: LatLon[]): IslandPlace => {
+const around = (id: string, name: string, lat: number, lon: number, kmWide: number, kmTall: number, keep?: LatLon[], apart?: LatLon[], sea?: LatLon[]): IslandPlace => {
   const c = latLonToGrid({ lat, lon });
   const width = kmWide * 1000;
   const height = kmTall * 1000;
@@ -30,7 +30,7 @@ const around = (id: string, name: string, lat: number, lon: number, kmWide: numb
     const g = latLonToGrid({ lat: la, lon: lo });
     return { e: Math.round(g.e), n: Math.round(g.n) };
   };
-  if (keep) place.only = { keep: keep.map(grid), ...(apart ? { apart: apart.map(grid) } : {}) };
+  if (keep) place.only = { keep: keep.map(grid), ...(apart ? { apart: apart.map(grid) } : {}), ...(sea ? { sea: sea.map(grid) } : {}) };
   return place;
 };
 
@@ -43,10 +43,41 @@ export const ISLANDS: IslandPlace[] = [
   around("arran", "Isle of Arran", 55.58, -5.22, 32, 40, [[55.626, -5.192], [55.635, -5.3], [55.5, -5.21]], [[55.525, -5.071], [55.427, -5.119]]),
   // Tiny (about 1.2 × 0.9 km, 338 m high), so a small area: it's then printed about 10 cm long.
   around("ailsa-craig", "Ailsa Craig", 55.2525, -5.1158, 3, 3, [[55.2525, -5.1158]]),
-  around("wight", "Isle of Wight", 50.67, -1.33, 46, 28),
+  // The Isle of Wight without the mainland (the height data may join it across the Solent's narrows at Hurst): points at
+  // Carisbrooke, on St Boniface Down and on Afton Down in the west.
+  around("wight", "Isle of Wight", 50.67, -1.33, 46, 28, [[50.6873, -1.3143], [50.6035, -1.1987], [50.677, -1.4848]]),
   around("man", "Isle of Man", 54.23, -4.55, 42, 60),
-  around("anglesey", "Anglesey", 53.28, -4.37, 52, 42),
-  around("mull", "Isle of Mull", 56.45, -6.05, 60, 50),
+  // Anglesey (with Holy Island, joined to it by its causeways) without the mainland, which the height data joins to it
+  // across the narrow Menai Strait (its bridges): points at Llangefni, Llannerch-y-medd and on Holyhead Mountain; others
+  // at Llanrug and Bangor on the mainland side.
+  around(
+    "anglesey",
+    "Anglesey",
+    53.28,
+    -4.37,
+    52,
+    42,
+    [[53.2557, -4.3109], [53.3301, -4.3756], [53.313, -4.6763]],
+    [[53.1475, -4.1935], [53.226, -4.1286]],
+  ),
+  // Mull itself (the owner's map): without Ulva and Gometra (the height data joins Ulva across its narrow sound), Inch
+  // Kenneth, Erraid (a tidal channel off Fidden), Iona, Calve Island (Tobermory), the Treshnish Isles, Little Colonsay,
+  // Coll, Kerrera, Lismore or the mainland. Points on Ben More, Dùn da Ghaoithe (east, above Craignure), Ben Buie
+  // (Lochbuie), north Mull between Dervaig and Loch Frisa, the Ross of Mull east of Bunessan and inland from Fionnphort
+  // (so the Ross's end is kept whatever its own waist); others on Ulva, Gometra, Inch Kenneth, Erraid, Iona, Calve Island
+  // and Morvern (above Lochaline). Loch Spelve, Loch Don, Loch na Keal and Loch Scridain stay sea even where the height
+  // data closes their mouths (Loch Spelve's narrows are a couple of hundred metres wide).
+  around(
+    "mull",
+    "Isle of Mull",
+    56.45,
+    -6.05,
+    60,
+    50,
+    [[56.4241, -6.0152], [56.4603, -5.7803], [56.3744, -5.8819], [56.573, -6.1369], [56.321, -6.1419], [56.3248, -6.3447]],
+    [[56.4771, -6.2077], [56.4905, -6.2888], [56.4417, -6.1632], [56.2943, -6.3687], [56.3342, -6.4105], [56.6175, -6.0423], [56.556, -5.8256]],
+    [[56.388, -5.73], [56.431, -5.672], [56.4729, -6.0366], [56.366, -6.084]],
+  ),
   // Islay without Jura (across the Sound of Islay): points in its east, on the Rinns and on the Oa.
   around("islay", "Islay", 55.76, -6.27, 46, 44, [[55.82, -6.17], [55.76, -6.42], [55.62, -6.25]]),
   // Jura without Islay, Scarba or Knapdale: points north and south of Loch Tarbert, where it's narrowest.

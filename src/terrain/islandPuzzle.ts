@@ -67,6 +67,11 @@ export interface IslandSpec {
 export interface IslandOnly {
   keep: { e: number; n: number }[];
   apart?: { e: number; n: number }[];
+  /**
+   * Points in sea lochs that stay sea even when the height data closes their mouths (Mull's Loch Spelve and Loch Don):
+   * a closed-in patch holding one is never filled in. Used with no keep points too (a trimmed area, decided already).
+   */
+  sea?: { e: number; n: number }[];
 }
 
 /** Land (m², or share of what's kept) the cut may give to the other side, beyond its own shaved coast, before saying so. */
@@ -291,7 +296,7 @@ export function keepLand(isLand: Uint8Array, nx: number, ny: number, land: Islan
   const spec = { land };
   const masses = stretches(nx, ny, (c) => isLand[c] === 1);
   if (!masses.count) throw new Error("There's no land in this area — it's all sea.");
-  if (only && keepOnly(isLand, nx, ny, only, warnings, heightOf)) return;
+  if (only && only.keep.length && keepOnly(isLand, nx, ny, only, warnings, heightOf)) return;
   if (spec.land !== "all") {
     const size = new Int32Array(masses.count);
     const edge = new Uint8Array(masses.count);
@@ -884,7 +889,14 @@ function buildIsland(
     const [e, n] = [sw.e + (((c % nx) + 0.5) * cell) / k, sw.n + ((Math.floor(c / nx) + 0.5) * cell) / k];
     return lochs.some((r) => inRing(r, e, n));
   };
+  // Sea lochs the island's own list entry names stay sea, whatever closes them in.
+  const seaCells = new Set<number>();
+  for (const p of spec.only?.sea ?? []) {
+    const [i, j] = [Math.floor(((p.e - sw.e) * k) / cell), Math.floor(((p.n - sw.n) * k) / cell)];
+    if (i >= 0 && j >= 0 && i < nx && j < ny) seaCells.add(j * nx + i);
+  }
   const holes = fillEnclosed(isLand, nx, ny, cellHeight, (cells, lowest) => {
+    if (seaCells.size && cells.some((c) => seaCells.has(c))) return false;
     // By the coastline, what's left closed in is sea (a loch mouth too narrow for the grid) or land left out: kept, but
     // for specks too small to print as holes (a pool, or a creek's bits between cells the coastline calls land).
     if (byCoast) return cells.length * cell * cell <= COAST_SPECK;
