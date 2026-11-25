@@ -2635,7 +2635,8 @@ kbd {
   min-width: 70px;
 }
 .topbar > .save-state {
-  flex: 0 1 auto;
+  /* Gives way much more slowly than the name, so "Not saved to a file" stays readable while the name box has room. */
+  flex: 0 0.002 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
