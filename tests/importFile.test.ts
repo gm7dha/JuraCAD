@@ -35,11 +35,11 @@ describe("importing files", () => {
 
   it("packages files, or explains why not", () => {
     const step = readImport("Bracket.step", enc("ISO-10303-21;\nHEADER;"));
-    expect(step.ok && step.file.format).toBe("step");
-    expect(step.ok && step.file.data).toMatch(/^ISO-10303-21/);
+    expect(step.ok === true && step.file.format).toBe("step");
+    expect(step.ok === true && step.file.data).toMatch(/^ISO-10303-21/);
     const stl = readImport("cube.stl", binaryStl(12));
-    expect(stl.ok && stl.file.format).toBe("stl");
-    expect(stl.ok && fromBase64(stl.file.data).length).toBe(84 + 600);
+    expect(stl.ok === true && stl.file.format).toBe("stl");
+    expect(stl.ok === true && fromBase64(stl.file.data).length).toBe(84 + 600);
 
     const empty = readImport("a.stl", new Uint8Array(0));
     expect(!empty.ok && empty.error).toMatch(/empty/);
