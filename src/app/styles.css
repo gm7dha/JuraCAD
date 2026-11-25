@@ -4537,6 +4537,13 @@ kbd {
   background: var(--panel);
   color: var(--ink);
 }
+/* Worked out for you ("As many pieces as will print well"): shown, greyed. */
+.mountain-number input:disabled {
+  color: var(--ink-3);
+  background: var(--subtle);
+  border-style: dashed;
+  cursor: default;
+}
 .mountain-fetch {
   margin: 6px 0 2px;
 }

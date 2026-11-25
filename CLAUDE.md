@@ -2135,6 +2135,20 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   mm × patterns 1–3, every piece one outer loop and no hole, every tab catching; those 36 builds are byte-identical to v0.74.
   Tests: tests/islandPuzzle (pure; over seeds/sizes on a ragged coast: ≥ 2 joints per piece, outlines from the meshes never
   cross or come within 2·fit, every tab catches when pulled, median play ≤ 0.5 mm — `tests/support/outlineGeom.ts`), tests/islandMarks.
+- "As many pieces as will print well" (the owner's wish; Island and Mountain/Photo windows): a tick box under the piece / cube
+  size (remembered for the session, `src/app/mostPiecesState.ts`); ticked, the box is greyed and filled in by a search. Pure
+  `src/terrain/mostPieces.ts`: `islandPrintsWell` (no dovetail dropped as too thin — `IslandPuzzle.droppedTabs` —, necks ≥
+  LEAST_NECK, every piece with a neighbour ≥ MIN_JOINTS; loose islets don't count), `mountainPrintsWell` (necks ≥ GOOD_NECK, a
+  key under every piece above the plate, no `MountainPuzzle.keyClashes`, no piece taller than the printer; few-joint peaks
+  don't count) and `mountainLayoutVerdict` (MAX_COLUMNS / 40 layers, checked before building); `smallestThatPrints` builds the
+  floor first (island `ISLAND_FLOOR` 15 = islandChecks' limit, steps 0.5; mountain `mountainFloor` = smallestCube(fit,
+  GOOD_NECK), steps 1), then from the typed size up, then halves the gap — the size picked and one step smaller are always
+  built; each size once, ≤ `MOST_TRIES` 10, stops when settings change (`stopped`). Not monotone in truth (a dovetail can drop
+  at one size and not the next), so it's a good size, not a proven minimum. Island: its own `IslandBuilder` worker; mountain:
+  on the page with 30 ms between builds. The search is keyed by the spec without the size; the found puzzle is kept (`found`,
+  with what it was built from) so it isn't built again; unticked = the old path exactly. `MostPiecesNote.tsx` says the sizes
+  tried and why smaller won't do. Tests: mostPieces (pure, fake builder), mostPiecesReal (heavy: a low coast from 17 finds 17.5
+  with 17 failing; a pretend-tile hill at 3× scale finds 32 with 31 over 400 cubes a layer).
 - Map puzzles tab (the owner's wish): the Mountain, Photo relief and Island puzzle cards (`LIBRARY_TOOLS`, `section: "maps"`) are a
   third library tab after Laser cutting and 3D printing (`src/library/sections.ts` `LIBRARY_SECTIONS`/`LibrarySection`, `sectionFrom`,
   `sectionLocked`; designs keep `DesignCategory`), behind a LIGHT lock (the code is public — it only stops casual visitors):

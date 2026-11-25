@@ -147,6 +147,8 @@ export interface IslandPuzzle {
   tabs: IslandTab[];
   /** Land and sea came from OpenStreetMap's coastline (missing: from the heights). */
   coastline?: true;
+  /** Dovetails left out as too thin at the neck to hold (missing: none). */
+  droppedTabs?: number;
   /** The ground's height (mm) at x, y — the one field every piece's top is drawn from, marks and all. */
   groundAt(x: number, y: number): number;
 }
@@ -1173,7 +1175,7 @@ function buildIsland(
   const tabs: IslandTab[] = joined.tabs
     .filter((tb) => indexOf.has(tb.from) && indexOf.has(tb.into))
     .map((tb) => ({ from: indexOf.get(tb.from)!, into: indexOf.get(tb.into)!, at: tb.at, dir: tb.dir, neck: tb.neck, reach: tb.reach }));
-  return { width: W, height: H, origin: { e: sw.e, n: sw.n }, k, high, pieces, alongBoundaries, joins, unjoined, loose, warnings, marks, tabs, groundAt: top, ...(byCoast ? { coastline: true } : {}) };
+  return { width: W, height: H, origin: { e: sw.e, n: sw.n }, k, high, pieces, alongBoundaries, joins, unjoined, loose, warnings, marks, tabs, groundAt: top, ...(byCoast ? { coastline: true } : {}), ...(crumbs.dropped.length ? { droppedTabs: crumbs.dropped.length } : {}) };
 }
 
 /**
