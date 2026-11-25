@@ -9,7 +9,7 @@ import { scaledShape } from "./scaleShape";
 
 import { describeError } from "./engine";
 import { solidsOf as listSolids } from "./topology";
-import { readBinaryStl, writeBinaryStl } from "../geometry/stl";
+import { readStlCorners, writeBinaryStl } from "../geometry/stl";
 import { weld } from "../geometry/threeMf";
 import { fromBase64 } from "../model/importFile";
 import { SIMPLIFY_TOLERANCES, simplifyReport, type SimplifiedFace, type SimplifyLevel, type SimplifySummary } from "../model/simplify";
@@ -88,20 +88,7 @@ function readStep(text: string): Shape3D[] {
   });
 }
 
-/** Corner positions (x, y, z per corner, three corners per triangle) from a binary or text STL. */
-function stlCorners(bytes: Uint8Array): Float32Array {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (bytes.length >= 84 && bytes.length === 84 + view.getUint32(80, true) * 50) {
-    const copy = bytes.slice().buffer;
-    return readBinaryStl(copy).vertices;
-  }
-  const text = new TextDecoder().decode(bytes);
-  const num = "([-+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][-+]?\\d+)?)";
-  const re = new RegExp(`vertex\\s+${num}\\s+${num}\\s+${num}`, "g");
-  const out: number[] = [];
-  for (let m = re.exec(text); m; m = re.exec(text)) out.push(Number(m[1]), Number(m[2]), Number(m[3]));
-  return new Float32Array(out);
-}
+const stlCorners = readStlCorners;
 
 /**
  * An STL is just triangles. Each one becomes a flat face sharing its edges with

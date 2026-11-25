@@ -855,6 +855,25 @@
   (heavy: a machined block's STL from the app's exporter → 10 faces, Ø5/Ø8/R2 within 0.01, volume within 0.5%, fillet on a
   recovered edge; slot ends, inside fillets and a notch; a STEP with split faces → 6 faces, same volume; a roof at 0.86° left
   alone; a mesh-like STEP skin → a solid; a lumpy ball stays sound), mcpSimplify.
+- Big STL imports: an STL becomes a solid of one face per triangle (readStl), which OpenCascade's WASM can't do past
+  ~50k (`SOLID_STL_TRIANGLES`; measured 20k 15 s / 1.7 GB, 50k 36 s / 3.6 GB, 100k out of memory — the display meshing is
+  the heavy part; this OCCT build has no BRep_Builder to give faces a ready triangulation). So `readImport` (importFile.ts)
+  answers `{ok: "reduce"}` for 50k…`MAX_STL_TRIANGLES` (2M) triangles or files over 25 MB (STL bytes ≤ `MAX_STL_BYTES` 250 MB),
+  and `reduceStl` (pure) welds (`weldCorners`, a numeric hash, 1e-5 rounding as `weld`), reduces with `decimate`
+  (src/geometry/decimate.ts: Garland–Heckbert quadric edge collapse, area-weighted planes, open edges held by standing planes
+  ×1000 and open corners kept in place; placed at the least error ALONG the edge only — off-edge optima pull rough meshes
+  inward; refused when the ends share more than the two opposite corners (stays closed/manifold), a triangle turns > 78° or
+  becomes a sliver (`thinness` < `SLIVER` 0.01 — a triangle that was one already, as CAD files' fans and hole strips are, may move if
+  it gets no thinner; refusing those left CAD meshes stuck above the target until only collapses through walls were left), or a body would drop under 4 corners; dead triangles are taken off the opposite corners' lists — leaving
+  them folded rough meshes) and keeps ONLY the reduced binary STL with `ImportedFile.reducedFrom` (missing = as before; old
+  files and STLs ≤ 50k byte-identical). App: fileActions reduces to `USUAL_REDUCE` 25k in `src/app/stlReduce.worker.ts`
+  (`stlReduce.ts` keeps the last 2 originals in memory, session only), the Import dialog's `ReducedStlChoice` says how far and
+  offers Less detail / Usual / Most detail (`REDUCE_CHOICES` 10k/25k/50k) while the original is still in memory. Simplify then
+  works on the reduced mesh (≤ 50k = planMesh's MAX_TRIANGLES). 1M → 25k reduces in ~16 s, 300k in ~4 s; 25k builds in ~20 s.
+  Tests: tests/decimate (pure: closed, count, volume, box edges exact, open sheet outline, a pathological rough ball),
+  decimateMore (a plate with Ø8/Ø3 holes at 25k and 10k: corners on their faces, Simplify still finds both holes and 6 planes; a 1 mm
+  walled cup down to 3k: volume within 0.2%, no triangles crossing; small raised letters kept; two bodies, duplicate/flipped triangles and
+  a hole in the mesh), importFile (limits, reducing), engineStlReduce (heavy: 300k → 25k built, volume within 1%).
 - Move / copy (Onshape's Transform): `Feature.transform` (`TransformDef` in types.ts). `mode` (missing = "free": turns about
   X, then Y, then Z, then the move — the original way) or "xyz" (Translate by XYZ: moves only), "distance" (`distance` box along
   `along`: the triad's X/Y/Z or a clicked `{dir, through}`), "line" (`line` {a, b}: a clicked straight edge, from the end nearer the

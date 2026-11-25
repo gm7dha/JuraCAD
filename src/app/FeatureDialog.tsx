@@ -37,7 +37,8 @@ import { MoveFaceOptions } from "./MoveFaceOptions";
 import { Icons } from "./icons";
 import { FASTENER_KINDS, FASTENER_LABELS, FASTENER_SIZES, type FastenerKind } from "../model/fasteners";
 import { ISO_COARSE } from "../kernel/thread";
-import { importedSize } from "../model/importFile";
+import { importedSize, reducedNote, REDUCE_CHOICES, SOLID_STL_TRIANGLES, storedTriangles } from "../model/importFile";
+import { originalOf, reduceStlFile } from "./stlReduce";
 import { SIMPLIFY_LABELS, SIMPLIFY_LEVELS } from "../model/simplify";
 import { chooseImportFile } from "./fileActions";
 import { TRANSFORM_MODES, transformMode } from "../model/transformMath";
@@ -1398,6 +1399,7 @@ function ImportOptions() {
           — {file.format === "step" ? "STEP" : "STL"}, {importedSize(file)}
         </span>
       </p>
+      {!!file.reducedFrom && <ReducedStlChoice />}
       {file.format === "stl" && file.data.length > 1_000_000 && (
         <p className="dialog-hint field-hint">This is a detailed file, so the preview can take up to a minute to appear.</p>
       )}
@@ -1419,6 +1421,63 @@ function ImportOptions() {
         another part.
       </p>
     </fieldset>
+  );
+}
+
+/**
+ * A big STL reduced when it was imported: how far, and (while this session still has the original file) a choice of
+ * detail that reduces it again.
+ */
+function ReducedStlChoice() {
+  const draft = useStore((s) => s.editing?.draft);
+  const setDraftField = useStore((s) => s.setDraftField);
+  const showToast = useStore((s) => s.showToast);
+  const [busy, setBusy] = useState(false);
+  if (!draft || draft.type !== "import" || !draft.import?.reducedFrom) return null;
+  const file = draft.import;
+  const original = originalOf(file);
+  const kept = storedTriangles(file);
+  // The choice nearest what it has now.
+  const now = REDUCE_CHOICES.reduce((best, c) => (Math.abs(c - kept) < Math.abs(best - kept) ? c : best), REDUCE_CHOICES[0] as number);
+  const choose = async (target: number) => {
+    if (!original) return;
+    setBusy(true);
+    try {
+      const again = await reduceStlFile(file.fileName, original, target);
+      const s = useStore.getState();
+      if (s.editing?.draft?.type === "import" && s.editing.draft.import?.fileName === file.fileName) setDraftField({ import: { ...again, units: file.units } });
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const names = ["Less detail", "Usual", "Most detail"];
+  return (
+    <>
+      <p className="dialog-hint field-hint">{reducedNote(file)}</p>
+      {original ? (
+        <div className="segmented three" role="radiogroup" aria-label="How much detail to keep">
+          {REDUCE_CHOICES.map((c, i) => (
+            <button
+              type="button"
+              key={c}
+              role="radio"
+              aria-checked={now === c}
+              disabled={busy}
+              className={now === c ? "selected" : ""}
+              onClick={() => now !== c && void choose(c)}
+              title={`Reduce it to about ${c.toLocaleString("en-GB")} triangles${c === SOLID_STL_TRIANGLES ? " — the finest a solid can have; slow to work with (up to a minute to rebuild)" : c === REDUCE_CHOICES[0] ? " — quickest" : ""}`}
+            >
+              {names[i]}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="dialog-hint field-hint">To reduce it to another level of detail, choose the file again.</p>
+      )}
+      {busy && <p className="dialog-hint field-hint">Reducing the file again…</p>}
+    </>
   );
 }
 

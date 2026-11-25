@@ -10,7 +10,9 @@
 import { DESIGN_EXTENSIONS, FILE_EXTENSION, FILE_MIME, OLD_FILE_EXTENSION, OLD_FILE_MIME, nameFromFileName, readDocumentFile, serializeDocument } from "../model/fileFormat";
 import { useStore } from "../model/store";
 import { downloadFile, safeFileName } from "./download";
-import { IMPORT_ACCEPT, readImport } from "../model/importFile";
+import { IMPORT_ACCEPT, readImport, USUAL_REDUCE } from "../model/importFile";
+import { reduceStlFile } from "./stlReduce";
+import type { ImportedFile } from "../model/types";
 
 // The File System Access API isn't in TypeScript's built-in types yet.
 interface WritableFile {
@@ -178,12 +180,35 @@ export async function importFile(file: File, replace = false): Promise<boolean> 
     s.showToast("Finish or cancel the open feature first, then import.", "error");
     return false;
   }
-  const result = readImport(file.name, new Uint8Array(await file.arrayBuffer()));
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const result = readImport(file.name, bytes);
   if (!result.ok) {
     useStore.getState().showToast(result.error, "error");
     return false;
   }
-  if (replace && draft?.type === "import") useStore.getState().setDraftField({ import: result.file });
-  else useStore.getState().startImport(result.file);
+  let imported: ImportedFile;
+  if (result.ok === "reduce") {
+    // Too detailed to be a solid as it is: reduced first (only the reduced shape goes into the design).
+    useStore
+      .getState()
+      .showToast(
+        `${file.name} has ${result.triangles.toLocaleString("en-GB")} triangles — more than a solid can have — so it's being reduced to about ${USUAL_REDUCE.toLocaleString("en-GB")}. This can take a little while…`,
+        "info",
+      );
+    try {
+      imported = await reduceStlFile(file.name, bytes, USUAL_REDUCE);
+    } catch (e) {
+      useStore.getState().showToast(e instanceof Error ? e.message : String(e), "error");
+      return false;
+    }
+    const now = useStore.getState();
+    if (now.editing && !(replace && now.editing.draft?.type === "import")) {
+      now.showToast("Finish or cancel the open feature first, then import.", "error");
+      return false;
+    }
+  } else imported = result.file;
+  const s2 = useStore.getState();
+  if (replace && s2.editing?.draft?.type === "import") s2.setDraftField({ import: imported });
+  else s2.startImport(imported);
   return true;
 }

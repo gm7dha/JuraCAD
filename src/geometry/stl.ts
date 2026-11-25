@@ -60,3 +60,18 @@ export function readBinaryStl(buffer: ArrayBuffer): { triangleCount: number; ver
   }
   return { triangleCount, vertices };
 }
+
+/** Corner positions (x, y, z per corner, three corners per triangle) from a binary or text STL. */
+export function readStlCorners(bytes: Uint8Array): Float32Array {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (bytes.length >= 84 && bytes.length === 84 + view.getUint32(80, true) * 50) {
+    const copy = bytes.slice().buffer;
+    return readBinaryStl(copy).vertices;
+  }
+  const text = new TextDecoder().decode(bytes);
+  const num = "([-+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][-+]?\\d+)?)";
+  const re = new RegExp(`vertex\\s+${num}\\s+${num}\\s+${num}`, "g");
+  const out: number[] = [];
+  for (let m = re.exec(text); m; m = re.exec(text)) out.push(Number(m[1]), Number(m[2]), Number(m[3]));
+  return new Float32Array(out);
+}

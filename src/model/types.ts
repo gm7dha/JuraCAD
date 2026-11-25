@@ -294,6 +294,8 @@ export interface ImportedFile {
   data: string;
   /** STL files have no units: what one unit in the file means. STEP files say for themselves. */
   units: "mm" | "in";
+  /** STL files too detailed to be a solid are reduced when imported: how many triangles the file had (missing = as it was). */
+  reducedFrom?: number;
 }
 
 /** Import's "File units" (Onshape's): what one unit in the file is taken to be, instead of what the file says. */
