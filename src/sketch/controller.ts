@@ -20,6 +20,7 @@ import {
   curveById,
   dimensionFor,
   dimensionSpecAt,
+  placedLabelOffset,
   dragArcRim,
   dragCircleRim,
   dragCurve,
@@ -64,7 +65,7 @@ import {
 import { isPartLink, ORIGIN_ID, type SketchCurve, type SketchData } from "./types";
 import { placedByOffset } from "./solver";
 import { chamferCorner, cornerOfLines } from "./sketchChamfer";
-import { filletBetween } from "./filletCurves";
+import { filletBetween, sharedEnd } from "./filletCurves";
 import { slotAlong } from "./slotAlong";
 import { trimAlong } from "./trimStroke";
 import { addEllipticalArc, ellipticalArcPath, ellipticalArcShape } from "./ellipticalArc";
@@ -1683,9 +1684,9 @@ export class SketchController {
       return done(r, r.sizeLineId, r.lineId);
     }
     const curve = hit?.kind === "curve" ? curveById(d, hit.id) : undefined;
-    if (!curve || !(curve.type === "line" || (round && curve.type === "arc"))) {
+    if (!curve || !(curve.type === "line" || curve.type === "arc" || (round && curve.type === "circle"))) {
       this.state.setSketchMessage(
-        round ? "Click a corner where two lines or arcs meet, or two lines or arcs to round between." : "Click a corner where two lines meet, or two lines to chamfer between.",
+        round ? "Click a corner where two lines or arcs meet, or two lines, arcs or circles to round between." : "Click a corner where two lines or arcs meet, or two lines to chamfer between.",
         "info",
       );
       return;
@@ -1694,12 +1695,20 @@ export class SketchController {
     if (!first || first.id === curve.id) {
       this.firstCurve = { id: curve.id, at: [e.x, e.y] };
       this.emit({ pending: [curve.id] });
-      this.state.setSketchMessage(`Now click the other ${round ? "line or arc" : "line"} (on the part to keep). Esc to start again.`, "info");
+      this.state.setSketchMessage(`Now click the other line or arc${round ? ", or a circle" : ""} (on the part to keep). Esc to start again.`, "info");
       return;
     }
     if (round) {
       const r = filletBetween(d, first.id, first.at, curve.id, [e.x, e.y], size, last);
       return done(r, r.arcId, r.arcId);
+    }
+    // Next to an arc: the corner where they meet.
+    const firstCurve = curveById(d, first.id);
+    if (curve.type === "arc" || firstCurve?.type === "arc") {
+      const shared = firstCurve && (firstCurve.type === "line" || firstCurve.type === "arc") && (curve.type === "line" || curve.type === "arc") ? sharedEnd(d, firstCurve, curve) : null;
+      if (!shared) return done({ sketch: d, error: "A chamfer next to an arc goes where they meet — click two that share an end, or click that corner." }, "", "");
+      const r = chamferCorner(shared.sketch, shared.point, chamfer, first.id);
+      return done(r.error ? { sketch: d, error: r.error } : r, r.sizeLineId, r.lineId);
     }
     const corner = cornerOfLines(d, first.id, first.at, curve.id, [e.x, e.y]);
     if (corner.error) return done(corner, "", "");
@@ -1960,14 +1969,16 @@ export class SketchController {
     const base = dimensionFor(d, this.transient.pending);
     if (typeof base === "string") return { preview: [], inference: null };
     const offset = offsetFor(d, { id: "tmp", ...base }, [e.x, e.y]);
-    const spec = dimensionSpecAt(d, this.transient.pending, offset);
+    const spec = dimensionSpecAt(d, this.transient.pending, offset, true);
     if (typeof spec === "string") return { preview: [], inference: null };
-    const layout = dimensionLayout(d, { id: "tmp", ...spec, value: "0", labelOffset: offset });
+    const layout = dimensionLayout(d, { id: "tmp", ...spec, value: "0", labelOffset: placedLabelOffset(d, spec, offset) });
     const preview: PreviewShape[] = (layout?.lines ?? []).map(([a, b]) => ({ kind: "guide", a, b }));
-    const text = spec.type === "horizontalDistance" ? "Across" : spec.type === "verticalDistance" ? "Up" : null;
+    const text = spec.type === "horizontalDistance" ? "Across" : spec.type === "verticalDistance" ? "Up" : spec.doubled ? "⌀" : null;
     // Say which kind it will be when that changes as the pointer moves.
-    if (spec.type !== this.previewKind) {
-      this.previewKind = spec.type;
+    const kind = spec.doubled ? "doubled" : spec.type;
+    if (kind !== this.previewKind) {
+      this.previewKind = kind;
+      if (spec.doubled) this.state.setSketchMessage("Click to place it as a diameter across the centreline — the size the turned part comes out. Back on the point's side, it's the distance to the line.", "info");
       const what =
         spec.type === "horizontalDistance" ? "the distance across" : spec.type === "verticalDistance" ? "the distance up" : spec.type === "length" ? "the line's length" : spec.type === "distance" ? "the straight distance" : null;
       if (what) this.state.setSketchMessage(`Click to place ${what} — moving the value round picks across, up or straight.`, "info");
@@ -2009,7 +2020,7 @@ export class SketchController {
       return;
     }
     const offset = offsetFor(d, { id: "tmp", ...spec }, [e.x, e.y]);
-    const r = addDimension(d, pending, offset);
+    const r = addDimension(d, pending, offset, true);
     this.emit({ pending: [] });
     if (!this.commit(r)) return;
     if (r.driven) {

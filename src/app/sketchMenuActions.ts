@@ -13,7 +13,7 @@ import { hiddenConstruction, type SketchKey } from "../sketch/sketchView";
 import { isDimension, type SketchConstraint } from "../sketch/types";
 import { viewportApi } from "../viewport/Viewport";
 import { canPasteSketch, copySketchSelection, pasteIntoSketch } from "./sketchClipboardApp";
-import { applySketchRelation, deleteSketchSelection, setSketchTool, sketchEscape, toggleSketchConstruction } from "./sketchActions";
+import { applySketchRelation, openPatternEditor, deleteSketchSelection, setSketchTool, sketchEscape, toggleSketchConstruction } from "./sketchActions";
 import { setSketchLit, setSketchView, sketchViewNow } from "./sketchViewState";
 
 export interface SketchMenuOpen {
@@ -152,6 +152,9 @@ export function runSketchMenu(action: SketchMenuAction): void {
       s.setSketchMessage(show ? "Dimensions shown." : "Dimensions hidden — they still set the sizes. Right-click and choose Show all dimensions to see them again.", "info");
       break;
     }
+    case "editPattern":
+      openPatternEditor(action.pattern);
+      break;
     case "selectOther": {
       const data = sketchData();
       if (!open || !data) break;

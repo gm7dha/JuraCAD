@@ -9,7 +9,7 @@ import { evaluate } from "../model/expr";
 import { curveById, deleteItems, pointPos, sketchId, type EditResult } from "./ops";
 import { solveSketch } from "./solver";
 import { mergeCoincident } from "./tools";
-import { ORIGIN_ID, type SketchConstraint, type SketchCurve, type SketchData, type SketchLine, type SketchPoint } from "./types";
+import { ORIGIN_ID, type SketchArc, type SketchConstraint, type SketchCurve, type SketchData, type SketchLine, type SketchPoint } from "./types";
 
 type P2 = [number, number];
 const sub = (a: P2, b: P2): P2 => [a[0] - b[0], a[1] - b[1]];
@@ -78,41 +78,48 @@ export function chamferCorner(original: SketchData, pointId: string, opts: Chamf
     angle = (v.value * Math.PI) / 180;
   }
   const s = mergeCoincident(original, pointId);
-  const meeting = s.curves.filter((c) => !c.construction && (c.type === "line" ? c.p1 === pointId || c.p2 === pointId : c.type === "arc" ? c.start === pointId || c.end === pointId : false));
+  const meeting = s.curves.filter((c): c is Side => !c.construction && (c.type === "line" ? c.p1 === pointId || c.p2 === pointId : c.type === "arc" ? c.start === pointId || c.end === pointId : false));
   const lines = meeting.filter((c): c is SketchLine => c.type === "line");
-  if (meeting.length !== 2 || lines.length !== 2) return fail(meeting.length === 2 ? "Chamfer works where two straight lines meet — use Round for a corner with an arc." : "Click a corner where exactly two lines meet.");
-  const [L1, L2] = firstLine && lines[1].id === firstLine ? [lines[1], lines[0]] : lines;
-  const far = (l: SketchLine) => (l.p1 === pointId ? l.p2 : l.p1);
+  if (meeting.length !== 2) return fail("Click a corner where exactly two lines or arcs meet.");
+  const arcs = meeting.length - lines.length;
+  if (arcs && opts.mode === "angle") return fail("A chamfer by distance and angle works where two straight lines meet — use Equal or Two distances next to an arc.");
+  const [L1, L2] = firstLine && meeting[1].id === firstLine ? [meeting[1], meeting[0]] : [meeting[0], meeting[1]];
   const P = pointPos(s, pointId);
-  const A = pointPos(s, far(L1));
-  const B = pointPos(s, far(L2));
-  const u1 = unit(sub(A, P));
-  const u2 = unit(sub(B, P));
+  const u1 = leaving(s, L1, pointId);
+  const u2 = leaving(s, L2, pointId);
   const phi = Math.acos(Math.max(-1, Math.min(1, dot(u1, u2))));
-  if (phi < 1e-3 || phi > Math.PI - 1e-3) return fail("Those lines are in a straight line, so there's no corner to chamfer.");
+  if (phi < 1e-3 || (!arcs && phi > Math.PI - 1e-3)) return fail(arcs ? "Those run on together there, so there's no corner to chamfer." : "Those lines are in a straight line, so there's no corner to chamfer.");
   if (opts.mode === "angle") {
     // The triangle cut off: the corner's angle φ at P, the chamfer's angle at the first line's cut.
     const third = Math.PI - phi - angle;
     if (third < 1e-3) return fail("That angle is too big for this corner — the chamfer would never meet the second line. Try a smaller one.");
     d2 = (d1.value * Math.sin(angle)) / Math.sin(third);
   }
-  if (d1.value >= len(sub(A, P)) - 1e-6 || d2 >= len(sub(B, P)) - 1e-6) return fail("That chamfer is too big for these lines — try a smaller distance.");
-  const T1 = add(P, mul(u1, d1.value));
-  const T2 = add(P, mul(u2, d2));
+  const T1 = cutPoint(s, L1, pointId, d1.value);
+  const T2 = cutPoint(s, L2, pointId, d2);
+  if (!T1 || !T2) return fail(arcs ? "That chamfer is too big for these — try a smaller distance." : "That chamfer is too big for these lines — try a smaller distance.");
   const [t1, t2] = [T1, T2].map(([x, y]): SketchPoint => ({ id: sketchId("p"), x, y }));
   const ids = { cut: sketchId("l"), c1: sketchId("l"), c2: sketchId("l") };
-  const reroute = (l: SketchLine, to: string): SketchLine => (l.p1 === pointId ? { ...l, p1: to } : { ...l, p2: to });
+  const reroute = (l: Side, to: string): Side =>
+    l.type === "line" ? (l.p1 === pointId ? { ...l, p1: to } : { ...l, p2: to }) : l.start === pointId ? { ...l, start: to } : { ...l, end: to };
+  const far = (l: SketchLine) => (l.p1 === pointId ? l.p2 : l.p1);
   const curves: SketchCurve[] = [
     ...s.curves.map((k) => (k.id === L1.id ? reroute(L1, t1.id) : k.id === L2.id ? reroute(L2, t2.id) : k)),
     { id: ids.cut, type: "line", p1: t1.id, p2: t2.id, construction: false },
     { id: ids.c1, type: "line", p1: pointId, p2: t1.id, construction: true },
     { id: ids.c2, type: "line", p1: pointId, p2: t2.id, construction: true },
   ];
-  const constraints: SketchConstraint[] = s.constraints.map((k) =>
+  const cutBack = (id: string) => (id === L1.id ? L1 : id === L2.id ? L2 : null);
+  const constraints: SketchConstraint[] = s.constraints.flatMap((k): SketchConstraint[] => {
+    const c = cutBack(k.refs[0]);
     // A length dimension on a cut-back line now measures to the virtual sharp instead.
-    k.type === "length" && (k.refs[0] === L1.id || k.refs[0] === L2.id) ? { ...k, type: "distance", refs: [pointId, far(k.refs[0] === L1.id ? L1 : L2)] } : k,
-  );
-  constraints.push(con("pointOnLine", [pointId, L1.id]), con("pointOnLine", [pointId, L2.id]));
+    if (k.type === "length" && c?.type === "line") return [{ ...k, type: "distance", refs: [pointId, far(c)] }];
+    // An arc's length or angle changes, so those go.
+    if ((k.type === "arcLength" || k.type === "arcAngle") && c?.type === "arc") return [];
+    return [k];
+  });
+  // The corner stays where the two would meet: on both lines, or on the arc's circle.
+  constraints.push(con(L1.type === "line" ? "pointOnLine" : "pointOnCircle", [pointId, L1.id]), con(L2.type === "line" ? "pointOnLine" : "pointOnCircle", [pointId, L2.id]));
   // Kept Equal only while the earlier chamfer is still that size (its dimension may have been changed since).
   const before = opts.mode === "equal" && opts.equalTo ? curveById(s, opts.equalTo) : undefined;
   const earlier =
@@ -133,6 +140,36 @@ export function chamferCorner(original: SketchData, pointId: string, opts: Chamf
   const solved = solveSketch(changed);
   if (!solved.ok) return fail("Chamfering this corner would conflict with the sketch's other constraints.");
   return { sketch: solved.sketch, lineId: ids.cut, sizeLineId: ids.c1 };
+}
+
+type Side = SketchLine | SketchArc;
+
+/** The way a line or arc leaves the corner point (for an arc, its tangent there, going round into it). */
+function leaving(s: SketchData, k: Side, corner: string): P2 {
+  if (k.type === "line") return unit(sub(pointPos(s, k.p1 === corner ? k.p2 : k.p1), pointPos(s, corner)));
+  const r = sub(pointPos(s, corner), pointPos(s, k.center));
+  // Arcs run anticlockwise from start to end: from the start the way on is anticlockwise, from the end clockwise.
+  const t: P2 = k.start === corner ? [-r[1], r[0]] : [r[1], -r[0]];
+  return unit(t);
+}
+
+/** The place `d` (straight) from the corner along the line or round the arc, inside it — or null when it's past its far end. */
+function cutPoint(s: SketchData, k: Side, corner: string, d: number): P2 | null {
+  const P = pointPos(s, corner);
+  if (k.type === "line") {
+    const A = pointPos(s, k.p1 === corner ? k.p2 : k.p1);
+    if (d >= len(sub(A, P)) - 1e-6) return null;
+    return add(P, mul(unit(sub(A, P)), d));
+  }
+  const C = pointPos(s, k.center);
+  const r = len(sub(P, C));
+  if (!(r > 1e-9) || d >= 2 * r - 1e-9) return null;
+  const turn = 2 * Math.asin(d / (2 * r));
+  const ang = (q: P2) => Math.atan2(q[1] - C[1], q[0] - C[0]);
+  const sweep = ((((ang(pointPos(s, k.end)) - ang(pointPos(s, k.start))) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) || 2 * Math.PI;
+  if (turn >= sweep - 1e-6) return null;
+  const a = ang(P) + (k.start === corner ? turn : -turn);
+  return [C[0] + r * Math.cos(a), C[1] + r * Math.sin(a)];
 }
 
 /** Where two lines meet (or would, carried on), or null when they're parallel. */
