@@ -1340,6 +1340,22 @@
   followed as w grows, a mirrored copy, a lost corner, a loft to a corner, a Use'd corner point followed), mcpCorners.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.
+  Functions and angles (Onshape's): `FUNCTIONS` in expr.ts (sin cos tan asin acos atan atan2 sqrt abs min/max (2+) round
+  floor ceil log = ln, log10 exp pow; case-insensitive; a function only when a "(" follows, so old variables called max/rad
+  still work — none of them, nor deg/rad, are reserved) and units deg/°/rad (after a number or ")", like mm). Values are
+  {plain | angle (radians)}: trig takes an angle (plain = DEGREES, as Onshape's boxes: sin(30) = 0.5; "pi rad" allowed), inverse trig gives one;
+  a plain number added to / min-maxed with an angle counts as degrees; angle×angle, ÷angle, angle^ refused. Also
+  degree(s)/radian(s). A unit applies to the product before it (as "1/4 in": "360 / 12 deg" = 30°), except an angle unit
+  after "<angle> / <number>" goes with that number ("90 deg / 30 deg" = 3, `last` in term()). `hasUnitsOrNames` ignores
+  angle units, so an inch box stores "sin(30 deg) * 2" as "(…) in"; varComplete keeps a variable typed in full first
+  (Enter sets the size, not "asin("). An angle result comes out in
+  DEGREES with `EvalResult.angle` (angle boxes take "30 deg"/"0.5 rad"); length boxes (resolveParams, args.amount,
+  setDimensionValue) refuse one. Lengths stay plain mm numbers (no further dimensional analysis). Angle variables are
+  marked in the scope by `ANGLE_KEY(name)` ("°name", set by resolveVariables; `isAngleVariable`; the dialog shows "30°").
+  `namesIn`/`hasUnitsOrNames` skip function calls; `renameInExpression` leaves "name(" alone. varComplete offers
+  `functionMatches` ("sin(") after variables — prefixes only, never after a number/")" (a unit goes there). Older
+  expressions give exactly what they gave (tests/exprFunctions). Library designs keep `trigOf` (six-place numbers;
+  switching would change what they make).
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.
 - Keep pure logic (model, geometry, reports) out of React and covered by Vitest tests.
 - Every change: `npm run typecheck && npm test && npm run build`. CI runs the same and publishes `main`

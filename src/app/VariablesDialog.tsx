@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { newId } from "../model/document";
 import { formatLength } from "../model/units";
 import { useDocument, useLengthUnit, useStore } from "../model/store";
-import { resolveVariables, usageCount, type Variable } from "../model/variables";
+import { isAngleVariable, resolveVariables, usageCount, type Variable } from "../model/variables";
 import { Icons } from "./icons";
 import { Modal } from "./Modal";
 
@@ -94,7 +94,7 @@ export function VariablesDialog() {
                       <span className="error-text">{error}</span>
                     ) : (
                       <>
-                        {formatLength(values[v.name], unit)}
+                        {isAngleVariable(values, v.name) ? `${Math.round(values[v.name] * 1000) / 1000}°` : formatLength(values[v.name], unit)}
                         {used > 0 && <span className="muted"> · used {used}×</span>}
                       </>
                     )}
@@ -124,7 +124,7 @@ export function VariablesDialog() {
       <button className="text-button add-variable" onClick={() => setRows((rs) => [...rs, { id: newId("v"), name: freeName(rs), value: "10" }])}>
         + Add variable
       </button>
-      <p className="muted small">Renaming a variable updates every box that uses it. Plain numbers here are millimetres{unit === "in" ? " (even in an inch design, since a variable can also be a count)" : ""} — add a unit for others, e.g. <code>1/4 in</code>.</p>
+      <p className="muted small">Renaming a variable updates every box that uses it. Plain numbers here are millimetres{unit === "in" ? " (even in an inch design, since a variable can also be a count)" : ""} — add a unit for others, e.g. <code>1/4 in</code>. Angles: <code>30 deg</code>. Functions work too, e.g. <code>sqrt(width ^ 2 + 20 ^ 2)</code>, <code>width * cos(30 deg)</code>, <code>max(2, wall)</code>.</p>
     </Modal>
   );
 }

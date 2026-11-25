@@ -1272,6 +1272,7 @@ export function setDimensionValue(s: SketchData, id: string, value: string): Edi
   if (c.driven) return { sketch: s, error: "That dimension (in brackets) just shows the size. Select it and click \"Let it set the size\" in the sketch panel first." };
   const r = evaluate(value);
   if (!r.ok) return { sketch: s, error: r.error };
+  if (r.angle && !isAngleDimension(c)) return { sketch: s, error: "That's an angle (deg or rad) — this dimension needs a length." };
   if (c.type !== "angle" && r.value <= 0 && c.type !== "pointLineDistance") return { sketch: s, error: "Must be more than 0." };
   if (c.type === "pointLineDistance" && r.value < 0) return { sketch: s, error: "Can't be negative." };
   if (c.type === "arcAngle" && r.value >= 360) return { sketch: s, error: "An arc goes less than all the way round: use less than 360°." };
