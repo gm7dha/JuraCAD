@@ -1333,6 +1333,20 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   `src/viewport/featureFaces.ts`: hovered row (`setHoveredFeature`) → Viewport `setListHover` (its faces, else its parts; a
   hidden sketch shown — only that id is a dep of the sketch scene; cleared when the list unmounts); double-click a face (`SceneCallbacks.onDoubleClick` → `editFeatureAt`) or Select other's "Edit <feature>…"
   opens it. Parts list "Show only this part"/"Show all parts" were already there. Tests: tests/massProps (pure), engineMassProps.
+  In assemblies (Onshape's): the readout stack (Measure, Mass) shows there too (App.tsx, outside the studio-only block). Engine
+  `massProperties(ids, instances)` / `measureParts(ids, instances)` / `measure(picks, instances, copies)` (optional protocol
+  `instances`/`copies`): copies placed by `placeInstances` (cut, mirrored, solved — never exploded); a pick is found on its copy's
+  part as cut (`measuredPick`, in part coordinates) then moved (`placedCopy`; centre/point/ref via pure `src/assembly/asmMeasure.ts`
+  `placedPoint`/`placedRef`, so angles work across copies). Pure: `copiesToWeigh` (picked tops — a sub-assembly = its parts — else
+  all not hidden; suppressed already out), `materialPartOf` (a configured part's material). App: `src/app/asmReadouts.ts`
+  (`useAssemblyInputs` = instancesForKernel of the solve; `asmPickFor` reads refs off the copy as shown, `cutMeshFor` first,
+  corners by `cornersOf`), `src/app/asmMeasureState.ts` (session-only picks, keys as partId; `asmMeasureClick` from
+  handleAssemblyPick — a click on another face of an already-selected copy keeps it selected; the same face again toggles as
+  before, and Shift taking one of a copy's two picks off keeps the copy — pure `asmSelectionAfterClick`; `livePicks` = picks whose copy is still selected; let go on tab change); the view highlights a copy's picks instead of
+  the whole copy (`instanceSelection`); `cornerWanted` is on in assemblies unless a mirror wants a face (and not while an
+  assembly Hole/Cut/Fillet is open, Viewport). Mass panel weighs copies by their part's material; exploded = weighed put
+  together, no centre dot, said. Tests: asmMeasure (pure), engineAsmMeasure (gap between placed copies, a turned copy's angle
+  and corner, sum + centre of mass, mirrored copy positive, a drilled copy lighter and its hole measured, sub-assembly).
   Feature list (Onshape's): several features picked — `store.featureSelection` (counts only while it holds
   `selectedFeatureId`, the main one; read with the selector-safe `pickedFeatures`; `selectFeatures(ids, primary)`; reset by
   selectFeature/startCreate/startEdit) via `src/app/featureListState.ts` (`clickFeatureRow` over listSelection's `clickRow` on

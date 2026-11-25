@@ -3,7 +3,9 @@ import { useEffect, useMemo, useState } from "react";
 import { getKernel } from "../kernel/connect";
 import { densityFor, massIn, materialKeyFor, massRows, massSummary, rowsText, type DensityChoice, type PartMassProps } from "../model/massProps";
 import { formatMass, MATERIALS } from "../model/materials";
-import { studioParts, useLengthUnit, useStore } from "../model/store";
+import { activeAssembly, studioParts, useLengthUnit, useStore } from "../model/store";
+import { copiesToWeigh, materialPartOf } from "../assembly/asmMeasure";
+import { useAssemblyInputs } from "./asmReadouts";
 import { formatArea, formatLength, formatVolume } from "../model/units";
 import { viewportApi } from "../viewport/Viewport";
 import { setMassState, useMassState } from "./massState";
@@ -26,7 +28,10 @@ export function copyText(text: string, what: string): void {
 /** The bottom-right button that opens Mass properties (Onshape keeps it beside Measure). */
 export function MassButton() {
   const { open } = useMassState();
-  const hasParts = useStore((s) => studioParts(s).length > 0);
+  const hasParts = useStore((s) => {
+    const asm = activeAssembly(s);
+    return asm ? asm.instances.length > 0 : studioParts(s).length > 0;
+  });
   const editing = useStore((s) => s.editing !== null);
   if (!hasParts || editing) return null;
   return (
@@ -35,7 +40,7 @@ export function MassButton() {
       className={`readout-button${open ? " active" : ""}`}
       aria-pressed={open}
       onClick={() => setMassState({ open: !open })}
-      title="Mass properties — what the parts weigh, their volume, surface area, centre of mass and size (for the parts selected, else all of them)"
+      title="Mass properties — what the parts (or an assembly's copies) weigh, their volume, surface area, centre of mass and size (for the parts selected, else all of them)"
     >
       <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden>
         <path d="M8 2v12M3 14h10M3 5h10M3 5l-2 5h4zM13 5l-2 5h4z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
@@ -60,14 +65,24 @@ export function MassPanel() {
   const materials = useStore((s) => s.history.present.materials ?? NO_MATERIALS);
   const unit = useLengthUnit();
   const [measured, setMeasured] = useState<PartMassProps[] | null>(null);
+  // In an assembly: its copies (cut, mirrored and placed as put together), the picked ones or all those shown.
+  const asm = useStore(activeAssembly);
+  const asmSelection = useStore((s) => s.asmSelection);
+  const hiddenCopies = useStore((s) => s.hiddenInstances);
+  const exploded = asm?.explode !== undefined;
+  const inputs = useAssemblyInputs(state.open && !editing);
 
   // Which parts: picked ones, the parts of picked faces/edges, else everything shown.
   const chosen = useMemo(() => {
+    if (asm) {
+      const c = copiesToWeigh(inputs ?? [], asmSelection, hiddenCopies);
+      return { ids: c.instances.map((i) => i.id), all: c.all, copies: c.instances };
+    }
     const ids = parts.map((p) => p.id);
     const picked = selectedParts.length ? selectedParts : [...new Set(selection.map((s) => s.partId))];
     const some = picked.filter((id) => ids.includes(id));
-    return { ids: some.length ? some : ids.filter((id) => !hidden.includes(id)), all: !some.length };
-  }, [parts, selectedParts, selection, hidden]);
+    return { ids: some.length ? some : ids.filter((id) => !hidden.includes(id)), all: !some.length, copies: null };
+  }, [asm, inputs, asmSelection, hiddenCopies, parts, selectedParts, selection, hidden]);
   const key = chosen.ids.join("|");
 
   useEffect(() => {
@@ -75,27 +90,32 @@ export function MassPanel() {
     setMeasured(null);
     if (!chosen.ids.length) return;
     let live = true;
-    getKernel()
-      .massProperties(chosen.ids)
+    (chosen.copies ? getKernel().massProperties([], chosen.copies) : getKernel().massProperties(chosen.ids))
       .then((r) => live && setMeasured(r))
       .catch(() => live && setMeasured([]));
     return () => {
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.open, editing, key, parts]);
+  }, [state.open, editing, key, parts, chosen.copies]);
 
+  // A copy is weighed as its part's material.
+  const partOf = (id: string) => {
+    const c = chosen.copies?.find((i) => i.id === id);
+    return c ? materialPartOf(c.partId, materials) : id;
+  };
   const choice: DensityChoice =
     state.choice === "own" ? { kind: "own", materials } : { kind: "all", density: state.choice === "custom" ? state.density : MATERIALS.find((m) => m.key === state.choice)?.density ?? 1 };
-  const keyOf = (id: string) => (state.choice === "own" ? materialKeyFor(choice, id) : state.choice === "custom" ? undefined : state.choice);
+  const keyOf = (id: string) => (state.choice === "own" ? materialKeyFor(choice, partOf(id)) : state.choice === "custom" ? undefined : state.choice);
   const summary = useMemo(
-    () => (measured ? massSummary(measured, (id) => densityFor(choice, id), keyOf) : null),
+    () => (measured ? massSummary(measured, (id) => densityFor(choice, partOf(id)), keyOf) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [measured, state.choice, state.density, materials],
+    [measured, state.choice, state.density, materials, chosen.copies],
   );
 
   const shown = state.open && !editing;
-  const centre = shown ? summary?.centre ?? null : null;
+  // (An exploded view is weighed put together, so the dot isn't drawn where the parts are shown apart.)
+  const centre = shown && !exploded ? summary?.centre ?? null : null;
   useEffect(() => {
     viewportApi.current?.setCentreMark(centre);
     return () => viewportApi.current?.setCentreMark(null);
@@ -107,7 +127,14 @@ export function MassPanel() {
     ? massRows(summary, { length: (v) => formatLength(v), area: (v) => formatArea(v), volume: (v) => formatVolume(v), mass: (g) => massIn(g, inches, formatMass) })
     : [];
   const names = measured?.map((p) => p.name) ?? [];
-  const title = chosen.all ? `All parts (${chosen.ids.length})` : chosen.ids.length === 1 ? names[0] ?? "1 part" : `${chosen.ids.length} parts`;
+  const what = asm ? (chosen.ids.length === 1 ? "copy" : "copies") : chosen.ids.length === 1 ? "part" : "parts";
+  const title = chosen.all
+    ? asm
+      ? `${asm.name} (${chosen.ids.length} ${what})`
+      : `All parts (${chosen.ids.length})`
+    : chosen.ids.length === 1
+      ? names[0] ?? `1 ${what}`
+      : `${chosen.ids.length} ${what}`;
 
   return (
     <div className="measure-panel mass-panel" aria-label="Mass properties" role="status">
@@ -151,7 +178,7 @@ export function MassPanel() {
         )}
       </label>
       {!measured ? (
-        <p className="muted small">{chosen.ids.length ? "Measuring…" : "Nothing to measure — every part is hidden."}</p>
+        <p className="muted small">{chosen.ids.length ? "Measuring…" : asm ? "Nothing to weigh — every copy is hidden or suppressed." : "Nothing to measure — every part is hidden."}</p>
       ) : (
         <table>
           <tbody>
@@ -165,8 +192,9 @@ export function MassPanel() {
         </table>
       )}
       <p className="muted small">
-        {chosen.all ? "Select parts (or a face of one) to weigh just those. " : ""}
-        Weights are solid; for plastics, "printed" guesses 2 walls and 15% infill. The dot in the view is the centre of mass.
+        {chosen.all ? (asm ? "Select copies to weigh just those. " : "Select parts (or a face of one) to weigh just those. ") : ""}
+        Weights are solid; for plastics, "printed" guesses 2 walls and 15% infill.{" "}
+        {exploded ? "Weighed as put together, not exploded (so the centre of mass isn't marked)." : "The dot in the view is the centre of mass."}
       </p>
     </div>
   );

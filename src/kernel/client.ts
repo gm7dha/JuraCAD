@@ -124,13 +124,13 @@ export class KernelClient {
   }
 
   /** Whole parts: their sizes, and the gap and overlap between two of them. */
-  measureParts(partIds: string[]): Promise<Measurement> {
-    return this.send({ type: "measureParts", partIds }).then((body) => body.result as Measurement);
+  measureParts(partIds: string[], instances?: InstanceInput[]): Promise<Measurement> {
+    return this.send({ type: "measureParts", partIds, instances }).then((body) => body.result as Measurement);
   }
 
   /** Mass properties of whole parts (exact: volume, surface area, centre of mass, box). */
-  massProperties(partIds: string[]): Promise<import("../model/massProps").PartMassProps[]> {
-    return this.send({ type: "massProperties", partIds }).then((body) => (body.type === "massProperties" ? body.result : []));
+  massProperties(partIds: string[], instances?: InstanceInput[]): Promise<import("../model/massProps").PartMassProps[]> {
+    return this.send({ type: "massProperties", partIds, instances }).then((body) => (body.type === "massProperties" ? body.result : []));
   }
 
   /** A sheet metal part laid out flat, as a mesh to show in place of the folded one (null if it can't be). */
@@ -153,8 +153,9 @@ export class KernelClient {
     return this.send({ type: "useEdge", partId, ref, plane }).then((body) => (body.type === "useEdge" ? body.result : { error: "Something went wrong reading that edge." }));
   }
 
-  measure(picks: (TopoPick | import("../geometry/vertexRef").VertexPick)[]): Promise<Measurement> {
-    return this.send({ type: "measure", picks }).then((body) => body.result as Measurement);
+  /** In an assembly: `instances` and, per pick, the copy it's on (`copies`, InstanceInput ids). */
+  measure(picks: (TopoPick | import("../geometry/vertexRef").VertexPick)[], instances?: InstanceInput[], copies?: string[]): Promise<Measurement> {
+    return this.send({ type: "measure", picks, instances, copies }).then((body) => body.result as Measurement);
   }
 
   /**

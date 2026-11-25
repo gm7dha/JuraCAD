@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { Measurement } from "../geometry/measureMath";
 import { getKernel } from "../kernel/connect";
-import { cornerPickFor, pickFor, useLengthUnit, useStore } from "../model/store";
+import { activeAssembly, cornerPickFor, pickFor, useLengthUnit, useStore } from "../model/store";
+import { livePicks, useAsmPicks } from "./asmMeasureState";
+import { asmPickFor, useAssemblyInputs } from "./asmReadouts";
 import { formatArea, formatLength, formatVolume } from "../model/units";
 import { rowsText } from "../model/massProps";
 import { copyText } from "./MassPanel";
@@ -15,22 +17,33 @@ const mm2 = (v: number) => formatArea(v);
  * one thing shows its size, two show the gap and angle between them.
  */
 export function MeasurePanel() {
-  const selection = useStore((s) => s.selection);
+  // In an assembly: faces, edges and corners clicked on copies, else two whole copies picked.
+  const asm = useStore(activeAssembly);
+  const asmSelection = useStore((s) => s.asmSelection);
+  const asmPicks = useAsmPicks();
+  const studioSelection = useStore((s) => s.selection);
+  const studioSelectedParts = useStore((s) => s.selectedParts);
+  const livePicked = useMemo(() => livePicks(asmPicks, asmSelection), [asmPicks, asmSelection]);
+  const selection = asm ? livePicked : studioSelection;
   // Whole parts picked (Parts list or a selection box) are measured too.
-  const selectedParts = useStore((s) => s.selectedParts);
+  const selectedParts = asm ? asmSelection : studioSelectedParts;
   const wholeParts = selection.length === 0 && selectedParts.length > 0 && selectedParts.length <= 2;
   const parts = useStore((s) => s.parts);
   const editing = useStore((s) => s.editing !== null);
+  const inputs = useAssemblyInputs(!!asm && (selection.length > 0 || wholeParts));
+  const exploded = asm?.explode !== undefined;
   useLengthUnit(); // shown in the design's units
   const [result, setResult] = useState<Measurement | null>(null);
 
   useEffect(() => {
     setResult(null);
     if (editing) return;
+    if (asm && !inputs) return;
     if (wholeParts) {
       let live = true;
-      getKernel()
-        .measureParts(selectedParts)
+      // (A copy picked in the list stands for every part in it when it's a sub-assembly: its first part is measured.)
+      const copies = inputs ? selectedParts.map((id) => inputs.find((i) => i.id === id || i.id.startsWith(`${id}/`))?.id).filter((x): x is string => !!x) : [];
+      (inputs ? getKernel().measureParts(copies, inputs) : getKernel().measureParts(selectedParts))
         .then((r) => live && setResult(r))
         .catch(() => live && setResult(null));
       return () => {
@@ -39,18 +52,19 @@ export function MeasurePanel() {
     }
     if (selection.length === 0 || selection.length > 2) return;
     // Faces, edges and corners (a corner is a point).
-    const picks = selection.map((item) => (item.kind === "vertex" ? cornerPickFor(parts, item) : pickFor(parts, item))).filter((p): p is NonNullable<typeof p> => p !== null);
+    const picks = selection
+      .map((item) => (asm ? asmPickFor(item) : item.kind === "vertex" ? cornerPickFor(parts, item) : pickFor(parts, item)))
+      .filter((p): p is NonNullable<typeof p> => p !== null);
     if (picks.length !== selection.length) return;
     let current = true;
-    getKernel()
-      .measure(picks)
+    (inputs ? getKernel().measure(picks, inputs, selection.map((item) => item.partId)) : getKernel().measure(picks))
       .then((r) => current && setResult(r))
       .catch(() => current && setResult(null));
     return () => {
       current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selection, parts, editing, wholeParts, selectedParts]);
+  }, [selection, parts, editing, wholeParts, selectedParts, inputs]);
 
   if (editing || (selection.length === 0 && !wholeParts)) return null;
   if (selection.length > 2) {
@@ -109,8 +123,15 @@ export function MeasurePanel() {
         </tbody>
       </table>
       {(wholeParts ? selectedParts.length === 1 : selection.length === 1) && (
-        <p className="muted small">{wholeParts ? "Select a second part (Shift or Ctrl-click in the Parts list) to measure between them." : "Shift-click a second thing to measure between them."}</p>
+        <p className="muted small">
+          {wholeParts
+            ? asm
+              ? "Shift-click a second copy in the list to measure between them, or click faces, edges or corners of the copies."
+              : "Select a second part (Shift or Ctrl-click in the Parts list) to measure between them."
+            : "Shift-click a second thing to measure between them."}
+        </p>
       )}
+      {asm && exploded && <p className="muted small">Measured as put together, not exploded.</p>}
     </div>
   );
 }
