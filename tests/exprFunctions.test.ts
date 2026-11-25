@@ -22,14 +22,21 @@ const isAngle = (src: string, scope: Record<string, number> = {}) => {
 };
 
 describe("functions in expressions", () => {
-  it("has the trig functions, taking angles (a plain number is radians, as in Onshape)", () => {
+  it("has the trig functions, taking angles (a plain number is degrees, as in Onshape's boxes)", () => {
     expect(value("sin(30 deg)")).toBe(0.5);
     expect(value("cos(60 deg)")).toBe(0.5);
     expect(value("tan(45 deg)")).toBe(1);
     expect(value("sin(30°)")).toBe(0.5);
-    expect(value("cos(pi)")).toBe(-1);
+    expect(value("sin(30)")).toBe(0.5);
+    expect(value("cos(60)")).toBe(0.5);
+    expect(value("tan(45)")).toBe(1);
+    expect(value("sin(asin(1))")).toBe(1);
+    expect(value("cos(pi rad)")).toBe(-1);
+    expect(value("cos((pi) rad)")).toBe(-1);
     expect(value("sin(0.5 rad)")).toBe(Math.round(Math.sin(0.5) * 1e9) / 1e9);
-    expect(value("sin(pi / 6)")).toBe(0.5);
+    expect(value("sin(pi / 6 rad)")).toBe(0.5);
+    expect(value("sin(30 degrees) + cos(60 degree)")).toBe(1);
+    expect(value("sin(0.5 radians)")).toBe(value("sin(0.5 radian)"));
     expect(value("cos(90 deg)")).toBe(0);
     expect(isAngle("sin(30 deg)")).toBe(false);
   });
@@ -86,6 +93,17 @@ describe("functions in expressions", () => {
     expect(value("2 * 30 deg")).toBe(60);
     expect(value("90 deg / 2")).toBe(45);
     expect(value("(90 deg) / (30 deg)")).toBe(3);
+    // Natural ways of writing things (an angle unit after "<angle> / <number>" goes with that number).
+    expect(value("90 deg / 30 deg")).toBe(3);
+    expect(isAngle("90 deg / 30 deg")).toBe(false);
+    expect(value("lean / 2 deg", { lean: 30, [ANGLE_KEY("lean")]: 1 })).toBe(15);
+    expect(value("30 deg * 2")).toBe(60);
+    expect(value("360 / 12 deg")).toBe(30);
+    expect(value("asin(0.5) * 2")).toBe(60);
+    expect(value("(180 deg) - 30 deg")).toBe(150);
+    expect(value("cos(lean) * 50 mm", { lean: 60, [ANGLE_KEY("lean")]: 1 })).toBe(25);
+    expect(value("50 * cos(lean)", { lean: 60, [ANGLE_KEY("lean")]: 1 })).toBe(25);
+    expect(value("atan(10 / 20)")).toBeCloseTo(26.565051177, 9);
     expect(isAngle("(90 deg) / (30 deg)")).toBe(false);
     expect(value("-30 deg")).toBe(-30);
     expect(value("abs(-30 deg)")).toBe(30);
@@ -105,6 +123,7 @@ describe("functions in expressions", () => {
     expect(error("tan(90 deg)")).toMatch(/endless/);
     expect(error("sqrt(30 deg)")).toMatch(/not an angle/);
     expect(error("(30 deg) * (2 deg)")).toMatch(/two angles/);
+    expect(error("30 deg * 2 deg")).toMatch(/two angles/);
     expect(error("2 / (30 deg)")).toMatch(/divide by an angle/);
     expect(error("(30 deg) ^ 2")).toMatch(/power/);
     expect(error("(30 deg) mm")).toMatch(/already an angle/);
@@ -134,9 +153,13 @@ describe("functions in expressions", () => {
     expect(namesIn("max * 2")).toEqual(["max"]);
     expect(namesIn("30 deg")).toEqual([]);
     expect(hasUnitsOrNames("sqrt(2)")).toBe(false);
-    expect(hasUnitsOrNames("30 deg")).toBe(true);
+    expect(hasUnitsOrNames("30 deg")).toBe(false); // angle units don't depend on the design's length unit
+    expect(hasUnitsOrNames("2 in")).toBe(true);
     expect(hasUnitsOrNames("sqrt(a)")).toBe(true);
     expect(storeLength("sqrt(2)", "in")).toBe("(sqrt(2)) in");
+    expect(storeLength("sin(30 deg) * 2", "in")).toBe("(sin(30 deg) * 2) in");
+    expect(evaluate(storeLength("sin(30 deg) * 2", "in"), {})).toEqual({ ok: true, value: 25.4 });
+    expect(storeLength("30 deg", "in")).toBe("30 deg"); // left for the box to refuse plainly
     expect(renameInExpression("sin(sin) + sin", "sin", "s")).toBe("sin(s) + s");
   });
 });
@@ -185,6 +208,15 @@ describe("functions offered while typing", () => {
     expect(suggestionsAt("10 + co", 7, []).names).toEqual(["cos("]);
     const s = suggestionsAt("2 * si", 6, []);
     expect(completeWith("2 * si", s.word!, s.names[0])).toEqual({ text: "2 * sin(", caret: 8 });
+  });
+
+  it("keeps a variable typed in full first, so Enter sets the size", () => {
+    expect(suggestionsAt("a", 1, ["a"]).names.slice(0, 2)).toEqual(["a", "asin("]);
+    expect(suggestionsAt("2 * max", 7, ["max"]).names).toEqual(["max", "max("]);
+    expect(suggestionsAt("a", 1, []).names[0]).toBe("asin(");
+    expect(suggestionsAt("w", 1, ["w"]).names).toEqual([]); // nothing else to offer: no list, as before
+    expect(suggestionsAt("10", 2, ["a"]).names).toEqual([]);
+    expect(suggestionsAt("1e3", 3, ["e"]).names).toEqual([]);
   });
 
   it("never where a unit goes, and no second bracket", () => {

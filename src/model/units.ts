@@ -60,8 +60,12 @@ export function formatVolume(mm3: number, unit: LengthUnit = current): string {
   return `${Math.round((mm3 / FACTOR[unit] ** 3) * f) / f} ${unit}³`;
 }
 
-/** A plain number (or sum) typed without units or variable names, that works out. */
-const plain = (text: string) => text.trim() !== "" && !hasUnitsOrNames(text) && evaluate(text, {}).ok;
+/** A plain number (or sum) typed without units or variable names, that works out (and isn't an angle). */
+const plain = (text: string) => {
+  if (text.trim() === "" || hasUnitsOrNames(text)) return false;
+  const r = evaluate(text, {});
+  return r.ok && !r.angle;
+};
 const isNumber = (text: string) => /^\s*(\d+\.?\d*|\.\d+)(e[+-]?\d+)?\s*$/i.test(text);
 
 /** What to save for a length typed in the shown unit. */

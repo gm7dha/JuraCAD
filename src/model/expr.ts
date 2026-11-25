@@ -8,9 +8,11 @@
  *
  * Functions and angles (as Onshape's expressions): sin cos tan asin acos atan atan2 sqrt abs min max round floor
  * ceil log (natural) ln log10 exp pow, and the angle units deg (or °) and rad. An angle is kept apart from plain
- * numbers: "30 deg" is an angle; sin/cos/tan take an angle (a plain number there is radians, as in Onshape and
- * maths); asin/acos/atan/atan2 give one. A plain number added to (or compared in min/max with) an angle counts as
- * degrees, as in an angle box. An expression whose result is an angle gives its value in DEGREES with `angle: true`
+ * numbers: "30 deg" is an angle; sin/cos/tan take an angle (a plain number there is DEGREES, as in Onshape's
+ * number boxes — "These functions are in degrees, not radians" — so sin(30) is 0.5; radians are written "0.5 rad");
+ * asin/acos/atan/atan2 give one. A plain number added to (or compared in min/max with) an angle counts as degrees,
+ * as in an angle box. A unit applies to the whole product before it ("360 / 12 deg" is 30°, as "1/4 in" is a quarter
+ * inch), except that an angle unit after "<angle> / <number>" goes with that number only, so "90 deg / 30 deg" is 3. An expression whose result is an angle gives its value in DEGREES with `angle: true`
  * (so angle boxes take "30 deg" and "0.5 rad"). Lengths are plain millimetre numbers — there's no further
  * dimensional analysis: sqrt(400) is 20 (mm), sqrt(1 in) the square root of 25.4.
  * A variable whose value is an angle is marked in the scope by an extra key `°<name>` (ANGLE_KEY), so sin(a) works.
@@ -94,10 +96,13 @@ type Token =
   | { kind: "comma" };
 
 // Units that may follow a number or a closing bracket (spaces allowed before them).
-const UNIT_AFTER = /^\s*(mm|cm|ft|in|m|deg|rad|"|°)(?![A-Za-z0-9_])/i;
+const UNIT_AFTER = /^\s*(mm|cm|ft|in|m|degrees|degree|deg|radians|radian|rad|"|°)(?![A-Za-z0-9_])/i;
+/** Onshape's longer spellings of the angle units. */
+const UNIT_SPELLINGS: Record<string, string> = { degrees: "deg", degree: "deg", radians: "rad", radian: "rad" };
 
 function unitToken(raw: string): Token {
-  const name = raw.toLowerCase();
+  const lower = raw.toLowerCase();
+  const name = UNIT_SPELLINGS[lower] ?? lower;
   if (name in ANGLE_UNITS) return { kind: "unit", factor: ANGLE_UNITS[name], angle: true, name };
   return { kind: "unit", factor: UNIT_TO_MM[name], name };
 }
@@ -131,6 +136,14 @@ function tokenize(src: string): Token[] {
       const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(src.slice(i))!;
       tokens.push({ kind: "name", value: m[0] });
       i += m[0].length;
+      // A unit may follow the constant pi too ("pi rad", "pi / 2 rad"); it was an error before.
+      if (m[0] === "pi") {
+        const unit = UNIT_AFTER.exec(src.slice(i));
+        if (unit) {
+          tokens.push(unitToken(unit[1]));
+          i += unit[0].length;
+        }
+      }
       continue;
     }
     if ("+-*/^".includes(ch)) {
@@ -221,17 +234,30 @@ class Parser {
 
   private term(): Val {
     let value = this.power();
+    // The value before the last "*" or "/", that operator and what came after it (for "90 deg / 30 deg").
+    let last: { before: Val; op: string; rhs: Val } | null = null;
     for (;;) {
       const t = this.peek();
       if (t?.kind === "unit") {
         this.pos++;
-        if (value.angle) throw new Error(`That's already an angle — "${t.name}" can't go after it`);
+        if (value.angle) {
+          // "90 deg / 30 deg", "lean / 2 deg": the angle unit goes with the last number, so it's one angle over another.
+          if (t.angle && last && last.before.angle && !last.rhs.angle && last.op === "/") {
+            value = plainVal(last.before.v / (last.rhs.v * t.factor));
+            last = null;
+            continue;
+          }
+          if (t.angle && last && last.before.angle && !last.rhs.angle && last.op === "*") throw new Error("Can't multiply two angles together");
+          throw new Error(`That's already an angle — "${t.name}" can't go after it`);
+        }
         value = t.angle ? angleVal(value.v * t.factor) : plainVal(value.v * t.factor);
+        last = null;
         continue;
       }
       if (!(this.isOp("*") || this.isOp("/"))) break;
       const op = (this.tokens[this.pos++] as { value: string }).value;
       const rhs = this.power();
+      last = { before: value, op, rhs };
       if (op === "/" && rhs.v === 0) throw new Error("Can't divide by zero");
       if (op === "*") {
         if (value.angle && rhs.angle) throw new Error("Can't multiply two angles together");
@@ -338,13 +364,14 @@ class Parser {
       return a.v;
     };
     switch (name) {
+      // A plain number inside is degrees, as in Onshape's boxes: sin(30) = sin(30 deg).
       case "sin":
-        return plainVal(Math.sin(x.v));
+        return plainVal(Math.sin(asAngle(x)));
       case "cos":
-        return plainVal(Math.cos(x.v));
+        return plainVal(Math.cos(asAngle(x)));
       case "tan": {
-        if (Math.abs(Math.cos(x.v)) < 1e-12) throw new Error("tan of a right angle (90°) is endless");
-        return plainVal(Math.tan(x.v));
+        if (Math.abs(Math.cos(asAngle(x))) < 1e-12) throw new Error("tan of a right angle (90°) is endless");
+        return plainVal(Math.tan(asAngle(x)));
       }
       case "asin":
       case "acos": {
@@ -419,11 +446,14 @@ function variableTokens(tokens: Token[]): string[] {
   return out;
 }
 
-/** True when the text uses a unit (mm, in, deg…) or a variable — so it doesn't depend on the document's units. */
+/**
+ * True when the text uses a length unit (mm, in…) or a variable — so it doesn't depend on the document's units. Angle
+ * units don't count: "sin(30 deg) * 2" typed in an inch design is 2 × sin 30° inches.
+ */
 export function hasUnitsOrNames(src: string): boolean {
   try {
     const tokens = tokenize(src);
-    return tokens.some((t) => t.kind === "unit") || tokens.some((t, i) => t.kind === "name" && t.value !== "pi" && !isFunctionCall(tokens, i));
+    return tokens.some((t) => t.kind === "unit" && !t.angle) || tokens.some((t, i) => t.kind === "name" && t.value !== "pi" && !isFunctionCall(tokens, i));
   } catch {
     return true;
   }

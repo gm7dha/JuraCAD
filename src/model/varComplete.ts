@@ -55,8 +55,10 @@ export function functionMatches(text: string, word: TypedWord, most = 6): string
 export function suggestionsAt(text: string, caret: number, names: readonly string[], most = 6): { word: TypedWord | null; names: string[] } {
   const word = wordAt(text, caret);
   if (!word) return { word, names: [] };
-  const vars = variableMatches(word.word, names, most);
+  let vars = variableMatches(word.word, names, most);
   const fns = functionMatches(text, word, most).filter((f) => !vars.includes(f));
+  // A variable typed in full ("a") stays first, so Enter still sets the size rather than taking "asin(".
+  if (fns.length && names.includes(word.word) && !vars.includes(word.word)) vars = [word.word, ...vars];
   return { word, names: [...vars, ...fns].slice(0, most) };
 }
 
