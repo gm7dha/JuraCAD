@@ -893,6 +893,22 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   decimateMore (a plate with Ø8/Ø3 holes at 25k and 10k: corners on their faces, Simplify still finds both holes and 6 planes; a 1 mm
   walled cup down to 3k: volume within 0.2%, no triangles crossing; small raised letters kept; two bodies, duplicate/flipped triangles and
   a hole in the mesh), importFile (limits, reducing), engineStlReduce (heavy: 300k → 25k built, volume within 1%).
+  3MF and OBJ imports (Onshape's): pure `src/geometry/meshFiles.ts` — `zipEntries` (stored/deflated, no zip64) + `inflateRaw`
+  (DecompressionStream "deflate-raw", Node too), a tiny tag reader, `parseModel3mf`/`read3mfMeshes` (main model from
+  `_rels/.rels`; build items × component transforms, rows p·M, `composeTransforms`; `p:path` components in other .model files
+  as Bambu/Prusa save them; a mirroring transform walks triangles the other way; `type` support skipped; `UNITS_3MF` → mm;
+  colours/materials not read), `readObj` (v/f, a/t/n forms, negative indices, faces fanned, `\` continuations; numbers as mm).
+  `src/model/meshImport.ts` `meshFileToStl` turns them into a binary STL; fileActions passes it to `readImport(…, from)`, so the
+  design keeps `format: "stl"` + `ImportedFile.from` ("3mf"/"obj"; missing = an STL; parsed only for stl) and everything after
+  (reduce, Simplify, File units, Scale, cache) is the STL path. A 3MF's own unit is applied when read and kept as
+  `ImportedFile.unitMm` (missing = mm; OBJ always mm), which `fileUnitMm` returns for `from` files, so File units are measured
+  against it (Inches on an inch 3MF = ×1, Millimetres = ÷25.4); `from` files never use the STL's on-the-file mm/in. Slicer projects:
+  `slicerSkips` leaves out Bambu/Orca `Metadata/model_settings.config` parts whose `subtype` isn't normal_part (part id = the root
+  object's component objectid) and PrusaSlicer `Slic3r_PE_model.config` volumes (triangle ranges) not ModelPart; `type="other"`
+  objects too (a toast counts them). Items keep the file's coordinates (Bambu plates centre at 128, 128; later plates further along).
+  Zip: central directory sizes (data descriptors fine), zip64 refused; no "deflate-raw" = "browser too old".
+  Not done: OBJ/STL "Y axis is up" (Onshape has it), negative parts subtracted, colours.
+  Dialog `importKind`. Tests: meshImport (pure; fixtures in tests/support/meshFixtures.ts), engineMeshImport.
 - Move / copy (Onshape's Transform): `Feature.transform` (`TransformDef` in types.ts). `mode` (missing = "free": turns about
   X, then Y, then Z, then the move — the original way) or "xyz" (Translate by XYZ: moves only), "distance" (`distance` box along
   `along`: the triad's X/Y/Z or a clicked `{dir, through}`), "line" (`line` {a, b}: a clicked straight edge, from the end nearer the
@@ -1352,6 +1368,22 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   followed as w grows, a mirrored copy, a lost corner, a loft to a corner, a Use'd corner point followed), mcpCorners.
 - Variables: `src/model/variables.ts`; `evaluate()` in `src/model/expr.ts` reads the document's current values
   (kept in sync by store.ts; the worker gets them with each rebuild). Changing variables re-solves sketches.
+  Functions and angles (Onshape's): `FUNCTIONS` in expr.ts (sin cos tan asin acos atan atan2 sqrt abs min/max (2+) round
+  floor ceil log = ln, log10 exp pow; case-insensitive; a function only when a "(" follows, so old variables called max/rad
+  still work — none of them, nor deg/rad, are reserved) and units deg/°/rad (after a number or ")", like mm). Values are
+  {plain | angle (radians)}: trig takes an angle (plain = DEGREES, as Onshape's boxes: sin(30) = 0.5; "pi rad" allowed), inverse trig gives one;
+  a plain number added to / min-maxed with an angle counts as degrees; angle×angle, ÷angle, angle^ refused. Also
+  degree(s)/radian(s). A unit applies to the product before it (as "1/4 in": "360 / 12 deg" = 30°), except an angle unit
+  after "<angle> / <number>" goes with that number ("90 deg / 30 deg" = 3, `last` in term()). `hasUnitsOrNames` ignores
+  angle units, so an inch box stores "sin(30 deg) * 2" as "(…) in"; varComplete keeps a variable typed in full first
+  (Enter sets the size, not "asin("). An angle result comes out in
+  DEGREES with `EvalResult.angle` (angle boxes take "30 deg"/"0.5 rad"); length boxes (resolveParams, args.amount,
+  setDimensionValue) refuse one. Lengths stay plain mm numbers (no further dimensional analysis). Angle variables are
+  marked in the scope by `ANGLE_KEY(name)` ("°name", set by resolveVariables; `isAngleVariable`; the dialog shows "30°").
+  `namesIn`/`hasUnitsOrNames` skip function calls; `renameInExpression` leaves "name(" alone. varComplete offers
+  `functionMatches` ("sin(") after variables — prefixes only, never after a number/")" (a unit goes there). Older
+  expressions give exactly what they gave (tests/exprFunctions). Library designs keep `trigOf` (six-place numbers;
+  switching would change what they make).
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.
 - Keep pure logic (model, geometry, reports) out of React and covered by Vitest tests.
 - Every change: `npm run typecheck && npm test && npm run build`. CI runs the same and publishes `main`

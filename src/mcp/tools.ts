@@ -50,7 +50,7 @@ export type { Content, ToolDef, ToolResult } from "./toolKit";
 export { fileNameFor } from "./toolKit";
 
 export const FORMAT_GUIDE = `JuraCAD conventions (the same as Onshape):
-- Units: millimetres for every length, degrees for angles. Any number may instead be maths or a variable as text: "w / 2", "1 in", "thickness * 2".
+- Units: millimetres for every length, degrees for angles. Any number may instead be maths or a variable as text: "w / 2", "1 in", "thickness * 2". Functions work too (sin cos tan asin acos atan atan2 sqrt abs min max round floor ceil log ln log10 exp pow): "w * cos(30 deg)", "sqrt(a ^ 2 + b ^ 2)", "max(2, w / 10)"; trig takes angles ("30 deg", "0.5 rad"; a plain number there is degrees, as in Onshape, so sin(30) is 0.5) and asin/acos/atan give degrees.
 - Axes: Z is up. The Top plane is XY (seen from above), Front is XZ (seen from −Y, so +X is right and +Z up), Right is YZ (seen from +X).
 - Building a part: add_sketch (2D shapes on a plane or on a flat face of a part) → add_feature "extrude" (or "revolve", or "sweep" along a path sketch) to make a solid ("loft" joins shapes on several sketches, faces or a point); "more_sketches" lets one extrude/revolve/sweep use areas of several sketches → then holes, fillets, chamfers, shells, patterns, mirrors. Features build in order; later ones change the result of earlier ones, and every size stays editable in the app.
 - Sketches: on the Top plane sketch x/y are world X/Y. On Front, sketch x = X and sketch y = Z. On Right, sketch x = Y and sketch y = Z. On a face, add_sketch says where its axes point. Shapes are fully dimensioned from the sketch origin automatically.

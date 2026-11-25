@@ -1,5 +1,7 @@
+import { FUNCTION_NAMES } from "./expr";
+
 /**
- * Variable names offered while typing a size (Onshape's autocomplete in a dimension box): the word being typed at
+ * Variable names (and functions, as "sin(") offered while typing a size (Onshape's autocomplete in a dimension box): the word being typed at
  * the cursor, the variables that match it, and the text with the chosen one put in. Pure.
  */
 
@@ -36,10 +38,28 @@ export function variableMatches(word: string, names: readonly string[], most = 6
   return all.slice(0, most);
 }
 
-/** What to offer at the cursor (empty when nothing fits). */
+/**
+ * Functions that fit what's being typed, as "sin(" (just "sin" when a bracket follows already): only those starting
+ * with it, and none where the word follows a number or a closing bracket (it's a unit there: "5 m", "1 in").
+ */
+export function functionMatches(text: string, word: TypedWord, most = 6): string[] {
+  const w = word.word.toLowerCase();
+  if (/[0-9.)"]\s*$/.test(text.slice(0, word.start))) return [];
+  const bracket = text[word.end] === "(";
+  return FUNCTION_NAMES.filter((f) => f.startsWith(w) && !(bracket && f === w))
+    .map((f) => (bracket ? f : `${f}(`))
+    .slice(0, most);
+}
+
+/** What to offer at the cursor (empty when nothing fits): matching variables first, then functions. */
 export function suggestionsAt(text: string, caret: number, names: readonly string[], most = 6): { word: TypedWord | null; names: string[] } {
   const word = wordAt(text, caret);
-  return { word, names: word ? variableMatches(word.word, names, most) : [] };
+  if (!word) return { word, names: [] };
+  let vars = variableMatches(word.word, names, most);
+  const fns = functionMatches(text, word, most).filter((f) => !vars.includes(f));
+  // A variable typed in full ("a") stays first, so Enter still sets the size rather than taking "asin(".
+  if (fns.length && names.includes(word.word) && !vars.includes(word.word)) vars = [word.word, ...vars];
+  return { word, names: [...vars, ...fns].slice(0, most) };
 }
 
 /** The text with the word at the cursor replaced by `name`, and where the cursor goes (just after it). */

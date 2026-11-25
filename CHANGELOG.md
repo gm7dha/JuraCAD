@@ -8,6 +8,23 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.113 — Import 3MF and OBJ files
+
+- **Import** (and drag-and-drop) now takes **.3mf** and **.obj** files as well as STEP and STL. They come in as
+  triangles, like an STL: Simplify, big-file reducing, Scale and File units all work.
+- 3MFs from Bambu Studio and PrusaSlicer are read with their parts where the file put them (a Bambu part sits at the
+  plate's middle — use Move to bring it to the origin); slicer-only parts (modifiers, negative parts, supports) are
+  left out and a message says how many. A 3MF's own units are kept; OBJ files are read as millimetres.
+- Not yet: 3MF colours, and OBJ files saved "Y up" (Blender's default) come in lying on their back.
+
+## v0.112 — Maths in number boxes
+
+- **Functions in every size box, sketch dimension and variable**: sin, cos, tan, asin, acos, atan, atan2, sqrt, abs,
+  min, max, round, floor, ceil, log, log10, exp and pow — e.g. `40 * sin(30)` or `sqrt(2) * 10`.
+- **Angles**: as in Onshape, trig works in degrees (`sin(30)` = 0.5); write `0.5 rad` for radians. Angle boxes and
+  variables take `30 deg`, `30°` or `asin(0.5)`; a length box says so plainly if given an angle.
+- Function names are offered as you type. Everything you've typed before works exactly as it did.
+
 ## v0.111 — Big STL files
 
 - **STL files up to 2,000,000 triangles (250 MB)** can now be imported. Over 50,000 triangles, a file is reduced as it
