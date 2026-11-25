@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.111 — Big STL files
+
+- **STL files up to 2,000,000 triangles (250 MB)** can now be imported. Over 50,000 triangles, a file is reduced as it
+  comes in — to about 25,000 by default (Less detail 10,000 / Most detail 50,000 in the Import dialog) — keeping sharp
+  edges, holes and thin walls, and staying a closed solid that Simplify can still turn into real faces.
+- Only the reduced shape is kept in your design, so it stays quick to save. STLs of 50,000 triangles or fewer import
+  exactly as before.
+
 ## v0.110 — Mountain puzzle: a border that follows the land
 
 - **The frame round a mountain puzzle now follows the land** in one smooth line all the way round — lower where the
