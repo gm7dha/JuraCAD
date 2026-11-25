@@ -692,6 +692,10 @@ export interface JuraCADDocument {
   appearance?: Record<string, string>;
   /** Part id → finish (matte, glossy, metal, clear…; see finishes.ts); missing = the usual matte look. Only changes how parts look on screen and in pictures (and see-through colours in exports). */
   finishes?: Record<string, FinishId>;
+  /** Part id → faces with a colour of their own (see faceColours.ts: found again each rebuild); missing = none. */
+  faceAppearance?: import("./faceColours").FaceAppearance;
+  /** Part id → the Bambu Lab spool code its colour was picked from (bambuColours.ts); missing = none. */
+  partSpools?: Record<string, string>;
   /** Part id → material key (see materials.ts); missing = PLA. */
   materials?: Record<string, string>;
   /**

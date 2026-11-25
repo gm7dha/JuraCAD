@@ -16,6 +16,7 @@ import { parseConfigurations } from "./configurations";
 import { parseVariables } from "./variables";
 import { parseAppearance } from "./colours";
 import { parseFinishes } from "./finishes";
+import { parseFaceAppearance, parsePartSpools } from "./faceColours";
 import { parseMaterials } from "./materials";
 import { parsePartProperties } from "../assembly/properties";
 import { parseAssemblies } from "../assembly/assembly";
@@ -1051,6 +1052,8 @@ export function parseDocument(data: unknown): JuraCADDocument | null {
     ...(Array.isArray(d.variables) && d.variables.length ? { variables: parseVariables(d.variables) } : {}),
     ...(Object.keys(parseAppearance(d.appearance)).length ? { appearance: parseAppearance(d.appearance) } : {}),
     ...(Object.keys(parseFinishes(d.finishes)).length ? { finishes: parseFinishes(d.finishes) } : {}),
+    ...(Object.keys(parseFaceAppearance(d.faceAppearance)).length ? { faceAppearance: parseFaceAppearance(d.faceAppearance) } : {}),
+    ...(Object.keys(parsePartSpools(d.partSpools)).length ? { partSpools: parsePartSpools(d.partSpools) } : {}),
     ...(Object.keys(parseMaterials(d.materials)).length ? { materials: parseMaterials(d.materials) } : {}),
     ...(d.units === "in" ? { units: "in" as const } : {}),
     ...(firstId !== MAIN_STUDIO ? { studioId: firstId } : {}),

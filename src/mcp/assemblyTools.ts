@@ -36,6 +36,7 @@ import { pickEdges, pickFaces, PICK_HELP } from "./picks";
 import { renderViews, type RenderPart, type RenderView } from "./render";
 import type { Session } from "./session";
 import { byName, r2, say, type ToolDef, type ToolResult } from "./toolKit";
+import { faceColoursForExport } from "../model/faceColours";
 import { exportColours } from "../model/finishes";
 
 // ---------------------------------------------------------------------------
@@ -878,7 +879,7 @@ export async function exportAssemblyBytes(s: Session, asm: Assembly, format: "st
       return new Uint8Array(r.stl);
     }
     if (format === "3mf") {
-      const r = e.export3mf([], "normal", `${s.doc.name} ${asm.name}`, exportColours(s.doc), instances);
+      const r = e.export3mf([], "normal", `${s.doc.name} ${asm.name}`, exportColours(s.doc), instances, faceColoursForExport(s.doc));
       said(r);
       return new Uint8Array(r.data);
     }
@@ -888,7 +889,7 @@ export async function exportAssemblyBytes(s: Session, asm: Assembly, format: "st
     if (flat) notes.push(FLAT_STEP_NOTE);
     const cut = hasAssemblyFeatures(asm, assembliesOf(s.doc)) ? new Set(e.assemblyCuts(instances).cut) : undefined;
     const tree = flat ? null : stepTree(asm, builtParts(s), solved.placements, assembliesOf(s.doc), solved.inner, cut);
-    const r = await e.exportStep([], exportColours(s.doc), instances, tree ?? undefined);
+    const r = await e.exportStep([], exportColours(s.doc), instances, tree ?? undefined, faceColoursForExport(s.doc));
     said(r);
     return new Uint8Array(r.step);
   });

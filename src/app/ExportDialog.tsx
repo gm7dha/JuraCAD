@@ -14,6 +14,7 @@ import { solveWithParts } from "../assembly/mates";
 import { stepTree } from "../assembly/stepTree";
 import { cutsInsideSubAssemblies, FLAT_STEP_NOTE } from "../assembly/placed";
 import { exportColours } from "../model/finishes";
+import { faceColoursForExport, filamentsFor, filamentsNote, lostFacesNote } from "../model/faceColours";
 
 const QUALITY: { value: MeshQuality; label: string; hint: string }[] = [
   { value: "coarse", label: "Coarse", hint: "Small file, visible facets on curves" },
@@ -73,6 +74,10 @@ export function ExportDialog() {
   // In an assembly: every copy, or just the one chosen.
   const chosenInstances = instances ? (which === "all" ? instances : instances.filter((i) => i.id === which)) : undefined;
 
+  // Faces with colours of their own: a multi-colour 3MF (and face colours in STEP).
+  const faceColours = faceColoursForExport(doc);
+  const filamentGuess = faceColours ? filamentsFor(doc, instances ? [...new Set(instances.map((i) => i.partId.split("@")[0]))] : partIds) : 0;
+
   const doExport = async () => {
     setError(null);
     setStage({ kind: "working", text: `Creating ${format.toUpperCase()}…` });
@@ -83,15 +88,16 @@ export function ExportDialog() {
         // (Parts inside sub-assemblies cut by assembly features: every part on its own instead — said below.)
         const flat = !!asm && !!solvedAll && cutsInsideSubAssemblies(asm, allParts, assemblies ?? []);
         const tree = asm && solvedAll && !flat ? stepTree(asm, allParts, solvedAll.placements, assemblies ?? [], solvedAll.inner) : null;
-        const { step, partCount, cutNotes } = await getKernel().exportStep(partIds, exportColours(doc), chosenInstances, tree ?? undefined);
+        const { step, partCount, cutNotes } = await getKernel().exportStep(partIds, exportColours(doc), chosenInstances, tree ?? undefined, faceColours);
         const name = `${safeFileName(fileName, "juracad")}.step`;
         downloadFile(step, name, "model/step");
         showToast(`Saved ${name} (${partCount === 1 ? "1 part" : `${partCount} parts`})${flat ? `. ${FLAT_STEP_NOTE}` : ""}${cutNotes?.length ? `. Problem: ${cutNotes.join(" ")}` : ""}`, cutNotes?.length ? "error" : "success");
       } else if (format === "3mf") {
-        const { data, triangleCount, cutNotes } = await getKernel().export3mf(partIds, quality, doc.name, exportColours(doc), chosenInstances);
+        const { data, triangleCount, cutNotes, filaments, lostFaces } = await getKernel().export3mf(partIds, quality, doc.name, exportColours(doc), chosenInstances, faceColours);
         const name = `${safeFileName(fileName, "juracad")}.3mf`;
         downloadFile(data, name, "model/3mf");
-        showToast(`Saved ${name} (${triangleCount.toLocaleString()} triangles)${cutNotes?.length ? `. Problem: ${cutNotes.join(" ")}` : ""}`, cutNotes?.length ? "error" : "success");
+        const colourNote = filaments ? `. ${filamentsNote(filaments)}${lostFaces ? ` ${lostFacesNote(lostFaces)}` : ""}` : "";
+        showToast(`Saved ${name} (${triangleCount.toLocaleString()} triangles)${colourNote}${cutNotes?.length ? `. Problem: ${cutNotes.join(" ")}` : ""}`, cutNotes?.length ? "error" : "success");
       } else {
         const { stl, triangleCount, cutNotes } = await getKernel().exportStl(partIds, quality, chosenInstances);
         const name = `${safeFileName(fileName, "juracad")}.stl`;
@@ -192,6 +198,12 @@ export function ExportDialog() {
           ))}
         </div>
 
+        {format === "3mf" && filamentGuess > 1 && (
+          <p className="dialog-note">
+            Some faces have colours of their own, so this 3MF is a multi-colour print for Bambu Studio: about {filamentGuess} filaments, one per colour (each part's own colour, then the face colours, painted on).
+            Load them in that order in your AMS.
+          </p>
+        )}
         {format !== "step" && <span className="form-label">Quality</span>}
         {format !== "step" && (
         <div className="quality-options" role="radiogroup" aria-label="Quality">

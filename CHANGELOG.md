@@ -8,6 +8,18 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.121 — Colour single faces, and every Bambu filament
+
+- **Colour a face**: right-click a face → "Colour this face…" (or several picked faces at once). The colour stays on its
+  face when the design changes. "Back to the part's colour" and "Clear face colours" undo it.
+- **Bambu filaments in every colour picker**: about 300 colours from Bambu Studio's own list, grouped by material
+  (PLA Basic, Matte, Silk+ and more, PETG HF/Basic/Translucent, ABS, ASA, TPU, PC, nylon), plus your own colour — for
+  parts, faces and the Island/Mountain puzzles.
+- **Multi-colour 3MF**: Export and the 3D print panel's slicer file give each colour its own filament and paint the
+  coloured faces, ready for Bambu Studio's AMS; the message lists the filaments in loading order. STEP files carry
+  face colours too.
+- Claude can colour faces with `set_appearance` (`faces`).
+
 ## v0.120 — Measure and Mass in assemblies
 
 - **Measure works in assemblies**: click faces, edges or corners on the copies, even mirrored ones, ones inside
