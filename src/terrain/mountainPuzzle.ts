@@ -296,6 +296,8 @@ export interface MountainPuzzle {
   warnings: string[];
   /** The narrowest tab neck used (mm). */
   neck: number;
+  /** Pairs of neighbouring keys that could still go into each other's pockets (missing: none). */
+  keyClashes?: number;
 }
 
 export class Mesh {
@@ -1144,5 +1146,5 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
   if (keyless.length) warnings.push(`No room for a key under ${keyless.length === 1 ? "piece" : "pieces"} ${keyless.slice(0, 6).join(", ")}${keyless.length > 6 ? "…" : ""}: ${keyless.length === 1 ? "it rests" : "they rest"} on the piece below with nothing to hold ${keyless.length === 1 ? "it" : "them"} in place.`);
   const tallest = Math.max(...pieces.map((p) => p.height));
   if (tallest > spec.bed[2]) warnings.push(`The tallest piece is ${Math.round(tallest)} mm — taller than the printer (${spec.bed[2]} mm). Lower the height stretch.`);
-  return { spec, layout, keys: g, snowZ, layers, pieces, warnings, neck: Number.isFinite(neck) ? neck : neckFor(cube, fit) };
+  return { spec, layout, keys: g, snowZ, layers, pieces, warnings, neck: Number.isFinite(neck) ? neck : neckFor(cube, fit), ...(clashes ? { keyClashes: clashes } : {}) };
 }

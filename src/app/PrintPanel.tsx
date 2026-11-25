@@ -7,6 +7,7 @@ import { CUSTOM_PRINTER, printerOf, PRINTERS } from "../model/printBed";
 import { arrangeOnBed, MODEL_DOWN, printHeadline, printPartReport, type PrintPartReport, type PrintPartResult } from "../model/printCheck";
 import { FIT_LABELS, FIT_NAMES, minWallOf, withFitVariables, type PrintSettings } from "../model/printSettings";
 import { SLICERS, sentMessage, slicerById, type SlicerId } from "../model/slicers";
+import { faceColoursForExport, filamentsNote, lostFacesNote } from "../model/faceColours";
 import { activeAssembly, studioParts, useDocument, useLengthUnit, useStore } from "../model/store";
 import { formatArea, fromUnit, lengthNumber } from "../model/units";
 import { viewportApi } from "../viewport/Viewport";
@@ -203,12 +204,14 @@ function PrintPanelBody() {
     try {
       const kernel = getKernel();
       await kernel.whenIdle();
-      const out = await kernel.exportPrint3mf(solidRequests, [bed[0], bed[1]], print.gap, "normal", doc.name, doc.appearance);
+      // Faces with colours of their own: a multi-colour file (filaments + Bambu painting), as Export's 3MF.
+      const out = await kernel.exportPrint3mf(solidRequests, [bed[0], bed[1]], print.gap, "normal", doc.name, doc.appearance, faceColoursForExport(doc));
       // (Plain colours only: slicers read #RRGGBB, and a print is never see-through.)
       const name = `${safeFileName(chosen.length === 1 ? `${doc.name} ${chosen[0].name}` : doc.name, "juracad")}.3mf`;
       downloadFile(out.data, name, "model/3mf");
       const off = out.layout.places.filter((p) => !p.onBed).length;
-      setSent(sentMessage(slicerById(slicer), name, out.layout.places.length - off, off));
+      const filamentLines = out.filaments ? [[filamentsNote(out.filaments), lostFacesNote(out.lostFaces)].filter(Boolean).join(" ")] : [];
+      setSent([...sentMessage(slicerById(slicer), name, out.layout.places.length - off, off), ...filamentLines]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

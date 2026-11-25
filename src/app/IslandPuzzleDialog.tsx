@@ -30,6 +30,9 @@ import { openMountain } from "./mountainState";
 import { coastOnGrid, coastQuery } from "../terrain/coastline";
 import { loadTerrainTile } from "./mountainTiles";
 import { amsSlotsOf, loadPrinter, printerBed, savePrinter } from "./printerSetting";
+import { ISLAND_COARSE, ISLAND_FLOOR, ISLAND_START, ISLAND_STEP, islandPrintsWell, mostPiecesSize, type CountedVerdict, type SearchResult, type SearchStep } from "../terrain/mostPieces";
+import { MostPiecesNote } from "./MostPiecesNote";
+import { mostPiecesTicked, setMostPiecesTicked } from "./mostPiecesState";
 
 /** The widest area (m): all of Great Britain. */
 const MOST = ISLAND_MOST;
@@ -172,6 +175,16 @@ export function IslandPuzzleDialog() {
   loadedKey.current = loaded ? areaKey(loaded.area) : null;
   const [working, setWorking] = useState(false);
   const builder = useRef(new IslandBuilder());
+  // "As many pieces as will print well": the piece size is found by building a few sizes in a worker of its own.
+  const [most, setMostShown] = useState(() => mostPiecesTicked("island"));
+  const setMost = (on: boolean) => {
+    setMostPiecesTicked("island", on);
+    setMostShown(on);
+  };
+  const searchBuilder = useRef(new IslandBuilder());
+  const [search, setSearch] = useState<{ key: string; steps: SearchStep[]; result: SearchResult | null } | null>(null);
+  // The puzzle the search built at the size it found, so it isn't built again (with what it was built from).
+  const found = useRef<{ specKey: string; inputs: unknown[]; puzzle: IslandBuilt } | null>(null);
   const [buildError, setBuildError] = useState<string | null>(null);
   const [explode, setExplode] = useState(0);
   // Colour bands with the usual colours to start with (the owner's wish); the bands follow the ground until changed.
@@ -389,7 +402,82 @@ export function IslandPuzzleDialog() {
   };
   const problems = islandChecks(fullSpec);
   const specKey = JSON.stringify(fullSpec);
+  const autoPieces = most && cutBy === "pieces";
+  // Everything but the piece size: what the search for the smallest pieces is for.
+  const { piece: _piece, ...specButPiece } = fullSpec;
+  void _piece;
+  const searchKey = JSON.stringify(specButPiece);
   useEffect(() => {
+    if (!autoPieces || !loaded || !used || coastPending || islandChecks({ ...fullSpec, piece: ISLAND_FLOOR }).length) {
+      searchBuilder.current.stop();
+      setSearch(null);
+      return;
+    }
+    let stopped = false;
+    const inputs: unknown[] = [used, cuts, features, coast, coastOk];
+    const builtAt = new Map<number, IslandBuilt>();
+    setSearch({ key: searchKey, steps: [], result: null });
+    const timer = setTimeout(() => {
+      mostPiecesSize({
+        start: ISLAND_START,
+        floor: ISLAND_FLOOR,
+        top: 150,
+        coarse: ISLAND_COARSE,
+        step: ISLAND_STEP,
+        stopped: () => stopped,
+        onStep: (steps) => !stopped && setSearch({ key: searchKey, steps, result: null }),
+        test: (piece) =>
+          new Promise<CountedVerdict>((resolve) => {
+            searchBuilder.current.build(
+              { grid: used.grid, sw: used.sw, width: used.width, height: used.height, spec: { ...fullSpec, piece }, cuts, features, ...(coast ? { coast, ...(coastOk !== undefined ? { coastOk } : {}) } : {}) },
+              (reply) => {
+                // Too slow or too big for the browser depends on the size; anything else (no land, say) doesn't.
+                if ("error" in reply) resolve(/took too long|part-way/.test(reply.error) ? { ok: false, why: "smaller pieces couldn't be made in time", pieces: 0 } : { ok: false, why: reply.error, pieces: 0, final: true });
+                else {
+                  builtAt.set(piece, reply.puzzle);
+                  resolve({ ...islandPrintsWell(reply.puzzle), pieces: reply.puzzle.pieces.length });
+                }
+              },
+            );
+          }),
+      })
+        .then((result) => {
+          if (stopped) return;
+          if (result.size !== null) {
+            found.current = { specKey: JSON.stringify({ ...fullSpec, piece: result.size }), inputs, puzzle: builtAt.get(result.size)! };
+            set("piece", result.size);
+          }
+          setSearch({ key: searchKey, steps: result.steps, result });
+        })
+        .catch(() => undefined);
+    }, 350);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      searchBuilder.current.stop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPieces, loaded, used, searchKey, cuts, features, coast, coastOk, coastPending]);
+  useEffect(() => {
+    if (autoPieces && loaded && !problems.length && !coastPending) {
+      // Ticked: the puzzle shown is the one the search found (never built twice); until then, nothing.
+      const f = found.current;
+      const inputs: unknown[] = [used, cuts, features, coast, coastOk];
+      if (f && f.specKey === specKey && f.inputs.every((x, i) => x === inputs[i])) {
+        builder.current.stop();
+        landIds.current = landIdsAfter(landIds.current, idsOf(f.puzzle.marks.lines), dropped);
+        setPuzzle(f.puzzle);
+        setBuildError(null);
+        setWorking(false);
+        return;
+      }
+      if (!search || search.key !== searchKey || !search.result || search.result.size === null) {
+        builder.current.stop();
+        setPuzzle(null);
+        setWorking(!search?.result);
+        return;
+      }
+    }
     if (!loaded || problems.length || coastPending) {
       // A build still running for the old settings mustn't show its puzzle beside the problem.
       builder.current.stop();
@@ -415,10 +503,16 @@ export function IslandPuzzleDialog() {
     }, 350);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, used, specKey, cuts, features, coast, coastOk, coastPending]);
+  }, [loaded, used, specKey, cuts, features, coast, coastOk, coastPending, autoPieces, search]);
 
-  // Stop the builder when the window closes.
-  useEffect(() => () => builder.current.stop(), []);
+  // Stop the builders when the window closes.
+  useEffect(
+    () => () => {
+      builder.current.stop();
+      searchBuilder.current.stop();
+    },
+    [],
+  );
 
   // Colour bands: pieces at different heights get plates of their own, so a plate changes colour on the same layers.
   const byLevel = colourOn && colour.mode === "bands";
@@ -455,9 +549,9 @@ export function IslandPuzzleDialog() {
   const paintMap = useMemo(() => mapRaster(puzzleMap, mapSize[0], mapSize[1]), [puzzleMap]);
   const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, colour, scale, puzzleMap, mapSize, paintMap);
   const set = <K extends keyof typeof spec>(key: K, value: (typeof spec)[K]) => setSpec((s) => ({ ...s, [key]: value }));
-  const numberBox = (value: number, onChange: (v: number) => void, step: number, min: number, max: number, unit: string) => (
+  const numberBox = (value: number, onChange: (v: number) => void, step: number, min: number, max: number, unit: string, disabled = false) => (
     <span className="mountain-number">
-      <input type="number" value={value} step={step} min={min} max={max} onChange={(e) => Number.isFinite(e.target.valueAsNumber) && onChange(e.target.valueAsNumber)} />
+      <input type="number" value={value} step={step} min={min} max={max} disabled={disabled} onChange={(e) => Number.isFinite(e.target.valueAsNumber) && onChange(e.target.valueAsNumber)} />
       <span className="muted">{unit}</span>
     </span>
   );
@@ -570,12 +664,20 @@ export function IslandPuzzleDialog() {
           <div className="mountain-choices" role="radiogroup" aria-label="How it's cut">
             <label>
               <input type="radio" name="island-cut" checked={cutBy === "pieces"} onChange={() => setCutBy("pieces")} /> Into pieces of about{" "}
-              {numberBox(spec.piece, (v) => set("piece", v), 5, 15, 150, "mm")}
+              {numberBox(spec.piece, (v) => set("piece", v), 5, ISLAND_FLOOR, 150, "mm", autoPieces)}
             </label>
             <label>
               <input type="radio" name="island-cut" checked={cutBy === "boundaries"} onChange={() => setCutBy("boundaries")} /> Along real boundaries
             </label>
           </div>
+          {cutBy === "pieces" && (
+            <>
+              <label className="mountain-check">
+                <input type="checkbox" checked={most} onChange={(e) => setMost(e.target.checked)} /> As many pieces as will print well
+              </label>
+              {autoPieces && <MostPiecesNote search={search} noun="Pieces" pieces={puzzle?.pieces.length ?? null} floorWords={`${ISLAND_FLOOR} mm is the smallest piece size this window makes`} looking="Finding the piece size that gives the most pieces that print well…" foundWords="most pieces that print well" />}
+            </>
+          )}
           {cutBy === "boundaries" && (
             <>
               <label className="mountain-row">

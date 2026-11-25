@@ -1,13 +1,17 @@
 /**
  * Real Bambu Lab filament colours (pure), so a coloured puzzle's preview and files use the colours of the spools that
- * will be loaded: PLA Basic first, then PLA Matte, then PLA Silk+ — single colours only (no gradients or dual colours).
+ * will be loaded: PLA Basic first, then PLA Matte, then PLA Silk+, then every other material's (bambuFilaments.ts) —
+ * single colours only (no gradients or dual colours).
  *
  * Source: Bambu Studio's own filament colour list, resources/profiles/BBL/filament/filaments_color_codes.json in
  * github.com/bambulab/BambuStudio (master at 930fe93, 10 Nov 2026): each entry's English name (`fila_color_name.en`),
  * its colour (`fila_color`, the alpha dropped) and Bambu's colour code (`fila_color_code`), in the file's order.
  */
 
-export type BambuLine = "PLA Basic" | "PLA Matte" | "PLA Silk+";
+import { MORE_BAMBU_COLOURS } from "./bambuFilaments";
+
+/** A filament line as Bambu names it ("PLA Basic", "PETG HF", "ABS"…). */
+export type BambuLine = string;
 
 export interface BambuColour {
   /** Bambu's colour code (as on the spool's label, e.g. 10501). */
@@ -18,9 +22,28 @@ export interface BambuColour {
   hex: string;
 }
 
-export const BAMBU_LINES: BambuLine[] = ["PLA Basic", "PLA Matte", "PLA Silk+"];
+/** Bambu's materials, each with its lines in the order the colour picker shows them (material first, then colour). */
+export const BAMBU_MATERIALS: { material: string; lines: BambuLine[] }[] = [
+  {
+    material: "PLA",
+    lines: ["PLA Basic", "PLA Matte", "PLA Silk+", "PLA Silk", "PLA Translucent", "PLA Lite", "PLA Tough", "PLA Tough+", "PLA Pure", "PLA Aero", "PLA Marble", "PLA Sparkle", "PLA Glow", "PLA Galaxy", "PLA Wood", "PLA Metal", "PLA Dynamic", "PLA Palette", "PLA-CF"],
+  },
+  { material: "PETG", lines: ["PETG HF", "PETG Basic", "PETG Matte", "PETG Translucent", "PETG-CF", "PET-CF"] },
+  { material: "ABS", lines: ["ABS", "ABS-GF"] },
+  { material: "ASA", lines: ["ASA", "ASA Aero", "ASA-CF"] },
+  { material: "TPU", lines: ["TPU 95A HF", "TPU for AMS", "TPU 95A", "TPU 90A", "TPU 85A"] },
+  { material: "PC", lines: ["PC", "PC FR"] },
+  { material: "Nylon and others", lines: ["PAHT-CF", "PA6-CF", "PA6-GF", "PPA-CF", "PPS-CF"] },
+];
 
-export const BAMBU_COLOURS: BambuColour[] = [
+/** Every line, PLA Basic, Matte and Silk+ first. */
+export const BAMBU_LINES: BambuLine[] = BAMBU_MATERIALS.flatMap((m) => m.lines);
+
+/** The material a line belongs to ("PLA", "PETG"…). */
+export const materialOfLine = (line: BambuLine): string => BAMBU_MATERIALS.find((m) => m.lines.includes(line))?.material ?? "Nylon and others";
+
+/** PLA Basic, Matte and Silk+ (the puzzles' usual colours come from these). */
+const PLA_COLOURS: BambuColour[] = [
   { code: "10300", line: "PLA Basic", name: "Orange", hex: "#ff6a13" },
   { code: "10301", line: "PLA Basic", name: "Pumpkin Orange", hex: "#ff9016" },
   { code: "10602", line: "PLA Basic", name: "Blue Gray", hex: "#5b6579" },
@@ -90,6 +113,15 @@ export const BAMBU_COLOURS: BambuColour[] = [
   { code: "13404", line: "PLA Silk+", name: "Champagne", hex: "#f3cfb2" },
   { code: "13405", line: "PLA Silk+", name: "Gold", hex: "#f4a925" },
 ];
+
+/** Every colour: PLA Basic, Matte and Silk+ first (so a colour is named after those spools first), then the other materials. */
+export const BAMBU_COLOURS: BambuColour[] = [...PLA_COLOURS, ...MORE_BAMBU_COLOURS];
+
+/** A material's colours, line by line in the picker's order. */
+export function coloursOfMaterial(material: string): { line: BambuLine; colours: BambuColour[] }[] {
+  const m = BAMBU_MATERIALS.find((x) => x.material === material);
+  return (m?.lines ?? []).map((line) => ({ line, colours: BAMBU_COLOURS.filter((c) => c.line === line) })).filter((g) => g.colours.length);
+}
 
 /** A colour by its Bambu code. */
 export const bambuColour = (code: string): BambuColour | undefined => BAMBU_COLOURS.find((c) => c.code === code);

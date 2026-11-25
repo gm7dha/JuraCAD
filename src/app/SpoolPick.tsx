@@ -1,17 +1,74 @@
 /**
- * Pick a colour for a puzzle's filament from Bambu Lab's real PLA colours (src/terrain/bambuColours.ts), as swatches with
- * their names — PLA Basic, then PLA Matte, then PLA Silk+ — or any colour of your own.
+ * Pick a colour from Bambu Lab's real filaments (src/terrain/bambuColours.ts): first the material (PLA, PETG, ABS, ASA,
+ * TPU…), then the colour, as swatches with their names under each line (PLA Basic, PLA Matte… / PETG HF, PETG Basic…) —
+ * or any colour of your own. `SpoolPick` is the swatch button the puzzles use; `SpoolChoices` is the list itself, also
+ * used by the part and face colour popovers.
  */
 import { useRef, useState } from "react";
 
-import { BAMBU_COLOURS, BAMBU_LINES, spoolFor } from "../terrain/bambuColours";
+import { BAMBU_MATERIALS, coloursOfMaterial, materialOfLine, spoolFor } from "../terrain/bambuColours";
 import { boxOf, PlacedPopup } from "./PlacedPopup";
+
+/** The material tabs and the colours of the one chosen; `onPick(hex, code)` (code missing = your own colour). */
+export function SpoolChoices({ value, chosen, onPick, label, custom = true }: { value: string; chosen?: string; onPick: (hex: string, code?: string) => void; label: string; custom?: boolean }) {
+  const spool = spoolFor(value, chosen);
+  const [material, setMaterial] = useState(() => (spool ? materialOfLine(spool.line) : "PLA"));
+  const hex = value.toLowerCase();
+  return (
+    <div className="spool-choices">
+      <div className="spool-materials" role="tablist" aria-label={`Filament material for ${label}`}>
+        {BAMBU_MATERIALS.map((m) => (
+          <button
+            type="button"
+            role="tab"
+            key={m.material}
+            aria-selected={m.material === material}
+            className={`spool-material${m.material === material ? " selected" : ""}`}
+            onClick={() => setMaterial(m.material)}
+          >
+            {m.material}
+          </button>
+        ))}
+      </div>
+      <div className="spool-lines">
+        {coloursOfMaterial(material).map(({ line, colours }) => (
+          <div key={line} className="spool-line">
+            <div className="spool-line-name">Bambu Lab {line}</div>
+            <div className="spool-grid">
+              {colours.map((c) => {
+                const on = spool?.code === c.code;
+                return (
+                  <button
+                    type="button"
+                    key={c.code}
+                    className={`spool-choice${on ? " selected" : ""}`}
+                    title={`${c.name} (${line}, ${c.hex})`}
+                    aria-pressed={on}
+                    onClick={() => onPick(c.hex, c.code)}
+                  >
+                    <span className="colour-swatch" style={{ background: c.hex }} />
+                    <span className="spool-name">{c.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+      {custom && (
+        <label className="spool-custom">
+          <input type="color" value={/^#[0-9a-f]{6}$/.test(hex) ? hex : "#a8b4c0"} onChange={(e) => onPick(e.target.value)} aria-label={`Your own colour for ${label}`} /> Your own colour
+          {!spool && <span className="muted small"> (chosen now)</span>}
+        </label>
+      )}
+    </div>
+  );
+}
 
 export function SpoolPick({ value, chosen, onPick, label }: { value: string; chosen?: string; onPick: (hex: string, code?: string) => void; label: string }) {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   const spool = spoolFor(value, chosen);
-  const hex = value.toLowerCase();
   return (
     <>
       <button
@@ -29,36 +86,15 @@ export function SpoolPick({ value, chosen, onPick, label }: { value: string; cho
         <PlacedPopup className="spool-popover" role="dialog" label={`Choose a filament colour for ${label}`} anchor={() => boxOf(button.current)} owner={button} onClose={() => setOpen(false)} focusFirst>
           {/* While it's open, Esc closes it and not the puzzle window. */}
           <div data-keeps-escape="">
-            {BAMBU_LINES.map((line) => (
-              <div key={line} className="spool-line">
-                <div className="spool-line-name">Bambu Lab {line}</div>
-                <div className="spool-grid">
-                  {BAMBU_COLOURS.filter((c) => c.line === line).map((c) => {
-                    const on = spool?.code === c.code;
-                    return (
-                      <button
-                        type="button"
-                        key={c.code}
-                        className={`spool-choice${on ? " selected" : ""}`}
-                        title={`${c.name} (${line}, ${c.hex})`}
-                        aria-pressed={on}
-                        onClick={() => {
-                          onPick(c.hex, c.code);
-                          setOpen(false);
-                        }}
-                      >
-                        <span className="colour-swatch" style={{ background: c.hex }} />
-                        <span className="spool-name">{c.name}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-            <label className="spool-custom">
-              <input type="color" value={hex} onChange={(e) => onPick(e.target.value)} aria-label={`Your own colour for ${label}`} /> Your own colour
-              {!spool && <span className="muted small"> (chosen now)</span>}
-            </label>
+            <SpoolChoices
+              value={value}
+              chosen={chosen}
+              label={label}
+              onPick={(h, code) => {
+                onPick(h, code);
+                if (code) setOpen(false);
+              }}
+            />
           </div>
         </PlacedPopup>
       )}

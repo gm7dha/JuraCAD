@@ -8,6 +8,27 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.122 — As many puzzle pieces as will print well
+
+- **New tick box in the Island and Mountain puzzle windows: "As many pieces as will print well".** It tries piece (or
+  cube) sizes for you and picks the one giving the most pieces that still print well — every piece held by at least
+  two dovetails, tabs thick enough to hold, each piece one solid — and says the size, the count and why it stopped.
+- **Island pieces can now be as small as 10 mm** (was 15). Most islands give the most pieces at about 12 mm — around a
+  third more than at 15 mm. Smaller than that, pieces too small for two dovetails join up, so there are fewer.
+- The Mountain puzzle's search runs in the background, so the window stays usable.
+
+## v0.121 — Colour single faces, and every Bambu filament
+
+- **Colour a face**: right-click a face → "Colour this face…" (or several picked faces at once). The colour stays on its
+  face when the design changes. "Back to the part's colour" and "Clear face colours" undo it.
+- **Bambu filaments in every colour picker**: about 300 colours from Bambu Studio's own list, grouped by material
+  (PLA Basic, Matte, Silk+ and more, PETG HF/Basic/Translucent, ABS, ASA, TPU, PC, nylon), plus your own colour — for
+  parts, faces and the Island/Mountain puzzles.
+- **Multi-colour 3MF**: Export and the 3D print panel's slicer file give each colour its own filament and paint the
+  coloured faces, ready for Bambu Studio's AMS; the message lists the filaments in loading order. STEP files carry
+  face colours too.
+- Claude can colour faces with `set_appearance` (`faces`).
+
 ## v0.120 — Measure and Mass in assemblies
 
 - **Measure works in assemblies**: click faces, edges or corners on the copies, even mirrored ones, ones inside

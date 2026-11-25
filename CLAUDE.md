@@ -1623,7 +1623,34 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   document.body, `position: fixed`, placed by the pure `placePopup` in popupPlace.ts — below, else above, else beside the swatch,
   scrolling inside only when taller than the window; closes on a click elsewhere or Escape) so no panel clips it; swatch size via
   `--swatch-size`, bigger under `(pointer: coarse)`; the smoke test's `popoverFits` checks it at several window sizes and in dark mode); store `setPartFinish`/`setPartsFinish`. Drawings ignore it (line
-  drawings). No colour per face (face indices aren't stable across rebuilds). Claude's `set_appearance` (colour and/or finish).
+  drawings). Claude's `set_appearance` (colour and/or finish; `faces` for face colours).
+  Face colours (Onshape's face Appearance): `doc.faceAppearance` (part id → `FaceColour[]` {face: FaceRef as picked, colour, spool?};
+  missing = none, old files byte-identical) + `doc.partSpools` (part id → Bambu code the part's colour was picked from). Pure
+  `src/model/faceColours.ts`: `resolveFaceColours` = strictMatch of each ref on the mesh's faceRefs (later wins; not found = `lost`,
+  never an error — the face shows the part's colour), `facesColoured` (cached per mesh + list), `setFaceColoursIn(doc, part, faces,
+  colour|null, mesh, spool?)` (an entry already landing on a chosen face is replaced; ones not found now are kept), `clearFaceColoursIn`,
+  `setPartSpoolIn`, `shownFaceColours` (meshes shown → face index → colour; assembly copies via their part), `filamentsFor` /
+  `filamentsNote`, `faceColoursForExport`. Store `setPartColour(id, c, spool?)`, `setFaceColours`, `clearFaceColours` (undoable).
+  View: SceneManager `setFaceColours` — `faceMaterialsFor` appends a material per face colour after [normal, hover, selected]
+  (`colourMaterial`, the part's finish/see-through), `faceSlot` is the face's normal index (applyHighlights, pictures); Viewport passes
+  `shownFaceColours(display, …)`. UI: Select other's "Colour this face…" / "Colour the N picked faces…" (the picked faces when the
+  one under the pointer is among them; Part Studios only) → `src/app/FaceColourMenu.tsx` (usual colours, `SpoolChoices`, back to
+  the part's colour, clear); "Clear face colours on this part"; the Parts list swatch gets a corner of the face colour
+  (`.swatch-faces`), a tooltip counting them (and any lost), "Clear face colours" and "Bambu Lab filaments…" (`SpoolChoices`, sets
+  `partSpools`). Export: `FilamentColours` on export3mf/exportStep (app, Claude's export_model). 3MF with face colours on any part
+  chosen = `src/geometry/filament3mf.ts` `writeFilament3mf` (each distinct colour one filament, parts' own first then faces'
+  — `planFilaments`; Bambu `extruder` per object/part in Metadata/model_settings.config + `paint_color` = `paintCode` (now
+  src/geometry/paintCode.ts, re-exported by terrain/colour.ts) on other-coloured triangles; core `basematerials` + `pid`/`p1` for other
+  slicers — Bambu ignores those once a file has painting, Plater.cpp `has_painting`); else the old write3mf byte for byte. Engine
+  `facePainting` finds the colours on the part's own faces (`faceRefOf`, as the app) and carries them by explorer index to the
+  shape written (placed/mirrored copies; a cut copy with other faces stays plain), triangles kept with `keptTriangles` (meshCheck).
+  `ThreeMfResult.filaments`/`lostFaces` → the Export dialog's toast ("2 filaments, load them in this order: …"); the dialog notes it
+  first. STEP: `colouredFaces` → `StepPart.faces` → XCAF `AddSubShape` + surface colour (both writers; cut copies skipped).
+  Tests: tests/faceColours (pure), engineFaceColours (a side and top followed as the box grows 40 → 80 and after a fillet; lost
+  quietly; the 3MF's painted triangles are exactly the face's; STEP face style); the smoke test colours the block's top face
+  PETG HF Black and checks the 3MF's paint, then undoes. The 3D print panel's 3MF (`exportPrint3mf(…, faces)`) paints faces the same way, laid on
+  the bed (filament words in its sent message); Claude's `set_appearance` takes `faces` (list_faces' names; with a colour, not a finish)
+  (tests/mcpAppearance, engineFaceColours). `filamentsFor` = 0 unless a chosen part has face colours (the dialog's note), `lostFacesNote`.
   3D view: `src/viewport/studio.ts` (`finishMaterial`: matte in the quick view is still the original Phong material and grey
   matte parts share the old one, so the everyday view is unchanged; `studioEnvironment`: three's RoomEnvironment made in code,
   turned Z-up, through PMREM — no downloaded assets; `studioRig`: four slightly spread shadow-casting key lights = a soft
@@ -2180,6 +2207,27 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   mm × patterns 1–3, every piece one outer loop and no hole, every tab catching; those 36 builds are byte-identical to v0.74.
   Tests: tests/islandPuzzle (pure; over seeds/sizes on a ragged coast: ≥ 2 joints per piece, outlines from the meshes never
   cross or come within 2·fit, every tab catches when pulled, median play ≤ 0.5 mm — `tests/support/outlineGeom.ts`), tests/islandMarks.
+- "As many pieces as will print well" (the owner's wish; Island and Mountain/Photo windows): a tick box under the piece / cube
+  size (remembered for the session, `src/app/mostPiecesState.ts`); ticked, the box is greyed and filled in by a search. Pure
+  `src/terrain/mostPieces.ts`: `islandPrintsWell` (no dovetail dropped as too thin — `IslandPuzzle.droppedTabs` —, necks ≥
+  LEAST_NECK, every piece with a neighbour ≥ MIN_JOINTS; loose islets don't count), `mountainPrintsWell` (necks ≥ GOOD_NECK, a
+  key under every piece above the plate, no `MountainPuzzle.keyClashes`, no piece taller than the printer; few-joint peaks
+  don't count) and `mountainLayoutVerdict` (MAX_COLUMNS / 40 layers, checked before building). Island: `mostPiecesSize` goes
+  by the COUNT — smaller isn't more: a dovetail's knob is ~6 mm whatever the size (LEAST_NECK + 2 × LEAST_UNDERCUT) and needs
+  ~9.5 mm of border, so below ~12 mm pieces can't hold two and join a neighbour (measured on four coasts × patterns: most at
+  12 mm, ~1.35 × the count at 15; 10 mm fewer than 12, 8 mm fewer than 15). It climbs from `ISLAND_START` 12 in 1 mm steps
+  both ways towards more pieces (sizes that don't print well skipped, up until one does), then ±0.5; ties to the bigger;
+  `SMALLER_JOIN_UP` says why not smaller. `ISLAND_FLOOR` = islandChecks' `LEAST_PIECE_SIZE` 10 (the typed box too, was 15).
+  Mountain: `smallestThatPrints` (cube counts only grow as cubes shrink) builds `mountainFloor` = smallestCube(fit, GOOD_NECK)
+  first, then from the typed size up, halves the gap, then `lookBelow` (2) sizes further down in case smaller prints well
+  after all (not monotone: a key clash or dropped tab at one size and not the next); steps 1. Both: each size once, ≤
+  `MOST_TRIES` 10, stop when settings change (`stopped`). Island: its own `IslandBuilder` worker; mountain: `MountainBuilder`
+  (src/app/mountainBuilder.ts → `mountainPuzzle.worker.ts`, built and judged off the page; photo grids made on the page).
+  The search is keyed by the spec without the size; the found puzzle is kept (`found`, with what it was built from) so it
+  isn't built again; unticked = the old path exactly. `MostPiecesNote.tsx` says the sizes tried (with counts) and why not
+  smaller. Tests: mostPieces (pure, fake builders: a count curve, non-monotone verdicts), mostPiecesReal (heavy: a low coast
+  finds < 15 mm with > 1.15 × the pieces at 15, every piece held by ≥ 2 catching dovetails, gaps ≥ 2·fit, each one solid; a
+  pretend-tile hill at 3× scale finds 32 with 31 over 400 cubes a layer).
 - Map puzzles tab (the owner's wish): the Mountain, Photo relief and Island puzzle cards (`LIBRARY_TOOLS`, `section: "maps"`) are a
   third library tab after Laser cutting and 3D printing (`src/library/sections.ts` `LIBRARY_SECTIONS`/`LibrarySection`, `sectionFrom`,
   `sectionLocked`; designs keep `DesignCategory`), behind a LIGHT lock (the code is public — it only stops casual visitors):
@@ -2408,10 +2456,13 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   order with a base and a band below the ground; first-layer snapping; plates by level ≤ bands − 1 changes each; warnings; the
   cache not re-cutting for a colour change).
   Bambu colours and 8 slots: `src/terrain/bambuColours.ts` (pure; Bambu Studio's filaments_color_codes.json, PLA Basic, Matte,
-  Silk+ single colours: code/line/name/hex; `bambu(line, name)`, `spoolFor(hex, code?)`, `spoolLabel`). Every usual colour is a
+  Silk+ single colours, then every other material's in `bambuFilaments.ts` (generated from the same file at 930fe93: PLA Silk/
+  Translucent/Glow/…, PETG HF/Basic/Matte/Translucent, ABS, ASA, TPU, PC, nylons; support/PVA/2.85 mm left out) — `BAMBU_MATERIALS`
+  (material → lines, the picker's order), `materialOfLine`, `coloursOfMaterial`; PLA's first so `spoolFor(hex)` still names PLA Basic
+  first: code/line/name/hex; `bambu(line, name)`, `spoolFor(hex, code?)`, `spoolLabel`). Every usual colour is a
   Bambu PLA (SEA_BLUE Matte Marine Blue, WATER_BLUE Basic Cyan, PATH_RED Basic Red, ROAD_BLACK Basic Black, ISLAND_/MOUNTAIN_COLOURS,
   SPARE_COLOURS). `ColourSpec.spools` (hex → code, where two spools share a colour) → `Filament.spool` ("Charcoal (PLA Matte)"),
-  shown in the Load list. `src/app/SpoolPick.tsx` (PlacedPopup of named swatches + your own colour) for every band, base, water,
+  shown in the Load list. `src/app/SpoolPick.tsx` (`SpoolChoices`: material tabs, then each line's named swatches + your own colour; `SpoolPick` = its PlacedPopup) for every band, base, water,
   paths, roads. Filament slots 4/8: `PrinterSetting.amsSlots` (`amsSlotsOf`: missing = 8 on every printer; panel row "Filament
   slots"), `colourWarnings(…, slots)`; the usual bands are always the three above (the old 5/6-band sets and
   `usualBandCount` are gone). Modal ignores Esc while a

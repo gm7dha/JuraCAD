@@ -75,4 +75,28 @@ describe("set_appearance", () => {
     const none = await callTool(s, "set_appearance", { part: part.name });
     expect(none.isError).toBe(true);
   });
+  it("colours single faces, and the 3MF then paints them for Bambu Studio", async () => {
+    const { s, folder } = newSession();
+    await ok(s, "new_design", { name: "Faces" });
+    await ok(s, "add_feature", { type: "box", width: 20, depth: 10, height: 10 });
+    const part = s.build().parts[0];
+    expect(await ok(s, "set_appearance", { colour: "red", faces: ["top"] })).toMatch(/1 face coloured #d64545 \(1 face colour on it now\)/);
+    const list = s.doc.faceAppearance?.[part.id];
+    expect(list).toHaveLength(1);
+    expect(list![0].face.normal[2]).toBeCloseTo(1, 6);
+    expect(s.doc.appearance).toBeUndefined();
+    // The same again: nothing changes.
+    expect(await ok(s, "set_appearance", { colour: "#d64545", faces: ["top"] })).toMatch(/already/);
+    await ok(s, "export_model", { format: "3mf", filename: "faces" });
+    const file = readdirSync(folder).find((f) => f.endsWith(".3mf"))!;
+    const bytes = readFileSync(join(folder, file)).toString("latin1");
+    expect(bytes).toMatch(/paint_color="8"/);
+    expect(bytes).toMatch(/Metadata\/model_settings\.config/);
+
+    expect(textOf(await callTool(s, "set_appearance", { colour: "red", faces: ["top"], finish: "glossy" }))).toMatch(/whole part/);
+    expect(textOf(await callTool(s, "set_appearance", { faces: ["top"] }))).toMatch(/give the faces a "colour"/);
+    expect((await callTool(s, "set_appearance", { colour: "red", faces: ["F99"] })).isError).toBe(true);
+    expect(await ok(s, "set_appearance", { colour: "default", faces: ["top"] })).toMatch(/back to the part's own colour \(no face colours/);
+    expect(s.doc.faceAppearance).toBeUndefined();
+  });
 });
