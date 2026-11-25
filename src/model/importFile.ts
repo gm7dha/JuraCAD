@@ -3,12 +3,25 @@
  * kept inside the design (so it saves, undoes and reopens like everything
  * else); the geometry engine turns it into a part on each rebuild.
  */
+import { decimate, weldCorners } from "../geometry/decimate";
+import { readStlCorners, writeBinaryStl } from "../geometry/stl";
 import type { ImportedFile } from "./types";
 
 /** Bigger files make the design slow to save and rebuild. */
 export const MAX_IMPORT_BYTES = 25 * 1024 * 1024;
-/** STL triangles become faces of a solid; past this it gets too slow to work with. */
-export const MAX_STL_TRIANGLES = 50_000;
+/**
+ * STL triangles become faces of a solid; past this it gets too slow to work with (and OpenCascade runs out of room:
+ * 50,000 take ~40 s and ~3.5 GB, 100,000 don't fit at all). More detailed files are reduced to this or fewer first.
+ */
+export const SOLID_STL_TRIANGLES = 50_000;
+/** The most triangles an STL may have at all (it's reduced first; a million take about 20 s). */
+export const MAX_STL_TRIANGLES = 2_000_000;
+/** The biggest STL that can be read to be reduced (it isn't kept in the design: only the reduced one is). */
+export const MAX_STL_BYTES = 250 * 1024 * 1024;
+/** How many triangles a big STL may be reduced to: less detail (quicker) … the most a solid can have. */
+export const REDUCE_CHOICES = [10_000, 25_000, SOLID_STL_TRIANGLES] as const;
+/** The usual choice: detailed enough for most models, and quick to work with. */
+export const USUAL_REDUCE = 25_000;
 
 export const IMPORT_ACCEPT = ".step,.stp,.stl";
 
@@ -58,15 +71,24 @@ export function importName(fileName: string): string {
   return fileName.replace(/\.(step|stp|stl)$/i, "").trim() || "Imported part";
 }
 
-export type ImportReadResult = { ok: true; file: ImportedFile } | { ok: false; error: string };
+export type ImportReadResult =
+  | { ok: true; file: ImportedFile }
+  | { ok: false; error: string }
+  /** An STL with more triangles than a solid can have: it's reduced (see `reduceStl`) before it's brought in. */
+  | { ok: "reduce"; fileName: string; triangles: number };
+
+const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+const count = (n: number) => n.toLocaleString("en-GB");
 
 /** Check a file's bytes and package them for the design, or explain in plain words why not. */
 export function readImport(fileName: string, bytes: Uint8Array): ImportReadResult {
   if (bytes.length === 0) return { ok: false, error: `${fileName} is empty.` };
-  if (bytes.length > MAX_IMPORT_BYTES) {
-    return { ok: false, error: `${fileName} is ${(bytes.length / 1024 / 1024).toFixed(0)} MB — JuraCAD can import files up to ${MAX_IMPORT_BYTES / 1024 / 1024} MB.` };
-  }
   const format = detectFormat(fileName, bytes);
+  // STL files too big to keep may still be reduced (only the reduced one is kept), so they're allowed bigger.
+  if (bytes.length > (format === "stl" ? MAX_STL_BYTES : MAX_IMPORT_BYTES)) {
+    const most = format === "stl" ? MAX_STL_BYTES : MAX_IMPORT_BYTES;
+    return { ok: false, error: `${fileName} is ${mb(bytes.length)} — JuraCAD can import ${format === "stl" ? "STL files" : "files"} up to ${mb(most)}.` };
+  }
   if (!format) return { ok: false, error: `${fileName} isn't a STEP or STL file, so it can't be imported.` };
   if (format === "step") {
     return { ok: true, file: { fileName, format, data: new TextDecoder().decode(bytes), units: "mm" } };
@@ -76,10 +98,40 @@ export function readImport(fileName: string, bytes: Uint8Array): ImportReadResul
   if (triangles > MAX_STL_TRIANGLES) {
     return {
       ok: false,
-      error: `${fileName} has ${triangles.toLocaleString("en-GB")} triangles — too detailed to work with as a solid (the limit is ${MAX_STL_TRIANGLES.toLocaleString("en-GB")}). Try exporting it more coarsely, or as STEP.`,
+      error: `${fileName} has ${count(triangles)} triangles — too detailed even to reduce (the limit is ${count(MAX_STL_TRIANGLES)}). Try exporting it more coarsely, or as STEP.`,
     };
   }
+  if (triangles > SOLID_STL_TRIANGLES || bytes.length > MAX_IMPORT_BYTES) return { ok: "reduce", fileName, triangles };
   return { ok: true, file: { fileName, format, data: toBase64(bytes), units: "mm" } };
+}
+
+/**
+ * A detailed STL reduced to about `target` triangles (flat areas lose triangles first; sharp edges and corners stay
+ * put — see geometry/decimate.ts), packaged for the design as a binary STL. Only the reduced triangles are kept, and
+ * `reducedFrom` says how many the file had. Throws a plain message when nothing usable is left.
+ */
+export function reduceStl(fileName: string, bytes: Uint8Array, target: number): ImportedFile {
+  const welded = weldCorners(readStlCorners(bytes));
+  const before = welded.triangles.length / 3;
+  if (before === 0) throw new Error(`${fileName} has no usable triangles in it.`);
+  const reduced = decimate(welded.vertices, welded.triangles, Math.min(target, SOLID_STL_TRIANGLES));
+  if (reduced.triangles.length === 0) throw new Error(`${fileName} couldn't be reduced: nothing usable was left.`);
+  const data = toBase64(new Uint8Array(writeBinaryStl([reduced], `JuraCAD: ${fileName} reduced`.slice(0, 80))));
+  return { fileName, format: "stl", data, units: "mm", reducedFrom: countStlTriangles(bytes) };
+}
+
+/** The triangles a reduced STL kept (from its stored bytes). */
+export function storedTriangles(file: ImportedFile): number {
+  if (file.format !== "stl") return 0;
+  if (lastCounted?.data !== file.data) lastCounted = { data: file.data, n: countStlTriangles(fromBase64(file.data)) };
+  return lastCounted.n;
+}
+let lastCounted: { data: string; n: number } | undefined;
+
+/** What the Import dialog says about a reduced STL. */
+export function reducedNote(file: ImportedFile): string | undefined {
+  if (!file.reducedFrom) return undefined;
+  return `Reduced from ${count(file.reducedFrom)} triangles to ${count(storedTriangles(file))}, so it can be worked with as a solid. Only the reduced shape is kept in your design.`;
 }
 
 /** Roughly how big the imported file is, for the dialog. */

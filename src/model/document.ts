@@ -487,6 +487,7 @@ function parseImportedFile(raw: unknown): ImportedFile | null {
     format: r.format,
     data: r.data,
     units: r.units === "in" ? "in" : "mm",
+    ...(typeof r.reducedFrom === "number" && Number.isInteger(r.reducedFrom) && r.reducedFrom > 0 ? { reducedFrom: r.reducedFrom } : {}),
   };
 }
 

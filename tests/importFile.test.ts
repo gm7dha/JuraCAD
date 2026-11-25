@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { countStlTriangles, detectFormat, fromBase64, importedSize, importName, readImport, toBase64, MAX_STL_TRIANGLES } from "../src/model/importFile";
+import { countStlTriangles, detectFormat, fromBase64, importedSize, importName, readImport, reducedNote, reduceStl, storedTriangles, toBase64, MAX_STL_TRIANGLES, SOLID_STL_TRIANGLES } from "../src/model/importFile";
+import { writeBinaryStl } from "../src/geometry/stl";
+import { analyzeMesh } from "../src/geometry/meshCheck";
+import { lumpyBall } from "./support/meshShapes";
 import { parseDocument } from "../src/model/document";
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -43,7 +46,38 @@ describe("importing files", () => {
     const notModel = readImport("photo.jpg", enc("hello there"));
     expect(!notModel.ok && notModel.error).toMatch(/isn't a STEP or STL/);
     const huge = readImport("big.stl", binaryStl(MAX_STL_TRIANGLES + 1));
-    expect(!huge.ok && huge.error).toMatch(/too detailed/);
+    expect(!huge.ok && huge.error).toMatch(/too detailed even to reduce/);
+    // Up to the old limit, exactly as before.
+    const most = readImport("most.stl", binaryStl(SOLID_STL_TRIANGLES));
+    expect(most.ok === true && fromBase64(most.file.data).length).toBe(84 + SOLID_STL_TRIANGLES * 50);
+    expect(most.ok === true && "reducedFrom" in most.file).toBe(false);
+    // Past it: reduced first.
+    expect(readImport("more.stl", binaryStl(SOLID_STL_TRIANGLES + 1))).toEqual({ ok: "reduce", fileName: "more.stl", triangles: SOLID_STL_TRIANGLES + 1 });
+    const bigStep = readImport("big.step", enc("ISO-10303-21;" + " ".repeat(26 * 1024 * 1024)));
+    expect(!bigStep.ok && bigStep.error).toMatch(/up to 25 MB/);
+  });
+
+  it("reduces a detailed STL to a closed mesh of about the triangles asked for", () => {
+    const ball = lumpyBall(130, 260);
+    const bytes = new Uint8Array(writeBinaryStl([ball]));
+    const n = ball.triangles.length / 3;
+    expect(readImport("ball.stl", bytes)).toEqual({ ok: "reduce", fileName: "ball.stl", triangles: n });
+    const file = reduceStl("ball.stl", bytes, 25_000);
+    expect(file).toMatchObject({ fileName: "ball.stl", format: "stl", units: "mm", reducedFrom: n });
+    const kept = storedTriangles(file);
+    expect(kept).toBeLessThanOrEqual(25_000);
+    expect(kept).toBeGreaterThan(24_000);
+    expect(reducedNote(file)).toBe(`Reduced from ${n.toLocaleString("en-GB")} triangles to ${kept.toLocaleString("en-GB")}, so it can be worked with as a solid. Only the reduced shape is kept in your design.`);
+    // It reads back as a closed body.
+    const view = new DataView(fromBase64(file.data).buffer);
+    const corners: number[] = [];
+    for (let t = 0; t < kept; t++) for (let k = 0; k < 9; k++) corners.push(view.getFloat32(84 + t * 50 + 12 + k * 4, true));
+    const a = analyzeMesh(corners, Array.from({ length: corners.length / 3 }, (_, i) => i));
+    expect(a.openEdges).toBe(0);
+    expect(a.nonManifoldEdges).toBe(0);
+    expect(Math.abs(a.volume - analyzeMesh(ball.vertices, ball.triangles).volume) / a.volume).toBeLessThan(0.02);
+    // Never more than a solid can have.
+    expect(storedTriangles(reduceStl("ball.stl", bytes, 10 * SOLID_STL_TRIANGLES))).toBeLessThanOrEqual(SOLID_STL_TRIANGLES);
   });
 
   it("names and sizes", () => {
@@ -63,5 +97,7 @@ describe("importing files", () => {
     };
     expect(parseDocument(doc)?.features[0].import).toEqual({ fileName: "cube.stl", format: "stl", data: "AAAA", units: "in" });
     expect(parseDocument({ ...doc, features: [{ ...doc.features[0], import: { format: "obj", data: "x" } }] })).toBeNull();
+    const reduced = { ...doc, features: [{ ...doc.features[0], import: { fileName: "big.stl", format: "stl", data: "AAAA", units: "mm", reducedFrom: 312456 } }] };
+    expect(parseDocument(reduced)?.features[0].import).toEqual({ fileName: "big.stl", format: "stl", data: "AAAA", units: "mm", reducedFrom: 312456 });
   });
 });
