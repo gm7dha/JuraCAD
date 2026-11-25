@@ -16,6 +16,10 @@ export interface MeshSoup {
   corners: Float64Array;
   /** Separate objects or bodies found (for the dialog's note). */
   objects: number;
+  /** Millimetres per unit the file said it uses (3MF; the corners are already in millimetres). Missing = millimetres. */
+  unitMm?: number;
+  /** Slicer parts left out (modifiers, negative parts, support blockers/enforcers). */
+  skipped?: number;
 }
 
 /** A file that can't be read: the message says why in plain words. */
@@ -52,6 +56,7 @@ export function zipEntries(bytes: Uint8Array): Map<string, ZipEntry> {
     const method = view.getUint16(at + 10, true);
     const packed = view.getUint32(at + 20, true);
     const size = view.getUint32(at + 24, true);
+    if (packed === 0xffffffff || size === 0xffffffff) throw new MeshFileError("it's a kind of zip file JuraCAD can't read (too big, zip64)");
     const nameLen = view.getUint16(at + 28, true);
     const extraLen = view.getUint16(at + 30, true);
     const commentLen = view.getUint16(at + 32, true);
@@ -193,10 +198,68 @@ export function mainModelPath(rels: string | undefined): string {
 const MOST_3MF_TRIANGLES = 5_000_000;
 
 /**
+ * What a slicer's own settings say isn't part of the shape (pure): Bambu Studio / Orca's `Metadata/model_settings.config`
+ * (`<object id><part id subtype>`: part id = the component's objectid; anything but "normal_part" — modifiers,
+ * negative parts, support blockers/enforcers — is left out) and PrusaSlicer's `Metadata/Slic3r_PE_model.config`
+ * (`<object id><volume firstid lastid>` triangle ranges of the object's mesh; a `volume_type` other than ModelPart, or
+ * `modifier` 1, is left out).
+ */
+export interface SlicerSkips {
+  /** Root object id → component objectids to leave out (Bambu). */
+  parts: Map<string, Set<string>>;
+  /** Object id → triangle ranges [first, last] to leave out (PrusaSlicer). */
+  ranges: Map<string, [number, number][]>;
+}
+
+export function slicerSkips(bambu: string | undefined, prusa: string | undefined): SlicerSkips {
+  const parts = new Map<string, Set<string>>();
+  const ranges = new Map<string, [number, number][]>();
+  let object: string | null = null;
+  if (bambu) {
+    for (const t of tags(bambu)) {
+      if (t.name === "object") {
+        if (t.close) object = null;
+        else if (!t.empty) object = t.attrs.id ?? null;
+      } else if (t.name === "part" && !t.close && object && t.attrs.id && t.attrs.subtype && t.attrs.subtype !== "normal_part") {
+        let set = parts.get(object);
+        if (!set) parts.set(object, (set = new Set()));
+        set.add(t.attrs.id);
+      }
+    }
+  }
+  if (prusa) {
+    let volume: { first: number; last: number; skip: boolean } | null = null;
+    object = null;
+    for (const t of tags(prusa)) {
+      if (t.name === "object") {
+        if (t.close) object = null;
+        else if (!t.empty) object = t.attrs.id ?? null;
+      } else if (t.name === "volume") {
+        if (t.close) {
+          const v = volume;
+          if (v && object && v.skip && Number.isInteger(v.first) && Number.isInteger(v.last)) {
+            let list = ranges.get(object);
+            if (!list) ranges.set(object, (list = []));
+            list.push([v.first, v.last]);
+          }
+          volume = null;
+        } else if (!t.empty) volume = { first: Number(t.attrs.firstid), last: Number(t.attrs.lastid), skip: false };
+      } else if (t.name === "metadata" && volume && t.attrs.type === "volume") {
+        if (t.attrs.key === "volume_type" && t.attrs.value && t.attrs.value !== "ModelPart") volume.skip = true;
+        if (t.attrs.key === "modifier" && t.attrs.value === "1") volume.skip = true;
+      }
+    }
+  }
+  return { parts, ranges };
+}
+
+const NO_SKIPS: SlicerSkips = { parts: new Map(), ranges: new Map() };
+
+/**
  * A 3MF's placed triangles, in millimetres. `read` gives a file of the zip as text (or undefined if it isn't there);
  * `main` is the main model file's path.
  */
-export async function read3mfMeshes(read: (path: string) => Promise<string | undefined>, main: string): Promise<MeshSoup> {
+export async function read3mfMeshes(read: (path: string) => Promise<string | undefined>, main: string, skips: SlicerSkips = NO_SKIPS): Promise<MeshSoup> {
   const models = new Map<string, ReturnType<typeof parseModel3mf>>();
   const model = async (path: string) => {
     const key = path.replace(/^\/+/, "").toLowerCase();
@@ -215,12 +278,13 @@ export async function read3mfMeshes(read: (path: string) => Promise<string | und
   if (root.items.length === 0) throw new MeshFileError("it has nothing to print in it (no parts are placed on its plate)");
   const out: number[] = [];
   let objects = 0;
+  let skipped = 0;
   const place = async (path: string, id: string, at: Transform3mf, depth: number): Promise<void> => {
     if (depth > 16) throw new MeshFileError("its parts are nested too deeply (or loop round)");
     const m = await model(path);
     const obj = m.objects.get(id);
     if (!obj) throw new MeshFileError(`one of its parts (object ${id}) is missing`);
-    if (obj.type === "support" || obj.type === "solidsupport") return;
+    if (obj.type === "support" || obj.type === "solidsupport" || obj.type === "other") return;
     if (obj.vertices && obj.triangles && obj.triangles.length > 0) {
       objects++;
       const v = obj.vertices;
@@ -235,17 +299,29 @@ export async function read3mfMeshes(read: (path: string) => Promise<string | und
       // A mirroring transform turns triangles inside out: walk them the other way round.
       const flip = determinant(at) < 0;
       const t = obj.triangles;
+      // PrusaSlicer's modifier volumes are triangle ranges of the main model's meshes.
+      const leave = path === main ? skips.ranges.get(id) : undefined;
+      if (leave) skipped += leave.length;
       for (let k = 0; k < t.length; k += 3) {
+        if (leave && leave.some(([a, b]) => k / 3 >= a && k / 3 <= b)) continue;
         const a = t[k], b = flip ? t[k + 2] : t[k + 1], c = flip ? t[k + 1] : t[k + 2];
         if (a >= n || b >= n || c >= n) throw new MeshFileError("one of its triangles uses a corner that isn't there");
         out.push(p[3 * a], p[3 * a + 1], p[3 * a + 2], p[3 * b], p[3 * b + 1], p[3 * b + 2], p[3 * c], p[3 * c + 1], p[3 * c + 2]);
       }
       if (out.length / 9 > MOST_3MF_TRIANGLES) throw new MeshFileError("it has far too many triangles");
     }
-    for (const c of obj.components ?? []) await place(c.path ?? path, c.objectid, composeTransforms(c.transform, at), depth + 1);
+    const leaveParts = depth === 0 && path === main ? skips.parts.get(id) : undefined;
+    for (const c of obj.components ?? []) {
+      if (leaveParts?.has(c.objectid)) {
+        skipped++;
+        continue;
+      }
+      await place(c.path ?? path, c.objectid, composeTransforms(c.transform, at), depth + 1);
+    }
   };
   for (const item of root.items) await place(item.path ?? main, item.objectid, item.transform, 0);
-  return { corners: Float64Array.from(out), objects };
+  if (out.length === 0 && skipped > 0) throw new MeshFileError("it only has slicer settings parts in it (modifiers or negative parts), no shape");
+  return { corners: Float64Array.from(out), objects, ...(scale !== 1 ? { unitMm: scale } : {}), ...(skipped ? { skipped } : {}) };
 }
 
 function determinant(m: Transform3mf): number {
@@ -255,8 +331,15 @@ function determinant(m: Transform3mf): number {
 /** Inflate a raw-deflated zip entry (in the browser and Node alike). */
 export async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
   const DS = (globalThis as { DecompressionStream?: new (f: string) => { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> } }).DecompressionStream;
-  if (!DS) throw new MeshFileError("this browser is too old to open 3MF files (update it, or export the model as STL)");
-  const stream = new DS("deflate-raw") as unknown as ReadableWritablePair<Uint8Array, Uint8Array>;
+  const tooOld = new MeshFileError("this browser is too old to open 3MF files (update it, or export the model as STL)");
+  if (!DS) throw tooOld;
+  let stream: ReadableWritablePair<Uint8Array, Uint8Array>;
+  try {
+    // (Browsers from before 2023 — Safari before 16.4, Firefox before 113 — have no "deflate-raw".)
+    stream = new DS("deflate-raw") as unknown as ReadableWritablePair<Uint8Array, Uint8Array>;
+  } catch {
+    throw tooOld;
+  }
   const out = new Response(new Blob([new Uint8Array(data)]).stream().pipeThrough(stream));
   return new Uint8Array(await out.arrayBuffer());
 }
@@ -277,7 +360,8 @@ export async function read3mf(bytes: Uint8Array): Promise<MeshSoup> {
       throw new MeshFileError("it's damaged (a part of it can't be unpacked)");
     }
   };
-  return read3mfMeshes(read, mainModelPath(await read("_rels/.rels")));
+  const skips = slicerSkips(await read("Metadata/model_settings.config"), await read("Metadata/Slic3r_PE_model.config"));
+  return read3mfMeshes(read, mainModelPath(await read("_rels/.rels")), skips);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

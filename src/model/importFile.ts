@@ -84,7 +84,7 @@ const count = (n: number) => n.toLocaleString("en-GB");
  * Check a file's bytes and package them for the design, or explain in plain words why not. `from`: the bytes are a
  * 3MF/OBJ file's triangles already turned into a binary STL (model/meshImport.ts), kept with the original's name.
  */
-export function readImport(fileName: string, bytes: Uint8Array, from?: "3mf" | "obj"): ImportReadResult {
+export function readImport(fileName: string, bytes: Uint8Array, from?: "3mf" | "obj", unitMm?: number): ImportReadResult {
   if (bytes.length === 0) return { ok: false, error: `${fileName} is empty.` };
   const format = from ? "stl" : detectFormat(fileName, bytes);
   // STL files too big to keep may still be reduced (only the reduced one is kept), so they're allowed bigger.
@@ -105,7 +105,7 @@ export function readImport(fileName: string, bytes: Uint8Array, from?: "3mf" | "
     };
   }
   if (triangles > SOLID_STL_TRIANGLES || bytes.length > MAX_IMPORT_BYTES) return { ok: "reduce", fileName, triangles };
-  return { ok: true, file: { fileName, format, data: toBase64(bytes), units: "mm", ...(from ? { from } : {}) } };
+  return { ok: true, file: { fileName, format, data: toBase64(bytes), units: "mm", ...(from ? { from } : {}), ...(from === "3mf" && unitMm && unitMm !== 1 ? { unitMm } : {}) } };
 }
 
 /**
@@ -131,7 +131,6 @@ export function storedTriangles(file: ImportedFile): number {
 }
 let lastCounted: { data: string; n: number } | undefined;
 
-/** What the Import dialog says about a reduced STL. */
 /** What the Import dialog calls the file's kind. */
 export function importKind(file: ImportedFile): string {
   if (file.from === "3mf") return "3MF";
@@ -139,6 +138,7 @@ export function importKind(file: ImportedFile): string {
   return file.format === "step" ? "STEP" : "STL";
 }
 
+/** What the Import dialog says about a reduced STL. */
 export function reducedNote(file: ImportedFile): string | undefined {
   if (!file.reducedFrom) return undefined;
   return `Reduced from ${count(file.reducedFrom)} triangles to ${count(storedTriangles(file))}, so it can be worked with as a solid. Only the reduced shape is kept in your design.`;

@@ -881,7 +881,14 @@
   colours/materials not read), `readObj` (v/f, a/t/n forms, negative indices, faces fanned, `\` continuations; numbers as mm).
   `src/model/meshImport.ts` `meshFileToStl` turns them into a binary STL; fileActions passes it to `readImport(…, from)`, so the
   design keeps `format: "stl"` + `ImportedFile.from` ("3mf"/"obj"; missing = an STL; parsed only for stl) and everything after
-  (reduce, Simplify, File units, Scale, cache) is the STL path. A 3MF's own unit is applied when read (File units says "as it says").
+  (reduce, Simplify, File units, Scale, cache) is the STL path. A 3MF's own unit is applied when read and kept as
+  `ImportedFile.unitMm` (missing = mm; OBJ always mm), which `fileUnitMm` returns for `from` files, so File units are measured
+  against it (Inches on an inch 3MF = ×1, Millimetres = ÷25.4); `from` files never use the STL's on-the-file mm/in. Slicer projects:
+  `slicerSkips` leaves out Bambu/Orca `Metadata/model_settings.config` parts whose `subtype` isn't normal_part (part id = the root
+  object's component objectid) and PrusaSlicer `Slic3r_PE_model.config` volumes (triangle ranges) not ModelPart; `type="other"`
+  objects too (a toast counts them). Items keep the file's coordinates (Bambu plates centre at 128, 128; later plates further along).
+  Zip: central directory sizes (data descriptors fine), zip64 refused; no "deflate-raw" = "browser too old".
+  Not done: OBJ/STL "Y axis is up" (Onshape has it), negative parts subtracted, colours.
   Dialog `importKind`. Tests: meshImport (pure; fixtures in tests/support/meshFixtures.ts), engineMeshImport.
 - Move / copy (Onshape's Transform): `Feature.transform` (`TransformDef` in types.ts). `mode` (missing = "free": turns about
   X, then Y, then Z, then the move — the original way) or "xyz" (Translate by XYZ: moves only), "distance" (`distance` box along

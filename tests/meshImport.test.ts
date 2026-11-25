@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { composeTransforms, IDENTITY_3MF, mainModelPath, read3mf, readObj, zipEntries } from "../src/geometry/meshFiles";
+import { composeTransforms, IDENTITY_3MF, mainModelPath, read3mf, readObj, slicerSkips, zipEntries } from "../src/geometry/meshFiles";
+import { fileUnitOf, importScaleFactor } from "../src/model/importScale";
+import type { ImportedFile } from "../src/model/types";
 import { readStlCorners } from "../src/geometry/stl";
 import { analyzeMesh } from "../src/geometry/meshCheck";
 import { weldCorners } from "../src/geometry/decimate";
-import { meshFileToStl, meshFormatOf } from "../src/model/meshImport";
+import { meshExtras, meshFileToStl, meshFormatOf } from "../src/model/meshImport";
 import { importKind, importName, readImport, IMPORT_ACCEPT } from "../src/model/importFile";
 import { parseDocument } from "../src/model/document";
-import { cubeObject, modelXml, objCube, threeMf } from "./support/meshFixtures";
+import { bambuProject, cubeObject, modelXml, objCube, prusaProject, threeMf } from "./support/meshFixtures";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
@@ -168,5 +170,85 @@ describe("importing 3MF and OBJ files", () => {
     expect(empty.ok === false && empty.error).toBe("x.obj is empty.");
     const noFaces = await meshFileToStl("x.obj", enc("v 1 2 3\n"), "obj");
     expect(noFaces.ok === false && noFaces.error).toMatch(/no faces/);
+  });
+});
+
+describe("slicer project files", () => {
+  it("reads a Bambu Studio project: parts in object files, every plate's items, modifiers left out", async () => {
+    const soup = await read3mf(await bambuProject());
+    // Plate 1: a 20 mm cube at the plate's middle (128, 128); plate 2: a 10 mm cube further along. The 30 mm modifier
+    // part and the negative part are slicer settings, not shape.
+    expect(soup.skipped).toBe(2);
+    expect(soup.objects).toBe(2);
+    const m = measure(soup.corners);
+    expect(m.volume).toBeCloseTo(8000 + 1000, 3);
+    expect(m.minX).toBe(118);
+    expect(m.maxX).toBe(128 + 307.2 + 5);
+  });
+
+  it("reads a PrusaSlicer project, leaving out its modifier volumes' triangles", async () => {
+    const soup = await read3mf(await prusaProject());
+    expect(soup.skipped).toBe(1);
+    expect(measure(soup.corners).volume).toBeCloseTo(1000, 4);
+    expect(soup.corners.length / 9).toBe(12);
+  });
+
+  it("reads which parts are slicer settings", () => {
+    const s = slicerSkips(
+      `<config><object id="4"><part id="1" subtype="normal_part"/><part id="2" subtype="modifier_part"><metadata key="name" value="m"/></part><part id="3" subtype="support_blocker"/></object></config>`,
+      `<config><object id="1"><volume firstid="0" lastid="11"><metadata type="volume" key="volume_type" value="ModelPart"/></volume><volume firstid="12" lastid="23"><metadata type="volume" key="modifier" value="1"/></volume></object></config>`,
+    );
+    expect([...(s.parts.get("4") ?? [])]).toEqual(["2", "3"]);
+    expect(s.ranges.get("1")).toEqual([[12, 23]]);
+  });
+
+  it("refuses a file with only modifiers in it, plainly", async () => {
+    await expect(read3mf(await bambuProject({ onlyModifiers: true }))).rejects.toThrow(/only has slicer settings parts/);
+  });
+});
+
+describe("File units for 3MF and OBJ files", () => {
+  const file = (unitMm?: number, from: "3mf" | "obj" = "3mf"): ImportedFile => ({ fileName: "a", format: "stl", data: "", units: "mm", from, ...(unitMm ? { unitMm } : {}) });
+
+  it("measures them against the unit the 3MF says, its numbers already in millimetres", () => {
+    const inch = file(25.4);
+    expect(fileUnitOf(inch)).toBe("in");
+    expect(importScaleFactor(inch, undefined)).toBe(1);
+    expect(importScaleFactor(inch, "in")).toBe(1); // already inches: not 25.4 times again
+    expect(importScaleFactor(inch, "mm")).toBeCloseTo(1 / 25.4, 12); // "its numbers are really millimetres"
+    expect(importScaleFactor(file(10), "mm")).toBeCloseTo(0.1, 12);
+    expect(importScaleFactor(file(), "in")).toBeCloseTo(25.4, 12);
+    expect(fileUnitOf(file(0.001))).toBeNull();
+  });
+
+  it("takes an OBJ as millimetres", () => {
+    expect(fileUnitOf(file(undefined, "obj"))).toBe("mm");
+    expect(importScaleFactor(file(undefined, "obj"), "in")).toBeCloseTo(25.4, 12);
+    expect(importScaleFactor(file(undefined, "obj"), "mm")).toBe(1);
+  });
+
+  it("keeps the 3MF's unit on the import, and in saved designs", async () => {
+    const mesh = await meshFileToStl("inch.3mf", await threeMf(modelXml(cubeObject(1, 1), `<item objectid="1"/>`, "inch")), "3mf");
+    expect(mesh.ok).toBe(true);
+    if (!mesh.ok) return;
+    expect(meshExtras(mesh)).toEqual({ from: "3mf", unitMm: 25.4 });
+    const r = readImport("inch.3mf", mesh.stl, mesh.from, mesh.unitMm);
+    if (r.ok !== true) throw new Error("not packaged");
+    expect(r.file.unitMm).toBe(25.4);
+    const doc = { format: "partsmith", version: 1, name: "x", features: [{ id: "a", name: "C", type: "import", operation: "new", params: {}, import: r.file }] };
+    expect(parseDocument(doc)?.features[0].import).toEqual(r.file);
+    // A millimetre 3MF and an OBJ carry nothing extra.
+    const mm = await meshFileToStl("mm.3mf", await threeMf(modelXml(cubeObject(1, 1), `<item objectid="1"/>`)), "3mf");
+    expect(mm.ok && meshExtras(mm)).toEqual({ from: "3mf" });
+    const obj = { ...r.file, from: "obj" as const };
+    expect(parseDocument({ ...doc, features: [{ ...doc.features[0], import: obj }] })?.features[0].import?.unitMm).toBeUndefined();
+  });
+});
+
+describe("OBJ files as download sites save them", () => {
+  it("reads Windows line endings, materials, normals, texture corners, smoothing groups and 5-sided faces", () => {
+    const text = objCube(10).replace(/\n/g, "\r\n").replace("o Cube", "mtllib cube.mtl\r\no Cube\r\nusemtl Mat\r\ns 1");
+    const soup = readObj(text + "l 1 2\r\np 3\r\n");
+    expect(measure(soup.corners).volume).toBeCloseTo(1000, 6);
   });
 });

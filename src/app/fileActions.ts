@@ -12,7 +12,7 @@ import { useStore } from "../model/store";
 import { downloadFile, safeFileName } from "./download";
 import { IMPORT_ACCEPT, readImport, USUAL_REDUCE } from "../model/importFile";
 import { reduceStlFile } from "./stlReduce";
-import { meshFileToStl, meshFormatOf } from "../model/meshImport";
+import { meshExtras, meshFileToStl, meshFormatOf } from "../model/meshImport";
 import type { ImportedFile } from "../model/types";
 
 // The File System Access API isn't in TypeScript's built-in types yet.
@@ -184,6 +184,7 @@ export async function importFile(file: File, replace = false): Promise<boolean> 
     return false;
   }
   let bytes: Uint8Array = new Uint8Array(await file.arrayBuffer());
+  let extras: Pick<ImportedFile, "from" | "unitMm"> = {};
   // 3MF and OBJ files are read as triangles and brought in as an STL would be (model/meshImport.ts).
   const meshKind = meshFormatOf(file.name);
   if (meshKind) {
@@ -193,9 +194,13 @@ export async function importFile(file: File, replace = false): Promise<boolean> 
       return false;
     }
     bytes = mesh.stl;
+    extras = meshExtras(mesh);
+    if (mesh.skipped) {
+      useStore.getState().showToast(`${mesh.skipped} slicer part${mesh.skipped === 1 ? "" : "s"} (modifiers, negative parts or support blockers) left out — only the shape is brought in.`, "info");
+    }
   }
   const from = meshKind ?? undefined;
-  const result = readImport(file.name, bytes, from);
+  const result = readImport(file.name, bytes, from, extras.unitMm);
   if (!result.ok) {
     useStore.getState().showToast(result.error, "error");
     return false;
@@ -211,7 +216,7 @@ export async function importFile(file: File, replace = false): Promise<boolean> 
       );
     try {
       imported = await reduceStlFile(file.name, bytes, USUAL_REDUCE);
-      if (from) imported = { ...imported, from };
+      if (from) imported = { ...imported, ...extras };
     } catch (e) {
       useStore.getState().showToast(e instanceof Error ? e.message : String(e), "error");
       return false;

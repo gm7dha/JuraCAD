@@ -9,7 +9,7 @@ import { meshFileToStl } from "../src/model/meshImport";
 import { readImport } from "../src/model/importFile";
 import type { Feature, ImportedFile } from "../src/model/types";
 import { loadOpenCascade, importFeature } from "./support/engineHelpers";
-import { cubeObject, modelXml, objCube, threeMf } from "./support/meshFixtures";
+import { bambuProject, cubeObject, modelXml, objCube, threeMf } from "./support/meshFixtures";
 
 beforeAll(loadOpenCascade);
 
@@ -24,7 +24,7 @@ function build(features: Feature[]) {
 async function imported(name: string, bytes: Uint8Array, from: "3mf" | "obj"): Promise<ImportedFile> {
   const mesh = await meshFileToStl(name, bytes, from);
   if (!mesh.ok) throw new Error(mesh.error);
-  const r = readImport(name, mesh.stl, mesh.from);
+  const r = readImport(name, mesh.stl, mesh.from, mesh.unitMm);
   if (r.ok !== true) throw new Error("not packaged");
   return r.file;
 }
@@ -55,5 +55,25 @@ describe("importing 3MF and OBJ files", () => {
     const r = build([importFeature(await imported("inch.3mf", zip, "3mf"))]);
     expect(r.featureErrors).toEqual({});
     expect(volumes(r)[0] / 25.4 ** 3).toBeCloseTo(1, 4);
+  });
+
+  it("takes File units relative to the 3MF's own unit (Inches on an inch file changes nothing)", async () => {
+    const file = await imported("inch.3mf", await threeMf(modelXml(cubeObject(1, 1), `<item objectid="1"/>`, "inch")), "3mf");
+    const asIs = volumes(build([importFeature(file)]))[0];
+    engine.dispose();
+    const inches = volumes(build([{ ...importFeature(file), importUnits: "in" }]))[0];
+    engine.dispose();
+    const mm = volumes(build([{ ...importFeature(file), importUnits: "mm" }]))[0];
+    expect(inches).toBeCloseTo(asIs, 3);
+    expect(mm).toBeCloseTo(1, 4);
+  });
+
+  it("brings in a Bambu Studio project's shapes on both plates, without its modifier parts", async () => {
+    const r = build([importFeature(await imported("project.3mf", await bambuProject(), "3mf"))]);
+    expect(r.featureErrors).toEqual({});
+    const v = volumes(r);
+    expect(v).toHaveLength(2);
+    expect(v[0]).toBeCloseTo(1000, 1);
+    expect(v[1]).toBeCloseTo(8000, 1);
   });
 });

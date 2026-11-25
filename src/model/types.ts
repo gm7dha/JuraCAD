@@ -298,6 +298,11 @@ export interface ImportedFile {
   reducedFrom?: number;
   /** A 3MF or OBJ file, read as triangles and kept as a binary STL (`format` "stl"; missing = the file was an STL itself). */
   from?: "3mf" | "obj";
+  /**
+   * A 3MF's own unit, as millimetres per unit, when it isn't millimetres: its numbers are already in millimetres in
+   * `data`; File units are taken relative to this (missing = millimetres, as for OBJ).
+   */
+  unitMm?: number;
 }
 
 /** Import's "File units" (Onshape's): what one unit in the file is taken to be, instead of what the file says. */

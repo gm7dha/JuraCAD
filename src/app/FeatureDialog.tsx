@@ -1450,7 +1450,7 @@ function ReducedStlChoice() {
     try {
       const again = await reduceStlFile(file.fileName, original, target);
       const s = useStore.getState();
-      if (s.editing?.draft?.type === "import" && s.editing.draft.import?.fileName === file.fileName) setDraftField({ import: { ...again, units: file.units, ...(file.from ? { from: file.from } : {}) } });
+      if (s.editing?.draft?.type === "import" && s.editing.draft.import?.fileName === file.fileName) setDraftField({ import: { ...again, units: file.units, ...(file.from ? { from: file.from } : {}), ...(file.unitMm ? { unitMm: file.unitMm } : {}) } });
     } catch (e) {
       showToast(e instanceof Error ? e.message : String(e), "error");
     } finally {
@@ -1499,10 +1499,19 @@ function ImportUnitsChoice() {
   if (!draft || draft.type !== "import" || !draft.import) return null;
   const file = draft.import;
   const own = fileUnitOf(file);
-  const ownName = file.from === "3mf" ? "as it says" : file.format === "stl" ? "millimetres" : own ? IMPORT_UNITS.find((u) => u.unit === own)!.label.toLowerCase() : "as it says";
-  const value = draft.importUnits ?? (file.format === "stl" && file.units === "in" ? "in" : "file");
+  // 3MF and OBJ files' numbers are kept in millimetres (a 3MF's turned from the unit it says), so their File units only
+  // ever scale the part after reading, measured against that unit; a plain STL keeps its millimetres/inches on the file.
+  const ownName =
+    file.format === "stl" && !file.from
+      ? "millimetres"
+      : own
+        ? IMPORT_UNITS.find((u) => u.unit === own)!.label.toLowerCase()
+        : file.unitMm === 0.001
+          ? "micrometres"
+          : "as it says";
+  const value = draft.importUnits ?? (file.format === "stl" && !file.from && file.units === "in" ? "in" : "file");
   const choose = (v: string) => {
-    if (file.format === "stl") {
+    if (file.format === "stl" && !file.from) {
       // Millimetres and inches as before (on the file); the rest scale the part after reading.
       const units = v === "in" ? "in" : "mm";
       setDraftField({ import: { ...file, units }, importUnits: v === "file" || v === "mm" || v === "in" ? undefined : (v as ImportUnit) });
@@ -1528,9 +1537,11 @@ function ImportUnitsChoice() {
       </select>
       <p className="dialog-hint field-hint">
         {file.from === "3mf"
-          ? "3MF files say what units they use. Choose others only if the part comes in the wrong size."
+          ? `3MF files say what units they use (this one: ${ownName}), and it's brought in at that size. Choose others only if the part comes in the wrong size.`
+          : file.from === "obj"
+          ? "OBJ files don't say what units they use, so it's read as millimetres. If the part looks 25 times too small, choose inches."
           : file.format === "stl"
-          ? `${file.from === "obj" ? "OBJ" : "STL"} files don't say what units they use. If the part looks 25 times too small, choose inches.`
+          ? "STL files don't say what units they use. If the part looks 25 times too small, choose inches."
           : "STEP files say what units they use. Choose others only if the part comes in the wrong size."}{" "}
         Use Scale below to make it bigger or smaller (2 = twice the size).
       </p>
