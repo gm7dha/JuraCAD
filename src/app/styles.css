@@ -400,6 +400,18 @@ button:disabled {
   border-top: 1px solid var(--line);
 }
 
+/* The assembly's panel has many sections (Instances, Mates, Positions, Parts list…): rather than squeezing them over each
+   other, each keeps its full height and the whole panel scrolls; Instances takes any room left. */
+.side-panel.assembly-panel {
+  overflow-y: auto;
+}
+.assembly-panel > .panel-section {
+  flex: 0 0 auto;
+}
+.assembly-panel > .panel-section.features {
+  flex: 1 0 auto;
+}
+
 .panel-section h3 {
   margin: 0;
   padding: 10px 12px 6px;
@@ -995,12 +1007,20 @@ button:disabled {
 .status-strip {
   position: absolute;
   right: 12px;
-  bottom: 10px;
+  /* --touch-bar-room: what the touch bar takes at the bottom on a tablet (set by TouchBar.tsx). */
+  bottom: calc(10px + var(--touch-bar-room, 0px));
   display: flex;
-  gap: 12px;
+  gap: 6px;
   font-size: 12.5px;
   color: var(--ink-2);
   pointer-events: none;
+}
+
+/* A soft backing so the words read over the model (empty ones take no room). */
+.status-strip > span:not(:empty) {
+  background: var(--glass);
+  border-radius: 9px;
+  padding: 1px 7px;
 }
 
 .bottom-tabs {
@@ -1633,7 +1653,7 @@ kbd {
 
 .print-bed-panel {
   top: auto;
-  bottom: 12px;
+  bottom: calc(36px + var(--touch-bar-room, 0px));
   width: 280px;
 }
 
@@ -1668,11 +1688,17 @@ kbd {
 /* 3D print panel: top right under the view cube (as the section panel), scrolls when long. */
 .print-panel {
   width: 300px;
-  max-height: calc(100% - 170px);
+  /* Ends above the status line in the bottom-right corner (top 158 + 36 below). */
+  max-height: calc(100% - 194px - var(--touch-bar-room, 0px));
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* The panel scrolls rather than squashing what's in it (the laser preview once spilled over the options). */
+.print-panel > * {
+  flex-shrink: 0;
 }
 
 /* Export for laser panel (same place as the 3D print panel). */
@@ -1744,6 +1770,14 @@ kbd {
   justify-content: flex-end;
   gap: 6px;
   flex-wrap: wrap;
+  /* Always in sight at the panel's foot while the rest scrolls (the panel's padding is 10 px). */
+  position: sticky;
+  bottom: -10px;
+  margin: 0 -12px -10px;
+  padding: 8px 12px 10px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 var(--radius) var(--radius);
 }
 
 .print-orient {
@@ -2590,6 +2624,41 @@ kbd {
   }
 }
 
+/* Every top-bar control stays on screen at any width: the buttons never shrink; the name and the save state give way
+   (the save state ends in "…"), and the labels go in two steps — Install/New/Open/Save first, then all of them
+   (each button keeps its name for screen readers and its tooltip). With every label the bar needs ~1230 px. */
+.topbar > * {
+  flex-shrink: 0;
+}
+.topbar > .doc-name {
+  flex-shrink: 1;
+  min-width: 70px;
+}
+.topbar > .save-state {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topbar > .live-hint {
+  flex-shrink: 1;
+  min-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 1260px) {
+  .topbar .early-label {
+    display: none;
+  }
+}
+@media (max-width: 1120px) {
+  .topbar > :not(.live-connect):not(.live-badge) .button-label {
+    display: none;
+  }
+}
+
 
 .install-steps {
   padding-left: 20px;
@@ -2651,17 +2720,31 @@ kbd {
 .readout-stack {
   position: absolute;
   right: 12px;
-  bottom: 34px;
+  bottom: calc(34px + var(--touch-bar-room, 0px));
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 8px;
-  max-height: calc(100% - 180px);
+  max-height: calc(100% - 180px - var(--touch-bar-room, 0px));
   pointer-events: none;
 }
 
 .readout-stack > * {
   pointer-events: auto;
+}
+
+/* Measure / Mass move left of a panel open on the right (Section, Print bed, 3D print, Laser), so neither hides the other. */
+.viewport-area:has(> .section-panel:not(.compare-panel)) .readout-stack {
+  right: 274px;
+}
+.viewport-area:has(> .print-bed-panel) .readout-stack {
+  right: 304px;
+}
+.viewport-area:has(> .print-panel) .readout-stack {
+  right: 324px;
+}
+.viewport-area:has(> .laser-panel) .readout-stack {
+  right: 344px;
 }
 
 .readout-stack .measure-panel {
@@ -3029,6 +3112,26 @@ kbd {
   letter-spacing: 0;
   color: var(--ink-2);
   cursor: pointer;
+}
+
+/* The feature list's heading: when a "failed"/"notes" chip leaves too little room, "Group by part" goes onto its own
+   line at the right, rather than everything being squeezed onto two lines each. */
+.features > .panel-heading-row {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  column-gap: 6px;
+  row-gap: 4px;
+}
+.features > .panel-heading-row > * {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.features > .panel-heading-row > .group-toggle {
+  margin-left: auto;
+}
+.features > .panel-heading-row > .feature-count-chip,
+.features > .panel-heading-row > .feature-count-chip + .feature-count-chip {
+  margin-left: 0;
 }
 
 .feature-group {

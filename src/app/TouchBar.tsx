@@ -8,7 +8,7 @@
  * The plain keys are sent as the very key presses the shortcuts already handle
  * (`pressKey`), so a button always does exactly what the key does.
  */
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { activeAssembly, activeDrawing, useStore } from "../model/store";
 import { viewportApi } from "../viewport/Viewport";
@@ -59,7 +59,29 @@ function TouchKey({ label, title, onClick, disabled }: { label: string; title: s
   );
 }
 
+/**
+ * Tells the area the bar sits in how much room it takes at the bottom (`--touch-bar-room`), so the status line, Measure /
+ * Mass and the side panels sit above it rather than under it (it is one row or two, depending on the width).
+ */
+function useRoomBelow(): (el: HTMLDivElement | null) => void {
+  const watching = useRef<{ observer: ResizeObserver; parent: HTMLElement } | null>(null);
+  return useCallback((el: HTMLDivElement | null) => {
+    const was = watching.current;
+    if (was) {
+      was.observer.disconnect();
+      was.parent.style.removeProperty("--touch-bar-room");
+      watching.current = null;
+    }
+    const parent = el?.parentElement;
+    if (!el || !parent || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => parent.style.setProperty("--touch-bar-room", `${Math.ceil(el.offsetHeight) + 8}px`));
+    observer.observe(el);
+    watching.current = { observer, parent };
+  }, []);
+}
+
 export function TouchBar() {
+  const roomBelow = useRoomBelow();
   const touch = useTouchScreen();
   const keys = useSyncExternalStore(subscribeTouchKeys, touchKeys);
   const sketching = useStore((s) => s.sketch !== null);
@@ -83,7 +105,7 @@ export function TouchBar() {
   if (!touch || (dialog && dialog !== "insert")) return null;
 
   return (
-    <div className="touch-bar" role="toolbar" aria-label="Touch keys" data-own-touch>
+    <div ref={roomBelow} className="touch-bar" role="toolbar" aria-label="Touch keys" data-own-touch>
       <TouchToggle
         on={keys.add}
         label="Add to selection"
