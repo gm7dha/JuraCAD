@@ -30,7 +30,7 @@ import { openMountain } from "./mountainState";
 import { coastOnGrid, coastQuery } from "../terrain/coastline";
 import { loadTerrainTile } from "./mountainTiles";
 import { amsSlotsOf, loadPrinter, printerBed, savePrinter } from "./printerSetting";
-import { ISLAND_FLOOR, ISLAND_STEP, islandPrintsWell, smallestThatPrints, type SearchResult, type SearchStep, type Verdict } from "../terrain/mostPieces";
+import { ISLAND_COARSE, ISLAND_FLOOR, ISLAND_START, ISLAND_STEP, islandPrintsWell, mostPiecesSize, type CountedVerdict, type SearchResult, type SearchStep } from "../terrain/mostPieces";
 import { MostPiecesNote } from "./MostPiecesNote";
 import { mostPiecesTicked, setMostPiecesTicked } from "./mostPiecesState";
 
@@ -185,8 +185,6 @@ export function IslandPuzzleDialog() {
   const [search, setSearch] = useState<{ key: string; steps: SearchStep[]; result: SearchResult | null } | null>(null);
   // The puzzle the search built at the size it found, so it isn't built again (with what it was built from).
   const found = useRef<{ specKey: string; inputs: unknown[]; puzzle: IslandBuilt } | null>(null);
-  const pieceNow = useRef(spec.piece);
-  pieceNow.current = spec.piece;
   const [buildError, setBuildError] = useState<string | null>(null);
   const [explode, setExplode] = useState(0);
   // Colour bands with the usual colours to start with (the owner's wish); the bands follow the ground until changed.
@@ -417,25 +415,26 @@ export function IslandPuzzleDialog() {
     let stopped = false;
     const inputs: unknown[] = [used, cuts, features, coast, coastOk];
     const builtAt = new Map<number, IslandBuilt>();
-    const from = pieceNow.current;
     setSearch({ key: searchKey, steps: [], result: null });
     const timer = setTimeout(() => {
-      smallestThatPrints({
-        from,
+      mostPiecesSize({
+        start: ISLAND_START,
         floor: ISLAND_FLOOR,
         top: 150,
+        coarse: ISLAND_COARSE,
         step: ISLAND_STEP,
         stopped: () => stopped,
         onStep: (steps) => !stopped && setSearch({ key: searchKey, steps, result: null }),
         test: (piece) =>
-          new Promise<Verdict>((resolve) => {
+          new Promise<CountedVerdict>((resolve) => {
             searchBuilder.current.build(
               { grid: used.grid, sw: used.sw, width: used.width, height: used.height, spec: { ...fullSpec, piece }, cuts, features, ...(coast ? { coast, ...(coastOk !== undefined ? { coastOk } : {}) } : {}) },
               (reply) => {
-                if ("error" in reply) resolve({ ok: false, why: "smaller pieces couldn't be made in time" });
+                // Too slow or too big for the browser depends on the size; anything else (no land, say) doesn't.
+                if ("error" in reply) resolve(/took too long|part-way/.test(reply.error) ? { ok: false, why: "smaller pieces couldn't be made in time", pieces: 0 } : { ok: false, why: reply.error, pieces: 0, final: true });
                 else {
                   builtAt.set(piece, reply.puzzle);
-                  resolve(islandPrintsWell(reply.puzzle));
+                  resolve({ ...islandPrintsWell(reply.puzzle), pieces: reply.puzzle.pieces.length });
                 }
               },
             );
@@ -664,7 +663,7 @@ export function IslandPuzzleDialog() {
           <div className="mountain-choices" role="radiogroup" aria-label="How it's cut">
             <label>
               <input type="radio" name="island-cut" checked={cutBy === "pieces"} onChange={() => setCutBy("pieces")} /> Into pieces of about{" "}
-              {numberBox(spec.piece, (v) => set("piece", v), 5, 15, 150, "mm", autoPieces)}
+              {numberBox(spec.piece, (v) => set("piece", v), 5, ISLAND_FLOOR, 150, "mm", autoPieces)}
             </label>
             <label>
               <input type="radio" name="island-cut" checked={cutBy === "boundaries"} onChange={() => setCutBy("boundaries")} /> Along real boundaries
@@ -675,7 +674,7 @@ export function IslandPuzzleDialog() {
               <label className="mountain-check">
                 <input type="checkbox" checked={most} onChange={(e) => setMost(e.target.checked)} /> As many pieces as will print well
               </label>
-              {autoPieces && <MostPiecesNote search={search} noun="Pieces" pieces={puzzle?.pieces.length ?? null} floorWords={`${ISLAND_FLOOR} mm is the smallest piece size this window makes`} what="pieces" />}
+              {autoPieces && <MostPiecesNote search={search} noun="Pieces" pieces={puzzle?.pieces.length ?? null} floorWords={`${ISLAND_FLOOR} mm is the smallest piece size this window makes`} looking="Finding the piece size that gives the most pieces that print well…" foundWords="most pieces that print well" />}
             </>
           )}
           {cutBy === "boundaries" && (

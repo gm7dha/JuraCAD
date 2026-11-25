@@ -42,9 +42,10 @@ import { loadTerrainTile } from "./mountainTiles";
 import { PickableView, type TopViewPick } from "./PathPicker";
 import { mountainViewBox, NONE_DROPPED, pickableLines, withoutDropped } from "../terrain/pickMarks";
 import { amsSlotsOf, loadPrinter, printerBed, savePrinter } from "./printerSetting";
-import { CUBE_STEP, mountainFloor, mountainLayoutVerdict, mountainPrintsWell, smallestThatPrints, type SearchResult, type SearchStep, type Verdict } from "../terrain/mostPieces";
+import { CUBE_STEP, mountainFloor, mountainLayoutVerdict, smallestThatPrints, type SearchResult, type SearchStep, type Verdict } from "../terrain/mostPieces";
 import { mostPiecesTicked, setMostPiecesTicked } from "./mostPiecesState";
 import { MostPiecesNote } from "./MostPiecesNote";
+import { MountainBuilder } from "./mountainBuilder";
 
 type Source = "peak" | "ref" | "picture" | "osm";
 
@@ -346,6 +347,8 @@ export function MountainPuzzleDialog() {
     setMostShown(on);
   };
   const [search, setSearch] = useState<{ key: string; steps: SearchStep[]; result: SearchResult | null } | null>(null);
+  const searchBuilder = useRef(new MountainBuilder());
+  useEffect(() => () => searchBuilder.current.stop(), []);
   const found = useRef<{ specKey: string; inputs: unknown[]; puzzle: MountainPuzzle } | null>(null);
   const cubeNow = useRef(spec.cube);
   cubeNow.current = spec.cube;
@@ -356,6 +359,7 @@ export function MountainPuzzleDialog() {
   const buildInputs: unknown[] = photoMode ? [photo, smooth, relief, invert, trim, features] : [mapUsed, features];
   useEffect(() => {
     if (!most || !loaded || !used) {
+      searchBuilder.current.stop();
       setSearch(null);
       return;
     }
@@ -373,7 +377,7 @@ export function MountainPuzzleDialog() {
         stopped: () => stopped,
         onStep: (steps) => !stopped && setSearch({ key: searchKey, steps, result: null }),
         test: async (cube): Promise<Verdict> => {
-          // A moment between builds, so the window draws the progress and stays usable.
+          // A moment between sizes, so the window draws the progress; the building itself is in a worker.
           await new Promise((r) => setTimeout(r, 30));
           if (stopped) return { ok: false };
           const u = photoMode ? photoFor(cube)?.used : mapUsed;
@@ -381,13 +385,15 @@ export function MountainPuzzleDialog() {
           const s: MountainSpec = { ...fullSpec, cube };
           const early = mountainLayoutVerdict(s, layoutFor(u.grid, u.width, u.height, { ...s, snowline: null }));
           if (early) return early;
-          try {
-            const p = makeMountainPuzzle(u.grid, u.width, u.height, s, features);
-            builtAt.set(cube, p);
-            return mountainPrintsWell(p);
-          } catch {
-            return { ok: false, why: "smaller cubes couldn't be made" };
-          }
+          return new Promise<Verdict>((resolve) => {
+            searchBuilder.current.build({ grid: u.grid, width: u.width, height: u.height, spec: s, features }, (reply) => {
+              if ("error" in reply) resolve({ ok: false, why: "smaller cubes couldn't be made" });
+              else {
+                builtAt.set(cube, reply.puzzle);
+                resolve(reply.verdict);
+              }
+            });
+          });
         },
       })
         .then((result) => {
@@ -404,6 +410,7 @@ export function MountainPuzzleDialog() {
     return () => {
       stopped = true;
       clearTimeout(timer);
+      searchBuilder.current.stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [most, !!loaded, searchKey, photoMode, photo, smooth, relief, invert, trim, mapUsed, features]);
@@ -798,7 +805,7 @@ export function MountainPuzzleDialog() {
           <label className="mountain-check">
             <input type="checkbox" checked={most} onChange={(e) => setMost(e.target.checked)} /> As many pieces as will print well
           </label>
-          {most && <MostPiecesNote search={search} noun="Cubes" pieces={puzzle?.pieces.length ?? null} floorWords={`${mountainFloor(spec.fit)} mm is the smallest cube with sturdy tabs`} what="cubes" />}
+          {most && <MostPiecesNote search={search} noun="Cubes" pieces={puzzle?.pieces.length ?? null} floorWords={`${mountainFloor(spec.fit)} mm is the smallest cube with sturdy tabs`} looking="Finding the smallest cubes that print well…" foundWords="smallest that prints well" />}
           <div className="mountain-row">
             <span>Side under the ground</span>
             <span>
