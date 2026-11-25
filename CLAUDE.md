@@ -2365,7 +2365,9 @@
   the Text / Insert DXF / Insert image group are listed there too. Smoke: click tools with `tool(name)` (opens the ▾ when needed).
   Top bar: its buttons never shrink (`.topbar > *`); the name and save state give way (ellipsis), labels go in steps
   (`early-label` Install/New/Open/Save ≤ 1260 px, the rest ≤ 1120 bar Claude's, all ≤ 1000); each button has an aria-label so
-  it keeps its name (the smoke test checks nothing is cut off at 1024–1366). Bottom-right corner: Measure/Mass
+  it keeps its name (the smoke test checks nothing is cut off at 1024–1366). Fonts differ, so the bar also
+  measures itself (`src/app/topBarFit.ts` `watchTopBar`: ResizeObserver + MutationObserver; classes `tight-1..3`, the first step
+  at which nothing overflows and the name box isn't squeezed to its minimum). Bottom-right corner: Measure/Mass
   (`.readout-stack`) moves left of a right-hand panel (`:has(> .laser-panel)`…); panels end above the status line; the touch bar
   sets `--touch-bar-room` on its parent (ResizeObserver) so the status line, readouts and panels sit above it. The 3D print /
   Laser panels scroll (children `flex-shrink: 0`), Laser's Save buttons are a sticky footer; the assembly panel scrolls as a whole.
