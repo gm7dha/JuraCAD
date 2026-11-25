@@ -144,11 +144,12 @@ describe("round between two curves", () => {
     expect(analyzeSketch(two.sketch).freedom).toBe(0);
   });
 
-  it("refuses circles and a radius that can't touch both", () => {
+  it("takes circles too, and refuses a radius that can't touch both", () => {
     let s = addLine(emptySketch(), at(0, 0), at(30, 0)).sketch;
     s = addCircle(s, at(10, 20), 5).sketch;
     const [l, c] = s.curves.map((k) => k.id);
-    expect(filletBetween(s, l, [0, 0], c, [10, 15], "2").error).toMatch(/arcs/);
+    expect(filletBetween(s, l, [0, 0], c, [10, 15], "2").error).toMatch(/radius/);
+    expect(filletBetween(s, l, [0, 0], c, [10, 15], "10").error).toBeUndefined();
   });
 });
 

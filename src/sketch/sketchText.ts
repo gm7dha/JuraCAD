@@ -253,15 +253,28 @@ function dropOrphans(s: SketchData, texts: SketchText[]): SketchText[] {
 export function keepSketchExtras(prev: SketchData, next: SketchData): SketchData {
   const texts = next.texts ?? prev.texts;
   const images = next.images ?? prev.images;
+  // Editable patterns too (the edit didn't know about them either).
+  const patterns = next.patterns ?? prev.patterns;
   const kept = texts ? dropOrphans(next, texts) : undefined;
-  if (kept === next.texts && images === next.images) return next;
-  return { ...next, ...(kept ? { texts: kept } : {}), ...(images ? { images } : {}) };
+  if (kept === next.texts && images === next.images && patterns === next.patterns) return next;
+  return { ...next, ...(kept ? { texts: kept } : {}), ...(images ? { images } : {}), ...(patterns ? { patterns } : {}) };
 }
 
 /** A sketch as it's saved: without empty text and picture lists (so a sketch without any is just as older files have it). */
 export function withoutEmptyExtras(s: SketchData): SketchData {
-  if (s.texts?.length !== 0 && s.images?.length !== 0) return s;
+  // Patterns whose copies have all gone are forgotten.
+  if (s.patterns) {
+    const live = new Set(s.constraints.flatMap((k) => (k.pattern ? [k.pattern.id] : [])));
+    const patterns = s.patterns.filter((p) => live.has(p.id));
+    if (patterns.length !== s.patterns.length) {
+      const { patterns: _p, ...rest } = s;
+      void _p;
+      s = patterns.length ? { ...rest, patterns } : rest;
+    }
+  }
+  if (s.texts?.length !== 0 && s.images?.length !== 0 && s.patterns?.length !== 0) return s;
   const out = { ...s };
+  if (out.patterns?.length === 0) delete out.patterns;
   if (out.texts?.length === 0) delete out.texts;
   if (out.images?.length === 0) delete out.images;
   return out;

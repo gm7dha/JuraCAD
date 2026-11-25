@@ -1,6 +1,7 @@
 /** Actions used by both the sketch toolbar and keyboard shortcuts. */
 import { patternGrid, readSecondDirection } from "../sketch/patternGrid";
 import { useEditToolOptions } from "../sketch/editToolOptions";
+import { editPattern, type PatternChange } from "../sketch/patternEdit";
 import { activeFeatures, useStore, type SketchTool } from "../model/store";
 import { sketchPlaneRefs } from "../sketch/planeRefsFor";
 import { applyRelation, relationMayTakeAWhile, RELATION_LABELS, setDimensionDriven, setMeasureTo, toggleConstruction, type MeasureTo, type RelationTool } from "../sketch/ops";
@@ -55,6 +56,27 @@ export function makeSketchPattern(): boolean {
   const copies = Math.round(s.sketch.patternCount) * (second && typeof second !== "string" ? Math.round(second.count) : 1) - 1;
   s.setSketchMessage(`Made ${copies} ${copies === 1 ? "copy" : "copies"}. Click more shapes to make another pattern.`, "info");
   viewportApi.sketch?.refreshPreview();
+  return true;
+}
+
+/** Show a pattern's settings in the sketch panel to change them (the menu's Edit pattern…). */
+export function openPatternEditor(id: string): void {
+  useEditToolOptions.getState().set({ editingPattern: id });
+  useStore.getState().setSketchMessage("Change the pattern's count or spacing in the sketch panel, then Apply. Copies already there keep their dimensions and relations.", "info");
+}
+
+/** Change a pattern made earlier: its count, spacing (or angle) and second direction. */
+export function applyPatternChange(id: string, change: PatternChange): boolean {
+  const s = useStore.getState();
+  const data = sketchData();
+  if (!data || !s.sketch) return false;
+  const r = editPattern(data, id, change);
+  if (r.error) {
+    s.setSketchMessage(r.error, "error");
+    return false;
+  }
+  s.updateSketch(r.sketch, { record: true });
+  s.setSketchMessage("Pattern changed.", "info");
   return true;
 }
 
