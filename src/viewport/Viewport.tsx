@@ -1,3 +1,4 @@
+import { partsAfterSketch } from "../model/finalPreview";
 import { useSketchView } from "../app/sketchViewState";
 import { hiddenConstruction } from "../sketch/sketchView";
 import { openSketchMenu } from "../app/sketchMenuActions";
@@ -1119,7 +1120,17 @@ export function Viewport() {
     manager.setMarkers(markers);
   }, [assembly, mateDraft, parts, solved, allAssemblies]);
 
-  useEffect(() => viewportApi.current?.setHidden(assembly ? hiddenMeshes(hiddenInstances, leaves) : hiddenParts), [hiddenParts, hiddenInstances, assembly, leaves]);
+  // Editing an existing sketch: what later features made is hidden (or see-through), as if rolled back to it.
+  const sketchEditId = useStore((s) => (s.editing?.mode === "edit" && s.editing.draft.type === "sketch" ? s.editing.draft.id : null));
+  const sketchFeatures = useStore(activeFeatures);
+  const afterSketch = useMemo(
+    () => (assembly || !sketchEditId ? null : partsAfterSketch(sketchFeatures, parts, { mode: "edit", draft: { id: sketchEditId, type: "sketch" } })),
+    [assembly, sketchFeatures, parts, sketchEditId],
+  );
+  useEffect(
+    () => viewportApi.current?.setHidden(assembly ? hiddenMeshes(hiddenInstances, leaves) : afterSketch ? [...hiddenParts, ...afterSketch.hidden] : hiddenParts),
+    [hiddenParts, hiddenInstances, assembly, leaves, afterSketch],
+  );
   // Comparing versions: the older one's parts, see-through over the design (Part Studios only).
   const compare = useStore((s) => s.versionCompare);
   const ghostStudio = useStore(activeStudioId);
@@ -1127,8 +1138,11 @@ export function Viewport() {
   useEffect(() => viewportApi.current?.setGhosts(ghosts), [ghosts]);
   const transparentParts = useStore((s) => s.transparentParts);
   useEffect(
-    () => viewportApi.current?.setTransparent(assembly ? NO_IDS : contextShown.length ? [...transparentParts, ...contextShown.map((p) => p.id)] : transparentParts),
-    [transparentParts, assembly, contextShown],
+    () =>
+      viewportApi.current?.setTransparent(
+        assembly ? NO_IDS : contextShown.length || afterSketch ? [...transparentParts, ...contextShown.map((p) => p.id), ...(afterSketch?.seeThrough ?? [])] : transparentParts,
+      ),
+    [transparentParts, assembly, contextShown, afterSketch],
   );
   // Plane features (and the one being made), drawn as squares you can click to sketch on.
   const planeDraft = useStore((s) => (s.editing?.draft.type === "plane" ? s.editing.draft : null));

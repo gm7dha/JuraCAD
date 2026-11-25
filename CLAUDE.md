@@ -1293,6 +1293,12 @@
   its whole build (`parked`, `sourceBuild`), so Derived/context studios aren't rebuilt, later features' errors/warnings/notes
   stay on their rows, and closing unchanged or ticking Final takes it back without building (only meshed). Sketches are left
   as before (their snap list and "ref:<n>" ids come from the whole build). Tests: tests/finalPreview, engineFinalPreview.
+  Editing an existing sketch shows the parts as rolled back to it WITHOUT a rebuild (candidates/ids untouched): pure
+  `partsAfterSketch` (finalPreview.ts) — parts whose making feature comes after the sketch hidden, parts made before but
+  changed later see-through; Viewport adds them to setHidden/setTransparent only (never `store.hiddenParts`). The rollback bar
+  at rest: `RollbackEnd` (FeaturePanel, `.rollback-end`, a slim draggable line under the last feature while not rolled back;
+  drops go through `dropRollbackAbove` as the rolled-back bar's). A new drawing (`addDrawing`) draws the picked part, else
+  `mainPart` (src/drawing/defaultPart.ts: the biggest solid, first of equals — not a pattern copy). Tests: editRollbackView.
 - Corners (vertices, Onshape's): pure `src/geometry/vertexRef.ts` — `VertexRef` {p, rel (share of the part's box), dirs (unit
   directions its edges leave in)} / `VertexPick` {partId, ref}; `cornersFromEnds` groups edge ends (`SAME_CORNER` 1 µm; closed
   edges have none), `meshCorners`/`cornersOf` (cached per PartMesh: ends from `edgeRefs`, directions from the drawn lines — no
