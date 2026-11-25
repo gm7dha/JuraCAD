@@ -863,14 +863,17 @@
   (src/geometry/decimate.ts: Garland–Heckbert quadric edge collapse, area-weighted planes, open edges held by standing planes
   ×1000 and open corners kept in place; placed at the least error ALONG the edge only — off-edge optima pull rough meshes
   inward; refused when the ends share more than the two opposite corners (stays closed/manifold), a triangle turns > 78° or
-  becomes a sliver, or a body would drop under 4 corners; dead triangles are taken off the opposite corners' lists — leaving
+  becomes a sliver (`thinness` < `SLIVER` 0.01 — a triangle that was one already, as CAD files' fans and hole strips are, may move if
+  it gets no thinner; refusing those left CAD meshes stuck above the target until only collapses through walls were left), or a body would drop under 4 corners; dead triangles are taken off the opposite corners' lists — leaving
   them folded rough meshes) and keeps ONLY the reduced binary STL with `ImportedFile.reducedFrom` (missing = as before; old
   files and STLs ≤ 50k byte-identical). App: fileActions reduces to `USUAL_REDUCE` 25k in `src/app/stlReduce.worker.ts`
   (`stlReduce.ts` keeps the last 2 originals in memory, session only), the Import dialog's `ReducedStlChoice` says how far and
   offers Less detail / Usual / Most detail (`REDUCE_CHOICES` 10k/25k/50k) while the original is still in memory. Simplify then
   works on the reduced mesh (≤ 50k = planMesh's MAX_TRIANGLES). 1M → 25k reduces in ~16 s, 300k in ~4 s; 25k builds in ~20 s.
   Tests: tests/decimate (pure: closed, count, volume, box edges exact, open sheet outline, a pathological rough ball),
-  importFile (limits, reducing), engineStlReduce (heavy: 300k → 25k built, volume within 1%).
+  decimateMore (a plate with Ø8/Ø3 holes at 25k and 10k: corners on their faces, Simplify still finds both holes and 6 planes; a 1 mm
+  walled cup down to 3k: volume within 0.2%, no triangles crossing; small raised letters kept; two bodies, duplicate/flipped triangles and
+  a hole in the mesh), importFile (limits, reducing), engineStlReduce (heavy: 300k → 25k built, volume within 1%).
 - Move / copy (Onshape's Transform): `Feature.transform` (`TransformDef` in types.ts). `mode` (missing = "free": turns about
   X, then Y, then Z, then the move — the original way) or "xyz" (Translate by XYZ: moves only), "distance" (`distance` box along
   `along`: the triad's X/Y/Z or a clicked `{dir, through}`), "line" (`line` {a, b}: a clicked straight edge, from the end nearer the

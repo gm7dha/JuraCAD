@@ -235,8 +235,12 @@ export function decimate(vertices: ArrayLike<number>, triangles: ArrayLike<numbe
       if (lb === 0) continue;
       const cos = (before[0] * after[0] + before[1] * after[1] + before[2] * after[2]) / (lb * la);
       if (cos < MOST_TURN) return false;
-      // No sliver: the smallest height of the moved triangle at least a little of its longest side.
-      if (sliver(pos, a, b, c, v, place)) return false;
+      // No new sliver: the smallest height of the moved triangle at least a little of its longest side — or, for a
+      // triangle that was a sliver already (CAD files are full of them: fans on flat faces, strips round holes), no
+      // thinner than it was. (Refusing every move of a sliver left such meshes stuck far above the triangles asked
+      // for, until only bad collapses were left.)
+      const thin = thinness(pos, a, b, c, v, place);
+      if (thin < SLIVER && thin < thinness(pos, a, b, c, v, pos.subarray(3 * v, 3 * v + 3))) return false;
     }
     return true;
   };
@@ -319,8 +323,11 @@ function normal(pos: Float64Array, a: number, b: number, c: number): [number, nu
   return [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
 }
 
-/** Whether triangle a b c, with corner v moved to `to`, would be a sliver (its height under 1% of its longest side). */
-function sliver(pos: Float64Array, a: number, b: number, c: number, v: number, to: Float64Array): boolean {
+/** A triangle's smallest height over its longest side: below this it's a sliver. */
+const SLIVER = 0.01;
+
+/** How thin triangle a b c is with corner v moved to `to`: its smallest height over its longest side (0 = no area). */
+function thinness(pos: Float64Array, a: number, b: number, c: number, v: number, to: ArrayLike<number>): number {
   const p = (i: number, k: number) => (i === v ? to[k] : pos[3 * i + k]);
   const ab = Math.hypot(p(b, 0) - p(a, 0), p(b, 1) - p(a, 1), p(b, 2) - p(a, 2));
   const bc = Math.hypot(p(c, 0) - p(b, 0), p(c, 1) - p(b, 1), p(c, 2) - p(b, 2));
@@ -329,7 +336,7 @@ function sliver(pos: Float64Array, a: number, b: number, c: number, v: number, t
   const wx = p(c, 0) - p(a, 0), wy = p(c, 1) - p(a, 1), wz = p(c, 2) - p(a, 2);
   const twiceArea = Math.hypot(uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx);
   const longest = Math.max(ab, bc, ca);
-  return longest === 0 || twiceArea / longest < 0.01 * longest;
+  return longest === 0 ? 0 : twiceArea / (longest * longest);
 }
 
 function compact(pos: Float64Array, tri: Int32Array, aliveTri: Uint8Array, nv: number): DecimateResult {
