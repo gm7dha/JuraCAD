@@ -7,12 +7,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import type { PartMesh } from "../src/kernel/protocol";
 import { emptyDocument, historyOf } from "../src/model/document";
-import { missingPick } from "../src/model/draftReady";
+import { acceptBlocker, missingPick } from "../src/model/draftReady";
 import { aimedFlip, clearSpacing, holeSketchFor, materialBehind, sizeAlong, suggestedSpacing } from "../src/model/newFeatureDefaults";
 import { activeFeatures, useStore } from "../src/model/store";
 import type { Feature, JuraCADDocument } from "../src/model/types";
 import { addCircle, addPoint } from "../src/sketch/ops";
-import type { SketchPlane } from "../src/sketch/planes";
+import { planeOnFace, type SketchPlane } from "../src/sketch/planes";
 import { emptySketch } from "../src/sketch/types";
 
 const s = () => useStore.getState();
@@ -36,6 +36,10 @@ describe("which way an Extrude from a part's face starts", () => {
     expect(aimedFlip({ ...ext, operation: "intersect" }, topFace)).toBe(true);
     expect(aimedFlip({ ...ext, operation: "add" }, topFace)).toBe(false);
     expect(aimedFlip({ ...ext, operation: "remove" }, { kind: "default", name: "Top" })).toBeNull();
+    // A sketch on the bottom face (its normal points down, out of the part): a Remove still goes up into it.
+    const bottom = planeOnFace([0, 0, -1], [20, 15, 0], "Face of Part 1", { partId: "b", ref: { kind: "face", surface: "PLANE", center: [20, 15, 0], normal: [0, 0, -1] } });
+    expect(materialBehind(bottom)).toBe(true);
+    expect(aimedFlip({ ...ext, operation: "remove" }, bottom)).toBe(true);
   });
 
   it("points a Remove into the part when chosen, back out for Add, and leaves a direction the user chose", () => {
@@ -91,6 +95,21 @@ describe("Accept waits for what must be picked", () => {
     expect(s().editing).not.toBeNull();
     expect(activeFeatures(s()).length).toBe(1);
     s().cancelDraft();
+  });
+});
+
+describe("Accept never traps an existing feature", () => {
+  it("lets a feature that was already missing its picks be accepted again (an old Open shell, edges lost upstream)", () => {
+    const oldShell = feat("sh", "shell");
+    expect(acceptBlocker(oldShell, oldShell)).toBeNull();
+    expect(acceptBlocker(oldShell, null)).toMatch(/Pick the faces/);
+    const edge = { partId: "b", ref: { kind: "edge" as const, curve: "LINE", a: [0, 0, 0] as [number, number, number], b: [1, 0, 0] as [number, number, number], mid: [0.5, 0, 0] as [number, number, number] } };
+    // Had its picks when opened, all taken off in the dialog: waits again.
+    expect(acceptBlocker(feat("f", "fillet"), feat("f", "fillet", { picks: [edge] }))).toMatch(/Click the edges/);
+    reset([feat("b", "box"), oldShell]);
+    s().startEdit("sh");
+    s().setDraftParam("thickness", "3");
+    expect(s().commitDraft()).toBe(true);
   });
 });
 
@@ -158,6 +177,42 @@ describe("a new Hole's sketch", () => {
     expect(activeFeatures(s()).length).toBe(2);
     s().cancelDraft();
     expect(activeFeatures(s()).map((f) => f.id)).toEqual(["s1"]);
+  });
+});
+
+describe("a Hole's face clicks never put an older design back", () => {
+  const withPoint = (id: string) => feat(id, "sketch", { sketch: { plane: { kind: "default", name: "Top" }, data: addPoint(emptySketch(), { x: 1, y: 1 }).sketch } });
+  it("keeps a change made while the dialog is open (the design renamed between clicks), on Cancel and on Accept", () => {
+    for (const accept of [false, true]) {
+      reset([withPoint("s1")]);
+      s().startCreate("hole");
+      s().placeHoleAt(topFace, [10, 10, 20]);
+      s().renameDocument("Renamed");
+      s().placeHoleAt(topFace, [30, 20, 20]);
+      expect(s().history.present.name).toBe("Renamed");
+      if (accept) {
+        expect(s().commitDraft()).toBe(true);
+        expect(activeFeatures(s()).map((f) => f.type)).toEqual(["sketch", "sketch", "hole"]);
+        expect(activeFeatures(s())[1].sketch!.data.points.length).toBe(2);
+      } else {
+        s().cancelDraft();
+        expect(activeFeatures(s()).map((f) => f.id)).toEqual(["s1"]);
+      }
+      expect(s().history.present.name).toBe("Renamed");
+    }
+  });
+
+  it("forgets the sketch when another design is opened mid-dialog, without bringing the old one back later", () => {
+    reset([withPoint("s1")]);
+    s().startCreate("hole");
+    s().placeHoleAt(topFace, [10, 10, 20]);
+    s().newDocument();
+    s().startCreate("box");
+    expect(s().commitDraft()).toBe(true);
+    expect(activeFeatures(s()).map((f) => f.type)).toEqual(["box"]);
+    s().startCreate("box");
+    s().cancelDraft();
+    expect(activeFeatures(s()).map((f) => f.type)).toEqual(["box"]);
   });
 });
 

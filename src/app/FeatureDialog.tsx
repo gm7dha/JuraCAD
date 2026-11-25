@@ -1,5 +1,5 @@
 import { BoundaryOptions, FaceBlendOptions } from "./BoundaryBlendOptions";
-import { missingPick } from "../model/draftReady";
+import { acceptBlocker } from "../model/draftReady";
 import { FinalToggle } from "./FinalToggle";
 import { MergeScopeField } from "./MergeScopeField";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -2620,6 +2620,8 @@ export function FeatureDialog() {
   const buildWarning = useStore((s) => (s.editing ? s.featureWarnings[s.editing.draft.id] : undefined));
   const buildNote = useStore((s) => (s.editing ? s.featureNotes[s.editing.draft.id] : undefined));
   const busy = useStore((s) => s.rebuildBusy);
+  // The feature as saved (editing): what it was already missing doesn't stop Accept.
+  const original = useStore((s) => (s.editing?.mode === "edit" ? activeFeatures(s).find((f) => f.id === s.editing!.draft.id) ?? null : null));
   // Move / copy's triad being dragged: its boxes follow it live.
   const live = useStore((s) => s.transformLive);
   const ref = useRef<HTMLFormElement>(null);
@@ -2648,7 +2650,7 @@ export function FeatureDialog() {
   const needsRef = draft.type === "mirror" ? !!draft.mirror?.unset : (draft.type === "circularPattern" || draft.type === "linearPattern") && !!draft.pattern?.unset;
   const refHint = draft.type === "mirror" ? "Choose the mirror plane first" : draft.type === "circularPattern" ? "Choose the axis first" : "Choose the direction first";
   // Nothing picked yet where something must be (a fillet with no edges): the ✓ waits, saying what to click.
-  const missing = needsRef ? null : missingPick(draft);
+  const missing = needsRef ? null : acceptBlocker(draft, mode === "edit" ? original : null);
   const groups: { title: string; params: ParamDef[] }[] = [
     { title: draft.type === "plane" ? "Placement" : draft.type === "extrude" ? "Depth" : draft.type === "revolve" ? "How far round" : draft.type === "shell" ? "Walls" : isPatternFeature(draft.type) ? "Copies" : draft.type === "transform" ? "Turn" : "Size", params: def.params.filter((p) => p.group === "size") },
     { title: draft.type === "transform" ? "Move" : draft.type === "circularPattern" ? "Axis goes through" : "Position", params: def.params.filter((p) => p.group === "position") },

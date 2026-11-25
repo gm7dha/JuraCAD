@@ -4048,27 +4048,41 @@ export class GeometryEngine {
     return featureErrors;
   }
 
-  /** Volumes of shapes already measured (a part's shape object is replaced whenever it changes). */
-  private shapeVolumes = new WeakMap<Shape3D, number>();
-  private volumeOf(shape: Shape3D): number {
-    let v = this.shapeVolumes.get(shape);
-    if (v === undefined) {
+  /** Volumes and face counts of shapes already measured (a part's shape object is replaced whenever it changes). */
+  private shapeSizes = new WeakMap<Shape3D, { volume: number; faces: number }>();
+  private sizeOf(shape: Shape3D): { volume: number; faces: number } {
+    let m = this.shapeSizes.get(shape);
+    if (!m) {
+      let volume = NaN;
+      let faces = -1;
       try {
-        v = measureVolume(shape);
+        volume = measureVolume(shape);
+        const oc = getOC();
+        const ex = new oc.TopExp_Explorer(shape.wrapped, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+        try {
+          faces = 0;
+          for (; ex.More(); ex.Next()) faces++;
+        } finally {
+          ex.delete();
+        }
       } catch {
-        v = NaN;
+        volume = NaN;
       }
-      this.shapeVolumes.set(shape, v);
+      m = { volume, faces };
+      this.shapeSizes.set(shape, m);
     }
-    return v;
+    return m;
   }
 
   /** The solid parts as they are before a feature that should change them. */
   private watchChange(feature: Feature): ChangeWatch {
-    return { id: feature.id, operation: feature.operation, parts: this.parts.filter((p) => !p.surface).map((p) => ({ id: p.id, shape: p.shape, volume: this.volumeOf(p.shape) })), count: this.parts.length };
+    return { id: feature.id, operation: feature.operation, parts: this.parts.filter((p) => !p.surface).map((p) => ({ id: p.id, shape: p.shape, ...this.sizeOf(p.shape) })), count: this.parts.length };
   }
 
-  /** "This doesn't change anything" when every solid part is as it was (same parts, same volumes), else null. */
+  /**
+   * "This doesn't change anything" when every solid part is as it was (same parts, same volumes, as many faces), else
+   * null. The face count tells a tiny hole in a big part (its volume within the tolerance) from no change at all.
+   */
   private noChangeNote(w: ChangeWatch): string | null {
     if (this.parts.length !== w.count) return null;
     const now = this.parts.filter((p) => !p.surface);
@@ -4078,8 +4092,9 @@ export class GeometryEngine {
       const p = now[i];
       if (p.id !== was.id) return null;
       if (p.shape === was.shape) continue;
-      const v = this.volumeOf(p.shape);
-      if (!Number.isFinite(v) || !Number.isFinite(was.volume) || Math.abs(v - was.volume) > 1e-6 * Math.max(1, Math.abs(was.volume))) return null;
+      const { volume: v, faces } = this.sizeOf(p.shape);
+      if (faces < 0 || faces !== was.faces) return null;
+      if (!Number.isFinite(v) || !Number.isFinite(was.volume) || Math.abs(v - was.volume) > 1e-8 * Math.max(1, Math.abs(was.volume))) return null;
     }
     return noChangeMessage(w.operation);
   }
@@ -9255,7 +9270,7 @@ export class GeometryEngine {
 interface ChangeWatch {
   id: string;
   operation: Feature["operation"];
-  parts: { id: string; shape: Shape3D; volume: number }[];
+  parts: { id: string; shape: Shape3D; volume: number; faces: number }[];
   count: number;
 }
 

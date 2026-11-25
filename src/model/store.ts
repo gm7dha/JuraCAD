@@ -86,7 +86,7 @@ import { newKeepId, readKept } from "./browserKeep";
 import { rememberOptions, withRemembered, type OptionsMemory } from "./lastOptions";
 import { holeSketchFor, withAutoValues, type AutoContext, type AutoValues } from "./newFeatureDefaults";
 import { holePositionCount } from "../sketch/holePositions";
-import { missingPick } from "./draftReady";
+import { acceptBlocker } from "./draftReady";
 import { editRollback } from "./finalPreview";
 
 /** Which instances show a symmetric part, or a symmetric sub-assembly (for mirrors that show such things as themselves). */
@@ -873,13 +873,22 @@ export const useStore = create<AppState>((set, get) => {
     };
   };
   // The sketch a new Hole's face clicks make (see placeHoleAt): kept out of the undo history until Accept, when it goes
-  // in with the hole as one step; Cancel takes it away again.
-  let holeSketch: { draftId: string; sketch: Feature; before: History; studio: string } | null = null;
+  // in with the hole as one step; Cancel takes it away again. `placed` is the document as the last click left it, and
+  // `clean` says nothing else has changed the design since the first click (then `before` can simply be put back).
+  let holeSketch: { draftId: string; sketch: Feature; before: History; placed: JuraCADDocument; clean: boolean; studio: string } | null = null;
   const dropHoleSketch = () => {
     if (!holeSketch) return;
-    const { before } = holeSketch;
+    const { before, placed, clean, sketch, studio } = holeSketch;
     holeSketch = null;
-    set({ history: before });
+    const h = get().history;
+    if (clean && h.present === placed) {
+      set({ history: before });
+      return;
+    }
+    // Something else changed the design meanwhile (or another document is open now): take only the sketch out again,
+    // never putting back an older design.
+    if (!studioFeatures(h.present, studio).some((f) => f.id === sketch.id)) return;
+    set({ history: { ...h, present: inStudio(h.present, studio, (doc) => removeFeature(doc, sketch.id)) } });
   };
   const withAuto = (draft: Feature, mode: "create" | "edit"): Feature => {
     if (mode !== "create" || autoValues.id !== draft.id) return draft;
@@ -1472,7 +1481,8 @@ export const useStore = create<AppState>((set, get) => {
       const { errors } = resolveParams(editing.draft);
       if (Object.keys(errors).length > 0) return false;
       // Nothing picked yet where something must be (a fillet with no edges): not accepted, as Onshape's greyed ✓.
-      const missing = missingPick(editing.draft);
+      const original = editing.mode === "edit" ? activeFeatures(get()).find((f) => f.id === editing.draft.id) : null;
+      const missing = acceptBlocker(editing.draft, original);
       if (missing) {
         get().showToast(missing, "info");
         return false;
@@ -1527,11 +1537,16 @@ export const useStore = create<AppState>((set, get) => {
       const base = mine?.sketch ?? { ...createFeature(view(), "sketch"), sketch: { plane, data: emptySketch() } };
       const data = addPoint(base.sketch!.data, { x: at[0], y: at[1] }).sketch;
       const sketch: Feature = { ...base, sketch: { ...base.sketch!, data } };
-      const before = mine?.before ?? s.history;
-      holeSketch = { draftId: d.id, sketch, before, studio };
+      const h = s.history;
+      const clean = mine ? mine.clean && h.present === mine.placed : true;
+      const before = mine?.before ?? h;
       // (Rolled back: it goes in at the rollback point, as the hole will.)
-      const placed = inStudio(before.present, studio, (doc) => (s.rollbackTo ? insertFeatureAfter(doc, sketch, s.rollbackTo) : addFeature(doc, sketch)));
-      set({ history: { ...before, present: placed }, editing: { ...s.editing!, draft: { ...d, hole: { ...d.hole, sketchRef: sketch.id } } } });
+      const from = clean ? before.present : h.present;
+      const placed = inStudio(from, studio, (doc) =>
+        doc.features.some((f) => f.id === sketch.id) ? replaceFeature(doc, sketch) : s.rollbackTo ? insertFeatureAfter(doc, sketch, s.rollbackTo) : addFeature(doc, sketch),
+      );
+      holeSketch = { draftId: d.id, sketch, before, placed, clean, studio };
+      set({ history: { ...(clean ? before : h), present: placed }, editing: { ...s.editing!, draft: { ...d, hole: { ...d.hole, sketchRef: sketch.id } } } });
     },
 
     setRollback: (id) => {

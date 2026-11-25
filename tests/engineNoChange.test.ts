@@ -60,6 +60,14 @@ describe("a feature that changes nothing", () => {
     expect(floating.featureWarnings?.boss).toBeUndefined();
   });
 
+  it("says nothing about a tiny hole in a big block (its volume is a few billionths of the block's)", () => {
+    const big: Feature = { ...box, params: { ...box.params, width: "300", depth: "300", height: "100" } };
+    const face: SketchPlane = { ...top, origin: [0, 0, 100] };
+    const r = build([big, circle("s", 150, 150, 0.25, face), extrude("cut", "s", "remove", 1, true)]);
+    expect(r.featureErrors.cut).toBeUndefined();
+    expect(r.featureWarnings?.cut).toBeUndefined();
+  });
+
   it("says nothing about a cut a pattern repeats (its seed may sit off the part on purpose)", () => {
     const pattern: Feature = { id: "p", name: "p", type: "linearPattern", operation: "add", suppressed: false, params: { ...defaultParams("linearPattern"), spacing: "10" }, pattern: { sources: ["cut"], axis: "x", flip: false } };
     const r = build([box, circle("s", 20, 15, 5), extrude("cut", "s", "remove", 5, false), pattern]);

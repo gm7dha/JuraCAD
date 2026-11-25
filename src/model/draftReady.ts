@@ -75,3 +75,14 @@ export function missingPick(f: Feature): string | null {
       return null;
   }
 }
+
+/**
+ * What stops Accept: `missingPick`, except when an existing feature being edited was already missing it when the dialog
+ * opened (its picks lost to an upstream change, an older Shell saved Open with no face) — then Accept stays free, so
+ * the user is never trapped in the dialog (the engine says what's wrong on the row as before).
+ */
+export function acceptBlocker(draft: Feature, original?: Feature | null): string | null {
+  const missing = missingPick(draft);
+  if (!missing || !original || original.id !== draft.id) return missing;
+  return missingPick(original) ? null : missing;
+}
