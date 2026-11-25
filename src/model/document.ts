@@ -488,6 +488,8 @@ function parseImportedFile(raw: unknown): ImportedFile | null {
     data: r.data,
     units: r.units === "in" ? "in" : "mm",
     ...(typeof r.reducedFrom === "number" && Number.isInteger(r.reducedFrom) && r.reducedFrom > 0 ? { reducedFrom: r.reducedFrom } : {}),
+    ...(r.format === "stl" && (r.from === "3mf" || r.from === "obj") ? { from: r.from } : {}),
+    ...(r.format === "stl" && r.from === "3mf" && typeof r.unitMm === "number" && Number.isFinite(r.unitMm) && r.unitMm > 0 && r.unitMm !== 1 ? { unitMm: r.unitMm } : {}),
   };
 }
 
