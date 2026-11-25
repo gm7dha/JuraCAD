@@ -330,9 +330,19 @@ export interface StepResult {
   partCount: number;
 }
 
+/** For a multi-colour 3MF: faces with colours of their own (by part id) and the Bambu spools parts' colours were picked from. */
+export interface FilamentColours {
+  faceAppearance: import("../model/faceColours").FaceAppearance;
+  partSpools?: Record<string, string>;
+}
+
 export interface ThreeMfResult {
   /** An assembly's features that couldn't be made or couldn't cut, in plain words (see InstanceInput.cuts). */
   cutNotes?: string[];
+  /** A multi-colour file (faces coloured): its filaments in number order. Missing = a plain file, as before. */
+  filaments?: import("../geometry/filament3mf").Filament[];
+  /** Face colours that couldn't be found on their parts (left in the part's own colour). */
+  lostFaces?: number;
   /** .3mf file contents. */
   data: ArrayBuffer;
   triangleCount: number;
@@ -370,22 +380,22 @@ export type KernelRequest =
   | { type: "rebuild"; studios: StudioInput[]; variables: Record<string, number>; partNames?: Record<string, string> }
   | { type: "check"; quality: MeshQuality; partIds?: string[] }
   | { type: "exportStl"; partIds: string[]; quality: MeshQuality; instances?: InstanceInput[] }
-  | { type: "exportStep"; partIds: string[]; colours?: Record<string, string>; instances?: InstanceInput[]; tree?: StepTree }
+  | { type: "exportStep"; partIds: string[]; colours?: Record<string, string>; instances?: InstanceInput[]; tree?: StepTree; faces?: FilamentColours }
   | { type: "clashes"; instances: InstanceInput[]; tolerance?: number; withGaps?: boolean; fitRange?: number; fitPairs?: [string, string][] }
   | { type: "assemblyCuts"; instances: InstanceInput[] }
   | { type: "project"; partIds: string[]; instances?: InstanceInput[]; views: ViewKind[]; hidden: boolean; sections?: SectionRequest[]; breakouts?: BreakOutRequest[]; tangent?: boolean }
-  | { type: "measure"; picks: (TopoPick | import("../geometry/vertexRef").VertexPick)[] }
-  | { type: "measureParts"; partIds: string[] }
-  | { type: "massProperties"; partIds: string[] }
+  | { type: "measure"; picks: (TopoPick | import("../geometry/vertexRef").VertexPick)[]; instances?: InstanceInput[]; copies?: string[] }
+  | { type: "measureParts"; partIds: string[]; instances?: InstanceInput[] }
+  | { type: "massProperties"; partIds: string[]; instances?: InstanceInput[] }
   | { type: "unfold"; partId: string }
   | { type: "laserOutlines"; sources: LaserSource[] }
   | { type: "intersect"; partId: string; plane: SketchPlane; face?: FaceRef }
   | { type: "useEdge"; partId: string; ref: EdgeRef; plane: SketchPlane }
   | { type: "deleteFaceBlockers"; features: Feature[]; featureId: string; variables: Record<string, number> }
   | { type: "sketchCandidates"; studioId: string; sketchId: string; known?: number }
-  | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string; colours?: Record<string, string>; instances?: InstanceInput[] }
+  | { type: "export3mf"; partIds: string[]; quality: MeshQuality; title: string; colours?: Record<string, string>; instances?: InstanceInput[]; faces?: FilamentColours }
   | { type: "printCheck"; parts: PrintCheckPart[]; settings: PrintCheckSettings }
-  | { type: "exportPrint3mf"; parts: PrintCheckPart[]; bed: [number, number]; gap: number; quality: MeshQuality; title: string; colours?: Record<string, string> };
+  | { type: "exportPrint3mf"; parts: PrintCheckPart[]; bed: [number, number]; gap: number; quality: MeshQuality; title: string; colours?: Record<string, string>; faces?: FilamentColours };
 
 export type KernelResponseBody =
   | { type: "rebuild"; result: RebuildResult }

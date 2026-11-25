@@ -5,7 +5,7 @@
 import { useMemo, useRef, useState } from "react";
 
 import { viewNameProblem, type NamedView } from "../model/namedViews";
-import { useStore, viewOwner } from "../model/store";
+import { activeAssembly, activeDrawing, studioParts, useStore, viewOwner } from "../model/store";
 import { FILTER_OPTIONS, filtering, filterSummary, NO_FILTER, toggleFilter } from "../viewport/selectionFilter";
 import { setSelectOther, useSelectOther } from "../viewport/selectOtherState";
 import type { OtherChoice } from "../viewport/selectOther";
@@ -13,6 +13,7 @@ import { featureForFace } from "../viewport/featureFaces";
 import { pickChoice, previewChoice, viewportApi } from "../viewport/Viewport";
 import { additive } from "../viewport/touchKeys";
 import { finishPaste } from "./featureClipboardApp";
+import { facesToColour, openFaceColour } from "./FaceColourMenu";
 import { Icons } from "./icons";
 import { Modal } from "./Modal";
 import { PlacedPopup } from "./PlacedPopup";
@@ -243,6 +244,34 @@ export function SelectOtherMenu() {
           <div className="menu-divider" role="separator" />
         </>
       )}
+      {face && faceColourable(face.partId) && (
+        <>
+          <button
+            className="menu-item"
+            role="menuitem"
+            onClick={() => {
+              close();
+              openFaceColour({ at: open.at, faces: facesToColour(face.partId, face.index) });
+            }}
+            title="Give the face under the pointer (or the faces picked, if it's one of them) a colour of its own — carried into 3MF files for multi-colour prints"
+          >
+            {faceColourLabel(face.partId, face.index)}
+          </button>
+          {!!useStore.getState().history.present.faceAppearance?.[face.partId]?.length && (
+            <button
+              className="menu-item"
+              role="menuitem"
+              onClick={() => {
+                close();
+                useStore.getState().clearFaceColours(face.partId);
+              }}
+            >
+              Clear face colours on this part
+            </button>
+          )}
+          <div className="menu-divider" role="separator" />
+        </>
+      )}
       <div className="select-other-title">Select other</div>
       {open.choices.map((c, i) => (
         <button
@@ -262,6 +291,18 @@ export function SelectOtherMenu() {
       ))}
     </PlacedPopup>
   );
+}
+
+/** Faces can be coloured in a Part Studio (not in an assembly, a drawing, a sketch, an open feature or an old version). */
+function faceColourable(partId: string): boolean {
+  const s = useStore.getState();
+  return !s.editing && !s.sketch && !s.versionView && !activeAssembly(s) && !activeDrawing(s) && studioParts(s).some((p) => p.id === partId);
+}
+
+function faceColourLabel(partId: string, index: number): string {
+  const faces = facesToColour(partId, index);
+  const n = Object.values(faces).reduce((k, l) => k + l.length, 0);
+  return n > 1 ? `Colour the ${n} picked faces…` : "Colour this face…";
 }
 
 /** Before pasting features that use variables this design doesn't have: add them? */

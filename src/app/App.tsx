@@ -2,6 +2,7 @@ import { copySketchSelection, duplicateSketchSelection, pasteIntoSketch } from "
 import { startLink } from "./juraLinkApp";
 import { startFeatureClipboard } from "./featureClipboardApp";
 import { PasteDialog, SelectOtherMenu } from "./ViewTools";
+import { FaceColourMenu } from "./FaceColourMenu";
 import { SketchContextMenu } from "./SketchContextMenu";
 import { closeSketchMenu, runSketchKey, sketchMenuNow } from "./sketchMenuActions";
 import { sketchKeyFor } from "../sketch/sketchView";
@@ -401,12 +402,15 @@ export function App() {
               <ContextBar />
               <FeatureDialog />
               <SketchPanel />
-              <div className="readout-stack">
-                <MassPanel />
-                <MeasurePanel />
-                <MassButton />
-              </div>
             </>
+          )}
+          {!drawing && (
+            // Measure and Mass properties, bottom right — in Part Studios and assemblies alike (Onshape's).
+            <div className="readout-stack">
+              <MassPanel />
+              <MeasurePanel />
+              <MassButton />
+            </div>
           )}
           <EngineStatus />
           <TouchBar />
@@ -438,6 +442,7 @@ export function App() {
       {deleteAsk && <DeleteDialog />}
       <PasteDialog />
       <SelectOtherMenu />
+      <FaceColourMenu />
       <SketchContextMenu />
       {libraryOpen && <LibraryDialog />}
       {mountainOpen && (puzzleKind === "island" ? <IslandPuzzleDialog /> : <MountainPuzzleDialog />)}

@@ -8,6 +8,35 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.121 — Colour single faces, and every Bambu filament
+
+- **Colour a face**: right-click a face → "Colour this face…" (or several picked faces at once). The colour stays on its
+  face when the design changes. "Back to the part's colour" and "Clear face colours" undo it.
+- **Bambu filaments in every colour picker**: about 300 colours from Bambu Studio's own list, grouped by material
+  (PLA Basic, Matte, Silk+ and more, PETG HF/Basic/Translucent, ABS, ASA, TPU, PC, nylon), plus your own colour — for
+  parts, faces and the Island/Mountain puzzles.
+- **Multi-colour 3MF**: Export and the 3D print panel's slicer file give each colour its own filament and paint the
+  coloured faces, ready for Bambu Studio's AMS; the message lists the filaments in loading order. STEP files carry
+  face colours too.
+- Claude can colour faces with `set_appearance` (`faces`).
+
+## v0.120 — Measure and Mass in assemblies
+
+- **Measure works in assemblies**: click faces, edges or corners on the copies, even mirrored ones, ones inside
+  sub-assemblies and ones drilled by assembly features, to get the distance, closest X/Y/Z, angle, length, area or radius.
+- **Mass works in assemblies**: the whole assembly, or the copies you pick, each weighed in its own part's material
+  (or one material / a density you type), with the centre of mass and overall size. In an exploded view the numbers
+  are for the parts put together.
+
+## v0.119 — Edit sketch patterns, chamfers by arcs, rounds onto circles
+
+- **Sketch patterns can be changed after they're made**: select a copy → Edit pattern… to change the count, spacing,
+  direction or second direction. Copies already there keep their dimensions, and the spacing can be a variable.
+- **Sketch Chamfer works where a line meets an arc**, or where two arcs meet.
+- **Round between two curves takes circles**: a circle another line crosses is cut into an arc (handy for keyholes).
+- **Diameter dimensions for revolve profiles**: dimension a point to a construction line and put the number on the far
+  side to get the diameter across it.
+
 ## v0.118 — Insert SVG into a sketch
 
 - **Insert SVG** in the sketch toolbar, beside Insert DXF: an SVG's lines, circles, arcs, ellipses and curves come in as

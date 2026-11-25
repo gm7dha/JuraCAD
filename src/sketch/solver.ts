@@ -516,7 +516,7 @@ function buildSystem(sketch: SketchData): System {
       case "patternMove": {
         // The copy is the original moved a set distance: along a line, or at a set angle.
         const p = P(a), q = P(b);
-        const [dist, deg] = [con.extra?.[0] ?? 0, con.extra?.[1] ?? 0];
+        const [dist, deg] = [patternAmount(con, value), con.extra?.[1] ?? 0];
         const along = con.refs[2] ? dir(con.refs[2]) : null;
         const fixed: Vec = [Math.cos((deg * Math.PI) / 180), Math.sin((deg * Math.PI) / 180)];
         return {
@@ -587,7 +587,7 @@ function buildSystem(sketch: SketchData): System {
       case "patternCopy": {
         // The copy is the original turned round the centre by a set angle.
         const p = P(a), q = P(b), c = P(con.refs[2]);
-        const t = ((con.extra?.[0] ?? 0) * Math.PI) / 180;
+        const t = (patternAmount(con, value) * Math.PI) / 180;
         const cs = Math.cos(t), sn = Math.sin(t);
         return {
           size: 2,
@@ -1381,6 +1381,21 @@ function writeBack(sketch: SketchData, sys: System, x: Float64Array): SketchData
 /** An `equal` made by a sketch pattern: the copy's (refs[0]) size follows the original's. */
 export const isPatternSize = (c: SketchConstraint) => c.type === "equal" && c.extra?.[0] === 1;
 
+/**
+ * How far a pattern copy is moved (mm) or turned (degrees): an editable pattern's typed spacing or angle (`value`,
+ * already worked out) times its step, else the fixed amount in extra[0] (older patterns, exactly as before).
+ */
+export function patternAmount(con: SketchConstraint, value?: number): number {
+  if (!con.pattern || con.value === undefined) return con.extra?.[0] ?? 0;
+  let v = value;
+  if (v === undefined) {
+    const r = evaluate(con.value);
+    if (!r.ok) return con.extra?.[0] ?? 0;
+    v = r.value;
+  }
+  return (v * con.pattern.n) / (con.pattern.of ?? 1);
+}
+
 /** Where a pattern puts a copy of a point: turned round a centre, or moved along a line or at an angle. */
 type CopyRule = { orig: string; centre: string; deg: number } | { orig: string; line?: string; dist: number; angle: number };
 
@@ -1428,11 +1443,11 @@ function splitDerived(sketch: SketchData): Derived | null {
     if (orig !== ORIGIN_ID && !known.has(orig)) continue;
     if (k.type === "patternMove") {
       if (third !== undefined && !lines.has(third)) continue;
-      points.set(copy, { orig, ...(third ? { line: third } : {}), dist: k.extra?.[0] ?? 0, angle: k.extra?.[1] ?? 0 });
+      points.set(copy, { orig, ...(third ? { line: third } : {}), dist: patternAmount(k), angle: k.extra?.[1] ?? 0 });
       continue;
     }
     if (third !== ORIGIN_ID && !known.has(third)) continue;
-    points.set(copy, { orig, centre: third, deg: k.extra?.[0] ?? 0 });
+    points.set(copy, { orig, centre: third, deg: patternAmount(k) });
   }
   const circles = new Map<string, string>();
   for (const k of sketch.constraints) if (isPatternSize(k)) circles.set(k.refs[0], k.refs[1]);

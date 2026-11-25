@@ -1198,9 +1198,14 @@ export function dimensionSpecAt(
   s: SketchData,
   sel: string[],
   labelOffset: { x: number; y: number },
-): { type: ConstraintType; refs: string[]; extra?: number[] } | string {
-  let spec = dimensionFor(s, sel);
+  /** The Dimension tool: a label put across a centreline makes the doubled (diameter) dimension. */
+  centreline = false,
+): { type: ConstraintType; refs: string[]; extra?: number[]; doubled?: true } | string {
+  let spec: { type: ConstraintType; refs: string[]; extra?: number[]; doubled?: true } | string = dimensionFor(s, sel);
   if (typeof spec === "string") return spec;
+  // A point and a centreline (construction line), the value put on the line's far side: measured as a diameter
+  // across the line (Onshape's revolve-profile dimension).
+  if (centreline && spec.type === "pointLineDistance" && acrossCentreline(s, spec.refs, labelOffset)) return { ...spec, doubled: true };
   // Two points, or a slanted line, can be measured across or up instead, by where the label goes.
   if (spec.type === "distance" || spec.type === "length") {
     const ends = spec.type === "distance" ? spec.refs : (() => {
@@ -1218,13 +1223,54 @@ export function dimensionSpecAt(
   return spec;
 }
 
+/** Is the label (`labelOffset` from halfway between the point and the line) on the far side of a construction line from the point? */
+function acrossCentreline(s: SketchData, refs: string[], labelOffset: { x: number; y: number }): boolean {
+  const line = curveById(s, refs[1]);
+  if (line?.type !== "line" || !line.construction) return false;
+  const p = pointPos(s, refs[0]);
+  const a = pointPos(s, line.p1);
+  const b = pointPos(s, line.p2);
+  const d: [number, number] = [b[0] - a[0], b[1] - a[1]];
+  const l = Math.hypot(d[0], d[1]);
+  if (!(l > 1e-9)) return false;
+  const side = (q: [number, number]) => (d[0] * (q[1] - a[1]) - d[1] * (q[0] - a[0])) / l;
+  const sp = side(p);
+  if (Math.abs(sp) < 1e-9) return false;
+  // Halfway between the point and its foot on the line, then out to the label.
+  const half: [number, number] = [p[0] - (d[1] / l) * (-sp / 2), p[1] + (d[0] / l) * (-sp / 2)];
+  const label: [number, number] = [half[0] + labelOffset.x, half[1] + labelOffset.y];
+  const sl = side(label);
+  return Math.sign(sl) === -Math.sign(sp) && Math.abs(sl) > 1e-6 * Math.max(1, Math.abs(sp));
+}
+
+/**
+ * The label offset a dimension keeps when `dimensionSpecAt` made it a centreline diameter: the label stays where it
+ * was put, measured from the diameter's own middle (on the line) instead of halfway to it.
+ */
+export function placedLabelOffset(s: SketchData, spec: { type: ConstraintType; refs: string[]; doubled?: true }, labelOffset: { x: number; y: number }): { x: number; y: number } {
+  if (!spec.doubled) return labelOffset;
+  const line = curveById(s, spec.refs[1]) as SketchLine;
+  const p = pointPos(s, spec.refs[0]);
+  const a = pointPos(s, line.p1);
+  const b = pointPos(s, line.p2);
+  const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const u: [number, number] = [(b[0] - a[0]) / l, (b[1] - a[1]) / l];
+  const t = (p[0] - a[0]) * u[0] + (p[1] - a[1]) * u[1];
+  const foot: [number, number] = [a[0] + u[0] * t, a[1] + u[1] * t];
+  const half: [number, number] = [(p[0] + foot[0]) / 2, (p[1] + foot[1]) / 2];
+  return { x: half[0] + labelOffset.x - foot[0], y: half[1] + labelOffset.y - foot[1] };
+}
+
 export function addDimension(
   s: SketchData,
   sel: string[],
-  labelOffset: { x: number; y: number } = { x: 0, y: 0 },
+  placed: { x: number; y: number } = { x: 0, y: 0 },
+  /** As dimensionSpecAt's: placed across a centreline = measured as a diameter about it. */
+  centreline = false,
 ): EditResult & { dimensionId: string; driven?: boolean } {
-  const spec = dimensionSpecAt(s, sel, labelOffset);
+  const spec = dimensionSpecAt(s, sel, placed, centreline);
   if (typeof spec === "string") return { sketch: s, error: spec, dimensionId: "" };
+  const labelOffset = placedLabelOffset(s, spec, placed);
   const id = sketchId("d");
   const draft: SketchConstraint = { id, ...spec, value: "0", labelOffset };
   // An angle measures the wedge the label was placed in (inside, outside or supplementary).

@@ -5,7 +5,7 @@ import type { Feature, MeshQuality, ViewKind } from "../model/types";
 import type { BreakOutRequest, SectionRequest } from "../drawing/sections";
 import type { PrintPartResult } from "../model/printCheck";
 import type { LaserOutline, LaserSource } from "../laser/sources";
-import type { AssemblyCutsResult, CheckResult, ContactMeasure, DeleteFaceBlockers, ExportResult, InstanceInput, Measurement, PartMesh, PrintCheckPart, PrintCheckSettings, PrintExportResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
+import type { AssemblyCutsResult, CheckResult, ContactMeasure, DeleteFaceBlockers, ExportResult, FilamentColours, InstanceInput, Measurement, PartMesh, PrintCheckPart, PrintCheckSettings, PrintExportResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection, FromWorker, KernelRequest, KernelResponseBody, RebuildResult, ToWorker } from "./protocol";
 
 /**
  * Main-thread handle on the geometry worker. Every call returns a promise.
@@ -109,8 +109,8 @@ export class KernelClient {
     return this.send({ type: "exportStl", partIds, quality, instances }).then((body) => body.result as ExportResult);
   }
 
-  export3mf(partIds: string[], quality: MeshQuality, title: string, colours?: Record<string, string>, instances?: InstanceInput[]): Promise<ThreeMfResult> {
-    return this.send({ type: "export3mf", partIds, quality, title, colours, instances }).then((body) => body.result as ThreeMfResult);
+  export3mf(partIds: string[], quality: MeshQuality, title: string, colours?: Record<string, string>, instances?: InstanceInput[], faces?: FilamentColours): Promise<ThreeMfResult> {
+    return this.send({ type: "export3mf", partIds, quality, title, colours, instances, ...(faces ? { faces } : {}) }).then((body) => body.result as ThreeMfResult);
   }
 
   /** 3D-print check of parts, each with its own "down" onto the bed. */
@@ -119,18 +119,18 @@ export class KernelClient {
   }
 
   /** A 3MF ready for the slicer: parts turned onto the bed and laid out on it. */
-  exportPrint3mf(parts: PrintCheckPart[], bed: [number, number], gap: number, quality: MeshQuality, title: string, colours?: Record<string, string>): Promise<PrintExportResult> {
-    return this.send({ type: "exportPrint3mf", parts, bed, gap, quality, title, colours }).then((body) => body.result as PrintExportResult);
+  exportPrint3mf(parts: PrintCheckPart[], bed: [number, number], gap: number, quality: MeshQuality, title: string, colours?: Record<string, string>, faces?: FilamentColours): Promise<PrintExportResult> {
+    return this.send({ type: "exportPrint3mf", parts, bed, gap, quality, title, colours, ...(faces ? { faces } : {}) }).then((body) => body.result as PrintExportResult);
   }
 
   /** Whole parts: their sizes, and the gap and overlap between two of them. */
-  measureParts(partIds: string[]): Promise<Measurement> {
-    return this.send({ type: "measureParts", partIds }).then((body) => body.result as Measurement);
+  measureParts(partIds: string[], instances?: InstanceInput[]): Promise<Measurement> {
+    return this.send({ type: "measureParts", partIds, instances }).then((body) => body.result as Measurement);
   }
 
   /** Mass properties of whole parts (exact: volume, surface area, centre of mass, box). */
-  massProperties(partIds: string[]): Promise<import("../model/massProps").PartMassProps[]> {
-    return this.send({ type: "massProperties", partIds }).then((body) => (body.type === "massProperties" ? body.result : []));
+  massProperties(partIds: string[], instances?: InstanceInput[]): Promise<import("../model/massProps").PartMassProps[]> {
+    return this.send({ type: "massProperties", partIds, instances }).then((body) => (body.type === "massProperties" ? body.result : []));
   }
 
   /** A sheet metal part laid out flat, as a mesh to show in place of the folded one (null if it can't be). */
@@ -153,8 +153,9 @@ export class KernelClient {
     return this.send({ type: "useEdge", partId, ref, plane }).then((body) => (body.type === "useEdge" ? body.result : { error: "Something went wrong reading that edge." }));
   }
 
-  measure(picks: (TopoPick | import("../geometry/vertexRef").VertexPick)[]): Promise<Measurement> {
-    return this.send({ type: "measure", picks }).then((body) => body.result as Measurement);
+  /** In an assembly: `instances` and, per pick, the copy it's on (`copies`, InstanceInput ids). */
+  measure(picks: (TopoPick | import("../geometry/vertexRef").VertexPick)[], instances?: InstanceInput[], copies?: string[]): Promise<Measurement> {
+    return this.send({ type: "measure", picks, instances, copies }).then((body) => body.result as Measurement);
   }
 
   /**
@@ -173,8 +174,8 @@ export class KernelClient {
   }
 
   /** `tree`: an assembly's structure (sub-assemblies, shared part definitions) to keep in the file. */
-  exportStep(partIds: string[], colours?: Record<string, string>, instances?: InstanceInput[], tree?: StepTree): Promise<StepResult> {
-    return this.send({ type: "exportStep", partIds, colours, instances, ...(tree ? { tree } : {}) }).then((body) => body.result as StepResult);
+  exportStep(partIds: string[], colours?: Record<string, string>, instances?: InstanceInput[], tree?: StepTree, faces?: FilamentColours): Promise<StepResult> {
+    return this.send({ type: "exportStep", partIds, colours, instances, ...(tree ? { tree } : {}), ...(faces ? { faces } : {}) }).then((body) => body.result as StepResult);
   }
 
   /** Drawing views of parts (or an assembly's placed copies). */

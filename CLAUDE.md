@@ -224,8 +224,29 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   `src/sketch/ellipticalArc.ts`: centre, axis end, start — sets the width —, end; an ellipse with start/end, short way round; its ends keep their clicks' snaps via placePoint).
   Linear pattern's second direction (rows × columns; `src/sketch/patternGrid.ts` `patternGrid` = patternCurves, then all of
   it again along the second; previewed). Settings in `src/sketch/editToolOptions.ts` (own zustand store, session only; panel
-  `src/app/SketchEditOptions.tsx`, which also has the tools' icons). Not done: editing a pattern's count after it's made;
-  chamfers next to arcs; rounds with circles. Tests: tests/sketchEditTools, sketchPatternGrid (pure), sketchEditToolsStore, engineSketchEditTools (outlines extruded).
+  `src/app/SketchEditOptions.tsx`, which also has the tools' icons). Tests: tests/sketchEditTools, sketchPatternGrid (pure), sketchEditToolsStore, engineSketchEditTools (outlines extruded).
+  Editable sketch patterns (Onshape's Edit pattern): new patterns are kept in `SketchData.patterns` (`SketchPatternDef`: kind,
+  `sources`, `count`, centre/full/line/reverse, `second` count; `value`/`angle` only a fallback) and their patternMove/patternCopy
+  carry `SketchConstraint.pattern` (`PatternStep` {id, n (signed along a line), of (circular share), second}) + `value` = the
+  spacing / whole angle AS TYPED, so variables rename and re-solve it (variables.ts already maps every `value`); the solver's
+  `patternAmount` = value × n / of (untagged = extra[0], exactly as before; extra[0] is still kept in step). Pure
+  `src/sketch/patternEdit.ts`: `patternIdOf` (a copy, its point, an original or a rule), `readPattern`, `editPattern` (fewer =
+  the last copies' points deleted with their second-direction copies; more = new copies after the last (`copyCurvesWith`, now
+  exported), a grid's rows found by mapping source curves through each row's copy points; copies that stay keep their ids,
+  values/extras/`of` rewritten). Copies the user deleted aren't made again unless the count grows past them. keepSketchExtras
+  carries `patterns`; withoutEmptyExtras drops defs with no tagged rule left; validate.ts parses both; the clipboard pastes
+  tagged rules as plain ones (`plainCopy`); transformSelection scales a tagged plain-number value (a variable refused).
+  UI `src/app/PatternEditor.tsx` (panel: "Edit pattern…" when a pattern item is picked, or the menu's "Edit pattern…" →
+  `editToolOptions.editingPattern`; Apply → `applyPatternChange`, one undo step). Tests: sketchPatternEdit (pure),
+  sketchPatternEditStore, engineSketchPatternArcs.
+  Chamfer next to arcs: `chamferCorner` takes line–arc and arc–arc corners (`leaving`, `cutPoint`: straight distance d from the
+  corner round the arc, 2·asin(d/2r); the sharp held `pointOnCircle` on the arc; arcLength/arcAngle dims on it dropped; distance +
+  angle refused there); two picked curves with an arc must share an end (controller via filletCurves' exported `sharedEnd`).
+  Round with circles: `filletBetween` takes circles; a circle the other curve (carried on) crosses becomes an arc (same id) from
+  the round's touch point, carrying on the way the round arrives there (`circleKeep`: smooth, away from the corner crossing `X1`),
+  to the first place another solid curve of the sketch really crosses it (`crossings`; its end held on that curve with
+  `onCurveType`); none = the circle stays whole and the touch point is held on it. The circle is clicked on the part to keep:
+  rounds that would cut the click away come last, then the one nearest both clicks.
   Move / copy handles (Onshape's sketch Transform): pure `src/sketch/transformSelection.ts` — `transformSelection(s, ids,
   {dx, dy, angle, scale}, about?)` (about = `selectionCentre`: the box middle of the picked shapes as drawn — `curveOutline`: arcs
   by their curve, circles' full size, splines' paths; a centre or axis point counts only when picked itself): points
@@ -285,7 +306,9 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   (`SketchConstraint.doubled` on a pointLineDistance to a construction line: solver uses value/2, `measure` ×2, layout runs to the
   mirror point, ⌀ label, validate keeps it; `measureToOf` null). Sketch toolbar Extrude / Revolve → `finishSketchInto` (commit, then
   startCreate on the sketch just finished; no closed shape = refused, sketch stays open). Tests: sketchMenu (pure), sketchMenuStore.
-  Not done: the Dimension tool making centreline dimensions by where the number is put (use the menu/panel).
+  The Dimension tool makes the centreline (doubled) dimension when a point + construction line's number is put on the line's
+  far side (`dimensionSpecAt(…, centreline)` → `acrossCentreline`; `placedLabelOffset` re-measures the label from the line;
+  `addDimension(…, true)`; the preview shows ⌀) — only the controller passes `centreline`, so library/Claude sketches are unchanged.
 - Visibility (the eye in the feature list): `src/model/visibility.ts`. Sketches and Plane features have `Feature.visible`
   (missing = automatic: planes shown; a sketch shown until an unsuppressed feature uses it, `usedSketches` — as Onshape
   hides consumed sketches). The Origin and Top/Front/Right hidden per Part Studio: `doc.hiddenDatums` (first studio) /
@@ -1310,6 +1333,20 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   `src/viewport/featureFaces.ts`: hovered row (`setHoveredFeature`) → Viewport `setListHover` (its faces, else its parts; a
   hidden sketch shown — only that id is a dep of the sketch scene; cleared when the list unmounts); double-click a face (`SceneCallbacks.onDoubleClick` → `editFeatureAt`) or Select other's "Edit <feature>…"
   opens it. Parts list "Show only this part"/"Show all parts" were already there. Tests: tests/massProps (pure), engineMassProps.
+  In assemblies (Onshape's): the readout stack (Measure, Mass) shows there too (App.tsx, outside the studio-only block). Engine
+  `massProperties(ids, instances)` / `measureParts(ids, instances)` / `measure(picks, instances, copies)` (optional protocol
+  `instances`/`copies`): copies placed by `placeInstances` (cut, mirrored, solved — never exploded); a pick is found on its copy's
+  part as cut (`measuredPick`, in part coordinates) then moved (`placedCopy`; centre/point/ref via pure `src/assembly/asmMeasure.ts`
+  `placedPoint`/`placedRef`, so angles work across copies). Pure: `copiesToWeigh` (picked tops — a sub-assembly = its parts — else
+  all not hidden; suppressed already out), `materialPartOf` (a configured part's material). App: `src/app/asmReadouts.ts`
+  (`useAssemblyInputs` = instancesForKernel of the solve; `asmPickFor` reads refs off the copy as shown, `cutMeshFor` first,
+  corners by `cornersOf`), `src/app/asmMeasureState.ts` (session-only picks, keys as partId; `asmMeasureClick` from
+  handleAssemblyPick — a click on another face of an already-selected copy keeps it selected; the same face again toggles as
+  before, and Shift taking one of a copy's two picks off keeps the copy — pure `asmSelectionAfterClick`; `livePicks` = picks whose copy is still selected; let go on tab change); the view highlights a copy's picks instead of
+  the whole copy (`instanceSelection`); `cornerWanted` is on in assemblies unless a mirror wants a face (and not while an
+  assembly Hole/Cut/Fillet is open, Viewport). Mass panel weighs copies by their part's material; exploded = weighed put
+  together, no centre dot, said. Tests: asmMeasure (pure), engineAsmMeasure (gap between placed copies, a turned copy's angle
+  and corner, sum + centre of mass, mirrored copy positive, a drilled copy lighter and its hole measured, sub-assembly).
   Feature list (Onshape's): several features picked — `store.featureSelection` (counts only while it holds
   `selectedFeatureId`, the main one; read with the selector-safe `pickedFeatures`; `selectFeatures(ids, primary)`; reset by
   selectFeature/startCreate/startEdit) via `src/app/featureListState.ts` (`clickFeatureRow` over listSelection's `clickRow` on
@@ -1586,7 +1623,34 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   document.body, `position: fixed`, placed by the pure `placePopup` in popupPlace.ts — below, else above, else beside the swatch,
   scrolling inside only when taller than the window; closes on a click elsewhere or Escape) so no panel clips it; swatch size via
   `--swatch-size`, bigger under `(pointer: coarse)`; the smoke test's `popoverFits` checks it at several window sizes and in dark mode); store `setPartFinish`/`setPartsFinish`. Drawings ignore it (line
-  drawings). No colour per face (face indices aren't stable across rebuilds). Claude's `set_appearance` (colour and/or finish).
+  drawings). Claude's `set_appearance` (colour and/or finish; `faces` for face colours).
+  Face colours (Onshape's face Appearance): `doc.faceAppearance` (part id → `FaceColour[]` {face: FaceRef as picked, colour, spool?};
+  missing = none, old files byte-identical) + `doc.partSpools` (part id → Bambu code the part's colour was picked from). Pure
+  `src/model/faceColours.ts`: `resolveFaceColours` = strictMatch of each ref on the mesh's faceRefs (later wins; not found = `lost`,
+  never an error — the face shows the part's colour), `facesColoured` (cached per mesh + list), `setFaceColoursIn(doc, part, faces,
+  colour|null, mesh, spool?)` (an entry already landing on a chosen face is replaced; ones not found now are kept), `clearFaceColoursIn`,
+  `setPartSpoolIn`, `shownFaceColours` (meshes shown → face index → colour; assembly copies via their part), `filamentsFor` /
+  `filamentsNote`, `faceColoursForExport`. Store `setPartColour(id, c, spool?)`, `setFaceColours`, `clearFaceColours` (undoable).
+  View: SceneManager `setFaceColours` — `faceMaterialsFor` appends a material per face colour after [normal, hover, selected]
+  (`colourMaterial`, the part's finish/see-through), `faceSlot` is the face's normal index (applyHighlights, pictures); Viewport passes
+  `shownFaceColours(display, …)`. UI: Select other's "Colour this face…" / "Colour the N picked faces…" (the picked faces when the
+  one under the pointer is among them; Part Studios only) → `src/app/FaceColourMenu.tsx` (usual colours, `SpoolChoices`, back to
+  the part's colour, clear); "Clear face colours on this part"; the Parts list swatch gets a corner of the face colour
+  (`.swatch-faces`), a tooltip counting them (and any lost), "Clear face colours" and "Bambu Lab filaments…" (`SpoolChoices`, sets
+  `partSpools`). Export: `FilamentColours` on export3mf/exportStep (app, Claude's export_model). 3MF with face colours on any part
+  chosen = `src/geometry/filament3mf.ts` `writeFilament3mf` (each distinct colour one filament, parts' own first then faces'
+  — `planFilaments`; Bambu `extruder` per object/part in Metadata/model_settings.config + `paint_color` = `paintCode` (now
+  src/geometry/paintCode.ts, re-exported by terrain/colour.ts) on other-coloured triangles; core `basematerials` + `pid`/`p1` for other
+  slicers — Bambu ignores those once a file has painting, Plater.cpp `has_painting`); else the old write3mf byte for byte. Engine
+  `facePainting` finds the colours on the part's own faces (`faceRefOf`, as the app) and carries them by explorer index to the
+  shape written (placed/mirrored copies; a cut copy with other faces stays plain), triangles kept with `keptTriangles` (meshCheck).
+  `ThreeMfResult.filaments`/`lostFaces` → the Export dialog's toast ("2 filaments, load them in this order: …"); the dialog notes it
+  first. STEP: `colouredFaces` → `StepPart.faces` → XCAF `AddSubShape` + surface colour (both writers; cut copies skipped).
+  Tests: tests/faceColours (pure), engineFaceColours (a side and top followed as the box grows 40 → 80 and after a fillet; lost
+  quietly; the 3MF's painted triangles are exactly the face's; STEP face style); the smoke test colours the block's top face
+  PETG HF Black and checks the 3MF's paint, then undoes. The 3D print panel's 3MF (`exportPrint3mf(…, faces)`) paints faces the same way, laid on
+  the bed (filament words in its sent message); Claude's `set_appearance` takes `faces` (list_faces' names; with a colour, not a finish)
+  (tests/mcpAppearance, engineFaceColours). `filamentsFor` = 0 unless a chosen part has face colours (the dialog's note), `lostFacesNote`.
   3D view: `src/viewport/studio.ts` (`finishMaterial`: matte in the quick view is still the original Phong material and grey
   matte parts share the old one, so the everyday view is unchanged; `studioEnvironment`: three's RoomEnvironment made in code,
   turned Z-up, through PMREM — no downloaded assets; `studioRig`: four slightly spread shadow-casting key lights = a soft
@@ -2384,10 +2448,13 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   order with a base and a band below the ground; first-layer snapping; plates by level ≤ bands − 1 changes each; warnings; the
   cache not re-cutting for a colour change).
   Bambu colours and 8 slots: `src/terrain/bambuColours.ts` (pure; Bambu Studio's filaments_color_codes.json, PLA Basic, Matte,
-  Silk+ single colours: code/line/name/hex; `bambu(line, name)`, `spoolFor(hex, code?)`, `spoolLabel`). Every usual colour is a
+  Silk+ single colours, then every other material's in `bambuFilaments.ts` (generated from the same file at 930fe93: PLA Silk/
+  Translucent/Glow/…, PETG HF/Basic/Matte/Translucent, ABS, ASA, TPU, PC, nylons; support/PVA/2.85 mm left out) — `BAMBU_MATERIALS`
+  (material → lines, the picker's order), `materialOfLine`, `coloursOfMaterial`; PLA's first so `spoolFor(hex)` still names PLA Basic
+  first: code/line/name/hex; `bambu(line, name)`, `spoolFor(hex, code?)`, `spoolLabel`). Every usual colour is a
   Bambu PLA (SEA_BLUE Matte Marine Blue, WATER_BLUE Basic Cyan, PATH_RED Basic Red, ROAD_BLACK Basic Black, ISLAND_/MOUNTAIN_COLOURS,
   SPARE_COLOURS). `ColourSpec.spools` (hex → code, where two spools share a colour) → `Filament.spool` ("Charcoal (PLA Matte)"),
-  shown in the Load list. `src/app/SpoolPick.tsx` (PlacedPopup of named swatches + your own colour) for every band, base, water,
+  shown in the Load list. `src/app/SpoolPick.tsx` (`SpoolChoices`: material tabs, then each line's named swatches + your own colour; `SpoolPick` = its PlacedPopup) for every band, base, water,
   paths, roads. Filament slots 4/8: `PrinterSetting.amsSlots` (`amsSlotsOf`: missing = 8 on every printer; panel row "Filament
   slots"), `colourWarnings(…, slots)`; the usual bands are always the three above (the old 5/6-band sets and
   `usualBandCount` are gone). Modal ignores Esc while a

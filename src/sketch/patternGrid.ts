@@ -13,6 +13,8 @@ export interface SecondDirection {
   count: number;
   spacing: number;
   angle: number;
+  /** The spacing as typed (may use variables). */
+  value?: string;
 }
 
 /** The second direction's boxes, as numbers (null when it's off), or what's wrong with them. */
@@ -22,15 +24,19 @@ export function readSecondDirection(set: { pattern2: boolean; pattern2Count: num
   if (!spacing.ok) return `Second direction's spacing: ${spacing.error}`;
   const angle = evaluate(set.pattern2Angle);
   if (!angle.ok) return `Second direction's angle: ${angle.error}`;
-  return { count: set.pattern2Count, spacing: spacing.value, angle: angle.value };
+  return { count: set.pattern2Count, spacing: spacing.value, angle: angle.value, value: set.pattern2Spacing };
 }
 
 /** A linear pattern in the first direction, then all of it (originals and copies) repeated along the second. */
-export function patternGrid(s: SketchData, curveIds: string[], first: SketchPatternOptions, second: SecondDirection): EditResult & { curveIds: string[] } {
-  if (first.kind !== "linear") return { sketch: s, curveIds: [], error: "A second direction is for patterns in a row." };
+export function patternGrid(s: SketchData, curveIds: string[], first: SketchPatternOptions, second: SecondDirection): EditResult & { curveIds: string[]; patternId: string } {
+  if (first.kind !== "linear") return { sketch: s, curveIds: [], patternId: "", error: "A second direction is for patterns in a row." };
   const one = patternCurves(s, curveIds, first);
   if (one.error) return one;
-  const two = patternCurves(one.sketch, [...curveIds, ...one.curveIds], { kind: "linear", count: second.count, spacing: second.spacing, angle: second.angle });
-  if (two.error) return { sketch: s, curveIds: [], error: two.error.replace("The number of copies", "The second direction's number of copies").replace("Give the copies", "Give the second direction") };
-  return { sketch: two.sketch, curveIds: [...one.curveIds, ...two.curveIds] };
+  const id = one.patternId;
+  const two = patternCurves(one.sketch, [...curveIds, ...one.curveIds], { kind: "linear", count: second.count, spacing: second.spacing, angle: second.angle, value: second.value }, id ? { id } : undefined);
+  if (two.error) return { sketch: s, curveIds: [], patternId: "", error: two.error.replace("The number of copies", "The second direction's number of copies").replace("Give the copies", "Give the second direction") };
+  // The pattern remembers its second direction, so it can be changed later as one grid.
+  const value = second.value?.trim() || String(second.spacing);
+  const patterns = two.sketch.patterns?.map((p) => (p.id === id ? { ...p, second: { count: Math.round(second.count), value, angle: second.angle } } : p));
+  return { sketch: patterns ? { ...two.sketch, patterns } : two.sketch, curveIds: [...one.curveIds, ...two.curveIds], patternId: id };
 }

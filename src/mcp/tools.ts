@@ -10,7 +10,7 @@ import { createFeature, emptyDocument, renamePart, replaceFeature, addFeature, n
 import { readDocumentFile, serializeDocument, nameFromFileName, FILE_EXTENSION, OLD_FILE_EXTENSION } from "../model/fileFormat";
 import { applyVariables, resolveVariables, checkName, type Variable } from "../model/variables";
 import { describeHole } from "../model/holes";
-import { describeRef } from "../geometry/topoRef";
+import { describeRef, type FaceRef } from "../geometry/topoRef";
 import type { Feature, JuraCADDocument } from "../model/types";
 import { describeMore, LINE_HELP, POINT_HELP } from "./planeSpec";
 import { CURVE_HELP } from "./curveSpec";
@@ -28,7 +28,7 @@ import { deleteFeatures, deletePlan, listNames, outsideLines } from "../model/de
 import { firstStudioId } from "../model/studios";
 import { followedSketch } from "../sketch/areaClicks";
 import { applyFeature, applySketch, describePlane, FEATURE_KINDS, KIND_OF, limitProblems, type FeatureKind, type SpecContext } from "./featureSpec";
-import { describeEdge, describeFace, edgeList, faceList, facing, PICK_HELP } from "./picks";
+import { describeEdge, describeFace, edgeList, faceList, facing, pickFaces, PICK_HELP } from "./picks";
 import { renderViews, RENDER_VIEWS, type RenderView } from "./render";
 import { Cancelled, type Session } from "./session";
 import { describeChange } from "./live";
@@ -42,6 +42,7 @@ import { ASSEMBLY_TOOLS, assemblyViews, exportAssemblyBytes, findAssembly, insta
 import { DRAWING_TOOLS } from "./drawingTools";
 import { LASER_TOOLS } from "./laserTools";
 import { libraryTools } from "./libraryTools";
+import { faceColoursForExport, faceColourWords, facesColoured, setFaceColoursIn } from "../model/faceColours";
 import { chooseFinish, exportColours, finishFromWords, finishOf, FINISHES, setColourIn } from "../model/finishes";
 import { colourFromWords, PART_COLOURS } from "../model/colours";
 import { cornersOf } from "../geometry/vertexRef";
@@ -739,20 +740,35 @@ export const TOOLS: ToolDef[] = [
   {
     name: "set_appearance",
     title: "Colour and finish of a part",
-    description: `Choose how a part looks in the app and in pictures: its colour (a hex colour like "#d64545", or one of ${PART_COLOURS.map((c) => c.name.replace(/ \(default\)$/, "")).join(", ")}; "default" = the usual grey) and/or its finish (${FINISHES.map((f) => `${f.id} = ${f.label}`).join(", ")}; "default" = matte). E.g. {"part":"Part 1","colour":"red","finish":"glossy"}; leave out "part" for the latest part. Colours (and see-through for "clear") go into STEP and 3MF exports; drawings stay line drawings. A grey part given wood or metal also gets a colour that suits it.`,
+    description: `Choose how a part looks in the app and in pictures: its colour (a hex colour like "#d64545", or one of ${PART_COLOURS.map((c) => c.name.replace(/ \(default\)$/, "")).join(", ")}; "default" = the usual grey) and/or its finish (${FINISHES.map((f) => `${f.id} = ${f.label}`).join(", ")}; "default" = matte). E.g. {"part":"Part 1","colour":"red","finish":"glossy"}; leave out "part" for the latest part. Colours (and see-through for "clear") go into STEP and 3MF exports; drawings stay line drawings. A grey part given wood or metal also gets a colour that suits it. With "faces" (as list_faces numbers them: ["F3", "top"]) only those faces get the colour ("default" = back to the part's own colour), for multi-colour prints: a 3MF of a part with coloured faces is painted for Bambu Studio, one filament per colour.`,
     inputSchema: {
       type: "object",
       properties: {
         part: { type: "string", description: "The part's name; leave it out for the latest part." },
         colour: { type: "string" },
         finish: { type: "string", description: `A finish's id or name (${FINISHES.map((f) => `"${f.id}" or "${f.label}"`).join(", ")}), or "default".` },
+        faces: { type: "array", items: {}, description: `Colour just these faces of the part (with "colour"; not with "finish"). ${PICK_HELP.faces}` },
       },
     },
     run: (s, a) => {
-      noExtras(a, ["part", "colour", "finish"], "set_appearance");
-      if (a.colour === undefined && a.finish === undefined) throw new InputError('set_appearance: give a "colour", a "finish", or both.');
+      noExtras(a, ["part", "colour", "finish", "faces"], "set_appearance");
+      if (a.colour === undefined && a.finish === undefined && a.faces === undefined) throw new InputError('set_appearance: give a "colour", a "finish", or both.');
       const p = s.part(s.build().parts, a.part, "part");
       let doc = s.doc;
+      if (a.faces !== undefined) {
+        if (!Array.isArray(a.faces) || !a.faces.length) throw new InputError('faces: give a list of faces, e.g. ["F3", "top"] (list_faces shows them).');
+        if (a.finish !== undefined) throw new InputError('set_appearance: a finish is for the whole part — leave out "finish" when colouring faces.');
+        if (a.colour === undefined) throw new InputError('set_appearance: give the faces a "colour" (or "default" to give them back the part\'s own colour).');
+        const c = colourFromWords(text(a.colour, "colour"));
+        if (c === undefined) throw new InputError(`colour: "${String(a.colour)}" isn't a colour I know. Use a hex colour like "#3d7fd9", or one of ${PART_COLOURS.map((x) => x.name.replace(/ \(default\)$/, "")).join(", ")}, or "default".`);
+        const indices = pickFaces(p, a.faces, "faces").map((f) => p.faceRefs.indexOf(f.ref as FaceRef)).filter((i) => i >= 0);
+        doc = setFaceColoursIn(doc, p.id, indices, c, p);
+        if (JSON.stringify(doc.faceAppearance ?? null) === JSON.stringify(s.doc.faceAppearance ?? null)) return say(`Those faces of ${p.name} already look like that.`);
+        s.commit(doc);
+        const n = facesColoured(doc.faceAppearance?.[p.id], p).colours.size;
+        const what = indices.length === 1 ? "1 face" : `${indices.length} faces`;
+        return say(`${p.name}: ${what} ${c ? `coloured ${c}` : "back to the part's own colour"} (${n ? faceColourWords(n) : "no face colours"} on it now).`);
+      }
       if (a.colour !== undefined) {
         const c = colourFromWords(text(a.colour, "colour"));
         if (c === undefined) throw new InputError(`colour: "${String(a.colour)}" isn't a colour I know. Use a hex colour like "#3d7fd9", or one of ${PART_COLOURS.map((x) => x.name.replace(/ \(default\)$/, "")).join(", ")}, or "default".`);
@@ -988,8 +1004,8 @@ export const TOOLS: ToolDef[] = [
       await s.checkpoint();
       const bytes = await s.withEngine(async (e) => {
         if (format === "stl") return new Uint8Array(e.exportStl(ids, "normal").stl);
-        if (format === "3mf") return new Uint8Array(e.export3mf(ids, "normal", s.doc.name, exportColours(s.doc)).data);
-        return new Uint8Array((await e.exportStep(ids, exportColours(s.doc))).step);
+        if (format === "3mf") return new Uint8Array(e.export3mf(ids, "normal", s.doc.name, exportColours(s.doc), undefined, faceColoursForExport(s.doc)).data);
+        return new Uint8Array((await e.exportStep(ids, exportColours(s.doc), undefined, undefined, faceColoursForExport(s.doc))).step);
       });
       writeOut(s, path, bytes);
       return say(`Exported ${ids.length ? "the part" : `${b.parts.length} part(s)`} to ${path} (${Math.max(1, Math.round(bytes.length / 1024))} KB).`);

@@ -16,6 +16,15 @@ export interface StepPart {
   name: string;
   /** "#rrggbb", or "#rrggbbaa" for a see-through finish */
   colour: string;
+  /** Faces with colours of their own (OpenCascade faces of `shape`), written as face styles. Missing = none, as before. */
+  faces?: FaceStyle[];
+}
+
+/** A face of a part's shape and its own colour. */
+export interface FaceStyle {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  face: any;
+  colour: string;
 }
 
 /** Screen (sRGB) value 0–1 → linear light 0–1. */
@@ -38,11 +47,21 @@ function writeXcaf(fill: (x: Xcaf) => void): Uint8Array {
     const main = keep(doc.Main());
     const shapes = oc.XCAFDoc_DocumentTool.ShapeTool(main);
     const colours = oc.XCAFDoc_DocumentTool.ColorTool(main);
-    fill({ oc, shapes, keep, name: (label, s) => oc.TDataStd_Name.Set(label, text(s)), colour: (label, c) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const colour = (label: any, c: string) => {
       const [r, g, b] = colourToRgb(c).map(srgbToLinear);
       // A see-through finish ("#rrggbbaa") keeps its opacity; everything else is solid, as before.
       colours.SetColor(label, keep(new oc.Quantity_ColorRGBA(r, g, b, colourOpacity(c))), oc.XCAFDoc_ColorType.XCAFDoc_ColorSurf);
-    } });
+    };
+    // Faces with colours of their own: each a sub-shape of its part's label with its own surface colour.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const faceColours = (label: any, faces: FaceStyle[] | undefined) => {
+      for (const f of faces ?? []) {
+        const sub = keep(shapes.AddSubShape(label, f.face));
+        if (sub && !sub.IsNull()) colour(sub, f.colour);
+      }
+    };
+    fill({ oc, shapes, keep, name: (label, s) => oc.TDataStd_Name.Set(label, text(s)), colour, faceColours });
     shapes.UpdateAssemblies();
 
     oc.Interface_Static.SetCVal("xstep.cascade.unit", "MM");
@@ -80,17 +99,19 @@ interface Xcaf {
   keep: <T extends { delete(): void }>(o: T) => T;
   name: (label: any, name: string) => void;
   colour: (label: any, colour: string) => void;
+  faceColours: (label: any, faces: FaceStyle[] | undefined) => void;
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 /** Parts side by side, each a named, coloured solid (a Part Studio's parts, or an assembly's copies already placed). */
 export function writeStep(parts: StepPart[]): Uint8Array {
-  return writeXcaf(({ shapes, keep, name, colour }) => {
+  return writeXcaf(({ shapes, keep, name, colour, faceColours }) => {
     parts.forEach((p, i) => {
       const label = keep(shapes.NewShape());
       shapes.SetShape(label, p.shape.wrapped);
       name(label, p.name || `Part ${i + 1}`);
       colour(label, p.colour);
+      faceColours(label, p.faces);
     });
   });
 }
@@ -99,6 +120,7 @@ export function writeStep(parts: StepPart[]): Uint8Array {
 export interface StepPartShape {
   shape: Shape3D;
   colour: string;
+  faces?: FaceStyle[];
 }
 
 /**
@@ -108,7 +130,7 @@ export interface StepPartShape {
  * instance and placed by a move and turn (a location, never a copy of the shape).
  */
 export function writeStepAssembly(tree: StepTree, shapeOf: (partKey: string) => StepPartShape | null): Uint8Array {
-  return writeXcaf(({ oc, shapes, keep, name, colour }) => {
+  return writeXcaf(({ oc, shapes, keep, name, colour, faceColours }) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const parts = new Map<string, any>();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -123,6 +145,7 @@ export function writeStepAssembly(tree: StepTree, shapeOf: (partKey: string) => 
         shapes.SetShape(label, shape.shape.wrapped);
         name(label, def.name);
         colour(label, shape.colour);
+        faceColours(label, shape.faces);
       }
       parts.set(key, label);
       return label;

@@ -253,6 +253,49 @@ export interface SketchConstraint {
    * twice the point's distance from the line. Missing = the plain distance.
    */
   doubled?: boolean;
+  /**
+   * patternMove / patternCopy made by a pattern that can be changed later (Onshape's editable sketch pattern): which
+   * pattern (`SketchData.patterns`) and which copy. The copy is moved `value` × n / of (mm along, or degrees round) —
+   * `value` is the pattern's spacing (or, round a centre, its whole angle) as typed, so it can use variables.
+   * Missing = the older fixed copies (moved `extra[0]`).
+   */
+  pattern?: PatternStep;
+}
+
+/** Which copy of an editable pattern a constraint places (see SketchConstraint.pattern). */
+export interface PatternStep {
+  id: string;
+  /** How many steps along (negative: the other way along its line). */
+  n: number;
+  /** Round a centre: the angle is shared out over this many steps. Missing = 1. */
+  of?: number;
+  /** A copy made by the second direction of a grid (its original is the copy in the first row). */
+  second?: true;
+}
+
+/**
+ * A sketch pattern as made, so it can be changed afterwards (its count, spacing, angle, second direction). The
+ * sizes live on its constraints (their `value`); this keeps what the copies are of and how many there are.
+ */
+export interface SketchPatternDef {
+  id: string;
+  kind: "linear" | "circular";
+  /** The lines, arcs and circles repeated (the originals). */
+  sources: string[];
+  /** How many in all, the originals included. */
+  count: number;
+  /** Round a centre: the point it goes round. */
+  centre?: string;
+  /** Round a centre: all the way round (the angle shared by count, not count − 1). */
+  full?: boolean;
+  /** In a row along a line of the sketch (the other way along it with `reverse`). */
+  line?: string;
+  reverse?: boolean;
+  /** As made (used only if every copy has been deleted since): spacing or angle as typed, and the direction. */
+  value: string;
+  angle: number;
+  /** A grid: the second direction (`count` in all along it). */
+  second?: { count: number; value: string; angle: number };
 }
 
 /**
@@ -303,6 +346,8 @@ export interface SketchData {
   texts?: SketchText[];
   /** Pictures to trace over (missing in older files and sketches without any). */
   images?: SketchImage[];
+  /** Patterns that can still be changed (missing in older files and sketches without any). */
+  patterns?: SketchPatternDef[];
 }
 
 export const emptySketch = (): SketchData => ({ points: [], curves: [], constraints: [] });

@@ -240,8 +240,9 @@ export function cornerWanted(
   s: { editing: { draft: Feature } | null; sketch: unknown; mateDraft?: unknown; mirrorFacePick?: boolean | "connector" },
   inAssembly: boolean,
 ): boolean {
-  // In an assembly: while a mate is being made, or a mirror's mate connector placed (a corner is where it goes).
-  if (inAssembly) return !!s.mateDraft || s.mirrorFacePick === "connector";
+  // In an assembly: while a mate is being made, or a mirror's mate connector placed (a corner is where it goes), and
+  // with nothing being picked, for Measure (a corner of a copy); never for a face to mirror across.
+  if (inAssembly) return !!s.mateDraft || s.mirrorFacePick === "connector" || !s.mirrorFacePick;
   // In a sketch: the Use tool brings a corner in as a point that follows it.
   if (s.sketch) return (s.sketch as { tool?: string }).tool === "useEdge";
   const d = s.editing?.draft;

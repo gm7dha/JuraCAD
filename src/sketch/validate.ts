@@ -2,7 +2,7 @@
 import { parsePick } from "../geometry/topoRef";
 import { parseVertexPick } from "../geometry/vertexRef";
 import type { SketchPlane, Vec3 } from "./planes";
-import { DIMENSION_TYPES, type ConstraintType, type CurveLink, type PointLink, type SketchConstraint, type SketchCurve, type SketchData, type SketchImage, type SketchPoint, type SketchText } from "./types";
+import { DIMENSION_TYPES, type ConstraintType, type CurveLink, type PointLink, type PatternStep, type SketchConstraint, type SketchPatternDef, type SketchCurve, type SketchData, type SketchImage, type SketchPoint, type SketchText } from "./types";
 
 const RELATIONS = new Set<string>([
   "coincident",
@@ -105,6 +105,8 @@ export function parseSketchData(raw: unknown): SketchData | null {
     if (lo && num(lo.x) && num(lo.y)) out.labelOffset = { x: lo.x, y: lo.y };
     if (c.driven === true && DIMENSION_TYPES.has(out.type)) out.driven = true;
     if (c.doubled === true && out.type === "pointLineDistance") out.doubled = true;
+    const tag = parsePatternStep(c.pattern);
+    if (tag && (out.type === "patternMove" || out.type === "patternCopy")) out.pattern = tag;
     constraints.push(out);
   }
   const out: SketchData = { points, curves, constraints };
@@ -113,7 +115,38 @@ export function parseSketchData(raw: unknown): SketchData | null {
   if (texts.length) out.texts = texts;
   const images = Array.isArray(d.images) ? (d.images as unknown[]).map(parseImage).filter((m): m is SketchImage => !!m) : [];
   if (images.length) out.images = images;
+  const patterns = Array.isArray(d.patterns) ? (d.patterns as unknown[]).map(parsePatternDef).filter((p): p is SketchPatternDef => !!p) : [];
+  if (patterns.length) out.patterns = patterns;
   return out;
+}
+
+function parsePatternStep(raw: unknown): PatternStep | null {
+  if (!raw || typeof raw !== "object") return null;
+  const t = raw as Record<string, unknown>;
+  if (!str(t.id) || !num(t.n) || !Number.isInteger(t.n)) return null;
+  return { id: t.id, n: t.n, ...(num(t.of) && t.of >= 1 ? { of: t.of } : {}), ...(t.second === true ? { second: true as const } : {}) };
+}
+
+function parsePatternDef(raw: unknown): SketchPatternDef | null {
+  if (!raw || typeof raw !== "object") return null;
+  const p = raw as Record<string, unknown>;
+  if (!str(p.id) || (p.kind !== "linear" && p.kind !== "circular") || !Array.isArray(p.sources) || !p.sources.every(str)) return null;
+  if (!num(p.count) || typeof p.value !== "string" || !num(p.angle)) return null;
+  const sec = p.second as Record<string, unknown> | undefined;
+  const second = sec && num(sec.count) && typeof sec.value === "string" && num(sec.angle) ? { count: sec.count, value: sec.value, angle: sec.angle } : null;
+  return {
+    id: p.id,
+    kind: p.kind,
+    sources: p.sources as string[],
+    count: p.count,
+    ...(str(p.centre) ? { centre: p.centre } : {}),
+    ...(p.full === true ? { full: true } : {}),
+    ...(str(p.line) ? { line: p.line } : {}),
+    ...(p.reverse === true ? { reverse: true } : {}),
+    value: p.value,
+    angle: p.angle,
+    ...(second ? { second } : {}),
+  };
 }
 
 /** A curve's link to a part edge (or, for Intersect, to where the sketch cuts the part). */

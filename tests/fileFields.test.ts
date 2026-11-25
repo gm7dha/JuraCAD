@@ -32,6 +32,8 @@ function everyField(): Required<JuraCADDocument> {
     units: "in",
     appearance: { [box.id]: "#3366cc" },
     finishes: { [box.id]: "brushed" },
+    faceAppearance: { [box.id]: [{ face: { kind: "face", surface: "PLANE", center: [5, 5, 10], normal: [0, 0, 1], rel: [0.5, 0.5, 1] }, colour: "#c12e1f", spool: "10200" }] },
+    partSpools: { [box.id]: "10100" },
     materials: { [box.id]: "petg" },
     studioId: "first",
     studioName: "Brackets",

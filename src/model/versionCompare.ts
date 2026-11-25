@@ -106,7 +106,7 @@ function sketchSummary(f: Feature | undefined): string {
   if (!d) return "(none)";
   const curves = new Map<string, number>();
   for (const c of d.curves) curves.set(c.type, (curves.get(c.type) ?? 0) + 1);
-  const dims = d.constraints.filter((c) => c.value !== undefined).length;
+  const dims = d.constraints.filter((c) => c.value !== undefined && !c.pattern).length;
   const parts = [...curves].map(([t, n]) => `${n} ${words(t)}${n === 1 ? "" : "s"}`);
   if (dims) parts.push(`${dims} dimension${dims === 1 ? "" : "s"}`);
   if (d.texts?.length) parts.push(`${d.texts.length} text${d.texts.length === 1 ? "" : "s"}`);
@@ -130,7 +130,7 @@ export function featureSettingChanges(a: Feature, b: Feature): SettingChange[] {
   }
   // The sketch itself: dimension values by dimension, then the shapes as a whole.
   if (!same(a.sketch, b.sketch)) {
-    const dimsA = new Map((a.sketch?.data.constraints ?? []).filter((c) => c.value !== undefined).map((c) => [c.id, c]));
+    const dimsA = new Map((a.sketch?.data.constraints ?? []).filter((c) => c.value !== undefined && !c.pattern).map((c) => [c.id, c]));
     let dimChanges = 0;
     for (const c of b.sketch?.data.constraints ?? []) {
       const old = dimsA.get(c.id);
@@ -256,6 +256,7 @@ export function compareDesigns(
   if ((a.units ?? "mm") !== (b.units ?? "mm")) other.push(`Units changed to ${b.units === "in" ? "inches" : "millimetres"}`);
   if (!same(a.appearance ?? {}, b.appearance ?? {})) other.push("Part colours changed");
   if (!same(a.finishes ?? {}, b.finishes ?? {})) other.push("Part finishes changed");
+  if (!same(a.faceAppearance ?? {}, b.faceAppearance ?? {})) other.push("Face colours changed");
   if (!same(a.materials ?? {}, b.materials ?? {})) other.push("Materials changed");
   if (!same(a.partNames ?? {}, b.partNames ?? {})) other.push("Part names changed");
   if (!same(a.partProperties ?? {}, b.partProperties ?? {})) other.push("Part numbers or properties changed");

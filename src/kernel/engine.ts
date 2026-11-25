@@ -5,9 +5,9 @@
  */
 import { assembleWire, basicFaceExtrusion, type Wire, cast, makePolygon, Vector, getOC, makeCompound, makeProjectedEdges, ProjectionCamera, makeBox, measureArea, measureDistanceBetween, measureLength, makeCylinder, makeVertex, makeSphere, measureVolume, type Vertex, type Edge, type Face, type Shape3D } from "replicad";
 
-import { analyzeMesh, estimateThickness, withoutDegenerateTriangles } from "../geometry/meshCheck";
+import { analyzeMesh, estimateThickness, keptTriangles, withoutDegenerateTriangles } from "../geometry/meshCheck";
 import { writeBinaryStl } from "../geometry/stl";
-import { matchRefs, refDistance, relativeTo, roundVec, sameRef, strictMatch, type EdgeRef, type FaceRef, type TopoPick, type Vec3 } from "../geometry/topoRef";
+import { matchRefs, refDistance, relativeTo, roundVec, sameRef, strictMatch, type EdgeRef, type FaceRef, type TopoPick, type TopoRef, type Vec3 } from "../geometry/topoRef";
 import { applyPoint, applyVec, isClassicTransform, isStill, scaleOf, toAxisAngle, transformMode, transformMotion, type Rigid } from "../model/transformMath";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSolidFeature, resolveParams, visibleParamKeys } from "../model/features";
 import { planeFrame, toSketch, toWorld, type PlaneFrame, type SketchPlane } from "../sketch/planes";
@@ -64,12 +64,14 @@ import type { PartMassProps } from "../model/massProps";
 import { biggestFlatFace, faceFrame, faceWires, flatFaceNormal, planeOutline, type FlatFrame } from "./laserFaces";
 import type { LaserOutline, LaserSource } from "../laser/sources";
 import type { FollowedFrame, PartConnector } from "./protocol";
-import type { AssemblyCutsResult, CutStage, CheckResult, ContactMeasure, ExportResult, FlatPatternData, InstanceInput, PartMesh, PrintCheckPart, PrintCheckSettings, PrintExportResult, RebuildResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
+import type { AssemblyCutsResult, CutStage, CheckResult, ContactMeasure, ExportResult, FilamentColours, FlatPatternData, InstanceInput, PartMesh, PrintCheckPart, PrintCheckSettings, PrintExportResult, RebuildResult, StepResult, StepTree, StudioInput, ThreeMfResult, ViewProjection } from "./protocol";
 import { VIEW_CAMERAS } from "../drawing/cameras";
 import { fromRel, sectionGeometry, type BreakOutRequest, type SectionRequest } from "../drawing/sections";
 import { dropCoveredHidden } from "../drawing/hidden";
 import type { ViewKind } from "../model/types";
 import { write3mf } from "../geometry/threeMf";
+import { writeFilament3mf, type PaintedPart } from "../geometry/filament3mf";
+import { resolveFaceColours, type FaceColour } from "../model/faceColours";
 import { analysePrint, type PrintMesh } from "./printAnalysis";
 import { arrangeOnBed, bedExtents, bedRotation, rotate, type PrintPartResult } from "../model/printCheck";
 import { DEFAULT_PART_COLOUR } from "../model/colours";
@@ -90,6 +92,7 @@ import { simplifyReport, type SimplifyLevel, type SimplifySummary } from "../mod
 import { edgesOf, facesOf, seamEdgeIds, shellsOf, solidsOf } from "./topology";
 export { seamEdgeIds };
 import { findCorner, shapeCorners } from "./corners";
+import { placedPoint, placedRef } from "../assembly/asmMeasure";
 import { matchVertex, type VertexPick } from "../geometry/vertexRef";
 import { radiusPointPick, VariableFilletError } from "../model/variableFillet";
 import { variableFillet, type EdgeRadiusPoint } from "./variableFillet";
@@ -8056,63 +8059,35 @@ export class GeometryEngine {
     }
   }
 
-  /** Measure one or two picked edges/faces: lengths, areas, round sizes, and the gap and angle between them. */
-  measure(picks: (TopoPick | VertexPick)[]): Measurement {
-    const found: { item: MeasuredItem; shape: Edge | Face | Vertex }[] = [];
-    for (const pick of picks.slice(0, 2)) {
-      const part = this.parts.find((p) => p.id === pick.partId);
+  /**
+   * Measure one or two picked edges/faces/corners: lengths, areas, round sizes, and the gap and angle between them.
+   * In an assembly (`instances` + `copies`: the copy each pick is on, by InstanceInput id) each pick is found on its
+   * copy's part as the assembly's features cut it, then measured where the copy is placed (mirrored, turned, moved).
+   */
+  measure(picks: (TopoPick | VertexPick)[], instances?: InstanceInput[], copies?: string[]): Measurement {
+    const found: { item: MeasuredItem; shape: Edge | Face | Vertex; ref?: TopoRef }[] = [];
+    const list = picks.slice(0, 2);
+    for (let k = 0; k < list.length; k++) {
+      const pick = list[k];
+      const inst = instances && copies ? instances.find((i) => i.id === copies[k]) : undefined;
+      if (instances && !inst) continue;
+      const wanted = inst ? inst.partId : pick.partId;
+      const part = this.parts.find((p) => p.id === wanted) ?? (inst ? this.parts.find((p) => p.id === wanted.split("@")[0]) : undefined);
       if (!part) continue;
-      if (pick.ref.kind === "vertex") {
-        // A corner: a point.
-        const corner = findCorner(this.parts, pick as VertexPick);
-        if (typeof corner === "string") continue;
-        found.push({ item: { label: "Corner", point: corner }, shape: makeVertex(corner) });
-        continue;
-      }
-      const pickT = pick as TopoPick;
-      const bounds = boundsOf(part.shape);
-      const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
-      const item = describePick(pickT.ref);
-      if (pickT.ref.kind === "edge") {
-        const edges = edgesOf(part.shape);
-        const [i] = matchRefs([pickT.ref], edges.map((e) => edgeRefOf(e, bounds)), size);
-        if (i === null) continue;
-        const edge = edges[i];
-        edges.forEach((e, j) => j !== i && e.delete());
-        item.length = measureLength(edge);
-        if (pickT.ref.curve === "CIRCLE") {
-          const c = circleThrough3D(take(edge.pointAt(0)), take(edge.pointAt(1 / 3)), take(edge.pointAt(2 / 3)));
-          if (c) Object.assign(item, { radius: c.radius, centre: c.centre });
+      // A copy in an assembly: its part as the assembly's own features cut it (in the part's own coordinates).
+      const cut = inst?.cuts?.length && !part.surface ? this.cutCopy(part, inst.cuts).shape : null;
+      try {
+        const hit = this.measuredPick({ id: part.id, name: part.name, shape: cut ?? part.shape }, pick);
+        if (!hit) continue;
+        if (inst) {
+          hit.shape = placedCopy(hit.shape, inst);
+          if (hit.item.centre) hit.item.centre = placedPoint(inst, hit.item.centre);
+          if (hit.item.point) hit.item.point = placedPoint(inst, hit.item.point);
+          if (hit.ref) hit.ref = placedRef(hit.ref, inst);
         }
-        found.push({ item, shape: edge });
-      } else {
-        const faces = facesOf(part.shape);
-        const [i] = matchRefs([pickT.ref], faces.map((f) => faceRefOf(f, bounds)), size);
-        if (i === null) continue;
-        const face = faces[i];
-        faces.forEach((f, j) => j !== i && f.delete());
-        item.area = measureArea(face);
-        if (pickT.ref.surface === "CYLINDRE") {
-          // A round face's size comes from one of its round edges.
-          for (const e of edgesOf(face)) {
-            if (!item.radius && e.geomType === "CIRCLE") {
-              const c = circleThrough3D(take(e.pointAt(0)), take(e.pointAt(1 / 3)), take(e.pointAt(2 / 3)));
-              if (c) Object.assign(item, { radius: c.radius, centre: c.centre });
-            }
-            e.delete();
-          }
-          // No round edge (a slanted hole between two elliptical rims): from the surface itself.
-          if (!item.radius) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const oc = getOC() as any;
-            const surf = new oc.BRepAdaptor_Surface(face.wrapped, true);
-            const cyl = surf.Cylinder();
-            item.radius = cyl.Radius();
-            cyl.delete();
-            surf.delete();
-          }
-        }
-        found.push({ item, shape: face });
+        found.push(hit);
+      } finally {
+        cut?.delete();
       }
     }
     const result: Measurement = { items: found.map((f) => f.item) };
@@ -8122,13 +8097,74 @@ export class GeometryEngine {
         result.distance = near.distance;
         result.closest = [near.a, near.b];
       }
-      const angle = picks[0].ref.kind === "vertex" || picks[1].ref.kind === "vertex" ? null : angleBetween((picks[0] as TopoPick).ref, (picks[1] as TopoPick).ref);
+      const [ra, rb] = [found[0].ref, found[1].ref];
+      const angle = ra && rb ? angleBetween(ra, rb) : null;
       if (angle !== null) result.angle = angle;
       const [a, b] = found.map((f) => f.item.centre ?? f.item.point);
       if (a && b && (found[0].item.centre || found[1].item.centre)) result.centreDistance = centreGap(a, b);
     }
     found.forEach((f) => f.shape.delete());
     return result;
+  }
+
+  /** One picked edge, face or corner found on a part's shape, with what can be measured of it alone (null if it isn't there). */
+  private measuredPick(part: { id: string; name: string; shape: Shape3D }, pick: TopoPick | VertexPick): { item: MeasuredItem; shape: Edge | Face | Vertex; ref?: TopoRef } | null {
+    if (pick.ref.kind === "vertex") {
+      // A corner: a point.
+      const corner = findCorner([part], { ...(pick as VertexPick), partId: part.id });
+      if (typeof corner === "string") return null;
+      return { item: { label: "Corner", point: corner }, shape: makeVertex(corner) };
+    }
+    const pickT = pick as TopoPick;
+    const bounds = boundsOf(part.shape);
+    const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
+    const item = describePick(pickT.ref);
+    if (pickT.ref.kind === "edge") {
+      const edges = edgesOf(part.shape);
+      const [i] = matchRefs([pickT.ref], edges.map((e) => edgeRefOf(e, bounds)), size);
+      if (i === null) {
+        edges.forEach((e) => e.delete());
+        return null;
+      }
+      const edge = edges[i];
+      edges.forEach((e, j) => j !== i && e.delete());
+      item.length = measureLength(edge);
+      if (pickT.ref.curve === "CIRCLE") {
+        const c = circleThrough3D(take(edge.pointAt(0)), take(edge.pointAt(1 / 3)), take(edge.pointAt(2 / 3)));
+        if (c) Object.assign(item, { radius: c.radius, centre: c.centre });
+      }
+      return { item, shape: edge, ref: pickT.ref };
+    }
+    const faces = facesOf(part.shape);
+    const [i] = matchRefs([pickT.ref], faces.map((f) => faceRefOf(f, bounds)), size);
+    if (i === null) {
+      faces.forEach((f) => f.delete());
+      return null;
+    }
+    const face = faces[i];
+    faces.forEach((f, j) => j !== i && f.delete());
+    item.area = measureArea(face);
+    if (pickT.ref.surface === "CYLINDRE") {
+      // A round face's size comes from one of its round edges.
+      for (const e of edgesOf(face)) {
+        if (!item.radius && e.geomType === "CIRCLE") {
+          const c = circleThrough3D(take(e.pointAt(0)), take(e.pointAt(1 / 3)), take(e.pointAt(2 / 3)));
+          if (c) Object.assign(item, { radius: c.radius, centre: c.centre });
+        }
+        e.delete();
+      }
+      // No round edge (a slanted hole between two elliptical rims): from the surface itself.
+      if (!item.radius) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const oc = getOC() as any;
+        const surf = new oc.BRepAdaptor_Surface(face.wrapped, true);
+        const cyl = surf.Cylinder();
+        item.radius = cyl.Radius();
+        cyl.delete();
+        surf.delete();
+      }
+    }
+    return { item, shape: face, ref: pickT.ref };
   }
 
   /**
@@ -8235,8 +8271,27 @@ export class GeometryEngine {
     });
   }
 
-  /** Mass properties of whole parts (all solid parts when none are named), exactly from the solid model. */
-  massProperties(partIds: string[]): PartMassProps[] {
+  /**
+   * Mass properties of whole parts (all solid parts when none are named), exactly from the solid model. In an
+   * assembly (`instances`): one entry per copy (by its InstanceInput id), placed and cut as the assembly has it.
+   */
+  massProperties(partIds: string[], instances?: InstanceInput[]): PartMassProps[] {
+    if (instances?.length) {
+      const placed = this.placeInstances(instances);
+      try {
+        const out: PartMassProps[] = [];
+        for (const p of placed) {
+          try {
+            out.push(massPropsOf(p.id, p.name, p.shape, !!p.surface));
+          } catch {
+            // leave it out
+          }
+        }
+        return out;
+      } finally {
+        placed.forEach((p) => p.shape.delete());
+      }
+    }
     const chosen = partIds.length ? partIds.map((id) => this.parts.find((p) => p.id === id)).filter((p): p is BuiltPart => !!p) : this.parts.filter((p) => !p.configured);
     const out: PartMassProps[] = [];
     for (const p of chosen) {
@@ -8249,48 +8304,52 @@ export class GeometryEngine {
     return out;
   }
 
-  /** Measure whole parts: each one's size, and between two of them the gap (0 if touching) and any overlap. */
-  measureParts(partIds: string[]): Measurement {
-    const chosen = partIds.slice(0, 2).map((id) => this.parts.find((p) => p.id === id)).filter((p): p is BuiltPart => !!p);
-    const items: MeasuredItem[] = chosen.map((p) => {
-      const b = boundsOf(p.shape);
-      const centre: Vec3 = [(b[0][0] + b[1][0]) / 2, (b[0][1] + b[1][1]) / 2, (b[0][2] + b[1][2]) / 2];
-      let volume: number | undefined;
+  /**
+   * Measure whole parts: each one's size, and between two of them the gap (0 if touching) and any overlap. In an
+   * assembly (`instances`): `partIds` are copies (InstanceInput ids), measured where they're placed.
+   */
+  measureParts(partIds: string[], instances?: InstanceInput[]): Measurement {
+    if (instances?.length) {
+      const placed = this.placeInstances(partIds.slice(0, 2).map((id) => instances.find((i) => i.id === id)).filter((i): i is InstanceInput => !!i));
       try {
-        volume = measureVolume(p.shape);
-      } catch {
-        // leave it out
+        return wholeMeasure(placed);
+      } finally {
+        placed.forEach((p) => p.shape.delete());
       }
-      return { label: p.name, centre, ...(volume !== undefined ? { volume } : {}) };
-    });
-    const result: Measurement = { items };
-    if (chosen.length === 2) {
-      try {
-        result.distance = measureDistanceBetween(chosen[0].shape, chosen[1].shape);
-      } catch {
-        // leave it out
-      }
-      if (result.distance !== undefined && result.distance < 1e-6) {
-        try {
-          const common = chosen[0].shape.intersect(chosen[1].shape) as Shape3D;
-          try {
-            result.overlap = Math.max(0, measureVolume(common));
-          } finally {
-            common.delete();
-          }
-        } catch {
-          // leave it out
-        }
-      }
-      const [a, b] = items.map((i) => i.centre!);
-      result.centreDistance = centreGap(a, b);
     }
-    return result;
+    return wholeMeasure(partIds.slice(0, 2).map((id) => this.parts.find((p) => p.id === id)).filter((p): p is BuiltPart => !!p));
   }
 
   /** One 3MF file with each chosen part as a separate, named object. */
-  export3mf(partIds: string[], quality: MeshQuality, title: string, colours: Record<string, string> = {}, instances?: InstanceInput[]): ThreeMfResult {
+  export3mf(partIds: string[], quality: MeshQuality, title: string, colours: Record<string, string> = {}, instances?: InstanceInput[], faces?: FilamentColours): ThreeMfResult {
     const tol = MESH_TOLERANCES[quality];
+    // Faces coloured on any part chosen: a multi-colour file (filaments + painting); else the plain file, as before.
+    if (faces && Object.keys(faces.faceAppearance).length) {
+      const painted = this.withChosen(partIds, instances, (chosen) => {
+        if (!chosen.some((p) => faces.faceAppearance[this.basePartOf(p.id)?.id ?? p.id]?.length)) return null;
+        let lost = 0;
+        const meshes: PaintedPart[] = chosen.map((p) => {
+          const part = this.basePartOf(p.id);
+          const list = faces.faceAppearance[part?.id ?? p.id] ?? [];
+          const m = p.shape.mesh(tol);
+          const own = { colour: colours[p.id] ?? DEFAULT_PART_COLOUR, ...(faces.partSpools?.[part?.id ?? p.id] ? { spool: faces.partSpools[part?.id ?? p.id] } : {}) };
+          const painting = list.length && part ? this.facePainting(part.shape, p.shape, m.faceGroups, m.triangles.length / 3, list) : null;
+          if (painting) lost += painting.lost;
+          const kept = keptTriangles(m.vertices, m.triangles);
+          const triangles: number[] = [];
+          const paint: number[] = [];
+          for (const t of kept) {
+            triangles.push(m.triangles[3 * t], m.triangles[3 * t + 1], m.triangles[3 * t + 2]);
+            paint.push(painting?.paint[t] ?? 0);
+          }
+          return { name: p.name, vertices: m.vertices, triangles, own, faceFilaments: painting?.filaments ?? [], paint };
+        });
+        const { bytes, filaments } = writeFilament3mf(meshes, title);
+        const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+        return { data, triangleCount: meshes.reduce((n, m) => n + m.triangles.length / 3, 0), filaments, ...(lost ? { lostFaces: lost } : {}), ...this.notesOf(instances) };
+      });
+      if (painted) return painted;
+    }
     return this.withChosen(partIds, instances, (chosen) => {
     const meshes = chosen.map((p) => {
       const m = p.shape.mesh(tol);
@@ -8300,6 +8359,74 @@ export class GeometryEngine {
     const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
     return { data, triangleCount: meshes.reduce((n, m) => n + m.triangles.length / 3, 0), ...this.notesOf(instances) };
     });
+  }
+
+  /** The built part a chosen item is (an assembly copy's id is its part's, maybe with "@<configuration>"). */
+  private basePartOf(id: string): BuiltPart | undefined {
+    return this.parts.find((p) => p.id === id) ?? this.parts.find((p) => p.id === id.split("@")[0]);
+  }
+
+  /**
+   * Which triangles of `shape`'s mesh are painted with a face colour of their own: the colours are found on the part's
+   * own faces (`own`, in its own coordinates, as the app finds them) and carried to `shape` — the part itself, or an
+   * assembly copy placed/mirrored (the same faces in the same order). A copy an assembly feature cut has other faces:
+   * left in the part's own colour. Per triangle: 0 = the part's colour, k = filaments[k − 1].
+   */
+  private facePainting(own: Shape3D, shape: Shape3D, groups: { start: number; count: number; faceId: number }[], triangles: number, list: FaceColour[]): { paint: Uint16Array; filaments: { colour: string; spool?: string }[]; lost: number } | null {
+    const bounds = boundsOf(own);
+    const ownFaces = facesOf(own);
+    const refs = ownFaces.map((f) => faceRefOf(f, bounds));
+    ownFaces.forEach((f) => f.delete());
+    const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
+    const found = resolveFaceColours(list, refs, size);
+    if (!found.colours.size) return { paint: new Uint16Array(triangles), filaments: [], lost: found.lost };
+    const shapeFaces = facesOf(shape);
+    const same = shapeFaces.length === refs.length;
+    const byHash = new Map<number, number[]>();
+    shapeFaces.forEach((f, i) => byHash.set(f.hashCode, [...(byHash.get(f.hashCode) ?? []), i]));
+    shapeFaces.forEach((f) => f.delete());
+    if (!same) return { paint: new Uint16Array(triangles), filaments: [], lost: found.lost + found.colours.size };
+    const filaments: { colour: string; spool?: string }[] = [];
+    const numberOf = new Map<string, number>();
+    const paint = new Uint16Array(triangles);
+    for (const g of groups) {
+      const index = byHash.get(g.faceId)?.shift();
+      const c = index === undefined ? undefined : found.colours.get(index);
+      if (!c) continue;
+      let k = numberOf.get(c.colour);
+      if (k === undefined) {
+        k = filaments.push({ colour: c.colour, ...(c.spool ? { spool: c.spool } : {}) });
+        numberOf.set(c.colour, k);
+      }
+      for (let t = g.start / 3; t < (g.start + g.count) / 3; t++) paint[t] = k;
+    }
+    return { paint, filaments, lost: found.lost };
+  }
+
+  /**
+   * STEP face styles: the faces of `shape` (the part itself, or an assembly copy placed/mirrored — same faces, same order)
+   * that have colours of their own, found on the part's own faces (`own`). The caller frees the faces.
+   */
+  private colouredFaces(own: Shape3D, shape: Shape3D, list: FaceColour[]): { face: Face; colour: string }[] | undefined {
+    const bounds = boundsOf(own);
+    const ownFaces = facesOf(own);
+    const refs = ownFaces.map((f) => faceRefOf(f, bounds));
+    ownFaces.forEach((f) => f.delete());
+    const size = Math.hypot(bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1], bounds[1][2] - bounds[0][2]);
+    const found = resolveFaceColours(list, refs, size);
+    if (!found.colours.size) return undefined;
+    const faces = facesOf(shape);
+    if (faces.length !== refs.length) {
+      faces.forEach((f) => f.delete());
+      return undefined;
+    }
+    const out: { face: Face; colour: string }[] = [];
+    faces.forEach((f, i) => {
+      const c = found.colours.get(i);
+      if (c) out.push({ face: f, colour: c.colour });
+      else f.delete();
+    });
+    return out;
   }
 
   /** 3D-print check of each chosen part, sitting on the bed with its own "down" (see src/model/printCheck.ts). */
@@ -8324,7 +8451,7 @@ export class GeometryEngine {
    * object, turned so its "down" faces the bed, standing on it, and laid out
    * on a bed of `bed` (X × Y mm) without overlapping. The model isn't changed.
    */
-  exportPrint3mf(parts: PrintCheckPart[], bed: [number, number], gap: number, quality: MeshQuality, title: string, colours: Record<string, string> = {}): PrintExportResult {
+  exportPrint3mf(parts: PrintCheckPart[], bed: [number, number], gap: number, quality: MeshQuality, title: string, colours: Record<string, string> = {}, faces?: FilamentColours): PrintExportResult {
     const tol = MESH_TOLERANCES[quality];
     const chosen = parts.map((r) => ({ r, p: this.parts.find((x) => x.id === r.partId) })).filter((x): x is { r: PrintCheckPart; p: BuiltPart } => !!x.p && !x.p.surface);
     if (!chosen.length) throw new Error("There's no solid part to export. Surfaces can't be printed — thicken them first.");
@@ -8334,7 +8461,20 @@ export class GeometryEngine {
       const v = new Float64Array(m.vertices.length);
       for (let i = 0; i < m.vertices.length; i += 3) v.set(rotate(R, [m.vertices[i], m.vertices[i + 1], m.vertices[i + 2]]), i);
       const ext = bedExtents(v, [0, 0, -1]);
-      return { p, v, triangles: withoutDegenerateTriangles(m.vertices, m.triangles), ext };
+      // Faces coloured: each kept triangle's paint goes with it (a multi-colour file below); else as before.
+      const list = faces?.faceAppearance[p.id];
+      if (list?.length) {
+        const painting = this.facePainting(p.shape, p.shape, m.faceGroups, m.triangles.length / 3, list);
+        const kept = keptTriangles(m.vertices, m.triangles);
+        const triangles: number[] = [];
+        const paint: number[] = [];
+        for (const t of kept) {
+          triangles.push(m.triangles[3 * t], m.triangles[3 * t + 1], m.triangles[3 * t + 2]);
+          paint.push(painting?.paint[t] ?? 0);
+        }
+        return { p, v, triangles, ext, painted: { paint, filaments: painting?.filaments ?? [], lost: painting?.lost ?? 0 } };
+      }
+      return { p, v, triangles: withoutDegenerateTriangles(m.vertices, m.triangles), ext, painted: undefined };
     });
     const layout = arrangeOnBed(turned.map((t) => ({ id: t.p.id, size: [t.ext.size[0], t.ext.size[1]] })), bed, gap);
     const meshes = turned.map((t, i) => {
@@ -8353,10 +8493,22 @@ export class GeometryEngine {
       }
       return { name: t.p.name, vertices: v, triangles: t.triangles, colour: colours[t.p.id], move: [place.x, place.y, 0] as [number, number, number] };
     });
+    const triangleCount = meshes.reduce((n, m) => n + m.triangles.length / 3, 0);
+    // Some part has faces coloured: the same multi-colour file as Export's 3MF, laid out on the bed.
+    if (turned.some((t) => t.painted)) {
+      const painted: PaintedPart[] = meshes.map((m, i) => {
+        const t = turned[i];
+        const spool = faces?.partSpools?.[t.p.id];
+        return { name: m.name, vertices: m.vertices, triangles: m.triangles, move: m.move, own: { colour: m.colour ?? DEFAULT_PART_COLOUR, ...(spool ? { spool } : {}) }, faceFilaments: t.painted?.filaments ?? [], paint: t.painted?.paint ?? [] };
+      });
+      const lost = turned.reduce((n, t) => n + (t.painted?.lost ?? 0), 0);
+      const { bytes, filaments } = writeFilament3mf(painted, title);
+      return { data: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, triangleCount, layout, filaments, ...(lost ? { lostFaces: lost } : {}) };
+    }
     const bytes = write3mf(meshes, title);
     return {
       data: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
-      triangleCount: meshes.reduce((n, m) => n + m.triangles.length / 3, 0),
+      triangleCount,
       layout,
     };
   }
@@ -8366,7 +8518,10 @@ export class GeometryEngine {
    * STEP keeps the exact shape — curves stay curves — which is what most
    * manufacturers (machining, sheet metal, injection moulding) ask for.
    */
-  async exportStep(partIds: string[], colours: Record<string, string> = {}, instances?: InstanceInput[], tree?: StepTree): Promise<StepResult> {
+  async exportStep(partIds: string[], colours: Record<string, string> = {}, instances?: InstanceInput[], tree?: StepTree, faces?: FilamentColours): Promise<StepResult> {
+    const faceStyles = (own: BuiltPart | undefined, shape: Shape3D) => (own && faces?.faceAppearance[own.id]?.length ? this.colouredFaces(own.shape, shape, faces.faceAppearance[own.id]) : undefined);
+    const freeFaces = (list: { face: Face }[] | undefined) => list?.forEach((f) => f.face.delete());
+    const styled: { face: Face }[][] = [];
     // A whole assembly: its structure kept (sub-assemblies, each part once, every copy a placed reference to it).
     if (tree) {
       const made: Shape3D[] = [];
@@ -8387,15 +8542,28 @@ export class GeometryEngine {
             shape = def.mirrored ? r.shape.mirror("YZ", [0, 0, 0]) : r.shape;
             made.push(shape);
           }
-          return { shape, colour: colours[def.partId] ?? colours[def.partId.split("@")[0]] ?? DEFAULT_PART_COLOUR };
+          const styles = def.cuts?.length ? undefined : faceStyles(part, shape);
+          if (styles) styled.push(styles);
+          return { shape, colour: colours[def.partId] ?? colours[def.partId.split("@")[0]] ?? DEFAULT_PART_COLOUR, ...(styles ? { faces: styles.map((f) => ({ face: f.face.wrapped, colour: f.colour })) } : {}) };
         });
         return { step: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, partCount: stepPartCount(written), ...(notes.size ? { cutNotes: [...notes] } : {}) };
       } finally {
+        styled.forEach(freeFaces);
         made.forEach((m) => m.delete());
       }
     }
     return this.withChosen(partIds, instances, (chosen) => {
-      const bytes = writeStep(chosen.map((p) => ({ shape: p.shape, name: p.name, colour: colours[p.id] ?? DEFAULT_PART_COLOUR })));
+      const parts = chosen.map((p) => {
+        const styles = faceStyles(this.basePartOf(p.id), p.shape);
+        if (styles) styled.push(styles);
+        return { shape: p.shape, name: p.name, colour: colours[p.id] ?? DEFAULT_PART_COLOUR, ...(styles ? { faces: styles.map((f) => ({ face: f.face.wrapped, colour: f.colour })) } : {}) };
+      });
+      let bytes: Uint8Array;
+      try {
+        bytes = writeStep(parts);
+      } finally {
+        styled.forEach(freeFaces);
+      }
       return { step: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, partCount: chosen.length, ...this.notesOf(instances) };
     });
   }
@@ -9290,4 +9458,54 @@ export function noChangeMessage(operation: Feature["operation"]): string {
   if (operation === "add") return "This doesn't change anything — everything it adds is inside the part already. Check the direction (Flip), the depth and where the sketch is.";
   if (operation === "intersect") return "This doesn't change anything — the parts it reaches are wholly inside it. Check the direction (Flip), the depth and where the sketch is.";
   return "This doesn't change anything — it removes no material. Check the direction (Flip), the depth and where the sketch is.";
+}
+
+/** Whole parts (or placed copies) measured: each one's size, and between two the gap (0 if touching) and any overlap. */
+function wholeMeasure(chosen: { name: string; shape: Shape3D }[]): Measurement {
+  const items: MeasuredItem[] = chosen.map((p) => {
+    const b = boundsOf(p.shape);
+    const centre: Vec3 = [(b[0][0] + b[1][0]) / 2, (b[0][1] + b[1][1]) / 2, (b[0][2] + b[1][2]) / 2];
+    let volume: number | undefined;
+    try {
+      volume = Math.abs(measureVolume(p.shape));
+    } catch {
+      // leave it out
+    }
+    return { label: p.name, centre, ...(volume !== undefined ? { volume } : {}) };
+  });
+  const result: Measurement = { items };
+  if (chosen.length === 2) {
+    try {
+      result.distance = measureDistanceBetween(chosen[0].shape, chosen[1].shape);
+    } catch {
+      // leave it out
+    }
+    if (result.distance !== undefined && result.distance < 1e-6) {
+      try {
+        const common = chosen[0].shape.intersect(chosen[1].shape) as Shape3D;
+        try {
+          result.overlap = Math.max(0, Math.abs(measureVolume(common)));
+        } finally {
+          common.delete();
+        }
+      } catch {
+        // leave it out
+      }
+    }
+    const [a, b] = items.map((i) => i.centre!);
+    result.centreDistance = centreGap(a, b);
+  }
+  return result;
+}
+
+/** A face, edge or corner of a part's own coordinates moved as an assembly copy is placed (as placeInstances places the part). The given shape is used up. */
+function placedCopy<T extends Edge | Face | Vertex>(shape: T, i: InstanceInput): T {
+  let out = shape;
+  if (i.mirrored) out = out.mirror("YZ", [0, 0, 0]) as T;
+  const [x, y, z, w] = i.rotation;
+  const s = Math.sqrt(Math.max(0, 1 - w * w));
+  const angle = (2 * Math.acos(Math.max(-1, Math.min(1, w))) * 180) / Math.PI;
+  if (s > 1e-9 && Math.abs(angle) > 1e-9) out = out.rotate(angle, [0, 0, 0], [x / s, y / s, z / s]) as T;
+  if (Math.abs(i.position[0]) + Math.abs(i.position[1]) + Math.abs(i.position[2]) > 0) out = out.translate(i.position) as T;
+  return out;
 }

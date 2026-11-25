@@ -6,6 +6,7 @@ import { distToCurve } from "./hit";
 import { ALL_RELATIONS, RELATION_LABELS, relationsFor, type RelationTool } from "./ops";
 import { canBeCentreline, canSwitchRound } from "./dimensionKinds";
 import { relationKey } from "./sketchView";
+import { patternIdOf } from "./patternEdit";
 import { isDimension, ORIGIN_ID, type SketchData } from "./types";
 
 export type SketchMenuAction =
@@ -19,7 +20,8 @@ export type SketchMenuAction =
   | { kind: "centreline"; on: boolean }
   | { kind: "showConstraints" }
   | { kind: "showDimensions" }
-  | { kind: "selectOther" };
+  | { kind: "selectOther" }
+  | { kind: "editPattern"; pattern: string };
 
 export interface SketchMenuItem {
   label: string;
@@ -60,6 +62,9 @@ export function sketchMenuItems(s: SketchData, selection: string[], ctx: SketchM
     if (canSwitchRound(s, d)) own.push({ label: d.type === "diameter" ? "Show as a radius" : "Show as a diameter", action: { kind: "roundSwitch" } });
     if (canBeCentreline(s, d)) own.push({ label: d.doubled ? "Measure to the centreline" : "Measure as a diameter (across the centreline)", action: { kind: "centreline", on: !d.doubled } });
   }
+  // A copy (or the original) of a pattern: change its count and spacing (Onshape's Edit pattern).
+  const pattern = selection.length ? patternIdOf(s, selection) : null;
+  if (pattern) own.push({ label: "Edit pattern…", action: { kind: "editPattern", pattern } });
   if (own.length) groups.push(own);
   const edit: SketchMenuItem[] = [];
   if (selection.length) edit.push({ label: "Copy", key: "Ctrl+C", action: { kind: "copy" } });
