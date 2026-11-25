@@ -2199,6 +2199,27 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   mm × patterns 1–3, every piece one outer loop and no hole, every tab catching; those 36 builds are byte-identical to v0.74.
   Tests: tests/islandPuzzle (pure; over seeds/sizes on a ragged coast: ≥ 2 joints per piece, outlines from the meshes never
   cross or come within 2·fit, every tab catches when pulled, median play ≤ 0.5 mm — `tests/support/outlineGeom.ts`), tests/islandMarks.
+- "As many pieces as will print well" (the owner's wish; Island and Mountain/Photo windows): a tick box under the piece / cube
+  size (remembered for the session, `src/app/mostPiecesState.ts`); ticked, the box is greyed and filled in by a search. Pure
+  `src/terrain/mostPieces.ts`: `islandPrintsWell` (no dovetail dropped as too thin — `IslandPuzzle.droppedTabs` —, necks ≥
+  LEAST_NECK, every piece with a neighbour ≥ MIN_JOINTS; loose islets don't count), `mountainPrintsWell` (necks ≥ GOOD_NECK, a
+  key under every piece above the plate, no `MountainPuzzle.keyClashes`, no piece taller than the printer; few-joint peaks
+  don't count) and `mountainLayoutVerdict` (MAX_COLUMNS / 40 layers, checked before building). Island: `mostPiecesSize` goes
+  by the COUNT — smaller isn't more: a dovetail's knob is ~6 mm whatever the size (LEAST_NECK + 2 × LEAST_UNDERCUT) and needs
+  ~9.5 mm of border, so below ~12 mm pieces can't hold two and join a neighbour (measured on four coasts × patterns: most at
+  12 mm, ~1.35 × the count at 15; 10 mm fewer than 12, 8 mm fewer than 15). It climbs from `ISLAND_START` 12 in 1 mm steps
+  both ways towards more pieces (sizes that don't print well skipped, up until one does), then ±0.5; ties to the bigger;
+  `SMALLER_JOIN_UP` says why not smaller. `ISLAND_FLOOR` = islandChecks' `LEAST_PIECE_SIZE` 10 (the typed box too, was 15).
+  Mountain: `smallestThatPrints` (cube counts only grow as cubes shrink) builds `mountainFloor` = smallestCube(fit, GOOD_NECK)
+  first, then from the typed size up, halves the gap, then `lookBelow` (2) sizes further down in case smaller prints well
+  after all (not monotone: a key clash or dropped tab at one size and not the next); steps 1. Both: each size once, ≤
+  `MOST_TRIES` 10, stop when settings change (`stopped`). Island: its own `IslandBuilder` worker; mountain: `MountainBuilder`
+  (src/app/mountainBuilder.ts → `mountainPuzzle.worker.ts`, built and judged off the page; photo grids made on the page).
+  The search is keyed by the spec without the size; the found puzzle is kept (`found`, with what it was built from) so it
+  isn't built again; unticked = the old path exactly. `MostPiecesNote.tsx` says the sizes tried (with counts) and why not
+  smaller. Tests: mostPieces (pure, fake builders: a count curve, non-monotone verdicts), mostPiecesReal (heavy: a low coast
+  finds < 15 mm with > 1.15 × the pieces at 15, every piece held by ≥ 2 catching dovetails, gaps ≥ 2·fit, each one solid; a
+  pretend-tile hill at 3× scale finds 32 with 31 over 400 cubes a layer).
 - Map puzzles tab (the owner's wish): the Mountain, Photo relief and Island puzzle cards (`LIBRARY_TOOLS`, `section: "maps"`) are a
   third library tab after Laser cutting and 3D printing (`src/library/sections.ts` `LIBRARY_SECTIONS`/`LibrarySection`, `sectionFrom`,
   `sectionLocked`; designs keep `DesignCategory`), behind a LIGHT lock (the code is public — it only stops casual visitors):

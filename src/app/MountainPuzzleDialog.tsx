@@ -42,6 +42,10 @@ import { loadTerrainTile } from "./mountainTiles";
 import { PickableView, type TopViewPick } from "./PathPicker";
 import { mountainViewBox, NONE_DROPPED, pickableLines, withoutDropped } from "../terrain/pickMarks";
 import { amsSlotsOf, loadPrinter, printerBed, savePrinter } from "./printerSetting";
+import { CUBE_STEP, mountainFloor, mountainLayoutVerdict, smallestThatPrints, type SearchResult, type SearchStep, type Verdict } from "../terrain/mostPieces";
+import { mostPiecesTicked, setMostPiecesTicked } from "./mostPiecesState";
+import { MostPiecesNote } from "./MostPiecesNote";
+import { MountainBuilder } from "./mountainBuilder";
 
 type Source = "peak" | "ref" | "picture" | "osm";
 
@@ -282,15 +286,17 @@ export function MountainPuzzleDialog() {
   const layoutBed: [number, number, number] = together ? [room[2] - room[0], room[3] - room[1], bed[2]] : bed;
 
   // A photo's heights depend on the puzzle's size (its relief is set in mm), so they're worked out again as that changes.
-  const photoLoaded = useMemo(() => {
+  const photoFor = (cube: number) => {
     if (!photoMode || !photo) return null;
     const { width: w, height: h } = photo.pixels;
     // Trimmed first, so the relief is the asked-for height on what's left; the grid keeps its place in the picture.
     const cut = cropPixels(blurred(photo.pixels, smooth), trim);
-    const made = photoGrid(cut.pixels, { ...spec, bed: layoutBed, snowline: null }, relief, invert);
+    const made = photoGrid(cut.pixels, { ...spec, cube, bed: layoutBed, snowline: null }, relief, invert);
     const grid = cut.west || cut.south ? { ...made, e0: cut.west, n0: cut.south } : made;
     return { area: { sw: { e: 0, n: 0 }, width: w - 1, height: h - 1, name: photo.name }, grid, used: { grid, width: cut.pixels.width - 1, height: cut.pixels.height - 1 } };
-  }, [photoMode, photo, smooth, relief, invert, spec.cube, spec.scale, layoutBed[0], layoutBed[1], trim]);
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const photoLoaded = useMemo(() => photoFor(spec.cube), [photoMode, photo, smooth, relief, invert, spec.cube, spec.scale, layoutBed[0], layoutBed[1], trim]);
   const loaded = photoMode ? photoLoaded : mapLoaded;
   // The heights the puzzle is made from: the area as loaded, less what's trimmed off each side.
   const mapUsed = useMemo(() => (mapLoaded ? cropGrid(mapLoaded.grid, mapLoaded.area.width, mapLoaded.area.height, trim) : null), [mapLoaded, trim]);
@@ -333,7 +339,97 @@ export function MountainPuzzleDialog() {
 
   // Make the puzzle a moment after the last change (it takes a second or two for big ones).
   const specKey = JSON.stringify(fullSpec);
+  // "As many pieces as will print well": the cube size is found by building a few sizes (a moment apart, so the window
+  // keeps drawing), and the puzzle at the size found is kept so it isn't built again.
+  const [most, setMostShown] = useState(() => mostPiecesTicked("mountain"));
+  const setMost = (on: boolean) => {
+    setMostPiecesTicked("mountain", on);
+    setMostShown(on);
+  };
+  const [search, setSearch] = useState<{ key: string; steps: SearchStep[]; result: SearchResult | null } | null>(null);
+  const searchBuilder = useRef(new MountainBuilder());
+  useEffect(() => () => searchBuilder.current.stop(), []);
+  const found = useRef<{ specKey: string; inputs: unknown[]; puzzle: MountainPuzzle } | null>(null);
+  const cubeNow = useRef(spec.cube);
+  cubeNow.current = spec.cube;
+  const { cube: _cube, ...specButCube } = fullSpec;
+  void _cube;
+  const searchKey = JSON.stringify(specButCube);
+  // What the puzzle is made from besides the sizes (the photo's grid depends on the cube size, so it's its settings).
+  const buildInputs: unknown[] = photoMode ? [photo, smooth, relief, invert, trim, features] : [mapUsed, features];
   useEffect(() => {
+    if (!most || !loaded || !used) {
+      searchBuilder.current.stop();
+      setSearch(null);
+      return;
+    }
+    let stopped = false;
+    const inputs = buildInputs;
+    const builtAt = new Map<number, MountainPuzzle>();
+    const from = cubeNow.current;
+    setSearch({ key: searchKey, steps: [], result: null });
+    const timer = setTimeout(() => {
+      smallestThatPrints({
+        from,
+        floor: mountainFloor(fullSpec.fit),
+        top: 100,
+        step: CUBE_STEP,
+        stopped: () => stopped,
+        onStep: (steps) => !stopped && setSearch({ key: searchKey, steps, result: null }),
+        test: async (cube): Promise<Verdict> => {
+          // A moment between sizes, so the window draws the progress; the building itself is in a worker.
+          await new Promise((r) => setTimeout(r, 30));
+          if (stopped) return { ok: false };
+          const u = photoMode ? photoFor(cube)?.used : mapUsed;
+          if (!u) return { ok: false };
+          const s: MountainSpec = { ...fullSpec, cube };
+          const early = mountainLayoutVerdict(s, layoutFor(u.grid, u.width, u.height, { ...s, snowline: null }));
+          if (early) return early;
+          return new Promise<Verdict>((resolve) => {
+            searchBuilder.current.build({ grid: u.grid, width: u.width, height: u.height, spec: s, features }, (reply) => {
+              if ("error" in reply) resolve({ ok: false, why: "smaller cubes couldn't be made" });
+              else {
+                builtAt.set(cube, reply.puzzle);
+                resolve(reply.verdict);
+              }
+            });
+          });
+        },
+      })
+        .then((result) => {
+          if (stopped) return;
+          if (result.size !== null) {
+            const puzzle = builtAt.get(result.size);
+            if (puzzle) found.current = { specKey: JSON.stringify({ ...fullSpec, cube: result.size }), inputs, puzzle };
+            set("cube", result.size);
+          }
+          setSearch({ key: searchKey, steps: result.steps, result });
+        })
+        .catch(() => undefined);
+    }, 350);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      searchBuilder.current.stop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [most, !!loaded, searchKey, photoMode, photo, smooth, relief, invert, trim, mapUsed, features]);
+  useEffect(() => {
+    if (most && loaded && used && !checks.problems.length) {
+      // Ticked: the puzzle shown is the one the search found; until then, nothing.
+      const f = found.current;
+      if (f && f.specKey === specKey && f.inputs.length === buildInputs.length && f.inputs.every((x, i) => x === buildInputs[i])) {
+        setPuzzle(f.puzzle);
+        setBuildError(null);
+        setWorking(false);
+        return;
+      }
+      if (!search || search.key !== searchKey || !search.result || search.result.size === null) {
+        setPuzzle(null);
+        setWorking(!search?.result);
+        return;
+      }
+    }
     if (!loaded || !used || checks.problems.length) {
       setPuzzle(null);
       return;
@@ -352,7 +448,7 @@ export function MountainPuzzleDialog() {
     }, 350);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, used, specKey, features]);
+  }, [loaded, used, specKey, features, most, search]);
 
   // Colour bands: pieces at different heights get plates of their own, so a plate changes colour on the same layers.
   const byLevel = colourOn && colour.mode === "bands";
@@ -421,9 +517,9 @@ export function MountainPuzzleDialog() {
     else downloadFile(blobOf(zipStored(files.map((f, i) => ({ name: `${fileName} - border plate ${i + 1} of ${files.length}.3mf`, data: f }))), "application/zip"), `${fileName} - border.zip`);
   };
   const set = <K extends keyof typeof spec>(key: K, value: (typeof spec)[K]) => setSpec((s) => ({ ...s, [key]: value }));
-  const numberBox = (value: number, onChange: (v: number) => void, step: number, min: number, max: number, unit: string) => (
+  const numberBox = (value: number, onChange: (v: number) => void, step: number, min: number, max: number, unit: string, disabled = false) => (
     <span className="mountain-number">
-      <input type="number" value={value} step={step} min={min} max={max} onChange={(e) => Number.isFinite(e.target.valueAsNumber) && onChange(e.target.valueAsNumber)} />
+      <input type="number" value={value} step={step} min={min} max={max} disabled={disabled} onChange={(e) => Number.isFinite(e.target.valueAsNumber) && onChange(e.target.valueAsNumber)} />
       <span className="muted">{unit}</span>
     </span>
   );
@@ -699,13 +795,17 @@ export function MountainPuzzleDialog() {
           <div className="mountain-row">
             <span>Cube size</span>
             <span>
-              {numberBox(spec.cube, (v) => set("cube", v), 1, 10, 100, "mm")}
+              {numberBox(spec.cube, (v) => set("cube", v), 1, 10, 100, "mm", most)}
               <span className={`small ${neck < MIN_NECK ? "error-text" : neck < GOOD_NECK ? "mountain-warn" : "muted"}`}>
                 {" "}
                 smallest {smallestCube(spec.fit)} mm, sturdy from {smallestCube(spec.fit, GOOD_NECK)} mm
               </span>
             </span>
           </div>
+          <label className="mountain-check">
+            <input type="checkbox" checked={most} onChange={(e) => setMost(e.target.checked)} /> As many pieces as will print well
+          </label>
+          {most && <MostPiecesNote search={search} noun="Cubes" pieces={puzzle?.pieces.length ?? null} floorWords={`${mountainFloor(spec.fit)} mm is the smallest cube with sturdy tabs`} looking="Finding the smallest cubes that print well…" foundWords="smallest that prints well" />}
           <div className="mountain-row">
             <span>Side under the ground</span>
             <span>

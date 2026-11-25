@@ -147,6 +147,8 @@ export interface IslandPuzzle {
   tabs: IslandTab[];
   /** Land and sea came from OpenStreetMap's coastline (missing: from the heights). */
   coastline?: true;
+  /** Dovetails left out as too thin at the neck to hold (missing: none). */
+  droppedTabs?: number;
   /** The ground's height (mm) at x, y — the one field every piece's top is drawn from, marks and all. */
   groundAt(x: number, y: number): number;
 }
@@ -166,9 +168,12 @@ export const LEAST_MARK_WATER = 4;
 export const MARK_FADE = 1;
 export const NECK_ROOM = 0.5;
 
+/** The smallest piece size made (mm): below about 12 mm pieces get too small for two dovetails and join up (mostPieces.ts). */
+export const LEAST_PIECE_SIZE = 10;
+
 export function islandChecks(spec: IslandSpec): string[] {
   const out: string[] = [];
-  if (!(spec.piece >= 15 && spec.piece <= 150)) out.push("Pieces should be between 15 and 150 mm.");
+  if (!(spec.piece >= LEAST_PIECE_SIZE && spec.piece <= 150)) out.push(`Pieces should be between ${LEAST_PIECE_SIZE} and 150 mm.`);
   if (!(spec.base >= LEAST_BASE && spec.base <= 30)) out.push("The base should be between 1.5 and 30 mm.");
   if (!(spec.relief >= 0 && spec.relief <= 150)) out.push("The highest ground should be between 0 and 150 mm above the base.");
   if (!(spec.fit >= 0 && spec.fit <= 0.5)) out.push("The fit gap should be between 0 and 0.5 mm.");
@@ -1173,7 +1178,7 @@ function buildIsland(
   const tabs: IslandTab[] = joined.tabs
     .filter((tb) => indexOf.has(tb.from) && indexOf.has(tb.into))
     .map((tb) => ({ from: indexOf.get(tb.from)!, into: indexOf.get(tb.into)!, at: tb.at, dir: tb.dir, neck: tb.neck, reach: tb.reach }));
-  return { width: W, height: H, origin: { e: sw.e, n: sw.n }, k, high, pieces, alongBoundaries, joins, unjoined, loose, warnings, marks, tabs, groundAt: top, ...(byCoast ? { coastline: true } : {}) };
+  return { width: W, height: H, origin: { e: sw.e, n: sw.n }, k, high, pieces, alongBoundaries, joins, unjoined, loose, warnings, marks, tabs, groundAt: top, ...(byCoast ? { coastline: true } : {}), ...(crumbs.dropped.length ? { droppedTabs: crumbs.dropped.length } : {}) };
 }
 
 /**
