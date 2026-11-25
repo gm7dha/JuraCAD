@@ -1319,7 +1319,7 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   (`useAssemblyInputs` = instancesForKernel of the solve; `asmPickFor` reads refs off the copy as shown, `cutMeshFor` first,
   corners by `cornersOf`), `src/app/asmMeasureState.ts` (session-only picks, keys as partId; `asmMeasureClick` from
   handleAssemblyPick — a click on another face of an already-selected copy keeps it selected; the same face again toggles as
-  before; `livePicks` = picks whose copy is still selected; let go on tab change); the view highlights a copy's picks instead of
+  before, and Shift taking one of a copy's two picks off keeps the copy — pure `asmSelectionAfterClick`; `livePicks` = picks whose copy is still selected; let go on tab change); the view highlights a copy's picks instead of
   the whole copy (`instanceSelection`); `cornerWanted` is on in assemblies unless a mirror wants a face (and not while an
   assembly Hole/Cut/Fillet is open, Viewport). Mass panel weighs copies by their part's material; exploded = weighed put
   together, no centre dot, said. Tests: asmMeasure (pure), engineAsmMeasure (gap between placed copies, a turned copy's angle

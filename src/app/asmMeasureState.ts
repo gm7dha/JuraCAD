@@ -24,7 +24,8 @@ const same = (a: SelectionItem, b: SelectionItem) => a.partId === b.partId && a.
 
 /**
  * A click in an assembly (not making a mate or a cut): the face, edge or corner joins the picks (Shift/Ctrl) or
- * replaces them. Returns whether it was already picked — then the click is the old "select / unselect the copy" one.
+ * replaces them. Returns whether the click let it go (Shift on a picked one, or a plain click on the only one picked)
+ * — then the click is the old "select / unselect the copy" one. A plain click on one of two picks keeps just it.
  */
 export function asmMeasureClick(target: PickTarget | null, additive: boolean): boolean {
   if (target?.kind !== "part" || target.whole) {
@@ -33,9 +34,26 @@ export function asmMeasureClick(target: PickTarget | null, additive: boolean): b
   }
   const item = target.item;
   const had = current.some((x) => same(x, item));
-  if (additive) set(had ? current.filter((x) => !same(x, item)) : [...current, item].slice(-2));
-  else set(had && current.length === 1 ? NONE : [item]);
-  return had;
+  if (additive) {
+    set(had ? current.filter((x) => !same(x, item)) : [...current, item].slice(-2));
+    return had;
+  }
+  const lettingGo = had && current.length === 1;
+  set(lettingGo ? NONE : [item]);
+  return lettingGo;
+}
+
+/**
+ * The copies selected after a click on copy `id` (its top-level key; a part's own in an exploded view), given whether
+ * the click let its face/edge/corner go (`lettingGo`, from asmMeasureClick) and the picks now. A click on another face
+ * of a selected copy keeps it selected (a plain one narrows the selection to it); letting a pick go is the old toggle
+ * — unless Shift took one pick off a copy that still has another. Returns `current` itself when nothing changes.
+ */
+export function asmSelectionAfterClick(current: string[], id: string, additive: boolean, lettingGo: boolean, picks: readonly SelectionItem[]): string[] {
+  const keep = !lettingGo || (additive && picks.some((p) => keyWithin(p.partId, id)));
+  if (keep && current.includes(id)) return additive || current.length === 1 ? current : [id];
+  if (additive) return current.includes(id) ? current.filter((x) => x !== id) : [...current, id];
+  return current.length === 1 && current[0] === id ? [] : [id];
 }
 
 export function clearAsmPicks(): void {

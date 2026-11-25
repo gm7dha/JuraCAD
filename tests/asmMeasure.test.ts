@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { copiesToWeigh, keyWithin, materialPartOf, placedDir, placedPoint, placedRef } from "../src/assembly/asmMeasure";
 import { quatFromAxisAngle } from "../src/assembly/math";
-import { asmMeasureClick, asmPicksNow, clearAsmPicks, livePicks } from "../src/app/asmMeasureState";
+import { asmMeasureClick, asmPicksNow, asmSelectionAfterClick, clearAsmPicks, livePicks } from "../src/app/asmMeasureState";
 import type { InstanceInput } from "../src/kernel/protocol";
 import { massSummary, type PartMassProps } from "../src/model/massProps";
 import type { SelectionItem } from "../src/model/store";
@@ -95,5 +95,48 @@ describe("clicking faces of copies for Measure", () => {
     const picks: SelectionItem[] = [{ partId: "sub/x", kind: "face", index: 0 }, { partId: "b", kind: "edge", index: 1 }];
     expect(livePicks(picks, ["sub", "b"])).toBe(picks);
     expect(livePicks(picks, ["b"]).map((p) => p.partId)).toEqual(["b"]);
+  });
+  it("what a click does to the copies selected", () => {
+    // As handleAssemblyPick: the pick first, then the selection.
+    let sel: string[] = [];
+    const click = (partId: string, index: number, additive = false) => {
+      const top = partId.split("/")[0];
+      sel = asmSelectionAfterClick(sel, top, additive, asmMeasureClick(face(partId, index), additive), asmPicksNow());
+    };
+    clearAsmPicks();
+    click("x", 1);
+    expect(sel).toEqual(["x"]);
+    // Another face of the same copy: still selected, that face picked.
+    click("x", 2);
+    expect(sel).toEqual(["x"]);
+    expect(asmPicksNow().map((p) => p.index)).toEqual([2]);
+    // Shift adds a second face of the same copy; the copy stays selected.
+    click("x", 3, true);
+    expect(sel).toEqual(["x"]);
+    expect(asmPicksNow().map((p) => p.index)).toEqual([2, 3]);
+    // Shift takes one of the two off: the copy keeps the other, still selected.
+    click("x", 3, true);
+    expect(sel).toEqual(["x"]);
+    expect(livePicks(asmPicksNow(), sel).map((p) => p.index)).toEqual([2]);
+    // A plain click on one of two picks keeps just it, and the copy.
+    click("x", 3, true);
+    click("x", 2);
+    expect(sel).toEqual(["x"]);
+    expect(asmPicksNow().map((p) => p.index)).toEqual([2]);
+    // The only pick clicked again: the copy is let go, as before.
+    click("x", 2);
+    expect(sel).toEqual([]);
+    expect(asmPicksNow()).toHaveLength(0);
+    // Two copies with Shift, then a plain click on one of them: just that one.
+    click("x", 1);
+    click("s/y", 1, true);
+    expect(sel).toEqual(["x", "s"]);
+    click("s/y", 4);
+    expect(sel).toEqual(["s"]);
+    // Shift on the only pick of a copy among two: that copy goes, as before.
+    click("x", 1, true);
+    expect(sel).toEqual(["s", "x"]);
+    click("x", 1, true);
+    expect(sel).toEqual(["s"]);
   });
 });

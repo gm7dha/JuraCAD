@@ -31,7 +31,7 @@ import { SketchController } from "../sketch/controller";
 import { intersectWith } from "../app/sketchIntersect";
 import { bringInCurvedEdge } from "../app/sketchUseCurve";
 import { cutMeshFor, useAssemblyCuts, useAsmFeatures, useShownContextParts } from "../app/assemblyFeatureState";
-import { asmMeasureClick, livePicks, useAsmPicks } from "../app/asmMeasureState";
+import { asmMeasureClick, asmPicksNow, asmSelectionAfterClick, livePicks, useAsmPicks } from "../app/asmMeasureState";
 import { asmCutPick } from "../app/AssemblyFeaturesUI";
 import { isContextPartId } from "../assembly/inContext";
 import { planeFrame, planeOnFace, type PlaneFrame, type SketchPlane } from "../sketch/planes";
@@ -212,13 +212,8 @@ function handleAssemblyPick(target: PickTarget | null, additive: boolean) {
     if (!additive) s.setAsmSelection([]);
     return;
   }
-  const current = s.asmSelection;
-  if (!again && current.includes(id)) {
-    if (!additive) s.setAsmSelection(current.length === 1 ? current : [id]);
-    return;
-  }
-  if (additive) s.setAsmSelection(current.includes(id) ? current.filter((x) => x !== id) : [...current, id]);
-  else s.setAsmSelection(current.length === 1 && current[0] === id ? [] : [id]);
+  const next = asmSelectionAfterClick(s.asmSelection, id, additive, again, asmPicksNow());
+  if (next !== s.asmSelection) s.setAsmSelection(next);
 }
 
 /** Lets keyboard shortcuts and toolbar buttons reach the 3D view. */
