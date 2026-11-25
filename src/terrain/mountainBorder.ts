@@ -38,8 +38,13 @@ export const CORNER_ARM = 20;
 export const MIN_PIECE = 15;
 /** No straight piece may be shorter than its lug plus the fit gaps and this much (mm): a shorter one would overlap its neighbours. */
 export const PIECE_MARGIN = 3;
-/** The wall's top stands at least this much (mm) above the puzzle's ground everywhere along its edge. */
-export const RISE = 1;
+/**
+ * The wall's top stands at least this much (mm) above the puzzle's ground everywhere along its edge. 2 mm, not 1: the
+ * slicer's layers can each take up to a layer off the wall's top and add one to an edge piece's, and a top piece may sit
+ * a few tenths proud on its key, so 1 mm could print nearly flush; 2 mm keeps a lip you can see and feel all round while
+ * still following the land closely (much more would hide the gentle relief along the edge again).
+ */
+export const RISE = 2;
 /** The top's height is worked out every `TOP_STEP` mm along each side (about; a whole number of steps a cube). */
 export const TOP_STEP = 1;
 /** How loosely the top follows the land: bumps are covered `ENVELOPE` cubes either way, then averaged over `SMOOTH` cubes either way. */

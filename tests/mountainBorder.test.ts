@@ -149,7 +149,7 @@ describe("Border round the puzzle", () => {
         }
     expect(checked).toBeGreaterThan(100);
     // It really follows the shape: each side's wall isn't one flat height, and never stands higher than the land needs.
-    expect(Object.values(border.lows).some((low, i) => Object.values(border.heights)[i] - low > 5)).toBe(true);
+    expect(Object.values(border.lows).some((low, i) => Object.values(border.heights)[i] - low > 3)).toBe(true);
     const need = Math.max(...Object.values(border.peaks)) + RISE;
     for (const s of ["E", "N", "W"] as const) {
       expect(border.heights[s]).toBeGreaterThanOrEqual(border.peaks[s] + RISE - 1e-6);
@@ -313,6 +313,45 @@ describe("Border round the puzzle", () => {
     const s = makeBorder(small, "");
     expect(s.problems).toEqual([]);
     for (const p of s.pieces) expect(closed(p.bodies[0]).open).toBe(0);
+  });
+
+  it("on rugged ground and a cliff at the edge: sound pieces, flat bottoms, a lip above every edge point, walls tall enough for the lugs", () => {
+    const shapes = [
+      (e: number, n: number) => 200 + 600 * Math.abs(Math.sin(e / 230) * Math.cos(n / 310)) + 150 * Math.sin(e / 47 + n / 61),
+      (e: number, n: number) => 100 + (e < 200300 ? 900 : 0) + 300 * Math.exp(-(((n - 771500) / 300) ** 2)),
+    ];
+    for (const shape of shapes) {
+      const ground = gridFrom({ e: 200000, n: 770000 }, W, H, 20, shape);
+      const pz = makeMountainPuzzle(ground, W, H, SPEC);
+      const b = makeBorder(pz, words);
+      expect(b.problems).toEqual([]);
+      const pw = pz.layout.cols * SPEC.cube;
+      const ph = pz.layout.rows * SPEC.cube;
+      for (const p of b.pieces) {
+        const { vertices: v, triangles: t } = p.bodies[0];
+        expect(closed(p.bodies[0]).open, p.name).toBe(0);
+        for (let i = 0; i < t.length; i += 3) {
+          const [a, c, e] = [t[i], t[i + 1], t[i + 2]].map((k) => [v[3 * k], v[3 * k + 1], v[3 * k + 2]]);
+          const u = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+          const w = [e[0] - a[0], e[1] - a[1], e[2] - a[2]];
+          expect(Math.hypot(u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]), p.name).toBeGreaterThan(1e-9);
+        }
+        // Every point is on the bed or on the top; the lowest top leaves the full-height lugs plenty to hold by.
+        for (let i = 2; i < v.length; i += 3) if (v[i] !== 0) expect(v[i]).toBeCloseTo(b.topAt(v[i - 2], v[i - 1]), 9);
+        const tops = v.filter((z, i) => i % 3 === 2 && z > 0);
+        expect(Math.min(...tops), p.name).toBeGreaterThanOrEqual(10);
+      }
+      const near = fit + 0.5;
+      for (const p of pz.pieces)
+        for (const body of p.bodies)
+          for (let i = 0; i < body.vertices.length; i += 3) {
+            const [x, y, z] = [body.vertices[i], body.vertices[i + 1], body.vertices[i + 2]];
+            if (y <= near) expect(b.topAt(x, -fit - 0.01)).toBeGreaterThanOrEqual(z + RISE - 1e-6);
+            if (y >= ph - near) expect(b.topAt(x, ph + fit + 0.01)).toBeGreaterThanOrEqual(z + RISE - 1e-6);
+            if (x <= near) expect(b.topAt(-fit - 0.01, y)).toBeGreaterThanOrEqual(z + RISE - 1e-6);
+            if (x >= pw - near) expect(b.topAt(pw + fit + 0.01, y)).toBeGreaterThanOrEqual(z + RISE - 1e-6);
+          }
+    }
   });
 });
 

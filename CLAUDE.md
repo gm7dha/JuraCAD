@@ -2100,7 +2100,7 @@
   whole area. `src/terrain/mountainBorder.ts` `makeBorder(puzzle, words, bed)`: a frame drawn from the puzzle's edge (t 0) out
   `BORDER_WALL` 10, every piece shrunk by fit (2·fit from the puzzle and at joins); the top follows the land (the owner's wish,
   no steps): `topRing` = one ring of heights every ~`TOP_STEP` 1 mm round the edge from the SW corner (the puzzle's corners
-  within fit + 0.5 of each face, binned, + `RISE`; the words' span on the front floored to their height), covered ±`ENVELOPE`
+  within fit + 0.5 of each face, binned, + `RISE` 2 — 1 could print flush after layer rounding; the words' span on the front floored to their height), covered ±`ENVELOPE`
   0.75 cube, averaged ±`SMOOTH` 0.5 cube (never below the land), lifted to ≤ `MAX_SLOPE` 0.5; `topAt(x, y)` reads it (corner
   squares = the corner's value), so every piece, lug and corner shares one function and joins match exactly; pieces are
   `columns` meshes (rectilinear outline gridded by its corners + every step, a column per square — watertight); `heights`/`lows`
