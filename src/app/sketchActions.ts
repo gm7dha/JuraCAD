@@ -9,8 +9,7 @@ import { readScale, transformCopy, transformSelection } from "../sketch/transfor
 import { viewportApi } from "../viewport/Viewport";
 import { linkAllEdges, piercePoint, type RefEdge } from "../sketch/links";
 import { addImage, changeText, deleteWithExtras, textById } from "../sketch/sketchText";
-import { DxfError, insertDxf, insertSummary, MAX_DXF_SIZE, parseDxf } from "../sketch/dxf";
-import { evaluate } from "../model/expr";
+import { insertDrawingText, tooBig } from "./sketchInsertFile";
 import type { SketchData } from "../sketch/types";
 
 const sketchData = () => useStore.getState().editing?.draft.sketch?.data ?? null;
@@ -234,44 +233,24 @@ export function copyFaceEdges(): boolean {
   return true;
 }
 
-/** A number typed in the sketch panel (or a sum or variable), or null when it isn't one. */
-function typedNumber(text: string | undefined, fallback: number): number | null {
-  if (text === undefined || text.trim() === "") return fallback;
-  const r = evaluate(text);
-  return r.ok && Number.isFinite(r.value) ? r.value : null;
-}
-
 /** Insert DXF: read the file and add its drawing to the open sketch. */
 export async function insertDxfFile(file: File): Promise<void> {
+  await insertDrawingFile("dxf", file);
+}
+
+/** Insert SVG: read the file and add its shapes to the open sketch. */
+export async function insertSvgFile(file: File): Promise<void> {
+  await insertDrawingFile("svg", file);
+}
+
+async function insertDrawingFile(kind: "dxf" | "svg", file: File): Promise<void> {
   const s = useStore.getState();
-  const data = sketchData();
-  if (!data || !s.sketch) return;
-  const scale = typedNumber(s.sketch.dxfScale, 1);
-  if (scale === null || !(scale > 0)) {
-    s.setSketchMessage("The scale must be a number more than 0 (1 = full size).", "error");
+  if (!sketchData() || !s.sketch) return;
+  if (tooBig(kind, file.size)) {
+    s.setSketchMessage(`That ${kind.toUpperCase()} file is too big to bring in (over 20 MB). Open it in a drawing program and save just the part you need.`, "error");
     return;
   }
-  if (file.size > MAX_DXF_SIZE) {
-    s.setSketchMessage("That DXF file is too big to bring in (over 20 MB). Open it in a drawing program and save just the part you need.", "error");
-    return;
-  }
-  let drawing;
-  let r;
-  try {
-    drawing = parseDxf(await file.text());
-    const now = sketchData();
-    if (!now) return;
-    r = insertDxf(now, drawing, scale, useStore.getState().sketch?.construction ?? false);
-  } catch (e) {
-    useStore.getState().setSketchMessage(e instanceof DxfError ? e.message : "That DXF file couldn't be brought in — it may be damaged. Try saving it again from the program that made it.", "error");
-    return;
-  }
-  if (r.error) {
-    s.setSketchMessage(r.error, "error");
-    return;
-  }
-  useStore.getState().updateSketch(r.sketch, { record: true, selection: r.curveIds });
-  useStore.getState().setSketchMessage(`${insertSummary(drawing, r.count, scale)} It's selected: use Move / copy to place it, or Delete to take it out again.`, "info");
+  insertDrawingText(kind, await file.text());
 }
 
 /** Picture files bigger than this aren't read at all. */

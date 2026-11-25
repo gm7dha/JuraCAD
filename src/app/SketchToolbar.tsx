@@ -132,6 +132,14 @@ export function SketchToolbar() {
               onClick: () => useStore.getState().setSketchOptions({ dxfOpen: true }),
             },
             {
+              key: "svg",
+              label: "Insert SVG",
+              icon: <Icons.InsertDxf />,
+              title: "Insert SVG — bring a drawing from Inkscape, Illustrator or Cricut (SVG file) into this sketch at true size, as lines, arcs, circles and curves you can edit",
+              disabled: !hasPlane,
+              onClick: () => useStore.getState().setSketchOptions({ dxfOpen: true }),
+            },
+            {
               key: "image",
               label: "Insert image",
               icon: <Icons.Picture />,
