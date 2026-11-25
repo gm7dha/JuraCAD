@@ -37,22 +37,23 @@ export function PatternEditor({ data, selection }: { data: SketchData; selection
 function PatternFields({ now, onClose }: { now: PatternNow; onClose: () => void }) {
   const unit = useLengthUnit();
   const linear = now.kind === "linear";
-  const [count, setCount] = useState(now.count);
+  const [count, setCount] = useState(String(now.count));
   const [value, setValue] = useState(linear ? showLength(now.value, unit) : now.value);
   const [angle, setAngle] = useState(String(now.angle ?? 0));
   const [second, setSecond] = useState(!!now.second);
-  const [count2, setCount2] = useState(now.second?.count ?? 2);
+  const [count2, setCount2] = useState(String(now.second?.count ?? 2));
   const [value2, setValue2] = useState(showLength(now.second?.value ?? "10", unit));
   const [angle2, setAngle2] = useState(String(now.second?.angle ?? 90));
-  const clampCount = (raw: string) => Math.max(2, Math.min(200, Math.round(Number(raw)) || 2));
+  // Kept as typed (so "15" can be typed through "1"); read on Apply, which says if it's out of range.
+  const readCount = (raw: string) => Math.round(Number(raw)) || 0;
   const apply = () => {
     const a = Number(angle);
     const a2 = Number(angle2);
     applyPatternChange(now.id, {
-      count,
+      count: readCount(count),
       value: linear ? storeLength(value, unit) : value,
       ...(linear && !now.alongLine && Number.isFinite(a) ? { angle: a } : {}),
-      ...(linear ? { second: second ? { count: count2, value: storeLength(value2, unit), angle: Number.isFinite(a2) ? a2 : 90 } : null } : {}),
+      ...(linear ? { second: second ? { count: readCount(count2), value: storeLength(value2, unit), angle: Number.isFinite(a2) ? a2 : 90 } : null } : {}),
     });
   };
   const enter = (e: KeyboardEvent) => {
@@ -66,7 +67,7 @@ function PatternFields({ now, onClose }: { now: PatternNow; onClose: () => void 
       </p>
       <label className="tool-option">
         How many
-        <input type="number" min={2} max={200} aria-label="Pattern count" value={count} onChange={(e) => setCount(clampCount(e.target.value))} onKeyDown={enter} />
+        <input type="number" min={2} max={200} aria-label="Pattern count" value={count} onChange={(e) => setCount(e.target.value)} onKeyDown={enter} />
       </label>
       <label className="tool-option" title="A number, a sum or a variable">
         {linear ? "Spacing" : "Spread over"}
@@ -90,7 +91,7 @@ function PatternFields({ now, onClose }: { now: PatternNow; onClose: () => void 
             <>
               <label className="tool-option">
                 How many
-                <input type="number" min={2} max={200} aria-label="Second direction count (edit)" value={count2} onChange={(e) => setCount2(clampCount(e.target.value))} onKeyDown={enter} />
+                <input type="number" min={2} max={200} aria-label="Second direction count (edit)" value={count2} onChange={(e) => setCount2(e.target.value)} onKeyDown={enter} />
               </label>
               <label className="tool-option">
                 Spacing

@@ -144,4 +144,27 @@ describe("round with circles", () => {
     expect(r.sketch.curves.find((c) => c.id === circle.id)?.type).toBe("arc");
     expect(solveSketch(r.sketch).ok).toBe(true);
   });
+  it("a circle clicked far from the corner, on the part to keep: the round goes where it leaves that part whole", () => {
+    let s = addCircle(emptySketch(), { x: 0, y: 0, snap: { kind: "origin" } }, 10).sketch;
+    s = addLine(s, at(-20, 5), at(20, 5)).sketch;
+    const circle = s.curves.find((c) => c.type === "circle")!;
+    const line = s.curves.find((c) => c.type === "line")!;
+    const ang = (p: [number, number]) => ((Math.atan2(p[1], p[0]) * 180) / Math.PI + 360) % 360;
+    // The line clicked inside the circle, the circle at many places round it: the part of the circle kept always
+    // holds the place clicked (before, a click at the bottom could keep only the little cap above the line).
+    for (const lx of [0, 6, -6])
+      for (const deg of [0, 45, 90, 135, 180, 225, 270, 315]) {
+        const click: [number, number] = [10 * Math.cos((deg * Math.PI) / 180), 10 * Math.sin((deg * Math.PI) / 180)];
+        const r = filletBetween(s, circle.id, click, line.id, [lx, 5], "2");
+        expect(r.error).toBeUndefined();
+        const was = r.sketch.curves.find((c) => c.id === circle.id)!;
+        if (was.type !== "arc") continue;
+        const a0 = ang(pointPos(r.sketch, was.start));
+        const a1 = ang(pointPos(r.sketch, was.end));
+        const sweep = (a1 - a0 + 360) % 360;
+        expect((deg - a0 + 360) % 360, `line at ${lx}, circle at ${deg}°`).toBeLessThan(sweep);
+        // And the circle carries on smoothly from the round (it's tangent there and the curve doesn't fold back).
+        expect(solveSketch(r.sketch).ok).toBe(true);
+      }
+  });
 });
