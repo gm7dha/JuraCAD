@@ -85,6 +85,7 @@ import { designOf, withVersionsOf } from "./versions";
 import { newKeepId, readKept } from "./browserKeep";
 import { rememberOptions, withRemembered, type OptionsMemory } from "./lastOptions";
 import { editRollback } from "./finalPreview";
+import { mainPart } from "../drawing/defaultPart";
 
 /** Which instances show a symmetric part, or a symmetric sub-assembly (for mirrors that show such things as themselves). */
 const symmetricIn = (parts: readonly PartMesh[], assemblies: readonly Assembly[] = []) => (i: Instance) => {
@@ -1776,9 +1777,9 @@ export const useStore = create<AppState>((set, get) => {
     addDrawing: () => {
       const s = get();
       if (s.editing) return;
-      // Draw the part that's selected, else the last part of the Part Studio on show, else any part.
+      // Draw the part that's selected, else the main (biggest) part of the Part Studio on show, else any part.
       const shown = studioParts(s);
-      const partId = s.selection[0]?.partId ?? shown[shown.length - 1]?.id ?? s.parts[s.parts.length - 1]?.id;
+      const partId = s.selection[0]?.partId ?? s.selectedParts[0] ?? mainPart(shown) ?? s.parts[s.parts.length - 1]?.id;
       const asm = activeAssembly(s);
       const source = asm ? { kind: "assembly" as const, id: asm.id } : partId ? { kind: "part" as const, id: partId } : null;
       const id = newId("d");

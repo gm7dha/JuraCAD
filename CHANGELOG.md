@@ -8,6 +8,13 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.116 — Drawings, sketch editing and the rollback bar
+
+- **A new drawing shows the part you've picked**, else the biggest part in the Part Studio (not a pattern copy).
+- **Editing an earlier sketch shows the model as it was then**: parts made later are hidden and parts changed later are
+  see-through. Edges that didn't exist yet at that sketch (a later fillet's, a later hole's) can't be used, and it says so.
+- **A slim rollback line always sits under the last feature** — drag it up to roll back.
+
 ## v0.115 — Sketch fixes: sizes, Esc and the toolbar
 
 - **Typed sizes stick**: a size you type is kept — even the same as drawn, and when you click or tap on to keep
