@@ -355,3 +355,39 @@ describe("the Isle of Mull", () => {
     expect(JSON.stringify(b.pieces)).toBe(JSON.stringify(a.pieces));
   });
 });
+
+// Mull's own troubles together: an islet (Ulva) joined by a neck a cell or two wide, the mainland off the edge, a big sea
+// loch (Loch Spelve) whose mouth is closed and whose water the tiles blend just above 0 (so it was filled in), and a
+// lochan the sea point mustn't touch. The sea point sits on the loch's shore, as a label's spot can on a narrow loch.
+describe("a Mull-like island", () => {
+  const sea0 = { ...SPEC, sea: 0.5 };
+  const grid = gridFrom(sw, W, H, 20, (e, n) => {
+    const [x, y] = [e - sw.e, n - sw.n];
+    if (x > 3500 && x < 4300 && Math.abs(y - 2000) < 150) return 0.3;
+    if (Math.hypot(x - 1500, y - 2000) < 200) return 0.3;
+    const mull = Math.max(0, 300 * (1 - Math.hypot(x - 3000, y - 2000) / 1800));
+    const ulva = Math.max(0, 60 * (1 - Math.hypot(x - 6200, y - 2000) / 500));
+    const neck = x > 4700 && x < 5800 && Math.abs(y - 2000) < 10 ? 5 : 0;
+    const mainland = x > 7600 ? 80 : 0;
+    return Math.max(mull, ulva, neck, mainland);
+  });
+  const keep = [{ e: sw.e + 3000, n: sw.n + 3000 }, { e: sw.e + 2000, n: sw.n + 1200 }];
+  const apart = [{ e: sw.e + 6200, n: sw.n + 2000 }];
+  const sea = [{ e: sw.e + 3900, n: sw.n + 2160 }];
+
+  it("keeps Mull alone with its sea loch open and its lochan filled", () => {
+    const before = makeIslandPuzzle(grid, sw, W, H, { ...sea0, only: { keep, apart } });
+    expect(spanE(before)[1]).toBeLessThan(5600);
+    expect(before.warnings.join(" ")).toMatch(/2 low patches/);
+    const p = makeIslandPuzzle(grid, sw, W, H, { ...sea0, only: { keep, apart, sea } });
+    expect(spanE(p)[1]).toBeLessThan(5600);
+    expect(p.warnings.join(" ")).toMatch(/A low patch/);
+    const lost = (landArea(before) - landArea(p)) / (p.k * p.k);
+    expect(lost).toBeGreaterThan(180000);
+    expect(lost).toBeLessThan(300000);
+    // Trimmed (land chosen already): everything is kept, the loch still open.
+    const all = makeIslandPuzzle(grid, sw, W, H, { ...sea0, land: "all", only: { keep: [], sea } });
+    expect(spanE(all)[1]).toBeGreaterThan(7900);
+    expect(all.warnings.join(" ")).toMatch(/A low patch/);
+  });
+});

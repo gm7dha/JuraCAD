@@ -2078,9 +2078,10 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   Mull (the owner's map; it had no `only`, so "every island" kept Ulva, Gometra, Iona, Erraid, the Treshnish Isles…): six keep
   points (Ben More, Dùn da Ghaoithe, Ben Buie, north Mull, the Ross east of Bunessan, inland from Fionnphort), apart points on
   Ulva, Gometra, Inch Kenneth, Erraid, Iona, Calve Island, Morvern, and `IslandOnly.sea` points (Loch Spelve, Loch Don, Loch na
-  Keal, Loch Scridain): buildIsland never fills a closed-in patch holding one (heights path; the coastline path keeps them
+  Keal, Loch Scridain): buildIsland never fills a closed-in patch holding one (a point the grid reads as land takes the nearest
+  sea within `SEA_REACH` 300 m; heights path; the coastline path keeps them
   anyway); keepLand skips keepOnly when `keep` is empty, so a trimmed (`decided`) build passes `{keep: [], sea}` to keep them.
-  Wight (Carisbrooke, St Boniface Down, Afton Down) and Anglesey (Llangefni, Llannerch-y-medd, Holyhead Mountain; apart at
+  Wight (Carisbrooke, St Boniface Down, Afton Down, Tennyson Down) and Anglesey (Llangefni, Llannerch-y-medd, Holyhead Mountain; apart at
   Llanrug and Bangor — the Menai Strait) got keep points too, so a join to the mainland is parted, not the island dropped.
   `boundaryQuery` (Overpass: one admin_level's relations in the box, recursed; fetched by POST from the dialog — CORS),
   `BOUNDARY_LEVELS`. osm.ts reads `boundaries`/`regionNames` (`boundaryLevels`, `boundariesOnGrid`, `levelName`).

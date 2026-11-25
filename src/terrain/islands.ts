@@ -44,8 +44,9 @@ export const ISLANDS: IslandPlace[] = [
   // Tiny (about 1.2 × 0.9 km, 338 m high), so a small area: it's then printed about 10 cm long.
   around("ailsa-craig", "Ailsa Craig", 55.2525, -5.1158, 3, 3, [[55.2525, -5.1158]]),
   // The Isle of Wight without the mainland (the height data may join it across the Solent's narrows at Hurst): points at
-  // Carisbrooke, on St Boniface Down and on Afton Down in the west.
-  around("wight", "Isle of Wight", 50.67, -1.33, 46, 28, [[50.6873, -1.3143], [50.6035, -1.1987], [50.677, -1.4848]]),
+  // Carisbrooke, on St Boniface Down, on Afton Down and on Tennyson Down (west of the Western Yar, whose head nearly
+  // reaches Freshwater Bay, so West Wight is kept even if the data parts it there).
+  around("wight", "Isle of Wight", 50.67, -1.33, 46, 28, [[50.6873, -1.3143], [50.6035, -1.1987], [50.677, -1.4848], [50.6654, -1.5428]]),
   around("man", "Isle of Man", 54.23, -4.55, 42, 60),
   // Anglesey (with Holy Island, joined to it by its causeways) without the mainland, which the height data joins to it
   // across the narrow Menai Strait (its bridges): points at Llangefni, Llannerch-y-medd and on Holyhead Mountain; others
