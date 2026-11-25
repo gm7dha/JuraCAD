@@ -1316,6 +1316,26 @@
   its whole build (`parked`, `sourceBuild`), so Derived/context studios aren't rebuilt, later features' errors/warnings/notes
   stay on their rows, and closing unchanged or ticking Final takes it back without building (only meshed). Sketches are left
   as before (their snap list and "ref:<n>" ids come from the whole build). Tests: tests/finalPreview, engineFinalPreview.
+  Dialog starting values and Accept (Onshape's): pure `src/model/newFeatureDefaults.ts` — `withAutoValues` keeps a NEW
+  feature's self-worked-out values up to date only while they still equal the last value set (`AutoValues`, store closure
+  `autoValues`, reset by startCreate; `autoParts` = the parts when the dialog opened, before its preview): an Extrude's `flip`
+  (`aimedFlip`: a sketch on a part's face — `materialBehind`, its plane normal vs the face pick's outward normal — Remove/
+  Intersect point in, New/Add out; plain planes unknown = left), a Linear pattern's `spacing`/`spacing2` (`suggestedSpacing`:
+  the repeated parts' box along the direction × 1.2, rounded up; parts picked, or the parts its sources made), run from
+  startCreate, setDraftField, toggleDraftPart/Source. Edits never change. A new Hole's sketch: `holeSketchFor` (highlighted,
+  else the last feature if an unused sketch with points, else none). Hole face clicks (Viewport handlePick, create mode):
+  `placeHoleAt(plane, point)` puts a standalone point in a sketch on that face made for the hole (store closure `holeSketch`:
+  written into `history.present` without an undo step; Cancel/startCreate/startEdit put `before` back only while nothing
+  else changed the design since the first click (`clean` + `placed`), else just take the sketch out — never an older design
+  back (a rename mid-dialog, New/Open); Accept inserts it just before the hole in ONE step; another face is refused; the
+  toolbar's Hole needs only a part). Accept waits: pure `src/model/draftReady.ts` `missingPick` (fillet/
+  chamfer with no picks, Shell Open with no face, face features, split face, part lists, part/face patterns, a hole with no
+  sketch…) — the ✓ disabled with it as the tooltip, commitDraft refuses with a toast; `acceptBlocker` lets an edited feature
+  that was already missing it when opened (picks lost upstream, an old Open shell with no face) be accepted, so no one's trapped. After Accept nothing is selected (a
+  sketch stays highlighted). Engine: solid Extrude/Revolve/Sweep/Loft Add/Remove/Intersect (not a pattern/mirror source) that
+  leaves every solid part's id, volume (1e-8) and face count as it was gets the `noChangeMessage` warning ("This doesn't
+  change anything — …"; `watchChange`/`noChangeNote`, `sizeOf` cached per shape object; the face count keeps a tiny hole in
+  a big block from looking like nothing). No library design warns at insert. Tests: featureDialogDefaults, engineNoChange.
   Editing an existing sketch shows the parts as rolled back to it WITHOUT a rebuild (candidates/ids untouched): pure
   `partsAfterSketch` (finalPreview.ts) — parts whose making feature comes after the sketch hidden, parts made before but
   changed later see-through; Viewport adds them to setHidden/setTransparent only (never `store.hiddenParts`). The snap list is

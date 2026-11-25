@@ -294,6 +294,13 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   }
   // Onshape's other Plane types, a Mate connector being placed, or a mate connector clicked.
   if (geomPick(viewportApi.current, target)) return;
+  // A new Hole: a flat face clicked puts a hole where it was clicked (a point in a sketch on that face, made for it).
+  if (s.editing?.mode === "create" && s.editing.draft.type === "hole" && target?.kind === "part" && target.item.kind === "face" && target.point && !isContextPartId(target.item.partId)) {
+    const plane = planeForFace(target.item);
+    if (!plane) s.showToast("Click a flat face to put a hole on it.", "info");
+    else s.placeHoleAt(plane, target.point);
+    return;
+  }
   // An area of the sketch an Extrude, Revolve or Sweep uses: pick it, or leave it out again (as the 2D map does).
   // Another sketch's area: that sketch becomes the feature's sketch. With nothing open: select it for the next feature.
   if (target?.kind === "sketchArea") {

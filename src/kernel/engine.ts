@@ -3569,7 +3569,18 @@ export class GeometryEngine {
     // A Move / copy that moves parts without copying them: their faces keep their makers.
     let lastMoved = false;
 
+    // A cut or add that turns out to change nothing (a Remove pointing out into the air): said as a warning.
+    let unchanged: ChangeWatch | null = null;
+    const settleWatch = () => {
+      if (unchanged && !featureErrors[unchanged.id]) {
+        const note = this.noChangeNote(unchanged);
+        if (note) warnings[unchanged.id] = warnings[unchanged.id] ? `${warnings[unchanged.id]} ${note}` : note;
+      }
+      unchanged = null;
+    };
+
     for (let index = 0; index < listed.length; index++) {
+      settleWatch();
       const feature = this.followedFeature(listed[index], moved);
       if (feature !== listed[index]) {
         if (features === listed) features = [...listed];
@@ -3585,6 +3596,7 @@ export class GeometryEngine {
       // Mate connectors whose part was merged into another (a Boolean, an Add joining parts) belong to that one now.
       this.reassignOwners();
       this.lastBuiltName = feature.name;
+      if (watchesChange(feature, features)) unchanged = this.watchChange(feature);
       if (feature.type === "mateConnector") {
         const err = this.placeConnector(feature, sketches, features, moved);
         if (err) featureErrors[feature.id] = err;
@@ -4030,9 +4042,61 @@ export class GeometryEngine {
       }
     }
 
+    settleWatch();
     if (lastBuilt) this.faceMakers.after(lastBuilt, this.parts, lastMoved);
     for (const p of this.parts) p.faceMakers = this.faceMakers;
     return featureErrors;
+  }
+
+  /** Volumes and face counts of shapes already measured (a part's shape object is replaced whenever it changes). */
+  private shapeSizes = new WeakMap<Shape3D, { volume: number; faces: number }>();
+  private sizeOf(shape: Shape3D): { volume: number; faces: number } {
+    let m = this.shapeSizes.get(shape);
+    if (!m) {
+      let volume = NaN;
+      let faces = -1;
+      try {
+        volume = measureVolume(shape);
+        const oc = getOC();
+        const ex = new oc.TopExp_Explorer(shape.wrapped, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+        try {
+          faces = 0;
+          for (; ex.More(); ex.Next()) faces++;
+        } finally {
+          ex.delete();
+        }
+      } catch {
+        volume = NaN;
+      }
+      m = { volume, faces };
+      this.shapeSizes.set(shape, m);
+    }
+    return m;
+  }
+
+  /** The solid parts as they are before a feature that should change them. */
+  private watchChange(feature: Feature): ChangeWatch {
+    return { id: feature.id, operation: feature.operation, parts: this.parts.filter((p) => !p.surface).map((p) => ({ id: p.id, shape: p.shape, ...this.sizeOf(p.shape) })), count: this.parts.length };
+  }
+
+  /**
+   * "This doesn't change anything" when every solid part is as it was (same parts, same volumes, as many faces), else
+   * null. The face count tells a tiny hole in a big part (its volume within the tolerance) from no change at all.
+   */
+  private noChangeNote(w: ChangeWatch): string | null {
+    if (this.parts.length !== w.count) return null;
+    const now = this.parts.filter((p) => !p.surface);
+    if (now.length !== w.parts.length) return null;
+    for (let i = 0; i < now.length; i++) {
+      const was = w.parts[i];
+      const p = now[i];
+      if (p.id !== was.id) return null;
+      if (p.shape === was.shape) continue;
+      const { volume: v, faces } = this.sizeOf(p.shape);
+      if (faces < 0 || faces !== was.faces) return null;
+      if (!Number.isFinite(v) || !Number.isFinite(was.volume) || Math.abs(v - was.volume) > 1e-8 * Math.max(1, Math.abs(was.volume))) return null;
+    }
+    return noChangeMessage(w.operation);
   }
   /** Which feature made each face, from the latest `featureSteps` (see faceMakers.ts). */
   private faceMakers = new FaceMakers();
@@ -9200,4 +9264,30 @@ export class GeometryEngine {
     this.parts = [];
     this.tools = new Map();
   }
+}
+
+/** A feature being watched to see whether it changes any part (see noChangeNote). */
+interface ChangeWatch {
+  id: string;
+  operation: Feature["operation"];
+  parts: { id: string; shape: Shape3D; volume: number; faces: number }[];
+  count: number;
+}
+
+/**
+ * Solid Extrudes, Revolves, Sweeps and Lofts that add to, cut or intersect parts are checked afterwards: one that
+ * changes nothing gets a warning. Not a pattern's or mirror's source (a seed cut off the part is on purpose).
+ */
+function watchesChange(feature: Feature, features: Feature[]): boolean {
+  if (feature.type !== "extrude" && feature.type !== "revolve" && feature.type !== "sweep" && feature.type !== "loft") return false;
+  if (feature.operation !== "add" && feature.operation !== "remove" && feature.operation !== "intersect") return false;
+  if (feature.surface) return false;
+  return !features.some((f) => (f.pattern?.sources ?? f.mirror?.sources ?? []).includes(feature.id));
+}
+
+/** The warning for a feature that changed no part. */
+export function noChangeMessage(operation: Feature["operation"]): string {
+  if (operation === "add") return "This doesn't change anything — everything it adds is inside the part already. Check the direction (Flip), the depth and where the sketch is.";
+  if (operation === "intersect") return "This doesn't change anything — the parts it reaches are wholly inside it. Check the direction (Flip), the depth and where the sketch is.";
+  return "This doesn't change anything — it removes no material. Check the direction (Flip), the depth and where the sketch is.";
 }

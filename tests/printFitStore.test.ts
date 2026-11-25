@@ -14,7 +14,8 @@ describe("a printed fit chosen in the Hole dialog", () => {
   it("adds the fit variables on Accept, in the same undo step, and sizes the hole from them", () => {
     s().startCreate("hole");
     const hole = s().editing!.draft.hole!;
-    s().setDraftField({ hole: { ...hole, standard: "Custom", printedFit: { fit: "sliding", nominal: "5 mm", fits: DEFAULT_FITS } } });
+    // (A sketch to drill at: a Hole with none can't be accepted.)
+    s().setDraftField({ hole: { ...hole, sketchRef: "sk", standard: "Custom", printedFit: { fit: "sliding", nominal: "5 mm", fits: DEFAULT_FITS } } });
     s().setDraftParam("diameter", "5 mm + 0.3 mm");
     // Nothing is added while the dialog is open.
     expect(s().history.present.variables ?? []).toEqual([]);

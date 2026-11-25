@@ -3,7 +3,7 @@ import { sketchFromDxf, type LinkedSketch } from "../link/receive";
 import { clickRadiusPoint, tidyRadiusPoints } from "./variableFillet";
 import { defaultTemplate } from "../drawing/templateStorage";
 import { applyTemplate } from "../drawing/templates";
-import { deleteItems, setDimensionValue } from "../sketch/ops";
+import { addPoint, deleteItems, setDimensionValue } from "../sketch/ops";
 import { takeTyped } from "../sketch/offeredBox";
 import { followLinks, pruneReferences, type RefEdge, type SketchLinkInfo } from "../sketch/links";
 import { isExtraId, keepSketchExtras, withoutEmptyExtras } from "../sketch/sketchText";
@@ -37,8 +37,8 @@ import {
 } from "./document";
 import { sameRef, type TopoPick } from "../geometry/topoRef";
 import { cornersOf, type VertexPick } from "../geometry/vertexRef";
-import type { SketchPlane } from "../sketch/planes";
-import type { SketchData } from "../sketch/types";
+import { dot, planeFrame, toSketch, type SketchPlane, type Vec3 } from "../sketch/planes";
+import { emptySketch, type SketchData } from "../sketch/types";
 import { setCurrentScope } from "./expr";
 import { addConfiguration, removeConfiguration, renameConfiguration, switchConfiguration } from "./configurations";
 import { framesOf, planeAsSketchPlane, refreshDocumentPlanes } from "../sketch/planeFeature";
@@ -76,6 +76,7 @@ import { addDrawing as addDrawingTo, removeDrawing as removeDrawingFrom, renameD
 import { withDragChange, type DragChange } from "../assembly/drag";
 import type { Placement } from "../assembly/math";
 import { importName } from "./importFile";
+import { usedSketches } from "./visibility";
 import { hiddenDatumsOf, keepVisibility, setAllPlanesVisible, setAllSketchesVisible, setDatumHidden, setFeaturesVisible, toggleAllPlanes } from "./visibility";
 import { settlePrintedFit } from "./printSettings";
 import { addStudio, firstStudioId, MAIN_STUDIO, inStudio, moveStudio, renameStudio, studioExists, studioFeatures, studioName, studioView, studiosOf } from "./studios";
@@ -84,6 +85,9 @@ import { deleteFeatures as deleteFeaturesIn, findDependents } from "./dependents
 import { designOf, withVersionsOf } from "./versions";
 import { newKeepId, readKept } from "./browserKeep";
 import { rememberOptions, withRemembered, type OptionsMemory } from "./lastOptions";
+import { holeSketchFor, withAutoValues, type AutoContext, type AutoValues } from "./newFeatureDefaults";
+import { holePositionCount } from "../sketch/holePositions";
+import { acceptBlocker } from "./draftReady";
 import { editRollback } from "./finalPreview";
 import { mainPart } from "../drawing/defaultPart";
 
@@ -477,6 +481,11 @@ export interface AppState {
   commitDraft: () => boolean;
   cancelDraft: () => void;
   /**
+   * The Hole dialog: a flat face clicked at `point` (on `plane`, the face's sketch plane) puts a hole there — a point in
+   * a sketch on that face, made for this hole (as Onshape's hole flow); more clicks on the same face add more.
+   */
+  placeHoleAt: (plane: SketchPlane, point: Vec3) => void;
+  /**
    * Turn features off (Delete face's "fillets in the way" prompt). With
    * `commit`, the open feature is added in the same undo step; otherwise it's dropped.
    */
@@ -851,6 +860,44 @@ function sameDesign(next: JuraCADDocument, from: JuraCADDocument) {
 export const useStore = create<AppState>((set, get) => {
   /** The last options each kind of new feature was made with, this session (lastOptions.ts). */
   let remembered: OptionsMemory = {};
+  // A new feature's self-worked-out starting values (an Extrude's direction into the part, a pattern's spacing), kept
+  // up to date while the user hasn't changed them; and the parts as they were when its dialog opened.
+  let autoValues: AutoValues = { id: "" };
+  let autoParts: PartMesh[] = [];
+  const autoContext = (): AutoContext => {
+    const s = get();
+    const features = activeFeatures(s);
+    return {
+      planeOf: (id) => followedSketch(features.find((f) => f.id === id && f.type === "sketch"), s.sketchLinks)?.plane ?? null,
+      parts: autoParts,
+      features,
+      unit: s.history.present.units === "in" ? "in" : "mm",
+    };
+  };
+  // The sketch a new Hole's face clicks make (see placeHoleAt): kept out of the undo history until Accept, when it goes
+  // in with the hole as one step; Cancel takes it away again. `placed` is the document as the last click left it, and
+  // `clean` says nothing else has changed the design since the first click (then `before` can simply be put back).
+  let holeSketch: { draftId: string; sketch: Feature; before: History; placed: JuraCADDocument; clean: boolean; studio: string } | null = null;
+  const dropHoleSketch = () => {
+    if (!holeSketch) return;
+    const { before, placed, clean, sketch, studio } = holeSketch;
+    holeSketch = null;
+    const h = get().history;
+    if (clean && h.present === placed) {
+      set({ history: before });
+      return;
+    }
+    // Something else changed the design meanwhile (or another document is open now): take only the sketch out again,
+    // never putting back an older design.
+    if (!studioFeatures(h.present, studio).some((f) => f.id === sketch.id)) return;
+    set({ history: { ...h, present: inStudio(h.present, studio, (doc) => removeFeature(doc, sketch.id)) } });
+  };
+  const withAuto = (draft: Feature, mode: "create" | "edit"): Feature => {
+    if (mode !== "create" || autoValues.id !== draft.id) return draft;
+    const r = withAutoValues(draft, autoValues, autoContext());
+    autoValues = r.auto;
+    return r.draft;
+  };
   /**
    * Apply a document change and record it for undo. Refused while an old
    * version is open, except changes to what's shown (`display`: the eye, P),
@@ -1024,6 +1071,7 @@ export const useStore = create<AppState>((set, get) => {
 
     startCreate: (type) => {
       if (readOnly()) return;
+      dropHoleSketch();
       // A new dialog starts with nothing to undo in it.
       set({ draftSteps: null, transformLive: null });
       const s = get();
@@ -1157,8 +1205,10 @@ export const useStore = create<AppState>((set, get) => {
       }
       // A hole uses the sketch highlighted in the list, if any.
       if (type === "hole" && draft.hole) {
-        const picked = features.find((f) => f.id === s.selectedFeatureId && f.type === "sketch");
-        if (picked) draft.hole = { ...draft.hole, sketchRef: picked.id };
+        // (Rolled back: only what's above the bar counts.)
+        const bar = s.rollbackTo ? features.findIndex((f) => f.id === s.rollbackTo) : -1;
+        const before = bar >= 0 ? features.slice(0, bar + 1) : features;
+        draft.hole = { ...draft.hole, sketchRef: holeSketchFor(before, s.selectedFeatureId, usedSketches(features), (f) => (f.sketch ? holePositionCount(f.sketch.data) : 0)) };
       }
       // Mirror and circular patterns start with no plane or axis: the dialog asks for one to be clicked
       // (Onshape does the same), rather than quietly using the origin.
@@ -1192,7 +1242,10 @@ export const useStore = create<AppState>((set, get) => {
           .map((item) => pickFor(s.parts, item))
           .filter((p): p is TopoPick => p !== null);
       }
-      set({ editing: { mode: "create", draft }, sketch: null, selectedFeatureId: null, featureSelection: NO_DIMS, selection: [], areaSelection: null, selectedPlane: null, showFlat: false });
+      autoParts = studioParts(s);
+      autoValues = { id: draft.id, flip: draft.extrude?.flip ?? false, spacing: draft.params.spacing, spacing2: draft.params.spacing2 };
+      const started = withAuto(draft, "create");
+      set({ editing: { mode: "create", draft: started }, sketch: null, selectedFeatureId: null, featureSelection: NO_DIMS, selection: [], areaSelection: null, selectedPlane: null, showFlat: false });
     },
 
     startImport: (file) => {
@@ -1210,6 +1263,7 @@ export const useStore = create<AppState>((set, get) => {
 
     startEdit: (id) => {
       if (readOnly()) return;
+      dropHoleSketch();
       const f = activeFeatures(get()).find((x) => x.id === id);
       if (!f) return;
       set({ draftSteps: null, transformLive: null });
@@ -1380,7 +1434,7 @@ export const useStore = create<AppState>((set, get) => {
         const { picking: _b, ...now } = next.transform ?? ({} as NonNullable<Feature["transform"]>);
         const onlyPicking = Object.keys(patch).every((k) => k === "transform") && JSON.stringify(was) === JSON.stringify(now);
         const steps = keepsSteps(d) && !onlyPicking ? { draftSteps: draftStepAfter(s.draftSteps, d, Object.keys(patch).join(",") === "name" ? "name" : undefined) } : {};
-        return { editing: { ...s.editing, draft: next }, ...steps };
+        return { editing: { ...s.editing, draft: withAuto(next, s.editing.mode) }, ...steps };
       }),
 
     toggleDraftPick: (pick) =>
@@ -1412,7 +1466,7 @@ export const useStore = create<AppState>((set, get) => {
         // The merge-scope box taking clicks: the part is put in (or taken out of) the parts to merge with / cut.
         if (d.mergeScopePicking) return { editing: { ...s.editing, draft: toggleScopePart(d, partId) } };
         if (d.type === "composite") return { editing: { ...s.editing, draft: { ...d, compositeParts: toggle(d.compositeParts ?? []) } } };
-        if (d.pattern?.of === "part") return { editing: { ...s.editing, draft: { ...d, pattern: { ...d.pattern, parts: toggle(d.pattern.parts ?? []), picking: "items" } } } };
+        if (d.pattern?.of === "part") return { editing: { ...s.editing, draft: withAuto({ ...d, pattern: { ...d.pattern, parts: toggle(d.pattern.parts ?? []), picking: "items" } }, s.editing.mode) } };
         return {};
       });
     },
@@ -1423,7 +1477,7 @@ export const useStore = create<AppState>((set, get) => {
         const d = s.editing.draft;
         const toggle = (list: string[]) => (list.includes(featureId) ? list.filter((x) => x !== featureId) : [...list, featureId]);
         if (d.mirror) return { editing: { ...s.editing, draft: { ...d, mirror: { ...d.mirror, sources: toggle(d.mirror.sources) } } } };
-        if (d.pattern) return { editing: { ...s.editing, draft: { ...d, pattern: { ...d.pattern, sources: toggle(d.pattern.sources) } } } };
+        if (d.pattern) return { editing: { ...s.editing, draft: withAuto({ ...d, pattern: { ...d.pattern, sources: toggle(d.pattern.sources) } }, s.editing.mode) } };
         return {};
       }),
 
@@ -1443,6 +1497,13 @@ export const useStore = create<AppState>((set, get) => {
       }
       const { errors } = resolveParams(editing.draft);
       if (Object.keys(errors).length > 0) return false;
+      // Nothing picked yet where something must be (a fillet with no edges): not accepted, as Onshape's greyed ✓.
+      const original = editing.mode === "edit" ? activeFeatures(get()).find((f) => f.id === editing.draft.id) : null;
+      const missing = acceptBlocker(editing.draft, original);
+      if (missing) {
+        get().showToast(missing, "info");
+        return false;
+      }
       // A printed fit chosen in the Hole dialog brings its fit_* variables into the design, in the same undo step.
       const fitted = settlePrintedFit(get().history.present.variables, editing.draft, () => newId("v"));
       const named = withoutPicking({ ...fitted.draft, name: fitted.draft.name.trim() || "Unnamed feature" });
@@ -1451,17 +1512,59 @@ export const useStore = create<AppState>((set, get) => {
       const draft = sk ? { ...named, sketch: { ...sk, data: withoutEmptyExtras(pruneReferences(sk.data)) } } : named;
       // Rolled back: a new feature goes in at the rollback point, and the bar moves down past it.
       const at = get().rollbackTo;
-      const place = (doc: JuraCADDocument) => (editing.mode === "create" ? (at ? insertFeatureAfter(doc, draft, at) : addFeature(doc, draft)) : replaceFeature(doc, keepVisibility(doc, draft)));
+      // A sketch the Hole's face clicks made goes in just before it, in the same undo step.
+      const made = holeSketch && holeSketch.draftId === draft.id && draft.hole?.sketchRef === holeSketch.sketch.id ? holeSketch.sketch : null;
+      dropHoleSketch();
+      const placeOne = (doc: JuraCADDocument) => (editing.mode === "create" ? (at ? insertFeatureAfter(doc, draft, at) : addFeature(doc, draft)) : replaceFeature(doc, keepVisibility(doc, draft)));
+      const place = made ? (doc: JuraCADDocument) => (at ? insertFeatureAfter(insertFeatureAfter(doc, made, at), draft, made.id) : addFeature(addFeature(doc, made), draft)) : placeOne;
       if (fitted.variables !== get().history.present.variables) {
         const vars = fitted.variables;
         change((doc) => inStudio({ ...doc, variables: vars }, activeStudioId(get()) ?? firstStudioId(get().history.present), place));
       } else changeStudio(place);
       if (editing.mode === "create") remembered = rememberOptions(remembered, draft);
-      set({ editing: null, sketch: null, selectedFeatureId: draft.id, draftSteps: null, transformLive: null, ...(at && editing.mode === "create" ? { rollbackTo: draft.id } : {}) });
+      // As Onshape: nothing stays selected after Accept (the new part isn't left lit up in the selection colour).
+      // (A sketch stays highlighted in the list, so Extrude goes on to use it.)
+      const keepSketch = draft.type === "sketch";
+      set({ editing: null, sketch: null, selectedFeatureId: keepSketch ? draft.id : null, featureSelection: NO_DIMS, selection: [], selectedParts: [], draftSteps: null, transformLive: null, ...(at && editing.mode === "create" ? { rollbackTo: draft.id } : {}) });
       return true;
     },
 
-    cancelDraft: () => set({ editing: null, sketch: null, draftSteps: null, transformLive: null }),
+    cancelDraft: () => {
+      dropHoleSketch();
+      set({ editing: null, sketch: null, draftSteps: null, transformLive: null });
+    },
+
+    placeHoleAt: (plane, point) => {
+      const s = get();
+      const d = s.editing?.draft;
+      if (!d || d.type !== "hole" || !d.hole || s.editing?.mode !== "create" || readOnly()) return;
+      const frame = planeFrame(plane);
+      const mine = holeSketch?.draftId === d.id ? holeSketch : null;
+      if (mine) {
+        // One Hole's points are in one sketch, on one face.
+        const was = planeFrame(mine.sketch.sketch!.plane!);
+        const sameFace = dot(was.n, frame.n) > 0.9999 && Math.abs(dot(was.n, [point[0] - was.origin[0], point[1] - was.origin[1], point[2] - was.origin[2]])) < 1e-3;
+        if (!sameFace) {
+          get().showToast("A Hole's holes all go on one face. Accept this one, then start another Hole for the other face.", "info");
+          return;
+        }
+      }
+      const at = toSketch(mine ? planeFrame(mine.sketch.sketch!.plane!) : frame, point);
+      const studio = mine?.studio ?? activeStudioId(s) ?? firstStudioId(s.history.present);
+      const base = mine?.sketch ?? { ...createFeature(view(), "sketch"), sketch: { plane, data: emptySketch() } };
+      const data = addPoint(base.sketch!.data, { x: at[0], y: at[1] }).sketch;
+      const sketch: Feature = { ...base, sketch: { ...base.sketch!, data } };
+      const h = s.history;
+      const clean = mine ? mine.clean && h.present === mine.placed : true;
+      const before = mine?.before ?? h;
+      // (Rolled back: it goes in at the rollback point, as the hole will.)
+      const from = clean ? before.present : h.present;
+      const placed = inStudio(from, studio, (doc) =>
+        doc.features.some((f) => f.id === sketch.id) ? replaceFeature(doc, sketch) : s.rollbackTo ? insertFeatureAfter(doc, sketch, s.rollbackTo) : addFeature(doc, sketch),
+      );
+      holeSketch = { draftId: d.id, sketch, before, placed, clean, studio };
+      set({ history: { ...(clean ? before : h), present: placed }, editing: { ...s.editing!, draft: { ...d, hole: { ...d.hole, sketchRef: sketch.id } } } });
+    },
 
     setRollback: (id) => {
       if (get().editing) return;
