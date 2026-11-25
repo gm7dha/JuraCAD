@@ -397,7 +397,7 @@ export function Toolbar() {
       onClick: () => chooseImportFile(),
       disabled: !ready || editing,
       active: editingType === "import",
-      title: editing ? finishFirst : "Import — bring in a STEP or STL file from another program as a part",
+      title: editing ? finishFirst : "Import — bring in a STEP, STL, 3MF or OBJ file from another program as a part",
     },
     derived: feature(
       "derived",
