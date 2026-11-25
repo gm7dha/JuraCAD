@@ -75,7 +75,8 @@ function lengthUnitOf(entity: string): number | null | undefined {
 
 /** Millimetres per unit the file was read in: an STL's chosen units, a STEP file's own (millimetres if it doesn't say). */
 export function fileUnitMm(file: ImportedFile): number {
-  if (file.format === "stl") return file.units === "in" ? 25.4 : 1;
+  // (A 3MF/OBJ's numbers are kept in millimetres; a 3MF's own unit is what File units are measured against.)
+  if (file.format === "stl") return file.from ? file.unitMm ?? 1 : file.units === "in" ? 25.4 : 1;
   // (Every rebuild asks: the last few files' answers are kept, as a big file's text takes a moment to look through.)
   let mm = stepUnits.get(file.data);
   if (mm === undefined) {

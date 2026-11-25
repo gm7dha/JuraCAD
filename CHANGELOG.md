@@ -8,13 +8,22 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
-## v0.112.1 — Everything fits on screen
+## v0.113.1 — Everything fits on screen
 
 - **Top bar**: Export, Settings and Help no longer disappear between about 1000 and 1235 px wide (iPad on its side
   too) — the buttons turn into icons (with their names on hover) instead.
 - **3D print and Laser panels** scroll instead of squashing; the Laser panel's Save buttons stay at its foot.
 - The status line, Measure/Mass, the iPad touch bar, the feature list's heading and the assembly panel no longer
   overlap each other or the side panels.
+
+## v0.113 — Import 3MF and OBJ files
+
+- **Import** (and drag-and-drop) now takes **.3mf** and **.obj** files as well as STEP and STL. They come in as
+  triangles, like an STL: Simplify, big-file reducing, Scale and File units all work.
+- 3MFs from Bambu Studio and PrusaSlicer are read with their parts where the file put them (a Bambu part sits at the
+  plate's middle — use Move to bring it to the origin); slicer-only parts (modifiers, negative parts, supports) are
+  left out and a message says how many. A 3MF's own units are kept; OBJ files are read as millimetres.
+- Not yet: 3MF colours, and OBJ files saved "Y up" (Blender's default) come in lying on their back.
 
 ## v0.112 — Maths in number boxes
 

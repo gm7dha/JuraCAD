@@ -874,6 +874,22 @@
   decimateMore (a plate with Ø8/Ø3 holes at 25k and 10k: corners on their faces, Simplify still finds both holes and 6 planes; a 1 mm
   walled cup down to 3k: volume within 0.2%, no triangles crossing; small raised letters kept; two bodies, duplicate/flipped triangles and
   a hole in the mesh), importFile (limits, reducing), engineStlReduce (heavy: 300k → 25k built, volume within 1%).
+  3MF and OBJ imports (Onshape's): pure `src/geometry/meshFiles.ts` — `zipEntries` (stored/deflated, no zip64) + `inflateRaw`
+  (DecompressionStream "deflate-raw", Node too), a tiny tag reader, `parseModel3mf`/`read3mfMeshes` (main model from
+  `_rels/.rels`; build items × component transforms, rows p·M, `composeTransforms`; `p:path` components in other .model files
+  as Bambu/Prusa save them; a mirroring transform walks triangles the other way; `type` support skipped; `UNITS_3MF` → mm;
+  colours/materials not read), `readObj` (v/f, a/t/n forms, negative indices, faces fanned, `\` continuations; numbers as mm).
+  `src/model/meshImport.ts` `meshFileToStl` turns them into a binary STL; fileActions passes it to `readImport(…, from)`, so the
+  design keeps `format: "stl"` + `ImportedFile.from` ("3mf"/"obj"; missing = an STL; parsed only for stl) and everything after
+  (reduce, Simplify, File units, Scale, cache) is the STL path. A 3MF's own unit is applied when read and kept as
+  `ImportedFile.unitMm` (missing = mm; OBJ always mm), which `fileUnitMm` returns for `from` files, so File units are measured
+  against it (Inches on an inch 3MF = ×1, Millimetres = ÷25.4); `from` files never use the STL's on-the-file mm/in. Slicer projects:
+  `slicerSkips` leaves out Bambu/Orca `Metadata/model_settings.config` parts whose `subtype` isn't normal_part (part id = the root
+  object's component objectid) and PrusaSlicer `Slic3r_PE_model.config` volumes (triangle ranges) not ModelPart; `type="other"`
+  objects too (a toast counts them). Items keep the file's coordinates (Bambu plates centre at 128, 128; later plates further along).
+  Zip: central directory sizes (data descriptors fine), zip64 refused; no "deflate-raw" = "browser too old".
+  Not done: OBJ/STL "Y axis is up" (Onshape has it), negative parts subtracted, colours.
+  Dialog `importKind`. Tests: meshImport (pure; fixtures in tests/support/meshFixtures.ts), engineMeshImport.
 - Move / copy (Onshape's Transform): `Feature.transform` (`TransformDef` in types.ts). `mode` (missing = "free": turns about
   X, then Y, then Z, then the move — the original way) or "xyz" (Translate by XYZ: moves only), "distance" (`distance` box along
   `along`: the triad's X/Y/Z or a clicked `{dir, through}`), "line" (`line` {a, b}: a clicked straight edge, from the end nearer the
