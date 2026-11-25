@@ -2098,8 +2098,13 @@
   unchanged), `cropPixels` for the photo puzzle (cropped before `photoGrid`, then e0/n0 = pixels off west/south); the dialog's
   "Trim from the north/east/south/west" sliders feed `used` (grid + size) to layoutFor/makeMountainPuzzle; the top view keeps the
   whole area. `src/terrain/mountainBorder.ts` `makeBorder(puzzle, words, bed)`: a frame drawn from the puzzle's edge (t 0) out
-  `BORDER_WALL` 10, every piece shrunk by fit (2·fit from the puzzle and at joins); each side `RISE` + its `edgePeaks` (corners
-  within fit + 0.5 of the face), rounded up; L corners (`CORNER_ARM` 20, the taller side's height) and straight pieces ≤ the
+  `BORDER_WALL` 10, every piece shrunk by fit (2·fit from the puzzle and at joins); the top follows the land (the owner's wish,
+  no steps): `topRing` = one ring of heights every ~`TOP_STEP` 1 mm round the edge from the SW corner (the puzzle's corners
+  within fit + 0.5 of each face, binned, + `RISE`; the words' span on the front floored to their height), covered ±`ENVELOPE`
+  0.75 cube, averaged ±`SMOOTH` 0.5 cube (never below the land), lifted to ≤ `MAX_SLOPE` 0.5; `topAt(x, y)` reads it (corner
+  squares = the corner's value), so every piece, lug and corner shares one function and joins match exactly; pieces are
+  `columns` meshes (rectilinear outline gridded by its corners + every step, a column per square — watertight); `heights`/`lows`
+  per side for the summary; words centred half way up the lowest top over them. L corners (`CORNER_ARM` 20) and straight pieces ≤ the
   bed (`most`), joined by full-height lugs (neck `LUG_NECK` 3.6 × 2 long, head `LUG_HEAD` 5.6 to `LUG_DEPTH` 5, shoulders
   square to the pull — a shallow dovetail slid 1.5 mm); `BorderJoint` lower/upper/dir. Words (`borderWords`: name, m, 6-figure
   ref, 1:scale; the dialog uses the famous summit only while it's on the trimmed puzzle, else its highest point) raised `RELIEF`
