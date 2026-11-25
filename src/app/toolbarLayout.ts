@@ -158,15 +158,59 @@ export const SKETCH_FAMILIES: readonly { name: string; tools: readonly SketchToo
   { name: "rectangle", tools: ["rectangle", "centreRectangle", "alignedRectangle", "slot", "polygon", "slotAlong"] },
   { name: "circle", tools: ["circle", "circle3", "ellipse"] },
   { name: "arc", tools: ["arc", "centreArc", "tangentArc", "ellipticalArc"] },
-  { name: "spline", tools: ["spline", "conic"] },
-  { name: "trim", tools: ["trim", "extend", "split", "offset", "sketchFillet", "sketchChamfer"] },
+  { name: "spline", tools: ["spline", "conic", "point"] },
+  { name: "round", tools: ["sketchFillet", "sketchChamfer"] },
+  { name: "trim", tools: ["trim", "extend", "split", "offset"] },
   { name: "copy", tools: ["mirror", "sketchPattern", "sketchTransform"] },
   { name: "use", tools: ["useEdge", "intersect"] },
 ];
 
 /** Sketch relations always on the toolbar; the rest are under "More relations ▾". */
-export const MAIN_RELATIONS: readonly RelationTool[] = ["coincident", "horizontal", "vertical", "parallel", "perpendicular", "equal", "tangent", "fix"];
-export const MORE_RELATIONS: readonly RelationTool[] = ["concentric", "midpoint", "symmetric", "normal", "curvature", "pierce"];
+export const MAIN_RELATIONS: readonly RelationTool[] = ["coincident", "horizontal", "vertical", "parallel", "equal"];
+export const MORE_RELATIONS: readonly RelationTool[] = ["perpendicular", "tangent", "fix", "concentric", "midpoint", "symmetric", "normal", "curvature", "pierce"];
+
+/** Sketch tools with a button of their own (every other drawing tool is in a family or the insert group). */
+export const SKETCH_SINGLE_TOOLS: readonly SketchTool[] = ["select", "dimension"];
+
+/**
+ * Every drawing tool on the sketch toolbar (SketchToolbar.tsx's TOOLS), each in exactly one place (tests/toolbarLayout).
+ * The toolbar fits a 1280 px window with room to spare: Copy / Paste / Delete share one ▾, Extrude / Revolve another,
+ * Construction is just its icon, and the rarer relations are under "More relations ▾".
+ */
+export const SKETCH_TOOLBAR_TOOLS: readonly SketchTool[] = [
+  "select",
+  "line",
+  "midpointLine",
+  "rectangle",
+  "centreRectangle",
+  "alignedRectangle",
+  "circle",
+  "circle3",
+  "arc",
+  "centreArc",
+  "tangentArc",
+  "spline",
+  "conic",
+  "ellipse",
+  "slot",
+  "polygon",
+  "point",
+  "dimension",
+  "sketchFillet",
+  "extend",
+  "split",
+  "trim",
+  "offset",
+  "mirror",
+  "sketchTransform",
+  "sketchPattern",
+  "useEdge",
+  "intersect",
+  "text",
+  "sketchChamfer",
+  "slotAlong",
+  "ellipticalArc",
+];
 
 /** The sketch tools that go with Insert DXF / Insert image in the sketch toolbar's "insert" group. */
 export const SKETCH_INSERT_TOOLS: readonly SketchTool[] = ["text"];
