@@ -10,7 +10,8 @@
  * so anything (a function such as sqrt(…), a name) can be written there.
  *
  * Function names (sin, sqrt, round… from the maths functions) deliberately don't count as names here: between them they
- * start with l, c, r, a, s, t and m, so every drawing tool's key would be swallowed. Click the box to type one. Other
+ * start with l, c, r, a, s, t and m, so every drawing tool's key would be swallowed. Once anything is typed ("30 ", "2*")
+ * every letter is the box's (functions, deg/rad); before that, click the box to start with a function. Other
  * words that should (a constant like pi) go in BOX_WORDS.
  */
 

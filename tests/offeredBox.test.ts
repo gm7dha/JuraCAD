@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { emptyDocument, historyOf } from "../src/model/document";
 import { useStore } from "../src/model/store";
 import { SketchController, type SketchPointer } from "../src/sketch/controller";
+import { FUNCTION_NAMES } from "../src/model/expr";
 import { BOX_WORDS, couldStartName, noteTyped, offeredBoxKey } from "../src/sketch/offeredBox";
 import { viewportApi } from "../src/viewport/Viewport";
 import { sketchEscape } from "../src/app/sketchActions";
@@ -65,6 +66,14 @@ describe("keys in an offered size's box", () => {
     expect(offeredBoxKey({ key: "s" }, offered, [])).toBe("shortcut");
     expect(couldStartName("s", [], ["sqrt"])).toBe(true);
     expect(couldStartName("s", [])).toBe(false);
+  });
+
+  it("once a number or sum is typed, function names and units go in (sin, sqrt, deg, rad…)", () => {
+    const after = { ...offered, typed: true };
+    for (const word of [...FUNCTION_NAMES, "deg", "rad", "degrees", "radians"]) expect(offeredBoxKey({ key: word[0] }, after, [])).toBe(null);
+    // Nothing typed yet: those letters are still the tools' keys (S = slot, D = dimension).
+    expect(offeredBoxKey({ key: "s" }, offered, [])).toBe("shortcut");
+    expect(offeredBoxKey({ key: "d" }, offered, [])).toBe("shortcut");
   });
 });
 
