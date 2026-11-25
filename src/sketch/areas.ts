@@ -265,6 +265,75 @@ const boxOfPts = (poly: Pt[]): Box => {
 const boxesMeet = (a: Box, b: Box, e: number) => a[0] <= b[2] + e && b[0] <= a[2] + e && a[1] <= b[3] + e && b[1] <= a[3] + e;
 const inBox = (p: Pt, b: Box, e: number) => p[0] >= b[0] - e && p[0] <= b[2] + e && p[1] >= b[1] - e && p[1] <= b[3] + e;
 
+/**
+ * A grid of boxes, so "which boxes might meet this one?" looks only nearby
+ * (thousands of shapes brought in from a file would otherwise compare every
+ * pair). `near` gives the indices, in order, of the boxes in the grid cells a
+ * box (grown by e) covers — a superset of those that meet it; callers still
+ * test each with boxesMeet / inBox, so the answers are exactly as before.
+ * Few boxes: every index (no grid).
+ */
+function boxGrid(boxes: Box[], e: number): (b: Box) => Iterable<number> {
+  const n = boxes.length;
+  const all = boxes.map((_b, i) => i);
+  if (n < 64) return () => all;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const sizes: number[] = [];
+  for (const b of boxes) {
+    x0 = Math.min(x0, b[0]);
+    y0 = Math.min(y0, b[1]);
+    x1 = Math.max(x1, b[2]);
+    y1 = Math.max(y1, b[3]);
+    sizes.push(Math.max(b[2] - b[0], b[3] - b[1]));
+  }
+  sizes.sort((a, b) => a - b);
+  const span = Math.max(x1 - x0, y1 - y0, 1e-9);
+  // About a typical box across, but never so fine the grid has far more cells than boxes.
+  const cell = Math.max(sizes[n >> 1] + 2 * e, span / Math.sqrt(4 * n), 1e-9);
+  const cols = Math.floor((x1 - x0 + 2 * e) / cell) + 1;
+  const rows = Math.floor((y1 - y0 + 2 * e) / cell) + 1;
+  const MOST = 64;
+  const grid = new Map<number, number[]>();
+  const big: number[] = [];
+  const range = (b: Box) => {
+    const i0 = Math.max(0, Math.floor((b[0] - e - x0 + e) / cell));
+    const j0 = Math.max(0, Math.floor((b[1] - e - y0 + e) / cell));
+    const i1 = Math.min(cols - 1, Math.floor((b[2] + e - x0 + e) / cell));
+    const j1 = Math.min(rows - 1, Math.floor((b[3] + e - y0 + e) / cell));
+    return [i0, j0, i1, j1];
+  };
+  boxes.forEach((b, k) => {
+    const [i0, j0, i1, j1] = range(b);
+    if ((i1 - i0 + 1) * (j1 - j0 + 1) > MOST) {
+      big.push(k);
+      return;
+    }
+    for (let i = i0; i <= i1; i++)
+      for (let j = j0; j <= j1; j++) {
+        const key = i * rows + j;
+        const list = grid.get(key);
+        if (list) list.push(k);
+        else grid.set(key, [k]);
+      }
+  });
+  const stamp = new Int32Array(n).fill(-1);
+  let query = 0;
+  return (b: Box) => {
+    query++;
+    const out: number[] = [];
+    const take = (k: number) => {
+      if (stamp[k] === query) return;
+      stamp[k] = query;
+      out.push(k);
+    };
+    big.forEach(take);
+    const [i0, j0, i1, j1] = range(b);
+    if ((i1 - i0 + 1) * (j1 - j0 + 1) > cols * rows) return all;
+    for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) grid.get(i * rows + j)?.forEach(take);
+    return out.sort((a, c) => a - c);
+  };
+}
+
 /** Where primitives p and q meet near (u, v), polished with Newton's method; null if they don't. */
 function refineCrossing(p: Prim, q: Prim, u: number, v: number, tol: number): [number, number] | null {
   for (let i = 0; i < 30; i++) {
@@ -409,9 +478,10 @@ function findAreas(sketch: SketchData): AreaMap {
   const addCut = (i: number, u: number) => cuts[i].push(u);
 
   // Crossings between every pair whose boxes meet (straight-piece crossings polished exactly).
+  const nearBoxes = boxGrid(samples.map((s) => s.box), tol);
   for (let i = 0; i < prims.length; i++) {
-    for (let j = i + 1; j < prims.length; j++) {
-      if (!boxesMeet(samples[i].box, samples[j].box, tol)) continue;
+    for (const j of nearBoxes(samples[i].box)) {
+      if (j <= i || !boxesMeet(samples[i].box, samples[j].box, tol)) continue;
       const A = samples[i], B = samples[j];
       for (let s = 0; s + 1 < A.ps.length; s++) {
         const p = A.ps[s], p2 = A.ps[s + 1];
@@ -446,7 +516,7 @@ function findAreas(sketch: SketchData): AreaMap {
     ends.push({ p: at(p, 0), prim: i }, { p: at(p, 1), prim: i });
   });
   for (const e of ends) {
-    for (let j = 0; j < prims.length; j++) {
+    for (const j of nearBoxes([e.p[0], e.p[1], e.p[0], e.p[1]])) {
       if (j === e.prim || !inBox(e.p, samples[j].box, tol)) continue;
       // Seed from the nearest sample.
       const S = samples[j];

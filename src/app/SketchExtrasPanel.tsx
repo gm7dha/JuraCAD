@@ -1,5 +1,5 @@
 /**
- * Sketch panel sections for Text, Intersect, Insert DXF and pictures: the
+ * Sketch panel sections for Text, Intersect, Insert DXF / SVG and pictures: the
  * settings for new text or the selected text, Intersect's "whole part"
  * choice, Insert DXF's scale and file button, and the selected picture's size
  * and see-through-ness.
@@ -12,7 +12,7 @@ import { lengthNumber, storeLength } from "../model/units";
 import { FONT_LABELS, type FontName } from "../geometry/fonts";
 import { changeImage, changeText, imageById, textById } from "../sketch/sketchText";
 import type { SketchData, SketchText } from "../sketch/types";
-import { insertDxfFile, pickFile } from "./sketchActions";
+import { insertDxfFile, insertSvgFile, pickFile } from "./sketchActions";
 
 const NO_SELECTION: string[] = [];
 
@@ -48,16 +48,19 @@ export function SketchExtrasPanel({ data }: { data: SketchData }) {
       )}
       {dxfOpen && (
         <div className="pattern-options">
-          <strong>Insert DXF</strong>
-          <label className="tool-option" title="1 = full size. The file's own units (inches, metres…) are taken into account when it says what they are.">
+          <strong>Insert DXF or SVG</strong>
+          <label className="tool-option" title="1 = full size. The file's own units (inches, metres, mm…) are taken into account when it says what they are.">
             Scale
             <input value={dxfScale} spellCheck={false} aria-label="DXF scale" onChange={(e) => setSketchOptions({ dxfScale: e.target.value })} />
             <span className="muted">×</span>
           </label>
-          <p className="dialog-hint">Lines, arcs, circles, polylines, splines and ellipses come in as sketch shapes, with the drawing's origin on the sketch's.</p>
+          <p className="dialog-hint">Lines, arcs, circles, polylines, curves and ellipses come in as sketch shapes. A DXF's origin goes on the sketch's; an SVG (from Inkscape, Illustrator, Cricut…) comes in at true size with its page's bottom-left corner on the origin. Text in an SVG is left out: turn it into paths first.</p>
           <div className="tool-option">
             <button type="button" className="primary-button" onClick={() => pickFile(".dxf", (f) => void insertDxfFile(f).then(() => setSketchOptions({ dxfOpen: false })))}>
               Choose a DXF file…
+            </button>
+            <button type="button" className="primary-button" onClick={() => pickFile(".svg,image/svg+xml", (f) => void insertSvgFile(f).then(() => setSketchOptions({ dxfOpen: false })))}>
+              Choose an SVG file…
             </button>
             <button type="button" className="text-button" onClick={() => setSketchOptions({ dxfOpen: false })}>
               Close

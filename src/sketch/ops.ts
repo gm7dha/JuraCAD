@@ -64,9 +64,32 @@ export interface EditResult {
 // ---------------------------------------------------------------------------
 // Lookups and measurements
 
+/**
+ * Where each point id sits in a points list, per list, so big sketches (a
+ * drawing brought in from a file has thousands of points) look points up at
+ * once instead of searching the list every time. Always checked against the
+ * list as it is now, so a list changed in place can never give a wrong point.
+ */
+const pointIndex = new WeakMap<SketchData["points"], Map<string, number>>();
+
+function findPoint(points: SketchData["points"], id: string): SketchData["points"][number] | undefined {
+  if (points.length < 32) return points.find((q) => q.id === id);
+  let index = pointIndex.get(points);
+  const known = index?.get(id);
+  if (known !== undefined && points[known]?.id === id) return points[known];
+  // Not known, or the list was changed in place: look again.
+  index = new Map();
+  points.forEach((q, i) => {
+    if (!index!.has(q.id)) index!.set(q.id, i);
+  });
+  pointIndex.set(points, index);
+  const i = index.get(id);
+  return i === undefined ? undefined : points[i];
+}
+
 export function pointPos(s: SketchData, id: string): [number, number] {
   if (id === ORIGIN_ID) return [0, 0];
-  const p = s.points.find((q) => q.id === id);
+  const p = findPoint(s.points, id);
   if (!p) throw new Error(`missing point ${id}`);
   return [p.x, p.y];
 }

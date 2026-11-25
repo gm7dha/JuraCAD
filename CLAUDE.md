@@ -166,6 +166,25 @@
   Insert DXF: `src/sketch/dxf.ts` (parse ENTITIES + $INSUNITS; lines, arcs, circles, (LW)polylines with bulges, splines, ellipses
   (partial ones as ellipses with `start`/`end`, ends joined), points;
   angles wrapped into one turn, non-finite shapes dropped, ≤20 MB / 20,000 shapes / 50,000 points, `DxfError` = plain message).
+  Insert SVG: `src/sketch/svg.ts` (pure; XML reader from JuraCUT's svgImport.ts): `parseSvg` → `SvgDrawing` (shapes = runs of
+  `SvgPiece`s in mm, y up — path data with relative/implicit commands and run-together arc flags, rect (rounded corners = quarter
+  ellipse arcs), circle, ellipse, line, polyline, polygon, through groups, transforms, nested svg and `use` (symbols' shapes; ≤ 8 deep);
+  hidden ones skipped; text/images/missing `use`s counted in `skipped`); size: viewBox + width/height in mm/cm/in/pt = `sized`, else
+  96 px/in — but a file from Adobe Illustrator (its generator comment / Adobe namespaces / Export As's `data-name` root) not sized
+in real units is read in points, 72/in (`illustrator`, `fromIllustrator`); the page's bottom-left corner on the origin (no page size:
+the shapes' own). Hidden = `display:none`/`visibility:hidden` in the style attribute, the attribute, or a simple `.class`/`#id`/tag
+rule in a `<style>` element (`styleRules`; the XML reader keeps a style element's text). Exact: lines; circles/ellipses and A arcs go
+  through `axesOf` (the transformed axes) → circle/arc when round, else ellipse (part: start/end, anticlockwise — flipped when the
+  transform mirrors); consecutive cubics (quadratics as cubics) = ONE spline via `splineThrough` (sharp corners between them kept by
+`tangentsIn`; an all-curves path back at its start is closed with or without Z; a closed run with < 3 pieces cut in
+  half exactly, as closed splines need 3 points); cubics with handles on their chord = lines. `insertSvg` joins ends like insertDxf
+  (returns its `InsertResult`), `svgSummary`; ≤ 20 MB / 20,000 shapes / 50,000 pieces, `SvgError`. App: `src/app/sketchInsertFile.ts`
+  `insertDrawingText(kind, text)` (both DXF and SVG; the panel's `dxfScale`), sketch toolbar "Insert SVG" opens the same panel
+  ("Insert DXF or SVG", two file buttons). The JuraCUT link still takes DXF only. Tests: svgInsert (pure), svgInsertStore,
+  engineSvgInsert (square with a round hole, ellipse corners, a curve lens, sharp corners + a pulled-in handle — exact volumes),
+  svgInsertFiles (Inkscape / Illustrator / Cricut-style / JuraCAD laser-export fixtures; 5,000 pieces in ~1 s). Over
+  `MANY_SHAPES` (300) the message warns that extruding them all is slow (the engine joins separate shapes one by one: 120 ≈ 17 s). `findAreas`
+  (areas.ts) looks up nearby boxes through `boxGrid` (same answers; 5,000 shapes ~0.7 s instead of ~15 s).
   The sketch check (`analyzeSketch` → `analyzeWhole` in solver.ts) row-reduces the Jacobian block by block: unknowns joined
   (union–find) through the equations that read them (`dependencies`), entries from `jacobianEntries` (the same numbers as the
   dense `jacobian`), the whole matrix's tolerance; unknowns no equation reads are free. Same answers as one dense reduction
