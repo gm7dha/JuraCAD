@@ -254,7 +254,7 @@ describe("an island with an islet joined across a bay (Arran and Holy Isle)", ()
 describe("the list of islands", () => {
   it("has the new islands in their places", () => {
     expect(ISLANDS.map((i) => i.id)).toEqual(["great-britain", "arran", "ailsa-craig", "wight", "man", "anglesey", "mull", "islay", "jura", "skye", "lewis-harris", "orkney", "shetland"]);
-    for (const id of ["arran", "ailsa-craig", "islay", "jura", "skye"]) expect(ISLANDS.find((i) => i.id === id)?.only, id).toBeDefined();
+    for (const id of ["arran", "ailsa-craig", "wight", "anglesey", "mull", "islay", "jura", "skye"]) expect(ISLANDS.find((i) => i.id === id)?.only, id).toBeDefined();
   });
 
   it("holds every keep and apart point well inside its box", () => {
@@ -284,7 +284,7 @@ describe("the list of islands", () => {
     for (const [id, e, n, width, height] of before) {
       const i = ISLANDS.find((x) => x.id === id)!;
       expect({ e: i.sw.e, n: i.sw.n, width: i.width, height: i.height }, id).toEqual({ e, n, width, height });
-      if (id !== "islay" && id !== "skye" && id !== "arran") expect(i.only, id).toBeUndefined();
+      if (!["islay", "skye", "arran", "wight", "anglesey", "mull"].includes(id)) expect(i.only, id).toBeUndefined();
     }
   });
 
@@ -294,5 +294,100 @@ describe("the list of islands", () => {
     const b = makeIslandPuzzle(g, sw, W, H, { ...SPEC, only: undefined });
     expect(JSON.stringify(b.pieces)).toBe(JSON.stringify(a.pieces));
     expect(a.warnings.join(" ")).not.toMatch(/island itself/);
+  });
+});
+
+// Mull (the owner's map): Mull itself, without Ulva, Gometra, Inch Kenneth, Erraid, Iona, Calve Island or the mainland,
+// with its sea lochs left as sea.
+describe("the Isle of Mull", () => {
+  const mull = ISLANDS.find((i) => i.id === "mull")!;
+  const at = (lat: number, lon: number) => latLonToGrid({ lat, lon });
+  const near = (a: { e: number; n: number }, b: { e: number; n: number }) => Math.hypot(a.e - b.e, a.n - b.n);
+
+  it("keeps Mull by points across it and parts the islands off it", () => {
+    const only = mull.only!;
+    expect(only.keep.length).toBeGreaterThanOrEqual(6);
+    // Ben More, and the Ross of Mull's end inland from Fionnphort.
+    expect(only.keep.some((p) => near(p, at(56.4246, -6.0136)) < 300)).toBe(true);
+    expect(only.keep.some((p) => near(p, at(56.325, -6.345)) < 500)).toBe(true);
+    // Ulva, Gometra, Inch Kenneth, Erraid, Iona, Calve Island, Morvern.
+    for (const [lat, lon] of [[56.48, -6.205], [56.49, -6.289], [56.4417, -6.1632], [56.294, -6.369], [56.334, -6.41], [56.6175, -6.0423], [56.556, -5.826]])
+      expect(only.apart!.some((p) => near(p, at(lat, lon)) < 500), `${lat}, ${lon}`).toBe(true);
+    // Every apart point well clear of every keep point (the keep points' reach can't land on another island).
+    for (const a of only.apart!) for (const k of only.keep) expect(near(a, k)).toBeGreaterThan(3000);
+    // Loch Spelve, Loch Don, Loch na Keal and Loch Scridain, in the box and clear of the keep points.
+    expect(only.sea!.length).toBe(4);
+    for (const p of only.sea!) {
+      expect(p.e > mull.sw.e && p.e < mull.sw.e + mull.width && p.n > mull.sw.n && p.n < mull.sw.n + mull.height).toBe(true);
+      for (const k of only.keep) expect(near(p, k)).toBeGreaterThan(2000);
+    }
+  });
+
+  // A sea loch whose mouth the height data closes: small enough on the puzzle to be filled in as a gap, unless it's named.
+  const withLoch = gridFrom(sw, AW, AH, 20, (e, n) => {
+    const [x, y] = [e - sw.e, n - sw.n];
+    if (x > 3800 && x < 4100 && Math.abs(y - 3000) < 100) return -2;
+    return Math.max(0, 400 * (1 - Math.hypot(x - 3000, y - 3000) / 2500));
+  });
+  const keepIt = [{ e: sw.e + 3000, n: sw.n + 3000 }];
+  const loch = [{ e: sw.e + 3950, n: sw.n + 3000 }];
+
+  it("leaves a named sea loch as sea when its mouth is closed", () => {
+    const filled = makeIslandPuzzle(withLoch, sw, AW, AH, { ...SPEC, only: { keep: keepIt } });
+    expect(filled.warnings.join(" ")).toMatch(/filled in/);
+    const open = makeIslandPuzzle(withLoch, sw, AW, AH, { ...SPEC, only: { keep: keepIt, sea: loch } });
+    expect(open.warnings.join(" ")).not.toMatch(/filled in/);
+    // About the loch's 300 × 200 m less, on the puzzle.
+    const lost = (landArea(filled) - landArea(open)) / (filled.k * filled.k);
+    expect(lost).toBeGreaterThan(30000);
+    expect(lost).toBeLessThan(120000);
+    // Put together too.
+    const placed = makeIslandPuzzle(withLoch, sw, AW, AH, { ...SPEC, inPlace: true, only: { keep: keepIt, sea: loch } });
+    expect(placed.warnings.join(" ")).not.toMatch(/filled in/);
+  });
+
+  it("keeps the sea lochs with no keep points (land already chosen on a trimmed area)", () => {
+    const p = makeIslandPuzzle(withLoch, sw, AW, AH, { ...SPEC, land: "all", only: { keep: [], sea: loch } });
+    expect(p.warnings.join(" ")).not.toMatch(/filled in|wasn't found/);
+    // A sea point leaves everything else as it was.
+    const a = makeIslandPuzzle(mainAlone, sw, AW, AH, { ...SPEC, only: { keep: keepIt } });
+    const b = makeIslandPuzzle(mainAlone, sw, AW, AH, { ...SPEC, only: { keep: keepIt, sea: loch } });
+    expect(JSON.stringify(b.pieces)).toBe(JSON.stringify(a.pieces));
+  });
+});
+
+// Mull's own troubles together: an islet (Ulva) joined by a neck a cell or two wide, the mainland off the edge, a big sea
+// loch (Loch Spelve) whose mouth is closed and whose water the tiles blend just above 0 (so it was filled in), and a
+// lochan the sea point mustn't touch. The sea point sits on the loch's shore, as a label's spot can on a narrow loch.
+describe("a Mull-like island", () => {
+  const sea0 = { ...SPEC, sea: 0.5 };
+  const grid = gridFrom(sw, W, H, 20, (e, n) => {
+    const [x, y] = [e - sw.e, n - sw.n];
+    if (x > 3500 && x < 4300 && Math.abs(y - 2000) < 150) return 0.3;
+    if (Math.hypot(x - 1500, y - 2000) < 200) return 0.3;
+    const mull = Math.max(0, 300 * (1 - Math.hypot(x - 3000, y - 2000) / 1800));
+    const ulva = Math.max(0, 60 * (1 - Math.hypot(x - 6200, y - 2000) / 500));
+    const neck = x > 4700 && x < 5800 && Math.abs(y - 2000) < 10 ? 5 : 0;
+    const mainland = x > 7600 ? 80 : 0;
+    return Math.max(mull, ulva, neck, mainland);
+  });
+  const keep = [{ e: sw.e + 3000, n: sw.n + 3000 }, { e: sw.e + 2000, n: sw.n + 1200 }];
+  const apart = [{ e: sw.e + 6200, n: sw.n + 2000 }];
+  const sea = [{ e: sw.e + 3900, n: sw.n + 2160 }];
+
+  it("keeps Mull alone with its sea loch open and its lochan filled", () => {
+    const before = makeIslandPuzzle(grid, sw, W, H, { ...sea0, only: { keep, apart } });
+    expect(spanE(before)[1]).toBeLessThan(5600);
+    expect(before.warnings.join(" ")).toMatch(/2 low patches/);
+    const p = makeIslandPuzzle(grid, sw, W, H, { ...sea0, only: { keep, apart, sea } });
+    expect(spanE(p)[1]).toBeLessThan(5600);
+    expect(p.warnings.join(" ")).toMatch(/A low patch/);
+    const lost = (landArea(before) - landArea(p)) / (p.k * p.k);
+    expect(lost).toBeGreaterThan(180000);
+    expect(lost).toBeLessThan(300000);
+    // Trimmed (land chosen already): everything is kept, the loch still open.
+    const all = makeIslandPuzzle(grid, sw, W, H, { ...sea0, land: "all", only: { keep: [], sea } });
+    expect(spanE(all)[1]).toBeGreaterThan(7900);
+    expect(all.warnings.join(" ")).toMatch(/A low patch/);
   });
 });

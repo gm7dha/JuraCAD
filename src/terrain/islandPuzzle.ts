@@ -67,6 +67,11 @@ export interface IslandSpec {
 export interface IslandOnly {
   keep: { e: number; n: number }[];
   apart?: { e: number; n: number }[];
+  /**
+   * Points in sea lochs that stay sea even when the height data closes their mouths (Mull's Loch Spelve and Loch Don):
+   * a closed-in patch holding one is never filled in. Used with no keep points too (a trimmed area, decided already).
+   */
+  sea?: { e: number; n: number }[];
 }
 
 /** Land (m², or share of what's kept) the cut may give to the other side, beyond its own shaved coast, before saying so. */
@@ -77,6 +82,8 @@ export const MOST_HANDED_SHARE = 0.03;
 export const KEEP_REACH = 2000;
 /** How far (m) an apart point looks for land when it falls on sea: not far, so a point on an islet the data hasn't got never lands on the island itself. */
 export const APART_REACH = 600;
+/** How far (m) a sea point (`IslandOnly.sea`) looks for sea when the grid reads its own spot as land. */
+export const SEA_REACH = 300;
 export const WIDEST_NECK = 1500;
 /** Heights (m) of low ground tried as shore, in turn, when an island can't be cut free from other land by shape alone. */
 export const LOW_JOINS = [2, 5, 10, 20];
@@ -296,7 +303,7 @@ export function keepLand(isLand: Uint8Array, nx: number, ny: number, land: Islan
   const spec = { land };
   const masses = stretches(nx, ny, (c) => isLand[c] === 1);
   if (!masses.count) throw new Error("There's no land in this area — it's all sea.");
-  if (only && keepOnly(isLand, nx, ny, only, warnings, heightOf)) return;
+  if (only && only.keep.length && keepOnly(isLand, nx, ny, only, warnings, heightOf)) return;
   if (spec.land !== "all") {
     const size = new Int32Array(masses.count);
     const edge = new Uint8Array(masses.count);
@@ -360,16 +367,19 @@ export function onlyCells(only: IslandOnly, sw: { e: number; n: number }, cellM:
   };
 }
 
-/** The land cell nearest a point (cells), within `reach` cells; −1 when the point is off the grid or there's none. */
-function landNear(isLand: Uint8Array, nx: number, ny: number, p: XY, reach: number): number {
+/**
+ * The land cell nearest a point (cells), within `reach` cells; −1 when the point is off the grid or there's none.
+ * `want` 0: the nearest sea cell instead.
+ */
+function landNear(isLand: Uint8Array, nx: number, ny: number, p: XY, reach: number, want = 1): number {
   const [i0, j0] = [Math.floor(p[0]), Math.floor(p[1])];
   if (i0 < 0 || j0 < 0 || i0 >= nx || j0 >= ny) return -1;
-  if (isLand[j0 * nx + i0]) return j0 * nx + i0;
+  if ((isLand[j0 * nx + i0] ? 1 : 0) === want) return j0 * nx + i0;
   const r = Math.ceil(reach);
   let [best, bd] = [-1, Infinity];
   for (let j = Math.max(0, j0 - r); j <= Math.min(ny - 1, j0 + r); j++)
     for (let i = Math.max(0, i0 - r); i <= Math.min(nx - 1, i0 + r); i++) {
-      if (!isLand[j * nx + i]) continue;
+      if ((isLand[j * nx + i] ? 1 : 0) !== want) continue;
       const d = (i + 0.5 - p[0]) ** 2 + (j + 0.5 - p[1]) ** 2;
       if (d < bd && d <= reach * reach) [bd, best] = [d, j * nx + i];
     }
@@ -889,7 +899,15 @@ function buildIsland(
     const [e, n] = [sw.e + (((c % nx) + 0.5) * cell) / k, sw.n + ((Math.floor(c / nx) + 0.5) * cell) / k];
     return lochs.some((r) => inRing(r, e, n));
   };
+  // Sea lochs the island's own list entry names stay sea, whatever closes them in.
+  // A point the grid reads as land (a mudflat, an islet, the shore of a narrow loch) takes the nearest sea within `SEA_REACH`.
+  const seaCells = new Set<number>();
+  for (const p of spec.only?.sea ?? []) {
+    const c = landNear(isLand, nx, ny, [((p.e - sw.e) * k) / cell, ((p.n - sw.n) * k) / cell], (SEA_REACH * k) / cell, 0);
+    if (c >= 0) seaCells.add(c);
+  }
   const holes = fillEnclosed(isLand, nx, ny, cellHeight, (cells, lowest) => {
+    if (seaCells.size && cells.some((c) => seaCells.has(c))) return false;
     // By the coastline, what's left closed in is sea (a loch mouth too narrow for the grid) or land left out: kept, but
     // for specks too small to print as holes (a pool, or a creek's bits between cells the coastline calls land).
     if (byCoast) return cells.length * cell * cell <= COAST_SPECK;
