@@ -8,6 +8,14 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.124 — Lewis and Harris, just the main island
+
+- **The Island puzzle's Lewis and Harris is the main island only**: Scalpay, Taransay, the Shiant Isles, Great and Little
+  Bernera, Scarp, Berneray, Eilean Chaluim Chille and the other islets are left out, and so is North Uist. Lewis and
+  Harris stay one piece, with Point, Huisinis and the Tarbert isthmus kept.
+- **Its sea lochs stay sea**: Loch Seaforth, Loch Erisort, Loch Leurbost, Loch Shell, East and West Loch Tarbert, Loch
+  Resort, Loch Roag and Little Loch Roag are never filled in as land.
+
 ## v0.123 — Isle of Mull, just Mull
 
 - **The Island puzzle's Isle of Mull is mainland Mull only**: Ulva, Gometra, Inch Kenneth, Iona, Erraid, Calve Island and

@@ -254,7 +254,7 @@ describe("an island with an islet joined across a bay (Arran and Holy Isle)", ()
 describe("the list of islands", () => {
   it("has the new islands in their places", () => {
     expect(ISLANDS.map((i) => i.id)).toEqual(["great-britain", "arran", "ailsa-craig", "wight", "man", "anglesey", "mull", "islay", "jura", "skye", "lewis-harris", "orkney", "shetland"]);
-    for (const id of ["arran", "ailsa-craig", "wight", "anglesey", "mull", "islay", "jura", "skye"]) expect(ISLANDS.find((i) => i.id === id)?.only, id).toBeDefined();
+    for (const id of ["arran", "ailsa-craig", "wight", "anglesey", "mull", "islay", "jura", "skye", "lewis-harris"]) expect(ISLANDS.find((i) => i.id === id)?.only, id).toBeDefined();
   });
 
   it("holds every keep and apart point well inside its box", () => {
@@ -284,7 +284,7 @@ describe("the list of islands", () => {
     for (const [id, e, n, width, height] of before) {
       const i = ISLANDS.find((x) => x.id === id)!;
       expect({ e: i.sw.e, n: i.sw.n, width: i.width, height: i.height }, id).toEqual({ e, n, width, height });
-      if (!["islay", "skye", "arran", "wight", "anglesey", "mull"].includes(id)) expect(i.only, id).toBeUndefined();
+      if (!["islay", "skye", "arran", "wight", "anglesey", "mull", "lewis-harris"].includes(id)) expect(i.only, id).toBeUndefined();
     }
   });
 
@@ -389,5 +389,84 @@ describe("a Mull-like island", () => {
     const all = makeIslandPuzzle(grid, sw, W, H, { ...sea0, land: "all", only: { keep: [], sea } });
     expect(spanE(all)[1]).toBeGreaterThan(7900);
     expect(all.warnings.join(" ")).toMatch(/A low patch/);
+  });
+});
+
+// Lewis and Harris (the owner's wish): the one main island alone — no Scalpay, Great Bernera, Scarp, Taransay, the Shiants,
+// the Sound of Harris islands or North Uist — with its sea lochs left as sea.
+describe("Lewis and Harris", () => {
+  const lh = ISLANDS.find((i) => i.id === "lewis-harris")!;
+  const at = (lat: number, lon: number) => latLonToGrid({ lat, lon });
+  const near = (a: { e: number; n: number }, b: { e: number; n: number }) => Math.hypot(a.e - b.e, a.n - b.n);
+  const inBox = (p: { e: number; n: number }) => p.e > lh.sw.e && p.e < lh.sw.e + lh.width && p.n > lh.sw.n && p.n < lh.sw.n + lh.height;
+
+  it("keeps the main island by points all along it", () => {
+    const only = lh.only!;
+    expect(only.keep.length).toBeGreaterThanOrEqual(12);
+    // Ness, Stornoway, Uig, Pairc, the Clisham, Tarbert's isthmus and South Harris (Roineabhal) each have a point.
+    for (const [lat, lon] of [[58.4717, -6.2876], [58.2116, -6.3944], [58.1313, -7.0611], [57.9896, -6.6481], [57.9637, -6.8125], [57.8974, -6.8051], [57.7667, -6.9754]])
+      expect(only.keep.some((p) => near(p, at(lat, lon)) < 300), `${lat}, ${lon}`).toBe(true);
+    // From the Butt of Lewis to South Harris: the points span the island's length.
+    const ns = only.keep.map((p) => p.n);
+    expect(Math.max(...ns) - Math.min(...ns)).toBeGreaterThan(75000);
+  });
+
+  it("parts every other island off it, North Uist too", () => {
+    const only = lh.only!;
+    // Scalpay, Great Bernera, Little Bernera, Scarp, Taransay, the Shiants, Seaforth Island, Eilean Liubhaird, Ensay,
+    // Killegray, Berneray, North Uist (Lochportain).
+    for (const [lat, lon] of [[57.865, -6.6775], [58.23, -6.85], [58.2653, -6.8733], [58.025, -7.127], [57.9, -7.017], [57.8989, -6.366], [58.001, -6.7292], [58.0009, -6.4327], [57.7632, -7.0852], [57.7399, -7.0836], [57.7164, -7.1526], [57.6311, -7.127],
+      // Eilean Chaluim Chille (tidal), Stockinish Island, Soay Mòr, Vuia Mòr.
+      [58.105, -6.4405], [57.8068, -6.8216], [57.9381, -6.9644], [58.209, -6.8898]])
+      expect(only.apart!.some((p) => near(p, at(lat, lon)) < 500), `${lat}, ${lon}`).toBe(true);
+    // Every apart point well clear of every keep point (a keep point's reach can't land on another island), all in the box.
+    for (const a of only.apart!) {
+      expect(inBox(a)).toBe(true);
+      for (const k of only.keep) expect(near(a, k)).toBeGreaterThan(3000);
+    }
+  });
+
+  it("leaves its sea lochs as sea", () => {
+    const only = lh.only!;
+    expect(only.sea!.length).toBeGreaterThanOrEqual(10);
+    // Loch Seaforth, Loch Erisort, East and West Loch Tarbert, Loch Resort, Little Loch Roag.
+    for (const [lat, lon] of [[57.955, -6.6996], [58.0954, -6.509], [57.8686, -6.7528], [57.927, -6.935], [58.0447, -6.9803], [58.1252, -6.8706]])
+      expect(only.sea!.some((p) => near(p, at(lat, lon)) < 300), `${lat}, ${lon}`).toBe(true);
+    for (const p of only.sea!) {
+      expect(inBox(p)).toBe(true);
+      for (const k of only.keep) expect(near(p, k)).toBeGreaterThan(2000);
+    }
+  });
+
+  // Its own necks (Tarbert's isthmus, the Braighe to Point) are narrower than the join to an island bridged near them
+  // (Scalpay): the shaving that parts the island cuts them too, but each side holds a keep point, so both grow back.
+  it("keeps the main island whole across its own necks while parting an island bridged near one", () => {
+    // 100 m cells. Lewis and Harris (4 × 4 km each) joined by a 300 m isthmus; Point east of Harris across a 200 m neck;
+    // Scalpay (1.2 × 1 km) joined to Harris by a 500 m wide, 600 m long join, 2 km from the isthmus.
+    const [gx, gy] = [120, 64];
+    const isl = new Uint8Array(gx * gy);
+    const set = (i0: number, i1: number, j0: number, j1: number) => {
+      for (let j = j0; j < j1; j++) for (let i = i0; i < i1; i++) isl[j * gx + i] = 1;
+    };
+    set(10, 50, 18, 58);
+    set(60, 100, 18, 58);
+    set(50, 60, 36, 39);
+    set(104, 116, 28, 48);
+    set(100, 104, 37, 39);
+    set(64, 76, 2, 12);
+    set(68, 73, 12, 18);
+    const main = isl.slice();
+    for (let j = 12; j < 18; j++) for (let i = 68; i < 73; i++) main[j * gx + i] = 0;
+    for (let j = 2; j < 12; j++) for (let i = 64; i < 76; i++) main[j * gx + i] = 0;
+    const w: string[] = [];
+    keepOnly(isl, gx, gy, { keep: [[30, 38], [80, 38], [55, 37.5], [110, 38]], apart: [[70, 7]], reach: 20, widest: 15 }, w);
+    expect(isl[7 * gx + 70]).toBe(0);
+    // Every cell of the main island kept, the isthmus and Point's neck included; Scalpay gone (at most a stub of its join
+    // is left on Harris).
+    expect(main.every((v, c) => !v || isl[c] === 1)).toBe(true);
+    for (let j = 2; j < 12; j++) for (let i = 64; i < 76; i++) expect(isl[j * gx + i]).toBe(0);
+    for (const [i, j] of [[55, 37], [50, 36], [59, 38], [102, 37], [110, 38]]) expect(isl[j * gx + i], `${i}, ${j}`).toBe(1);
+    expect(w.join(" ")).toMatch(/cut free/);
+    expect(w.join(" ")).not.toMatch(/sizeable piece|too broadly/);
   });
 });
