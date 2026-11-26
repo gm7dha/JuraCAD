@@ -8,6 +8,12 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.126 — Two layers of blue on big lochs too
+
+- Big lochs with a narrow neck (like Mull's) now get the same two-layer piece of blue filament as smaller lochs, instead of falling back to painted blue.
+- Fixed some colour-band pieces that came out with tiny gaps where a colour change sat exactly level with flat ground or a wall. They now come out whole.
+- Puzzles without these problems come out exactly as before.
+
 ## v0.125 — Flat lochs on the island and mountain puzzles
 
 - Lochs and lakes on the map are now flat: the ground under them is built up (or taken down) to one level, instead of following the land's contours.
