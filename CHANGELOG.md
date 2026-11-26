@@ -8,6 +8,13 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.125 — Flat lochs on the island and mountain puzzles
+
+- Lochs and lakes on the map are now flat: the ground under them is built up (or taken down) to one level, instead of following the land's contours.
+- Each loch's level sits exactly on a print layer.
+- In colour bands, the water is now its own two-layer piece of blue filament instead of being painted, so the blue doesn't run several layers down. This follows the layer height you choose.
+- Rivers are still painted, and puzzles with no lochs come out exactly as before.
+
 ## v0.124 — Lewis and Harris, just the main island
 
 - **The Island puzzle's Lewis and Harris is the main island only**: Scalpay, Taransay, the Shiant Isles, Great and Little
