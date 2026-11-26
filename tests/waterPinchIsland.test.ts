@@ -2,9 +2,10 @@
  * Lochs as two layers of water where the mesh is awkward (pure; its own file for memory): the biggest loch of the 40 mm
  * puzzles touches itself at single corners (a narrow neck), and a ragged coast's band edge grazes an upright wall — both
  * used to fall back to paint. Each now gets a closed slab two layers thick, every part closed, the volumes adding up.
+ * "Closed" is strict: every edge used once each way (meshCheck would let an edge used twice each way cancel out).
  */
 import { describe, expect, it } from "vitest";
-import { bandParts, filaments, GROUND_BROWN, islandBands, mapOnPuzzle, mapRaster, meshCheck, SEA_BLUE, type ColourSpec } from "../src/terrain/colour";
+import { bandParts, filaments, GROUND_BROWN, islandBands, mapOnPuzzle, mapRaster, meshCheck, NO_MAP, SEA_BLUE, type ColourSpec } from "../src/terrain/colour";
 import { gridFrom } from "../src/terrain/elevation";
 import { lochLayers } from "../src/terrain/groundMarks";
 import { featuresForIsland, ISLAND_DEFAULTS, makeIslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
@@ -32,6 +33,11 @@ const grids = {
     const a = Math.atan2(y, x);
     return Math.max(0, (1 - (Math.hypot(x / 0.42, y / 0.4) + 0.12 * Math.sin(a * 7) + 0.08 * Math.sin(a * 13 + 1) + 0.05 * Math.sin(e / 90) * Math.cos(n / 110))) * 300);
   }),
+  low: gridFrom(sw, W, H, 25, (e, n) => {
+    const [x, y] = [(e - sw.e) / W - 0.5, (n - sw.n) / H - 0.5];
+    const a = Math.atan2(y, x);
+    return Math.max(0, (1 - (Math.hypot(x / 0.42, y / 0.4) + 0.12 * Math.sin(a * 9) + 0.07 * Math.sin(a * 23 + 1) + 0.04 * Math.sin(e / 70) * Math.cos(n / 80))) * 25);
+  }),
 };
 const lochs: XY[][][] = [
   [loch(302400, 702100, 700, 420)],
@@ -42,7 +48,8 @@ const lochs: XY[][][] = [
   [loch(302400, 701000, 200, 300)],
 ];
 const features: MapFeatures = { lines: [], shapes: lochs.map((rings) => ({ kind: "water" as const, rings })), names: [] };
-import { WATER_LAYERS } from "../src/terrain/waterPart";
+import { createHash } from "node:crypto";
+import { closedMesh, WATER_LAYERS } from "../src/terrain/waterPart";
 
 function check(grid: keyof typeof grids, piece: number, seed: number, name: string, layer = 0.2) {
   const spec: IslandSpec = { ...ISLAND_DEFAULTS, bed: BED, piece, seed, ...lochLayers(true, { layer }, features) };
@@ -57,7 +64,7 @@ function check(grid: keyof typeof grids, piece: number, seed: number, name: stri
   let sum = 0;
   for (const q of parts) {
     const c = meshCheck(q.vertices, q.triangles);
-    expect(c.open, `${grid} ${piece} piece ${name} filament ${q.filament}`).toBe(0);
+    expect(closedMesh(q), `${grid} ${piece} piece ${name} filament ${q.filament}`).toBe(true);
     sum += c.volume;
   }
   expect(Math.abs(sum - whole) / whole).toBeLessThan(1e-8);
@@ -75,5 +82,29 @@ describe("water slabs on awkward lochs", () => {
   });
   it("a band edge grazing an upright wall leaves every band closed (ragged coast, 15 mm, piece 28)", () => {
     check("ragged", 15, 1, "28");
+  });
+  it("a cap whose hole joins through a corner exactly: no folded triangles, with or without the map (low coast, 15 mm, piece 43)", () => {
+    for (const layer of [0.2, 0.12]) check("low", 15, 1, "43", layer);
+    const spec: IslandSpec = { ...ISLAND_DEFAULTS, bed: BED, piece: 15, seed: 1 };
+    const isl = makeIslandPuzzle(grids.low, sw, W, H, spec);
+    const p = isl.pieces.find((q) => q.name === "43")!;
+    const scale = { z0: spec.base, h0: 0, mmPerM: spec.relief / Math.max(isl.high, 1) };
+    for (const layer of [0.2, 0.12]) {
+      const cspec: ColourSpec = { mode: "bands", bands: islandBands(isl.high), base: GROUND_BROWN, water: SEA_BLUE, layer };
+      for (const q of bandParts(p.bodies, p.z0, { spec: cspec, scale, map: mapRaster(NO_MAP, isl.width, isl.height) })) expect(closedMesh(q), `filament ${q.filament}`).toBe(true);
+    }
+  });
+  it("colour bands with no water come out byte for byte as before (low coast, 25 mm)", () => {
+    const spec: IslandSpec = { ...ISLAND_DEFAULTS, bed: BED, piece: 25, seed: 1 };
+    const isl = makeIslandPuzzle(grids.low, sw, W, H, spec);
+    const scale = { z0: spec.base, h0: 0, mmPerM: spec.relief / Math.max(isl.high, 1) };
+    const hashes = [0.2, 0.12].map((layer) => {
+      const cspec: ColourSpec = { mode: "bands", bands: islandBands(isl.high), base: GROUND_BROWN, water: SEA_BLUE, layer };
+      const map = mapRaster(NO_MAP, isl.width, isl.height);
+      const parts = isl.pieces.map((p) => bandParts(p.bodies, p.z0, { spec: cspec, scale, map }).map((q) => [q.filament, Array.from(q.vertices), Array.from(q.triangles)]));
+      return createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 16);
+    });
+    // What v0.125 made (main at 6cdbd2c).
+    expect(hashes).toEqual(["17e6e1c209f48d14", "9bd92a60ffa81e2a"]);
   });
 });

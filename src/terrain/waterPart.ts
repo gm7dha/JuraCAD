@@ -396,7 +396,11 @@ function volumeOf(V: ArrayLike<number>, T: ArrayLike<number>): number {
   return v;
 }
 
-function closedMesh(m: MeshData): boolean {
+/**
+ * Closed, strictly: every directed edge used exactly once and its reverse exactly once (by corner number, as the file is
+ * written). meshCheck's count lets an edge used twice each way cancel out, which a fold of overlapping triangles does.
+ */
+export function closedMesh(m: { vertices: ArrayLike<number>; triangles: ArrayLike<number> }): boolean {
   const nv = m.vertices.length / 3;
   const edges = new Map<number, number>();
   for (let t = 0; t < m.triangles.length; t += 3)

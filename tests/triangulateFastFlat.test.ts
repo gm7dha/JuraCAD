@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { triangulate } from "../src/terrain/triangulate";
 import { triangulateFast } from "../src/terrain/triangulateFast";
 
 type P2 = [number, number];
@@ -28,10 +30,50 @@ describe("triangulateFast with corners in a line", () => {
     const area = tris.reduce((s, [a, b, c]) => s + ((square[b][0] - square[a][0]) * (square[c][1] - square[a][1]) - (square[b][1] - square[a][1]) * (square[c][0] - square[a][0])) / 2, 0);
     expect(area).toBeCloseTo(1, 9);
   });
+  it("a speck of a cap: its last ear, tiny but the right way round, is kept (else the band is left open)", () => {
+    // From the low coast's piece 43 at z = 9, with a map: about 0.02 mm across.
+    const speck: P2[] = [[129.375, 89.10136445074532], [129.3749583547923, 89.1249583547923], [129.3749583547923, 89.125], [129.375, 89.1250416452077], [129.38199877263062, 89.13199877263061], [129.3940276222185, 89.125]];
+    const tris = triangulateFast(speck);
+    expect(tris.length).toBe(4);
+    expect(everyEdgeUsed(speck, tris)).toBe(true);
+  });
   it("an ordinary outline is triangulated as before", () => {
     const l: P2[] = [[0, 0], [2, 0], [2, 1], [1, 1], [1, 2], [0, 2]];
     const tris = triangulateFast(l);
     expect(tris.length).toBe(4);
     expect(everyEdgeUsed(l, tris)).toBe(true);
+  });
+});
+
+describe("a hole joined through a corner its ray passes exactly", () => {
+  // A band's cap from the island's low coast (15 mm pieces, pattern 1, piece 43, z = 9): the ray right from the hole's
+  // rightmost corner passes exactly through an outline corner at (121.06036, 80.875), and two more corners further along
+  // lie on the same line. The join used to go to one of those, past the outline, and the ear clipping then folded over.
+  const { outer, holes } = JSON.parse(readFileSync(new URL("./support/knotCap.json", import.meta.url), "utf8")) as { outer: P2[]; holes: P2[][] };
+  const pts = [...outer, ...holes.flat()];
+  const signed = (p: P2[]) => p.reduce((s, a, i) => s + a[0] * p[(i + 1) % p.length][1] - p[(i + 1) % p.length][0] * a[1], 0) / 2;
+  const region = Math.abs(signed(outer)) - Math.abs(signed(holes[0]));
+  for (const [name, fn] of [["triangulateFast", triangulateFast], ["triangulate", triangulate]] as const)
+    it(`${name}: no folded triangles, the area exactly, every edge once`, () => {
+      const tris = fn(outer, holes) as [number, number, number][];
+      let sum = 0;
+      const used = new Map<string, number>();
+      for (const [a, b, c] of tris) {
+        const s = ((pts[b][0] - pts[a][0]) * (pts[c][1] - pts[a][1]) - (pts[b][1] - pts[a][1]) * (pts[c][0] - pts[a][0])) / 2;
+        expect(s).toBeGreaterThan(-1e-12);
+        sum += s;
+        for (const [p, q] of [[a, b], [b, c], [c, a]]) used.set(`${p},${q}`, (used.get(`${p},${q}`) ?? 0) + 1);
+      }
+      expect(Math.abs(sum - region)).toBeLessThan(1e-9);
+      expect([...used.values()].every((n) => n === 1)).toBe(true);
+      expect(tris.length).toBe(outer.length + holes[0].length);
+    });
+  it("a leftover with real area is left open, not fanned into folds", () => {
+    // An outline crossing itself (lobes of different sizes) can't all be clipped into ears: what's left has real area, so
+    // it gets no triangles (the caller then sees the mesh isn't closed) rather than a fan folding over itself.
+    const knot: P2[] = [[0, 0], [3, 3], [3, 0], [0, 1]];
+    const tris = triangulateFast(knot);
+    expect(tris.length).toBeLessThan(knot.length - 2);
+    expect(everyEdgeUsed(knot, tris)).toBe(false);
   });
 });

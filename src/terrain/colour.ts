@@ -22,7 +22,7 @@ import type { Body } from "./mountainPuzzle";
 import type { MapFeatures, OsmLineKind } from "./osm";
 import type { P2 } from "./triangulate";
 import { triangulateFast } from "./triangulateFast";
-import { splitWater, WATER_LAYERS } from "./waterPart";
+import { closedMesh, splitWater, WATER_LAYERS } from "./waterPart";
 
 type XY = [number, number];
 
@@ -773,8 +773,8 @@ export function bandParts(bodies: Body[], z0: number, ctx: BandContext, top = tr
       if (split) {
         const moved = clearOfWater(cuts, split.levels, waterDepth, layer);
         const cut = sliceMesh(split.main.vertices, split.main.triangles, moved.map((c) => c.z));
-        // Every band of the rest closed, else the piece is painted as before.
-        if (cut.every((m) => !m.triangles.length || meshCheck(m.vertices, m.triangles).open === 0)) {
+        // Every band of the rest closed (strictly: no edge used twice), else the piece is painted as before.
+        if (cut.every((m) => !m.triangles.length || closedMesh(m))) {
           [body, bodyCuts, slabs, lochLevels] = [split.main, moved, cut, split.levels];
           waterParts = split.waters.map((w) => {
             let [lo, hi] = [Infinity, -Infinity];
