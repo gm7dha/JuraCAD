@@ -254,7 +254,7 @@ describe("an island with an islet joined across a bay (Arran and Holy Isle)", ()
 describe("the list of islands", () => {
   it("has the new islands in their places", () => {
     expect(ISLANDS.map((i) => i.id)).toEqual(["great-britain", "arran", "ailsa-craig", "wight", "man", "anglesey", "mull", "islay", "jura", "skye", "lewis-harris", "orkney", "shetland"]);
-    for (const id of ["arran", "ailsa-craig", "wight", "anglesey", "mull", "islay", "jura", "skye"]) expect(ISLANDS.find((i) => i.id === id)?.only, id).toBeDefined();
+    for (const id of ["arran", "ailsa-craig", "wight", "anglesey", "mull", "islay", "jura", "skye", "lewis-harris"]) expect(ISLANDS.find((i) => i.id === id)?.only, id).toBeDefined();
   });
 
   it("holds every keep and apart point well inside its box", () => {
@@ -284,7 +284,7 @@ describe("the list of islands", () => {
     for (const [id, e, n, width, height] of before) {
       const i = ISLANDS.find((x) => x.id === id)!;
       expect({ e: i.sw.e, n: i.sw.n, width: i.width, height: i.height }, id).toEqual({ e, n, width, height });
-      if (!["islay", "skye", "arran", "wight", "anglesey", "mull"].includes(id)) expect(i.only, id).toBeUndefined();
+      if (!["islay", "skye", "arran", "wight", "anglesey", "mull", "lewis-harris"].includes(id)) expect(i.only, id).toBeUndefined();
     }
   });
 
@@ -389,5 +389,50 @@ describe("a Mull-like island", () => {
     const all = makeIslandPuzzle(grid, sw, W, H, { ...sea0, land: "all", only: { keep: [], sea } });
     expect(spanE(all)[1]).toBeGreaterThan(7900);
     expect(all.warnings.join(" ")).toMatch(/A low patch/);
+  });
+});
+
+// Lewis and Harris (the owner's wish): the one main island alone — no Scalpay, Great Bernera, Scarp, Taransay, the Shiants,
+// the Sound of Harris islands or North Uist — with its sea lochs left as sea.
+describe("Lewis and Harris", () => {
+  const lh = ISLANDS.find((i) => i.id === "lewis-harris")!;
+  const at = (lat: number, lon: number) => latLonToGrid({ lat, lon });
+  const near = (a: { e: number; n: number }, b: { e: number; n: number }) => Math.hypot(a.e - b.e, a.n - b.n);
+  const inBox = (p: { e: number; n: number }) => p.e > lh.sw.e && p.e < lh.sw.e + lh.width && p.n > lh.sw.n && p.n < lh.sw.n + lh.height;
+
+  it("keeps the main island by points all along it", () => {
+    const only = lh.only!;
+    expect(only.keep.length).toBeGreaterThanOrEqual(12);
+    // Ness, Stornoway, Uig, Pairc, the Clisham, Tarbert's isthmus and South Harris (Roineabhal) each have a point.
+    for (const [lat, lon] of [[58.4717, -6.2876], [58.2116, -6.3944], [58.1313, -7.0611], [57.9896, -6.6481], [57.9637, -6.8125], [57.8974, -6.8051], [57.7667, -6.9754]])
+      expect(only.keep.some((p) => near(p, at(lat, lon)) < 300), `${lat}, ${lon}`).toBe(true);
+    // From the Butt of Lewis to South Harris: the points span the island's length.
+    const ns = only.keep.map((p) => p.n);
+    expect(Math.max(...ns) - Math.min(...ns)).toBeGreaterThan(75000);
+  });
+
+  it("parts every other island off it, North Uist too", () => {
+    const only = lh.only!;
+    // Scalpay, Great Bernera, Little Bernera, Scarp, Taransay, the Shiants, Seaforth Island, Eilean Liubhaird, Ensay,
+    // Killegray, Berneray, North Uist (Lochportain).
+    for (const [lat, lon] of [[57.865, -6.6775], [58.23, -6.85], [58.2653, -6.8733], [58.025, -7.127], [57.9, -7.017], [57.8989, -6.366], [58.001, -6.7292], [58.0009, -6.4327], [57.7632, -7.0852], [57.7399, -7.0836], [57.7164, -7.1526], [57.6311, -7.127]])
+      expect(only.apart!.some((p) => near(p, at(lat, lon)) < 500), `${lat}, ${lon}`).toBe(true);
+    // Every apart point well clear of every keep point (a keep point's reach can't land on another island), all in the box.
+    for (const a of only.apart!) {
+      expect(inBox(a)).toBe(true);
+      for (const k of only.keep) expect(near(a, k)).toBeGreaterThan(3000);
+    }
+  });
+
+  it("leaves its sea lochs as sea", () => {
+    const only = lh.only!;
+    expect(only.sea!.length).toBeGreaterThanOrEqual(10);
+    // Loch Seaforth, Loch Erisort, East and West Loch Tarbert, Loch Resort, Little Loch Roag.
+    for (const [lat, lon] of [[57.955, -6.6996], [58.0954, -6.509], [57.8686, -6.7528], [57.927, -6.935], [58.0447, -6.9803], [58.1253, -6.8681]])
+      expect(only.sea!.some((p) => near(p, at(lat, lon)) < 300), `${lat}, ${lon}`).toBe(true);
+    for (const p of only.sea!) {
+      expect(inBox(p)).toBe(true);
+      for (const k of only.keep) expect(near(p, k)).toBeGreaterThan(2000);
+    }
   });
 });

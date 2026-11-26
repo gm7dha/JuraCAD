@@ -96,7 +96,70 @@ export const ISLANDS: IslandPlace[] = [
     [[57.23, -6.2], [57.507, -6.183], [57.4, -6.65], [57.1, -5.94], [57.245, -5.75], [57.235, -5.975]],
     [[57.31, -5.6], [57.2, -5.58], [57.45, -5.7], [57.07, -5.6]],
   ),
-  around("lewis-harris", "Lewis and Harris", 58.1, -6.65, 70, 105),
+  // Lewis and Harris, the one main island, alone (the owner's wish): without Scalpay (bridged across a 300 m narrows),
+  // Great Bernera (bridged in Loch Roag), Little Bernera, Vacasay (Loch Roag), Scarp (the Kyle of Scarp off Huisinis),
+  // Taransay, the Shiant Isles, Seaforth Island (in Loch Seaforth), Eilean Liubhaird (off Lemreway), Eilean Chalaibrigh
+  // (Loch Erisort), the Sound of Harris islands (Ensay, Killegray, Berneray, Vaccasay) or North Uist, whose north runs
+  // into the box. Keep points all along it — Cross (Ness), Muirneag (the Barvas moor), Garrabost (Point, beyond the
+  // Braighe), Lews Castle (Stornoway), Achmore, Callanish, Mealaisbhal (Uig), Beinn Mhòr and the middle of Pairc, the
+  // Clisham, Huisinis, Tarbert on its isthmus, Roineabhal and Chaipaval (Toe Head) — so no part of it is given away
+  // wherever its own necks are; others on each island left out (Pabbay lies outside the box). Its sea lochs stay sea
+  // where the height data closes their mouths: Loch Seaforth (outer and upper), Loch Erisort, Loch Leurbost, Loch
+  // Shell, East and West Loch Tarbert, Loch Resort, Loch Roag (east and west) and Little Loch Roag (by its shore).
+  around(
+    "lewis-harris",
+    "Lewis and Harris",
+    58.1,
+    -6.65,
+    70,
+    105,
+    [
+      [58.4717, -6.2876],
+      [58.3561, -6.3102],
+      [58.2159, -6.2192],
+      [58.2116, -6.3944],
+      [58.1713, -6.5748],
+      [58.1974, -6.7451],
+      [58.1313, -7.0611],
+      [57.9896, -6.6481],
+      [58.0, -6.567],
+      [57.9637, -6.8125],
+      [57.9948, -7.0977],
+      [57.8974, -6.8051],
+      [57.7667, -6.9754],
+      [57.8187, -7.1014],
+    ],
+    [
+      [57.865, -6.6775],
+      [58.23, -6.85],
+      [58.2653, -6.8733],
+      [58.2245, -6.7913],
+      [58.025, -7.127],
+      [57.9, -7.017],
+      [57.8989, -6.366],
+      [58.001, -6.7292],
+      [58.0009, -6.4327],
+      [58.1129, -6.4449],
+      [57.7632, -7.0852],
+      [57.7399, -7.0836],
+      [57.7164, -7.1526],
+      [57.6585, -7.0721],
+      [57.6311, -7.127],
+    ],
+    [
+      [57.955, -6.6996],
+      [58.0523, -6.6545],
+      [58.0954, -6.509],
+      [58.1312, -6.4608],
+      [58.0041, -6.4958],
+      [57.8686, -6.7528],
+      [57.927, -6.935],
+      [58.0447, -6.9803],
+      [58.1977, -6.8814],
+      [58.2405, -6.9129],
+      [58.1253, -6.8681],
+    ],
+  ),
   around("orkney", "Orkney", 59.06, -2.9, 72, 82),
   around("shetland", "Shetland", 60.36, -1.35, 90, 125),
 ];

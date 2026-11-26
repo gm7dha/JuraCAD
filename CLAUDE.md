@@ -2110,6 +2110,11 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   anyway); keepLand skips keepOnly when `keep` is empty, so a trimmed (`decided`) build passes `{keep: [], sea}` to keep them.
   Wight (Carisbrooke, St Boniface Down, Afton Down, Tennyson Down) and Anglesey (Llangefni, Llannerch-y-medd, Holyhead Mountain; apart at
   Llanrug and Bangor — the Menai Strait) got keep points too, so a join to the mainland is parted, not the island dropped.
+  Lewis and Harris (the owner's wish: the main island alone): 14 keep points from Cross (Ness) to Roineabhal/Chaipaval (Point,
+  Stornoway, Achmore, Callanish, Uig, Pairc, the Clisham, Huisinis, Tarbert's isthmus), so its own necks never give part of it
+  away; apart points on Scalpay, Great/Little Bernera, Vacasay, Scarp, Taransay, the Shiants, Seaforth Island, Eilean Liubhaird,
+  Eilean Chalaibrigh, Ensay, Killegray, Berneray, Vaccasay and North Uist (Lochportain; Pabbay is outside the box); 11 sea points
+  (Loch Seaforth outer/upper, Erisort, Leurbost, Shell, East/West Loch Tarbert, Resort, Loch Roag east/west, Little Loch Roag).
   `boundaryQuery` (Overpass: one admin_level's relations in the box, recursed; fetched by POST from the dialog — CORS),
   `BOUNDARY_LEVELS`. osm.ts reads `boundaries`/`regionNames` (`boundaryLevels`, `boundariesOnGrid`, `levelName`).
   elevation.ts: `zoomFor` (finest zoom with ≤ MAX_TILES), `areaProblem(…, most, z)`, `readHeights(…, spacing, z)`.
