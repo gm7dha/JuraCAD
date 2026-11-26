@@ -3,7 +3,8 @@
  *
  * Three choices: "plain" (one filament, plus the mountain's snow part — exactly as before), "bands" (an AMS: each piece
  * cut by level planes into a part per colour, every band edge on a whole print layer of the piece as printed standing on
- * its underside; water painted onto the ground's triangles with Bambu's `paint_color`) and "full" (full-colour printers
+ * its underside; the map's flat lochs a part of the water filament two layers thick (waterPart.ts), other water painted
+ * onto the ground's triangles with Bambu's `paint_color`) and "full" (full-colour printers
  * and services: a colour for every triangle corner — a smooth height tint, gentle hill shading lit from the north-west,
  * snow on gentle slopes above the snow line, the map's water, paths, roads and woods; the sides tinted by height).
  *
@@ -21,6 +22,7 @@ import type { Body } from "./mountainPuzzle";
 import type { MapFeatures, OsmLineKind } from "./osm";
 import type { P2 } from "./triangulate";
 import { triangulateFast } from "./triangulateFast";
+import { splitWater, WATER_LAYERS } from "./waterPart";
 
 type XY = [number, number];
 
@@ -733,11 +735,36 @@ export function bandParts(bodies: Body[], z0: number, ctx: BandContext, top = tr
   const roadN = ctx.spec.roads && ctx.map.roads ? filamentOf(fs, ctx.spec.roads) : 0;
   const paintOf = (kind: MapKind) => (kind === MapKind.Water ? waterN : kind === MapKind.Path || kind === MapKind.Track ? pathN : kind === MapKind.Road ? roadN : 0);
   const parts: BandPart[] = [];
-  for (const body of bodies) {
-    const slabs = sliceMesh(body.vertices, body.triangles, cuts.map((c) => c.z));
+  const layer = ctx.spec.layer;
+  const waterDepth = WATER_LAYERS * layer;
+  const filamentAt = (z: number) => {
+    let f = first;
+    for (const c of cuts) if (c.z <= z) f = c.filament;
+    return f;
+  };
+  for (const whole of bodies) {
+    let body: { vertices: ArrayLike<number>; triangles: ArrayLike<number> } = whole;
+    let bodyCuts = cuts;
+    // With the lochs a part of their own: their floors in the rest of the piece (hidden under them) and the banks
+    // running up from their edges take no water paint.
+    let lochLevels: number[] = [];
+    // The lochs (flat on top) as a slab of the water filament WATER_LAYERS layers thick, a real part of its own rather
+    // than paint the slicer would carry further down; band edges in its way go just under it.
+    if (top && waterN) {
+      const split = splitWater(whole, (x, y) => ctx.map.kindAt(x, y) === MapKind.Water, waterDepth, z0 + layer, (level) => filamentAt(level - waterDepth / 2) !== waterN);
+      if (split) {
+        body = split.main;
+        bodyCuts = clearOfWater(cuts, split.levels, waterDepth);
+        lochLevels = split.levels;
+        let [lo, hi] = [Infinity, -Infinity];
+        for (let i = 2; i < split.water.vertices.length; i += 3) [lo, hi] = [Math.min(lo, split.water.vertices[i]), Math.max(hi, split.water.vertices[i])];
+        parts.push({ filament: waterN, vertices: split.water.vertices, triangles: split.water.triangles, low: lo - z0, high: hi - z0 });
+      }
+    }
+    const slabs = sliceMesh(body.vertices, body.triangles, bodyCuts.map((c) => c.z));
     slabs.forEach((slab, s) => {
       if (!slab.triangles.length) return;
-      const filament = s === 0 ? first : cuts[s - 1].filament;
+      const filament = s === 0 ? first : bodyCuts[s - 1].filament;
       let low = Infinity;
       let high = -Infinity;
       for (let i = 2; i < slab.vertices.length; i += 3) [low, high] = [Math.min(low, slab.vertices[i]), Math.max(high, slab.vertices[i])];
@@ -752,7 +779,7 @@ export function bandParts(bodies: Body[], z0: number, ctx: BandContext, top = tr
           const nz = normalOf(V, a, b, c)[2];
           if (!(nz > 1e-6)) continue;
           // The cap where this part was cut from the band above (flat at its top, inside the piece).
-          if (s < cuts.length && [a, b, c].every((i) => Math.abs(V[i * 3 + 2] - high) < 1e-9)) continue;
+          if (s < bodyCuts.length && [a, b, c].every((i) => Math.abs(V[i * 3 + 2] - high) < 1e-9)) continue;
           const x = (V[a * 3] + V[b * 3] + V[c * 3]) / 3;
           const y = (V[a * 3 + 1] + V[b * 3 + 1] + V[c * 3 + 1]) / 3;
           const kind = ctx.map.kindAt(x, y);
@@ -760,6 +787,10 @@ export function bandParts(bodies: Body[], z0: number, ctx: BandContext, top = tr
           // steep slivers where its edges meet); water as before.
           if (!(kind === MapKind.Path || kind === MapKind.Track || kind === MapKind.Road) && !takesMapPaint(nz)) continue;
           const f = paintOf(kind);
+          if (f === waterN && lochLevels.length) {
+            const zs = [V[a * 3 + 2], V[b * 3 + 2], V[c * 3 + 2]];
+            if (lochLevels.some((l) => zs.some((zz) => Math.abs(zz - l) < 1e-9 || Math.abs(zz - (l - waterDepth)) < 1e-9))) continue;
+          }
           if (f && f !== filament) {
             paint[t / 3] = f;
             any = true;
@@ -778,6 +809,22 @@ export function bandParts(bodies: Body[], z0: number, ctx: BandContext, top = tr
     });
   }
   return parts;
+}
+
+/**
+ * Band edges moved clear of the lochs' slabs (each `depth` under its level): an edge inside one (or on its top) goes
+ * just under it, so no band plane cuts the walls the slab shares with the rest of the piece.
+ */
+export function clearOfWater(cuts: { z: number; filament: number }[], levels: number[], depth: number): { z: number; filament: number }[] {
+  const out: { z: number; filament: number }[] = [];
+  for (const c of cuts) {
+    let z = c.z;
+    for (const l of levels) if (z >= l - depth - 2 * PLANE_CLEAR && z <= l + 2 * PLANE_CLEAR) z = l - depth - 2 * PLANE_CLEAR;
+    const last = out[out.length - 1];
+    if (last && z <= last.z + 1e-9) last.filament = c.filament;
+    else out.push({ z, filament: c.filament });
+  }
+  return out;
 }
 
 /** Layers counted under painted triangles (Bambu Studio's top paint penetration, 4 layers: the painted one and 3 more). */

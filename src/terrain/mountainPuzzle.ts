@@ -21,7 +21,7 @@
  */
 import { insideGap, offsetPolygon } from "../library/outlines";
 import { heightAt, type HeightGrid } from "./elevation";
-import { groundMarks } from "./groundMarks";
+import { groundMarks, onPrintLayer } from "./groundMarks";
 import { cutGrooves } from "./grooveCut";
 import { weld } from "../geometry/threeMf";
 import { featuresAtScale, NO_FEATURES, type MapFeatures } from "./osm";
@@ -1006,6 +1006,12 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
       full.push(room < plate ? 1 : 1 + Math.floor((room - plate) / cube));
     }
   const fullAt = (c: number, r: number) => (c < 0 || r < 0 || c >= cols || r >= rows ? 0 : full[r * cols + c]);
+  // Each loch's flat top on a whole print layer of the top piece it lies on (as printed, standing on its underside).
+  // Moving it by under half a layer leaves the top piece its thickness: `full` keeps half a millimetre to spare.
+  marks.water?.snap((level, x, y) => {
+    const [c, r] = [Math.max(0, Math.min(cols - 1, Math.floor(x / cube))), Math.max(0, Math.min(rows - 1, Math.floor(y / cube)))];
+    return onPrintLayer(level, bottomOf(fullAt(c, r)));
+  });
   const layers = Math.max(...full) + 1;
 
   // Each layer's jigsaw, and its pieces' outlines (tabs only between two whole cubes).

@@ -17,7 +17,7 @@
  */
 import { heightAt, type HeightGrid } from "./elevation";
 import { coastAgrees, coastMask, LEFT_OUT_BELOW } from "./coastline";
-import { BUILDING_LEAST, groundMarks, type GroundMarks } from "./groundMarks";
+import { BUILDING_LEAST, groundMarks, onPrintLayer, PRINT_LAYER, type GroundMarks } from "./groundMarks";
 import { cutGrooves, type GrooveIndex } from "./grooveCut";
 import { smoothedFeatures } from "./smoothLines";
 import type { Body, PuzzlePiece } from "./mountainPuzzle";
@@ -1117,12 +1117,18 @@ function buildIsland(
   const used = featuresForIsland(features, k);
   if (used.features.lines.length || used.features.shapes.length) {
     const m = groundMarks(used.features, sw.e, sw.n, k, W, H, plainTop);
+    // Each loch's flat top on a whole print layer (every piece stands on z = 0), never below the thinnest base.
+    m.water?.snap((level) => {
+      const z = onPrintLayer(Math.max(level, LEAST_BASE), 0);
+      return z < LEAST_BASE - 1e-9 ? z + PRINT_LAYER : z;
+    });
     if (!m.empty) {
       const fade = neckFade(joined.tabs, nx, ny, cell);
       const lowered = (g: GroundMarks) => (x: number, y: number) => {
         const p = plainTop(x, y);
         let z = g.apply(x, y, p);
-        if (z < p) z = Math.max(LEAST_BASE, p + fade(x, y) * (z - p));
+        // Water stays flat (a dovetail's neck under it is still as thick as the water, at least the base less WATER_DROP).
+        if (z < p) z = Math.max(LEAST_BASE, m.water && m.water.at(x, y) >= 0 ? z : p + fade(x, y) * (z - p));
         return z;
       };
       top = lowered(m);
