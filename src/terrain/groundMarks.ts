@@ -1,6 +1,8 @@
 /**
  * Map features pressed into the printed ground (pure): paths, tracks, roads, rivers and streams as shallow rounded
- * grooves, lochs as flat water a little below their shore, buildings as small raised blocks. Worked out once on a
+ * grooves, lochs as flat water a little below their lowest shore (one flat surface each: the land under them built up
+ * where it's lower, taken down where it's higher; the callers put each level on a whole print layer), buildings as
+ * small raised blocks. Worked out once on a
  * fine grid over the puzzle (mm), then `apply` changes a ground height there — so every piece, the "whole cubes
  * under the top" count and the snow line all see the same ground.
  */
@@ -38,6 +40,36 @@ export function thinDepth(r: number): number {
 export const isChannel = (l: { kind: OsmLineKind }) => l.kind === "path" || l.kind === "track" || l.kind === "road";
 /** How far water sits below the lowest of its shore (mm). */
 export const WATER_DROP = 0.5;
+/**
+ * The print layer heights water levels are put on (mm): the first layer and every layer after it (Bambu's usual 0.2 mm
+ * profiles). A loch's flat top then lies on a whole layer as the piece is printed.
+ */
+export const PRINT_LAYER = 0.2;
+
+/** The print layers loch levels go on (from the colour panel); missing: `PRINT_LAYER` throughout. */
+export interface PrintLayers {
+  layer: number;
+  /** The first layer's height, when it isn't `layer`. */
+  first?: number;
+}
+
+/**
+ * What a puzzle window adds to its spec for lochs: the colour panel's layers, only when printing in colour with water on
+ * the map and layers other than the usual 0.2 mm (so nothing else rebuilds when the layer height changes, and the usual
+ * spec stays as it was).
+ */
+export function lochLayers(colourOn: boolean, colour: { layer: number; firstLayer?: number }, features: MapFeatures): { printLayer?: PrintLayers } {
+  if (!colourOn || !features.shapes.some((s) => s.kind === "water")) return {};
+  const first = colour.firstLayer ?? colour.layer;
+  if (Math.abs(colour.layer - PRINT_LAYER) < 1e-9 && Math.abs(first - PRINT_LAYER) < 1e-9) return {};
+  return { printLayer: first === colour.layer ? { layer: colour.layer } : { layer: colour.layer, first } };
+}
+
+/** `z` moved onto the nearest print layer boundary of a piece standing on `z0` (never onto the bed itself). */
+export function onPrintLayer(z: number, z0: number, layer = PRINT_LAYER, first = layer): number {
+  const h = z - z0;
+  return z0 + (h < first ? first : first + Math.round((h - first) / layer) * layer);
+}
 /** Buildings stand this high (mm), and at least this big across, so they print. */
 export const BUILDING_HEIGHT = 0.8;
 export const BUILDING_LEAST = 1.2;
@@ -48,11 +80,26 @@ export interface GroundMarks {
   /** Nothing to change. */
   empty: boolean;
   /**
+   * The map's water inside the land (missing: none): every point inside a loch's outline is EXACTLY its level — the
+   * ground under it built up where it's lower and taken down where it's higher, so each loch is one flat surface. `snap`
+   * moves each level (from the one worked out from its shore) once its print layers are known: `onLayer(level, x, y)`, x, y
+   * a point inside that loch.
+   */
+  water?: WaterLevels;
+  /**
    * The paths', tracks' and roads' channels (missing: none): meshes are made with `base` (everything else) and then
    * cut along them (`cutGrooves`), so `apply` = `base` less their depth.
    */
   channels?: GrooveIndex;
   base?: GroundMarks;
+}
+
+export interface WaterLevels {
+  /** Each loch's level now (mm). */
+  levels: Float64Array;
+  /** The loch at x, y (an index into `levels`), or −1. */
+  at(x: number, y: number): number;
+  snap(onLayer: (level: number, x: number, y: number) => number): void;
 }
 
 export const PLAIN_GROUND: GroundMarks = { apply: (_x, _y, z) => z, empty: true };
@@ -67,7 +114,9 @@ export function groundMarks(f: MapFeatures, e0: number, n0: number, k: number, w
   const nx = Math.ceil(width / cell) + 1;
   const ny = Math.ceil(height / cell) + 1;
   const groove = new Float32Array(nx * ny);
-  const cap = new Float32Array(nx * ny).fill(Infinity);
+  // Each grid point's loch (−1: none), and each loch's level as worked out from its shore.
+  const lochOf = new Int32Array(nx * ny).fill(-1);
+  const waterRaw: number[] = [];
   const raise = new Float32Array(nx * ny);
   const at = ([e, n]: XY): XY => [(e - e0) * k, (n - n0) * k];
   const onPuzzle = ([x, y]: XY, m: number) => x >= -m && y >= -m && x <= width + m && y <= height + m;
@@ -110,7 +159,16 @@ export function groundMarks(f: MapFeatures, e0: number, n0: number, k: number, w
     if (!rings[0].some((p) => onPuzzle(p, 0)) && !rings[0].some((p, i) => crossesBox(p, rings[0][(i + 1) % rings[0].length], width, height))) continue;
     let level = Infinity;
     if (shape.kind === "water") {
-      for (const [x, y] of rings[0]) if (onPuzzle([x, y], 0)) level = Math.min(level, groundZ(x, y));
+      // The lowest of its shore — every ring (islands in it too), looked at about every grid cell along each side.
+      for (const ring of rings)
+        for (let i = 0; i < ring.length; i++) {
+          const [p, q] = [ring[i], ring[(i + 1) % ring.length]];
+          const steps = Math.min(400, Math.max(1, Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) / cell)));
+          for (let s = 0; s < steps; s++) {
+            const pt: XY = [p[0] + ((q[0] - p[0]) * s) / steps, p[1] + ((q[1] - p[1]) * s) / steps];
+            if (onPuzzle(pt, 0)) level = Math.min(level, groundZ(pt[0], pt[1]));
+          }
+        }
       if (!Number.isFinite(level)) continue;
       level -= WATER_DROP;
     } else {
@@ -129,11 +187,45 @@ export function groundMarks(f: MapFeatures, e0: number, n0: number, k: number, w
           ],
         ];
     }
-    fillRings(rings, cell, nx, ny, (c) => {
-      if (shape.kind === "water") cap[c] = Math.min(cap[c], level);
-      else raise[c] = BUILDING_HEIGHT;
-    });
+    if (shape.kind === "water") {
+      const w = waterRaw.length;
+      waterRaw.push(level);
+      fillRings(rings, cell, nx, ny, (c) => {
+        // Where two lochs overlap, the lower one.
+        if (lochOf[c] < 0 || waterRaw[lochOf[c]] > level) lochOf[c] = w;
+      });
+    } else fillRings(rings, cell, nx, ny, (c) => (raise[c] = BUILDING_HEIGHT));
   }
+  const lochAt = (x: number, y: number) => lochOf[Math.max(0, Math.min(ny - 1, Math.round(y / cell))) * nx + Math.max(0, Math.min(nx - 1, Math.round(x / cell)))];
+  // A point inside each loch, for its print layers: the cell of it nearest the middle of its cells.
+  const levels = Float64Array.from(waterRaw);
+  const anchors: XY[] = [];
+  if (waterRaw.length) {
+    const sums = waterRaw.map(() => [0, 0, 0]);
+    for (let c = 0; c < lochOf.length; c++) if (lochOf[c] >= 0) {
+      const s = sums[lochOf[c]];
+      s[0] += c % nx;
+      s[1] += Math.floor(c / nx);
+      s[2]++;
+    }
+    const best = waterRaw.map(() => [Infinity, 0, 0]);
+    for (let c = 0; c < lochOf.length; c++) if (lochOf[c] >= 0) {
+      const w = lochOf[c];
+      const [i, j] = [c % nx, Math.floor(c / nx)];
+      const d = (i - sums[w][0] / sums[w][2]) ** 2 + (j - sums[w][1] / sums[w][2]) ** 2;
+      if (d < best[w][0]) best[w] = [d, i * cell, j * cell];
+    }
+    for (const b of best) anchors.push([b[1], b[2]]);
+  }
+  const water: WaterLevels | undefined = waterRaw.length
+    ? {
+        levels,
+        at: (x, y) => lochAt(x, y),
+        snap(onLayer) {
+          waterRaw.forEach((l, w) => (levels[w] = onLayer(l, anchors[w][0], anchors[w][1])));
+        },
+      }
+    : undefined;
 
   const read = (a: Float32Array, x: number, y: number): number => {
     const fx = Math.max(0, Math.min(nx - 1.000001, x / cell));
@@ -144,15 +236,20 @@ export function groundMarks(f: MapFeatures, e0: number, n0: number, k: number, w
     return (a[c] * (1 - u) + a[c + 1] * u) * (1 - v) + (a[c + nx] * (1 - u) + a[c + nx + 1] * u) * v;
   };
   const nearest = (a: Float32Array, x: number, y: number) => a[Math.max(0, Math.min(ny - 1, Math.round(y / cell))) * nx + Math.max(0, Math.min(nx - 1, Math.round(x / cell)))];
+  // Inside a loch the ground is its level, flat: no grooves, channels or buildings in the water.
   const plainLines = channelLines.length < f.lines.length;
   const base: GroundMarks = !plainLines && !f.shapes.length
     ? PLAIN_GROUND
     : {
         empty: false,
+        ...(water ? { water } : {}),
         apply(x, y, z) {
-          const top = Math.min(z, nearest(cap, x, y));
+          if (water) {
+            const w = lochAt(x, y);
+            if (w >= 0) return levels[w];
+          }
           const lift = nearest(raise, x, y);
-          return top - read(groove, x, y) + (lift && top === z ? lift : 0);
+          return z - read(groove, x, y) + lift;
         },
       };
   if (!channelLines.length) return base;
@@ -162,10 +259,14 @@ export function groundMarks(f: MapFeatures, e0: number, n0: number, k: number, w
     empty: false,
     channels,
     base,
+    ...(water ? { water } : {}),
     apply(x, y, z) {
-      const top = Math.min(z, nearest(cap, x, y));
+      if (water) {
+        const w = lochAt(x, y);
+        if (w >= 0) return levels[w];
+      }
       const lift = nearest(raise, x, y);
-      return top - Math.max(read(groove, x, y), channels.depthAt(x, y)) + (lift && top === z ? lift : 0);
+      return z - Math.max(read(groove, x, y), channels.depthAt(x, y)) + lift;
     },
   };
 }

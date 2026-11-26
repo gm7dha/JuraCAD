@@ -21,7 +21,7 @@
  */
 import { insideGap, offsetPolygon } from "../library/outlines";
 import { heightAt, type HeightGrid } from "./elevation";
-import { groundMarks } from "./groundMarks";
+import { groundMarks, onPrintLayer, type PrintLayers } from "./groundMarks";
 import { cutGrooves } from "./grooveCut";
 import { weld } from "../geometry/threeMf";
 import { featuresAtScale, NO_FEATURES, type MapFeatures } from "./osm";
@@ -30,6 +30,8 @@ import { triangulate, type P2 } from "./triangulate";
 export interface MountainSpec {
   /** The printer's build volume, mm. */
   bed: [number, number, number];
+  /** The print layers lochs' flat tops go on (the colour panel's; missing: 0.2 mm). Only given when there's water. */
+  printLayer?: PrintLayers;
   /** 1 = the finished puzzle is as big as the bed; 2 = twice as wide (more pieces, printed over several plates). */
   scale: number;
   /** Cube size, mm. */
@@ -1006,6 +1008,12 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
       full.push(room < plate ? 1 : 1 + Math.floor((room - plate) / cube));
     }
   const fullAt = (c: number, r: number) => (c < 0 || r < 0 || c >= cols || r >= rows ? 0 : full[r * cols + c]);
+  // Each loch's flat top on a whole print layer of the top piece it lies on (as printed, standing on its underside).
+  // Moving it by under half a layer leaves the top piece its thickness: `full` keeps half a millimetre to spare.
+  marks.water?.snap((level, x, y) => {
+    const [c, r] = [Math.max(0, Math.min(cols - 1, Math.floor(x / cube))), Math.max(0, Math.min(rows - 1, Math.floor(y / cube)))];
+    return onPrintLayer(level, bottomOf(fullAt(c, r)), spec.printLayer?.layer, spec.printLayer?.first ?? spec.printLayer?.layer);
+  });
   const layers = Math.max(...full) + 1;
 
   // Each layer's jigsaw, and its pieces' outlines (tabs only between two whole cubes).

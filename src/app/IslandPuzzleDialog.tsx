@@ -18,6 +18,7 @@ import { boundariesOnGrid, boundaryLevels, featuresOnGrid, featureSummary, level
 import { allPlatesZip, IN_PLACE_SETTINGS, plate3mf, platesByLevel, platesFor, platesInPlace, TOWER_ROOM, towerWhere, type BedRect } from "../terrain/puzzle3mf";
 import { GROUND_BROWN, islandBands, mapOnPuzzle, mapRaster, NO_MAP, SEA_BLUE, type HeightScale } from "../terrain/colour";
 import { ColourDownloads, ColourPanel, useBandsFollow, useColoured, useUsualColour } from "./PuzzleColour";
+import { lochLayers } from "../terrain/groundMarks";
 import { downloadFile, safeFileName } from "./download";
 import type { IslandJob, IslandReply } from "./islandPuzzle.worker";
 import { Modal } from "./Modal";
@@ -399,6 +400,8 @@ export function IslandPuzzleDialog() {
     // Trimmed: the land was already chosen on the whole area (trimmedIsland), so build all that's left.
     // (Its sea lochs still stay sea: `only` with no keep points.)
     ...(used?.decided ? { land: "all" as const, ...(only?.sea ? { only: { keep: [], sea: only.sea } } : {}) } : only ? { only } : {}),
+    // Lochs' flat tops on the colour panel's layers (only with water, so other layer changes don't rebuild).
+    ...lochLayers(colourOn, colour, features),
   };
   const problems = islandChecks(fullSpec);
   const specKey = JSON.stringify(fullSpec);

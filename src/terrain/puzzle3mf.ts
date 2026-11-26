@@ -311,6 +311,8 @@ export interface BandPartFile {
   triangles: number[];
   /** Per triangle: a filament painted on (Bambu's paint_color), or 0. */
   paint?: Uint8Array;
+  /** Its lowest point as printed (missing: 0): the lowest part gives the object its filament. */
+  low?: number;
 }
 
 /**
@@ -360,7 +362,9 @@ export function bandPlateFiles(
     for (const p of parts) lines.push(`    <component objectid="${p.id}"/>`);
     lines.push("   </components>", "  </object>");
     items.push(`  <item objectid="${objectId}" transform="1 0 0 0 1 0 0 0 1 ${move.map(num).join(" ")}" printable="1"/>`);
-    config.push(`  <object id="${objectId}">`, `    <metadata key="name" value="${xmlEscape(piece.name)}"/>`, `    <metadata key="extruder" value="${parts[0].part.filament}"/>`, ...objectSettings(settings));
+    // The object's own filament: its lowest part's (the band it stands on — never a loch's slab, which sits higher up).
+    const lowest = parts.reduce((p, q) => ((q.part.low ?? 0) < (p.part.low ?? 0) ? q : p));
+    config.push(`  <object id="${objectId}">`, `    <metadata key="name" value="${xmlEscape(piece.name)}"/>`, `    <metadata key="extruder" value="${lowest.part.filament}"/>`, ...objectSettings(settings));
     for (const p of parts)
       config.push(
         `    <part id="${p.id}" subtype="normal_part">`,

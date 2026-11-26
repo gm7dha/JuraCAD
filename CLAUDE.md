@@ -2380,6 +2380,24 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   snow never folds through it. tests/grooveCutMesh: every edge shared by exactly two triangles and none folded back on
   another, with crossings, a T, a path on a road and over the coast, and on a mountain with a snow line; untouched pieces
   as without the map; switchbacks wider than the fold keep their legs; small loops stay.
+  Flat water (the owner's Mull report): inside a map loch the ground is EXACTLY its level (lowest shore — every ring,
+  sampled about every cell along each side — less `WATER_DROP`), raised where the ground is lower and lowered where higher;
+  no grooves, channels or buildings in it (groundMarks `lochOf` grid, nearest cell; overlapping lochs: the lower).
+  `GroundMarks.water` (`WaterLevels`: `levels`, `at`, `snap`) — the callers put levels on print layers (`onPrintLayer`,
+  `PRINT_LAYER` 0.2, never the bed): the island from z 0, ≥ `LEAST_BASE`, and the island's neck fade skips water (a neck under
+  it is still ≥ base − WATER_DROP); the mountain after `full` is known, from the top piece's z0 under each loch's anchor
+  (its cell nearest its middle; under half a layer, within `full`'s 0.5 mm spare). Colour bands: `src/terrain/waterPart.ts`
+  `splitWater` (bandParts, top pieces, when the band there isn't the water's colour) takes the flat upward faces mostly water
+  (edge-joined, one height) and makes them a real part of the water filament `WATER_LAYERS` (2) × layer thick — top, floor,
+  walls up every shore and the top strip of the piece's side under it (side panels flooded across slanting edges; T-junctions
+  split, small upright holes fanned, `heal`); the rest gets the floor dropped. Both closed, volumes add up, else null (painted as
+  before). `clearOfWater` moves band edges inside a slab to just under it; the floors and the banks touching a loch's level
+  take no water paint. One slab part per loch level (`WaterSplit.waters`), pushed AFTER the band slabs; the 3MF object's
+  extruder is its lowest part's (`BandPartFile.low`). `clearOfWater` puts edges in (level − depth − layer/2, level] a whole
+  layer under the floor; every band slab of the split body must be closed (meshCheck), else the unsplit body (paint). The
+  colour panel's layers reach the build as `IslandSpec`/`MountainSpec.printLayer` (`lochLayers`: only in colour, with water,
+  and layers other than 0.2 — so the usual spec is unchanged and layer changes rebuild only with water). No water shapes =
+  everything byte for byte as before. Tests: tests/flatWater, flatWaterMore (the reviewer's ragged/lumpy cases).
   `featuresAtScale(f, k)` (mountain build/preview/colour) and `featuresForIsland` honour `least`. `marksQuery(…, choice)`
   fetches path|footway|bridleway|steps|track, towns/parks (+ woods for hills), natural=water/landuse=reservoir (+ multipolygons),
   waterways only for "all", roads by `ROAD_RANK`, walking route relations bare (`->.hr`); `fetchCovers` says when to fetch
