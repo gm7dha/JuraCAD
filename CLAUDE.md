@@ -2113,8 +2113,10 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   Lewis and Harris (the owner's wish: the main island alone): 14 keep points from Cross (Ness) to Roineabhal/Chaipaval (Point,
   Stornoway, Achmore, Callanish, Uig, Pairc, the Clisham, Huisinis, Tarbert's isthmus), so its own necks never give part of it
   away; apart points on Scalpay, Great/Little Bernera, Vacasay, Scarp, Taransay, the Shiants, Seaforth Island, Eilean Liubhaird,
-  Eilean Chalaibrigh, Ensay, Killegray, Berneray, Vaccasay and North Uist (Lochportain; Pabbay is outside the box); 11 sea points
-  (Loch Seaforth outer/upper, Erisort, Leurbost, Shell, East/West Loch Tarbert, Resort, Loch Roag east/west, Little Loch Roag).
+  Eilean Chalaibrigh, Eilean Chaluim Chille (tidal), Stockinish Island, Soay Mòr, Vuia Mòr, Ensay, Killegray, Berneray, Vaccasay and
+  North Uist (Lochportain; Pabbay is outside the box); 11 sea points (Loch Seaforth outer/upper, Erisort, Leurbost, Shell, East/West
+  Loch Tarbert, Resort, Loch Roag east/west, Little Loch Roag). Eilean Chearstaidh (Kearstay) has none: it's 1.5 km from Callanish's
+  keep point.
   `boundaryQuery` (Overpass: one admin_level's relations in the box, recursed; fetched by POST from the dialog — CORS),
   `BOUNDARY_LEVELS`. osm.ts reads `boundaries`/`regionNames` (`boundaryLevels`, `boundariesOnGrid`, `levelName`).
   elevation.ts: `zoomFor` (finest zoom with ≤ MAX_TILES), `areaProblem(…, most, z)`, `readHeights(…, spacing, z)`.

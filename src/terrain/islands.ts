@@ -99,13 +99,15 @@ export const ISLANDS: IslandPlace[] = [
   // Lewis and Harris, the one main island, alone (the owner's wish): without Scalpay (bridged across a 300 m narrows),
   // Great Bernera (bridged in Loch Roag), Little Bernera, Vacasay (Loch Roag), Scarp (the Kyle of Scarp off Huisinis),
   // Taransay, the Shiant Isles, Seaforth Island (in Loch Seaforth), Eilean Liubhaird (off Lemreway), Eilean Chalaibrigh
-  // (Loch Erisort), the Sound of Harris islands (Ensay, Killegray, Berneray, Vaccasay) or North Uist, whose north runs
-  // into the box. Keep points all along it — Cross (Ness), Muirneag (the Barvas moor), Garrabost (Point, beyond the
-  // Braighe), Lews Castle (Stornoway), Achmore, Callanish, Mealaisbhal (Uig), Beinn Mhòr and the middle of Pairc, the
-  // Clisham, Huisinis, Tarbert on its isthmus, Roineabhal and Chaipaval (Toe Head) — so no part of it is given away
-  // wherever its own necks are; others on each island left out (Pabbay lies outside the box). Its sea lochs stay sea
-  // where the height data closes their mouths: Loch Seaforth (outer and upper), Loch Erisort, Loch Leurbost, Loch
-  // Shell, East and West Loch Tarbert, Loch Resort, Loch Roag (east and west) and Little Loch Roag (by its shore).
+  // (Loch Erisort) and Eilean Chaluim Chille beside it (tidal, joined to Lewis at Crobeag at low tide), Stockinish Island
+  // (Bays of Harris), Soay Mòr (West Loch Tarbert), Vuia Mòr (West Loch Roag), the Sound of Harris islands (Ensay,
+  // Killegray, Berneray, Vaccasay) or North Uist, whose north runs into the box. Keep points all along it — Cross (Ness),
+  // Muirneag (the Barvas moor), Garrabost (Point, beyond the Braighe), Lews Castle (Stornoway), Achmore, Callanish,
+  // Mealaisbhal (Uig), Beinn Mhòr and the middle of Pairc, the Clisham, Huisinis, Tarbert on its isthmus, Roineabhal and
+  // Chaipaval (Toe Head) — so no part of it is given away wherever its own necks are; others on each island left out
+  // (Pabbay lies outside the box). Its sea lochs stay sea where the height data closes their mouths: Loch Seaforth (outer
+  // and upper), Loch Erisort, Loch Leurbost, Loch Shell, East and West Loch Tarbert, Loch Resort, Loch Roag (east and
+  // west) and Little Loch Roag (just off its east shore, by the crannog at Scaliscro).
   around(
     "lewis-harris",
     "Lewis and Harris",
@@ -145,6 +147,10 @@ export const ISLANDS: IslandPlace[] = [
       [57.7164, -7.1526],
       [57.6585, -7.0721],
       [57.6311, -7.127],
+      [58.105, -6.4405],
+      [57.8068, -6.8216],
+      [57.9381, -6.9644],
+      [58.209, -6.8898],
     ],
     [
       [57.955, -6.6996],
@@ -157,7 +163,7 @@ export const ISLANDS: IslandPlace[] = [
       [58.0447, -6.9803],
       [58.1977, -6.8814],
       [58.2405, -6.9129],
-      [58.1253, -6.8681],
+      [58.1252, -6.8706],
     ],
   ),
   around("orkney", "Orkney", 59.06, -2.9, 72, 82),
