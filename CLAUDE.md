@@ -2398,6 +2398,14 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   colour panel's layers reach the build as `IslandSpec`/`MountainSpec.printLayer` (`lochLayers`: only in colour, with water,
   and layers other than 0.2 — so the usual spec is unchanged and layer changes rebuild only with water). No water shapes =
   everything byte for byte as before. Tests: tests/flatWater, flatWaterMore (the reviewer's ragged/lumpy cases).
+  Pinches: a loch touching itself at one corner (a narrow neck; two lochs corner to corner) gets a floor copy per FAN of loch
+  triangles round that corner (union–find over loch edges; `corner[t*3+k]`), each moved `PINCH_SHIFT` (1 µm, past weld's
+  1e-5) into its own fan — along the piece's side when the fan has a side edge there (`alongSide`; none at the piece's own
+  corner) — so the walls meeting there share no edge; the piece's side under it takes the fan along that side (`primeNear`).
+  Band caps: `triangulateFast` fans whatever is left with no area (corners in a line or a hair apart, where a plane grazes an
+  upright wall) instead of dropping it, and capTriangles fans zero-area loops (`FLAT_CAP`) — they left a band open, so the
+  piece fell back to paint (most low-coast builds had one). Tests: waterPinch (pure), waterPinchIsland (the 40 mm big loch,
+  ragged 15 mm piece 28), triangulateFastFlat.
   `featuresAtScale(f, k)` (mountain build/preview/colour) and `featuresForIsland` honour `least`. `marksQuery(…, choice)`
   fetches path|footway|bridleway|steps|track, towns/parks (+ woods for hills), natural=water/landuse=reservoir (+ multipolygons),
   waterways only for "all", roads by `ROAD_RANK`, walking route relations bare (`->.hr`); `fetchCovers` says when to fetch

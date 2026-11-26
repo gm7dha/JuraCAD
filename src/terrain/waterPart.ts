@@ -25,6 +25,8 @@ export interface WaterSplit {
 }
 
 const FLAT = 1e-7;
+/** How far (mm) each side's floor copy of a pinch corner moves into its own side: well past welding's 1e-5. */
+export const PINCH_SHIFT = 1e-3;
 
 /**
  * `isWater(x, y)`: the map's water there. `depth`: the slab's thickness. `lowest`: no loch floor below this (else that loch
@@ -103,35 +105,118 @@ export function splitWater(
   }
   if (!levels.length) return null;
 
-  // Every corner of the lochs gets a copy at its floor.
-  const prime = new Int32Array(nv).fill(-1);
+  // Every corner of the lochs gets a copy at its floor — one per fan of loch triangles round it. Where a loch touches
+  // itself at a single corner (a narrow neck, two lochs corner to corner) each side gets its own copy, moved
+  // `PINCH_SHIFT` into its own fan, so the two walls meeting there don't share an edge and both parts stay closed.
   const out = V.slice();
-  const primeOf = (i: number) => {
-    if (prime[i] < 0) {
-      prime[i] = out.length / 3;
-      out.push(V[i * 3], V[i * 3 + 1], V[i * 3 + 2] - depth);
-    }
-    return prime[i];
+  const corner = new Int32Array(nt * 3).fill(-1);
+  const root = new Int32Array(nt * 3);
+  for (let i = 0; i < root.length; i++) root[i] = i;
+  const find = (i: number): number => {
+    while (root[i] !== i) i = root[i] = root[root[i]];
+    return i;
   };
-  for (let t = 0; t < nt; t++) if (inR[t]) for (let k = 0; k < 3; k++) primeOf(T[t * 3 + k]);
+  const cornerAt = (t: number, v: number) => t * 3 + [T[t * 3], T[t * 3 + 1], T[t * 3 + 2]].indexOf(v);
+  for (let t = 0; t < nt; t++) {
+    if (!inR[t]) continue;
+    for (let k = 0; k < 3; k++) {
+      const [a, b] = [T[t * 3 + k], T[t * 3 + ((k + 1) % 3)]];
+      const n = edge.get(b * nv + a)!;
+      if (!inR[n]) continue;
+      // Across the edge a→b both corners a and b are the same fan on either side.
+      const [p, q] = [find(t * 3 + k), find(cornerAt(n, a))];
+      if (p !== q) root[p] = q;
+      const [r, u] = [find(t * 3 + ((k + 1) % 3)), find(cornerAt(n, b))];
+      if (r !== u) root[r] = u;
+    }
+  }
+  // Fans per corner: their own copy, and the way into the fan (for the shift).
+  const fans = new Map<number, number>();
+  const fanList: { v: number; id: number; dx: number; dy: number }[][] = Array.from({ length: nv }, () => []);
+  for (let t = 0; t < nt; t++) {
+    if (!inR[t]) continue;
+    const cx = (V[T[t * 3] * 3] + V[T[t * 3 + 1] * 3] + V[T[t * 3 + 2] * 3]) / 3;
+    const cy = (V[T[t * 3] * 3 + 1] + V[T[t * 3 + 1] * 3 + 1] + V[T[t * 3 + 2] * 3 + 1]) / 3;
+    for (let k = 0; k < 3; k++) {
+      const v = T[t * 3 + k];
+      const f = find(t * 3 + k);
+      let id = fans.get(f);
+      if (id === undefined) {
+        id = out.length / 3;
+        fans.set(f, id);
+        out.push(V[v * 3], V[v * 3 + 1], V[v * 3 + 2] - depth);
+        fanList[v].push({ v, id, dx: 0, dy: 0 });
+      }
+      corner[t * 3 + k] = id;
+      const fan = fanList[v].find((e) => e.id === id)!;
+      const len = Math.hypot(cx - V[v * 3], cy - V[v * 3 + 1]) || 1;
+      fan.dx += (cx - V[v * 3]) / len;
+      fan.dy += (cy - V[v * 3 + 1]) / len;
+    }
+  }
+  for (const list of fanList) {
+    if (list.length < 2) continue;
+    for (const f of list) {
+      const len = Math.hypot(f.dx, f.dy) || 1;
+      [f.dx, f.dy] = [f.dx / len, f.dy / len];
+    }
+  }
+  /**
+   * The floor copy of corner i: its only one, else (for the piece's side under a pinch on it) the fan running along that
+   * side the way the side's triangle lies.
+   */
+  const prime = new Int32Array(nv).fill(-1);
+  for (let v = 0; v < nv; v++) if (fanList[v].length) prime[v] = fanList[v][0].id;
+  const primeNear = (i: number, tx: number, ty: number) => {
+    const all = fanList[i];
+    if (all.length < 2) return prime[i];
+    const onSide = all.filter((f) => alongSide.has(f.id));
+    const list = onSide.length ? onSide : all;
+    const toward = (f: (typeof list)[number]) => f.dx * (tx - V[i * 3]) + f.dy * (ty - V[i * 3 + 1]);
+    let best = list[0];
+    for (const f of list) if (toward(f) > toward(best)) best = f;
+    return best.id;
+  };
 
   // The loch's edges: shore (land beside it) or side (the piece's upright side under it).
   const sides: [number, number][] = [];
-  const shores: [number, number][] = [];
-  const edgesOut: [number, number, number][] = [];
+  /** Shore edges a→b with a's and b's floor copies. */
+  const shores: [number, number, number, number][] = [];
+  const edgesOut: [number, number, number, number, number][] = [];
   const wallSeeds: number[] = [];
+  const alongSide = new Map<number, [number, number][]>();
   for (let t = 0; t < nt; t++) {
     if (!inR[t]) continue;
     for (let k = 0; k < 3; k++) {
       const [a, b] = [T[t * 3 + k], T[t * 3 + ((k + 1) % 3)]];
       const n = edge.get(b * nv + a)!;
       if (inR[n]) continue;
-      edgesOut.push([a, b, flatAt[t]]);
+      const [pa, pb] = [corner[t * 3 + k], corner[t * 3 + ((k + 1) % 3)]];
+      edgesOut.push([a, b, flatAt[t], pa, pb]);
       const third = [T[n * 3], T[n * 3 + 1], T[n * 3 + 2]].find((i) => i !== a && i !== b)!;
       if (Math.abs(nz(n)) < 0.05 && z(third) < z(a) - depth / 2) {
         sides.push([a, b]);
+        // A pinch on the piece's side: its floor copy moves along the side, never off it.
+        for (const [v, id, w] of [[a, pa, b], [b, pb, a]]) {
+          if (fanList[v].length < 2) continue;
+          const len = Math.hypot(V[w * 3] - V[v * 3], V[w * 3 + 1] - V[v * 3 + 1]) || 1;
+          const list = alongSide.get(id) ?? [];
+          list.push([(V[w * 3] - V[v * 3]) / len, (V[w * 3 + 1] - V[v * 3 + 1]) / len]);
+          alongSide.set(id, list);
+        }
         wallSeeds.push(n);
-      } else shores.push([a, b]);
+      } else shores.push([a, b, pa, pb]);
+    }
+  }
+  // Each side's copy of a pinch corner moved into its own fan (along the piece's side when it's on it; at a corner of
+  // the piece, where it can't stay on both sides, not at all).
+  for (const list of fanList) {
+    if (list.length < 2) continue;
+    for (const f of list) {
+      const along = alongSide.get(f.id);
+      const [dx, dy] = !along ? [f.dx, f.dy] : along.length === 1 ? along[0] : [0, 0];
+      out[f.id * 3] += dx * PINCH_SHIFT;
+      out[f.id * 3 + 1] += dy * PINCH_SHIFT;
     }
   }
   // The piece's sides under the loch: upright faces reached from under its side edges, across their slanting edges
@@ -156,11 +241,15 @@ export function splitWater(
   const main: number[] = [];
   for (let t = 0; t < nt; t++) {
     const [a, b, c] = [T[t * 3], T[t * 3 + 1], T[t * 3 + 2]];
-    if (inR[t]) main.push(prime[a], prime[b], prime[c]);
-    else if (underWater[t]) main.push(...[a, b, c].map((i) => (prime[i] >= 0 ? prime[i] : i)));
+    if (inR[t]) main.push(corner[t * 3], corner[t * 3 + 1], corner[t * 3 + 2]);
+    else if (underWater[t]) {
+      const cx = (V[a * 3] + V[b * 3] + V[c * 3]) / 3;
+      const cy = (V[a * 3 + 1] + V[b * 3 + 1] + V[c * 3 + 1]) / 3;
+      main.push(...[a, b, c].map((i) => (prime[i] >= 0 ? primeNear(i, cx, cy) : i)));
+    }
     else main.push(a, b, c);
   }
-  for (const [a, b] of shores) main.push(a, b, prime[b], a, prime[b], prime[a]);
+  for (const [a, b, pa, pb] of shores) main.push(a, b, pb, a, pb, pa);
   if (!heal(out, main)) return null;
   // The slabs, one per level: the lochs' tops, their floors, and walls all round.
   levels.sort((p, q) => p - q);
@@ -169,9 +258,9 @@ export function splitWater(
   for (let t = 0; t < nt; t++) {
     if (!inR[t]) continue;
     const [a, b, c] = [T[t * 3], T[t * 3 + 1], T[t * 3 + 2]];
-    water[slabOf(flatAt[t])].push(a, b, c, prime[a], prime[c], prime[b]);
+    water[slabOf(flatAt[t])].push(a, b, c, corner[t * 3], corner[t * 3 + 2], corner[t * 3 + 1]);
   }
-  for (const [a, b, l] of edgesOut) water[slabOf(l)].push(b, a, prime[a], b, prime[a], prime[b]);
+  for (const [a, b, l, pa, pb] of edgesOut) water[slabOf(l)].push(b, a, pa, b, pa, pb);
   const mainMesh = compact(out, main);
   const waters = water.map((w, i) => ({ level: levels[i], mesh: compact(out, w) }));
   // All closed, and adding up to the piece.

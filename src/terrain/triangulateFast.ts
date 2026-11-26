@@ -165,6 +165,12 @@ export function triangulateFast(outer: P2[], holes: P2[][] = []): [number, numbe
       stall = 0;
     }
   }
-  if (left === 3 && cross(P(prev[i]), P(i), P(next[i])) > eps) out.push([list[prev[i]], list[i], list[next[i]]]);
+  // What's left has no area (its corners in a line, or a pair a hair apart): a fan of flat triangles along it, so every
+  // edge of the outline still has its other half and the mesh stays closed.
+  if (left >= 3) {
+    const rest: number[] = [];
+    for (let j = i, k = 0; k < left; j = next[j], k++) rest.push(list[j]);
+    for (let k = 1; k + 1 < rest.length; k++) out.push([rest[0], rest[k], rest[k + 1]]);
+  }
   return out;
 }
