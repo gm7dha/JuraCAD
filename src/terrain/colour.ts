@@ -22,7 +22,7 @@ import type { Body } from "./mountainPuzzle";
 import type { MapFeatures, OsmLineKind } from "./osm";
 import type { P2 } from "./triangulate";
 import { triangulateFast } from "./triangulateFast";
-import { splitWater, WATER_LAYERS } from "./waterPart";
+import { closedMesh, splitWater, WATER_LAYERS } from "./waterPart";
 
 type XY = [number, number];
 
@@ -451,6 +451,9 @@ export function sliceMesh(vertices: ArrayLike<number>, triangles: ArrayLike<numb
   });
 }
 
+/** A cap loop this flat (area ≤ FLAT_CAP × its size²) has no inside: its corners lie in a line. */
+const FLAT_CAP = 1e-9;
+
 /** Triangles closing a slab on one plane, from its cap edges (from → to), facing up (`top`) or down. */
 function capTriangles(edges: Map<number, number>, pos: (id: number) => [number, number, number], top: boolean): number[][] {
   const loops: number[][] = [];
@@ -481,6 +484,20 @@ function capTriangles(edges: Map<number, number>, pos: (id: number) => [number, 
     return a / 2;
   };
   const sign = top ? 1 : -1;
+  // A loop with no area (its corners in a line: where the plane just grazes an upright wall) is no outline or hole, but
+  // its edges still need their other halves: a fan of flat triangles along it closes them.
+  const out: number[][] = [];
+  const span = (loop: number[]) => {
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const id of loop) {
+      const [x, y] = xy(id);
+      [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
+    }
+    return Math.max(x1 - x0, y1 - y0);
+  };
+  const flat = (loop: number[]) => Math.abs(area(loop)) <= FLAT_CAP * span(loop) ** 2;
+  for (const l of loops.filter(flat)) for (let i = 1; i + 1 < l.length; i++) out.push([l[0], l[i], l[i + 1]]);
+  loops.splice(0, loops.length, ...loops.filter((l) => !flat(l)));
   const outers = loops.filter((l) => area(l) * sign > 0).map((l) => ({ loop: l, area: Math.abs(area(l)), holes: [] as number[][] }));
   const holes = loops.filter((l) => area(l) * sign <= 0);
   const inside = (p: P2, loop: number[]) => {
@@ -497,7 +514,6 @@ function capTriangles(edges: Map<number, number>, pos: (id: number) => [number, 
     for (const o of outers) if ((!best || o.area < best.area) && inside(p, o.loop)) best = o;
     best?.holes.push(h);
   }
-  const out: number[][] = [];
   for (const o of outers) {
     const ids = [...o.loop, ...o.holes.flat()];
     for (const [a, b, c] of triangulateFast(o.loop.map(xy), o.holes.map((h) => h.map(xy)))) out.push(top ? [ids[a], ids[b], ids[c]] : [ids[a], ids[c], ids[b]]);
@@ -757,8 +773,8 @@ export function bandParts(bodies: Body[], z0: number, ctx: BandContext, top = tr
       if (split) {
         const moved = clearOfWater(cuts, split.levels, waterDepth, layer);
         const cut = sliceMesh(split.main.vertices, split.main.triangles, moved.map((c) => c.z));
-        // Every band of the rest closed, else the piece is painted as before.
-        if (cut.every((m) => !m.triangles.length || meshCheck(m.vertices, m.triangles).open === 0)) {
+        // Every band of the rest closed (strictly: no edge used twice), else the piece is painted as before.
+        if (cut.every((m) => !m.triangles.length || closedMesh(m))) {
           [body, bodyCuts, slabs, lochLevels] = [split.main, moved, cut, split.levels];
           waterParts = split.waters.map((w) => {
             let [lo, hi] = [Infinity, -Infinity];

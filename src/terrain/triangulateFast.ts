@@ -16,6 +16,9 @@ function area(poly: P2[]): number {
   return s / 2;
 }
 
+/** A leftover this flat (area ≤ FLAT_LEFT × its size²) has no inside: its corners lie in a line. */
+const FLAT_LEFT = 1e-9;
+
 const same = (a: P2, b: P2) => Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
 
 function inTriangle(p: P2, a: P2, b: P2, c: P2, eps: number): boolean {
@@ -46,6 +49,7 @@ export function triangulateFast(outer: P2[], holes: P2[][] = []): [number, numbe
     // The nearest outline edge straight to the right of M.
     let bestX = Infinity;
     let at = -1;
+    let onCorner = false;
     for (let k = 0; k < list.length; k++) {
       const a = pts[list[k]];
       const b = pts[list[(k + 1) % list.length]];
@@ -53,7 +57,9 @@ export function triangulateFast(outer: P2[], holes: P2[][] = []): [number, numbe
       const x = a[0] + ((M[1] - a[1]) * (b[0] - a[0])) / (b[1] - a[1]);
       if (x >= M[0] - 1e-12 && x < bestX) {
         bestX = x;
-        at = a[0] > b[0] ? k : (k + 1) % list.length;
+        // The ray through a corner exactly: that corner is the one it sees (not whichever end of the edge is further right).
+        onCorner = a[1] === M[1] || b[1] === M[1];
+        at = a[1] === M[1] ? k : b[1] === M[1] ? (k + 1) % list.length : a[0] > b[0] ? k : (k + 1) % list.length;
       }
     }
     if (at < 0) continue; // a hole outside the outline: ignored
@@ -69,7 +75,9 @@ export function triangulateFast(outer: P2[], holes: P2[][] = []): [number, numbe
       const c = pts[list[(k + 1) % list.length]];
       return cross(a, q, c) < 0 ? cross(a, q, M) >= 0 || cross(q, c, M) >= 0 : cross(a, q, M) >= 0 && cross(q, c, M) >= 0;
     };
-    for (let k = 0; k < list.length; k++) {
+    // (A corner the ray passes through exactly is seen from M: nothing to look for — the triangle would be a line, and
+    // every corner further along it would seem to block.)
+    for (let k = 0; k < list.length && !onCorner; k++) {
       const q = pts[list[k]];
       if (k === at || q[0] < M[0] || !inTriangle(q, tri[0] as P2, tri[1] as P2, tri[2] as P2, 0)) continue;
       const prev = pts[list[(k + list.length - 1) % list.length]];
@@ -165,6 +173,22 @@ export function triangulateFast(outer: P2[], holes: P2[][] = []): [number, numbe
       stall = 0;
     }
   }
-  if (left === 3 && cross(P(prev[i]), P(i), P(next[i])) > eps) out.push([list[prev[i]], list[i], list[next[i]]]);
+  // The last ear, the right way round (however small: one below the ear test's tolerance is still no fold).
+  if (left === 3 && cross(P(prev[i]), P(i), P(next[i])) > 0) out.push([list[prev[i]], list[i], list[next[i]]]);
+  else if (left >= 3) {
+    // What's left has no area (its corners in a line, or a pair a hair apart): a fan of flat triangles along it, so every
+    // edge of the outline still has its other half and the mesh stays closed. Anything with real area left (rounding
+    // tied it in a knot) is left open, so the caller sees the mesh isn't closed rather than getting folded triangles.
+    const rest: number[] = [];
+    for (let j = i, k = 0; k < left; j = next[j], k++) rest.push(list[j]);
+    let [x0, y0, x1, y1, twice] = [Infinity, Infinity, -Infinity, -Infinity, 0];
+    for (let k = 0; k < rest.length; k++) {
+      const [p, q] = [pts[rest[k]], pts[rest[(k + 1) % rest.length]]];
+      [x0, y0, x1, y1] = [Math.min(x0, p[0]), Math.min(y0, p[1]), Math.max(x1, p[0]), Math.max(y1, p[1])];
+      twice += p[0] * q[1] - q[0] * p[1];
+    }
+    if (Math.abs(twice / 2) <= FLAT_LEFT * Math.max(x1 - x0, y1 - y0) ** 2)
+      for (let k = 1; k + 1 < rest.length; k++) out.push([rest[0], rest[k], rest[k + 1]]);
+  }
   return out;
 }

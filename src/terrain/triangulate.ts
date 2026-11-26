@@ -50,6 +50,7 @@ export function triangulate(outer: P2[], holes: P2[][] = []): [number, number, n
     // The nearest outline edge straight to the right of M.
     let bestX = Infinity;
     let at = -1;
+    let onCorner = false;
     for (let k = 0; k < list.length; k++) {
       const a = pts[list[k]];
       const b = pts[list[(k + 1) % list.length]];
@@ -57,7 +58,9 @@ export function triangulate(outer: P2[], holes: P2[][] = []): [number, number, n
       const x = a[0] + ((M[1] - a[1]) * (b[0] - a[0])) / (b[1] - a[1]);
       if (x >= M[0] - 1e-12 && x < bestX) {
         bestX = x;
-        at = a[0] > b[0] ? k : (k + 1) % list.length;
+        // The ray through a corner exactly: that corner is the one it sees (not whichever end of the edge is further right).
+        onCorner = a[1] === M[1] || b[1] === M[1];
+        at = a[1] === M[1] ? k : b[1] === M[1] ? (k + 1) % list.length : a[0] > b[0] ? k : (k + 1) % list.length;
       }
     }
     if (at < 0) continue; // a hole outside the outline: ignored
@@ -73,7 +76,9 @@ export function triangulate(outer: P2[], holes: P2[][] = []): [number, number, n
       const c = pts[list[(k + 1) % list.length]];
       return cross(a, q, c) < 0 ? cross(a, q, M) >= 0 || cross(q, c, M) >= 0 : cross(a, q, M) >= 0 && cross(q, c, M) >= 0;
     };
-    for (let k = 0; k < list.length; k++) {
+    // (A corner the ray passes through exactly is seen from M: nothing to look for — the triangle would be a line, and
+    // every corner further along it would seem to block.)
+    for (let k = 0; k < list.length && !onCorner; k++) {
       const q = pts[list[k]];
       if (k === at || q[0] < M[0] || !inTriangle(q, tri[0] as P2, tri[1] as P2, tri[2] as P2, 0)) continue;
       const prev = pts[list[(k + list.length - 1) % list.length]];

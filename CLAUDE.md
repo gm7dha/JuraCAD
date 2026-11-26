@@ -2398,6 +2398,21 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   colour panel's layers reach the build as `IslandSpec`/`MountainSpec.printLayer` (`lochLayers`: only in colour, with water,
   and layers other than 0.2 — so the usual spec is unchanged and layer changes rebuild only with water). No water shapes =
   everything byte for byte as before. Tests: tests/flatWater, flatWaterMore (the reviewer's ragged/lumpy cases).
+  Pinches: a loch touching itself at one corner (a narrow neck; two lochs corner to corner) gets a floor copy per FAN of loch
+  triangles round that corner (union–find over loch edges; `corner[t*3+k]`), each moved `PINCH_SHIFT` (1 µm, past weld's
+  1e-5) into its own fan — along the piece's side when the fan has a side edge there (`alongSide`; none at the piece's own
+  corner) — so the walls meeting there share no edge; the piece's side under it takes the fan along that side (`primeNear`).
+  Band caps: `triangulateFast` keeps its last ear whenever it's the right way round (even below the ear test's eps — the old
+  order, [prev, i, next], so other caps are byte for byte as before) and fans a leftover only when it really has no area
+  (`FLAT_LEFT`: |area| ≤ 1e-9 × size²; corners in a line where a plane grazes an upright wall) — one with real area is left
+  open, never fanned into folds; capTriangles fans zero-area loops (`FLAT_CAP`). The hole join (triangulate.ts and
+  triangulateFast alike) takes a corner the ray passes through exactly as the one it sees, without the blocking search
+  (its triangle was a line, so corners further along it "blocked" and the join went past the outline: overlapping, inverted
+  triangles meshCheck can't see). bandParts accepts the split only if every band is closed STRICTLY (`closedMesh` in
+  waterPart.ts: each edge once each way). Plain/mountain/border/marks meshes are byte-identical to before; banded ones
+  differ only on pieces whose bands were open. Tests: waterPinch (pure), waterPinchIsland (the 40 mm big loch, ragged
+  15 mm piece 28, low 15 mm piece 43 with and without the map, a banded hash pinned to v0.125), triangulateFastFlat
+  (the reviewer's knot cap `tests/support/knotCap.json`, a speck, a crossed outline left open).
   `featuresAtScale(f, k)` (mountain build/preview/colour) and `featuresForIsland` honour `least`. `marksQuery(…, choice)`
   fetches path|footway|bridleway|steps|track, towns/parks (+ woods for hills), natural=water/landuse=reservoir (+ multipolygons),
   waterways only for "all", roads by `ROAD_RANK`, walking route relations bare (`->.hr`); `fetchCovers` says when to fetch
