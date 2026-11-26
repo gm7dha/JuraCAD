@@ -2392,7 +2392,12 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   walls up every shore and the top strip of the piece's side under it (side panels flooded across slanting edges; T-junctions
   split, small upright holes fanned, `heal`); the rest gets the floor dropped. Both closed, volumes add up, else null (painted as
   before). `clearOfWater` moves band edges inside a slab to just under it; the floors and the banks touching a loch's level
-  take no water paint. No water shapes = everything byte for byte as before. Tests: tests/flatWater.
+  take no water paint. One slab part per loch level (`WaterSplit.waters`), pushed AFTER the band slabs; the 3MF object's
+  extruder is its lowest part's (`BandPartFile.low`). `clearOfWater` puts edges in (level − depth − layer/2, level] a whole
+  layer under the floor; every band slab of the split body must be closed (meshCheck), else the unsplit body (paint). The
+  colour panel's layers reach the build as `IslandSpec`/`MountainSpec.printLayer` (`lochLayers`: only in colour, with water,
+  and layers other than 0.2 — so the usual spec is unchanged and layer changes rebuild only with water). No water shapes =
+  everything byte for byte as before. Tests: tests/flatWater, flatWaterMore (the reviewer's ragged/lumpy cases).
   `featuresAtScale(f, k)` (mountain build/preview/colour) and `featuresForIsland` honour `least`. `marksQuery(…, choice)`
   fetches path|footway|bridleway|steps|track, towns/parks (+ woods for hills), natural=water/landuse=reservoir (+ multipolygons),
   waterways only for "all", roads by `ROAD_RANK`, walking route relations bare (`->.hr`); `fetchCovers` says when to fetch

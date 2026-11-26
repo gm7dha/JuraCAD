@@ -17,7 +17,7 @@
  */
 import { heightAt, type HeightGrid } from "./elevation";
 import { coastAgrees, coastMask, LEFT_OUT_BELOW } from "./coastline";
-import { BUILDING_LEAST, groundMarks, onPrintLayer, PRINT_LAYER, type GroundMarks } from "./groundMarks";
+import { BUILDING_LEAST, groundMarks, onPrintLayer, PRINT_LAYER, type GroundMarks, type PrintLayers } from "./groundMarks";
 import { cutGrooves, type GrooveIndex } from "./grooveCut";
 import { smoothedFeatures } from "./smoothLines";
 import type { Body, PuzzlePiece } from "./mountainPuzzle";
@@ -31,6 +31,8 @@ export type IslandLand = "islands" | "biggest" | "all";
 
 export interface IslandSpec {
   bed: [number, number, number];
+  /** The print layers lochs' flat tops go on (the colour panel's; missing: 0.2 mm). Only given when there's water. */
+  printLayer?: PrintLayers;
   /** 1 = the puzzle fills the bed. */
   scale: number;
   /** About how big pieces are (mm) when they're cut into cells. */
@@ -1118,9 +1120,10 @@ function buildIsland(
   if (used.features.lines.length || used.features.shapes.length) {
     const m = groundMarks(used.features, sw.e, sw.n, k, W, H, plainTop);
     // Each loch's flat top on a whole print layer (every piece stands on z = 0), never below the thinnest base.
+    const pl = spec.printLayer;
     m.water?.snap((level) => {
-      const z = onPrintLayer(Math.max(level, LEAST_BASE), 0);
-      return z < LEAST_BASE - 1e-9 ? z + PRINT_LAYER : z;
+      const z = onPrintLayer(Math.max(level, LEAST_BASE), 0, pl?.layer, pl?.first ?? pl?.layer);
+      return z < LEAST_BASE - 1e-9 ? z + (pl?.layer ?? PRINT_LAYER) : z;
     });
     if (!m.empty) {
       const fade = neckFade(joined.tabs, nx, ny, cell);

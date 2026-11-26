@@ -46,6 +46,25 @@ export const WATER_DROP = 0.5;
  */
 export const PRINT_LAYER = 0.2;
 
+/** The print layers loch levels go on (from the colour panel); missing: `PRINT_LAYER` throughout. */
+export interface PrintLayers {
+  layer: number;
+  /** The first layer's height, when it isn't `layer`. */
+  first?: number;
+}
+
+/**
+ * What a puzzle window adds to its spec for lochs: the colour panel's layers, only when printing in colour with water on
+ * the map and layers other than the usual 0.2 mm (so nothing else rebuilds when the layer height changes, and the usual
+ * spec stays as it was).
+ */
+export function lochLayers(colourOn: boolean, colour: { layer: number; firstLayer?: number }, features: MapFeatures): { printLayer?: PrintLayers } {
+  if (!colourOn || !features.shapes.some((s) => s.kind === "water")) return {};
+  const first = colour.firstLayer ?? colour.layer;
+  if (Math.abs(colour.layer - PRINT_LAYER) < 1e-9 && Math.abs(first - PRINT_LAYER) < 1e-9) return {};
+  return { printLayer: first === colour.layer ? { layer: colour.layer } : { layer: colour.layer, first } };
+}
+
 /** `z` moved onto the nearest print layer boundary of a piece standing on `z0` (never onto the bed itself). */
 export function onPrintLayer(z: number, z0: number, layer = PRINT_LAYER, first = layer): number {
   const h = z - z0;

@@ -18,8 +18,9 @@ export const WATER_LAYERS = 2;
 
 export interface WaterSplit {
   main: MeshData;
-  water: MeshData;
-  /** The lochs' levels (mm), each once. */
+  /** One slab per loch level (lowest first), so each counts only on its own layers. */
+  waters: { level: number; mesh: MeshData }[];
+  /** The lochs' levels (mm), each once, lowest first. */
   levels: number[];
 }
 
@@ -117,7 +118,7 @@ export function splitWater(
   // The loch's edges: shore (land beside it) or side (the piece's upright side under it).
   const sides: [number, number][] = [];
   const shores: [number, number][] = [];
-  const edgesOut: [number, number][] = [];
+  const edgesOut: [number, number, number][] = [];
   const wallSeeds: number[] = [];
   for (let t = 0; t < nt; t++) {
     if (!inR[t]) continue;
@@ -125,7 +126,7 @@ export function splitWater(
       const [a, b] = [T[t * 3 + k], T[t * 3 + ((k + 1) % 3)]];
       const n = edge.get(b * nv + a)!;
       if (inR[n]) continue;
-      edgesOut.push([a, b]);
+      edgesOut.push([a, b, flatAt[t]]);
       const third = [T[n * 3], T[n * 3 + 1], T[n * 3 + 2]].find((i) => i !== a && i !== b)!;
       if (Math.abs(nz(n)) < 0.05 && z(third) < z(a) - depth / 2) {
         sides.push([a, b]);
@@ -161,21 +162,28 @@ export function splitWater(
   }
   for (const [a, b] of shores) main.push(a, b, prime[b], a, prime[b], prime[a]);
   if (!heal(out, main)) return null;
-  // The slab: the lochs' tops, their floors, and walls all round.
-  const water: number[] = [];
+  // The slabs, one per level: the lochs' tops, their floors, and walls all round.
+  levels.sort((p, q) => p - q);
+  const slabOf = (z: number) => levels.findIndex((l) => Math.abs(l - z) < FLAT);
+  const water: number[][] = levels.map(() => []);
   for (let t = 0; t < nt; t++) {
     if (!inR[t]) continue;
     const [a, b, c] = [T[t * 3], T[t * 3 + 1], T[t * 3 + 2]];
-    water.push(a, b, c, prime[a], prime[c], prime[b]);
+    water[slabOf(flatAt[t])].push(a, b, c, prime[a], prime[c], prime[b]);
   }
-  for (const [a, b] of edgesOut) water.push(b, a, prime[a], b, prime[a], prime[b]);
+  for (const [a, b, l] of edgesOut) water[slabOf(l)].push(b, a, prime[a], b, prime[a], prime[b]);
   const mainMesh = compact(out, main);
-  const waterMesh = compact(out, water);
-  // Both closed, and adding up to the piece.
+  const waters = water.map((w, i) => ({ level: levels[i], mesh: compact(out, w) }));
+  // All closed, and adding up to the piece.
   const whole = volumeOf(V, T);
-  const [vm, vw] = [volumeOf(mainMesh.vertices, mainMesh.triangles), volumeOf(waterMesh.vertices, waterMesh.triangles)];
-  if (!closedMesh(mainMesh) || !closedMesh(waterMesh) || !(vw > 0) || Math.abs(vm + vw - whole) > 1e-6 * Math.max(1, Math.abs(whole))) return null;
-  return { main: mainMesh, water: waterMesh, levels };
+  let sum = volumeOf(mainMesh.vertices, mainMesh.triangles);
+  for (const w of waters) {
+    const v = volumeOf(w.mesh.vertices, w.mesh.triangles);
+    if (!closedMesh(w.mesh) || !(v > 0)) return null;
+    sum += v;
+  }
+  if (!closedMesh(mainMesh) || Math.abs(sum - whole) > 1e-6 * Math.max(1, Math.abs(whole))) return null;
+  return { main: mainMesh, waters, levels };
 }
 
 /**

@@ -234,7 +234,7 @@ describe("the water slab on a simple block", () => {
     const s = splitWater({ vertices: V, triangles: T }, (x) => isWater(x), 0.4, 0.2)!;
     expect(s).not.toBeNull();
     expect(s.levels).toEqual([5]);
-    const [main, water] = [meshCheck(s.main.vertices, s.main.triangles), meshCheck(s.water.vertices, s.water.triangles)];
+    const [main, water] = [meshCheck(s.main.vertices, s.main.triangles), meshCheck(s.waters[0].mesh.vertices, s.waters[0].mesh.triangles)];
     expect(main.open).toBe(0);
     expect(water.open).toBe(0);
     expect(water.volume).toBeCloseTo(6 * 10 * 0.4, 9);
@@ -248,11 +248,15 @@ describe("the water slab on a simple block", () => {
   });
 
   it("moves band edges out of the slab", () => {
-    expect(clearOfWater([{ z: 3, filament: 2 }, { z: 4.8, filament: 3 }, { z: 6, filament: 4 }], [5], 0.4).map((c) => [Math.round(c.z * 1e3) / 1e3, c.filament])).toEqual([
+    expect(clearOfWater([{ z: 3, filament: 2 }, { z: 4.8, filament: 3 }, { z: 6, filament: 4 }], [5], 0.4, 0.2).map((c) => [Math.round(c.z * 1e3) / 1e3, c.filament])).toEqual([
       [3, 2],
-      [4.6, 3],
+      [4.4, 3],
       [6, 4],
     ]);
+    // On the slab's floor: a layer under it too.
+    expect(clearOfWater([{ z: 4.6, filament: 3 }], [5], 0.4, 0.2)[0].z).toBeCloseTo(4.4, 12);
+    // Well under it: left alone.
+    expect(clearOfWater([{ z: 4.4, filament: 3 }], [5], 0.4, 0.2)[0].z).toBe(4.4);
   });
 });
 

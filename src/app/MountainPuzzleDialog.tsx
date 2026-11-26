@@ -35,6 +35,7 @@ import { breakawaySwaps, LAYER_HEIGHTS, layerPlates, stackWithBreakaway, togethe
 import { weld, zipStored } from "../geometry/threeMf";
 import { GROUND_BROWN, mapOnPuzzle, mapRaster, mountainBands, NO_MAP, WATER_BLUE, type HeightScale, type PreviewMesh } from "../terrain/colour";
 import { ColourDownloads, ColourPanel, useBandsFollow, useColoured, useUsualColour } from "./PuzzleColour";
+import { lochLayers } from "../terrain/groundMarks";
 import { downloadFile, safeFileName } from "./download";
 import { Modal } from "./Modal";
 import { openMountain, useMountain } from "./mountainState";
@@ -333,7 +334,9 @@ export function MountainPuzzleDialog() {
     }
   };
 
-  const fullSpec: MountainSpec = photoMode ? { ...spec, bed: layoutBed, exaggeration: 1, snowline: null } : { ...spec, bed: layoutBed, snowline: snowOn && !colourOn ? snowline : null };
+  const fullSpec: MountainSpec = photoMode
+    ? { ...spec, bed: layoutBed, exaggeration: 1, snowline: null }
+    : { ...spec, bed: layoutBed, snowline: snowOn && !colourOn ? snowline : null, ...lochLayers(colourOn, colour, features) };
   const layout = useMemo(() => (used ? layoutFor(used.grid, used.width, used.height, { ...spec, bed: layoutBed, snowline: null }) : null), [used, spec, layoutBed[0], layoutBed[1], layoutBed[2]]);
   const checks = mountainChecks(fullSpec, layout ?? undefined);
 

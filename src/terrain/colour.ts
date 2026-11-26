@@ -748,20 +748,27 @@ export function bandParts(bodies: Body[], z0: number, ctx: BandContext, top = tr
     // With the lochs a part of their own: their floors in the rest of the piece (hidden under them) and the banks
     // running up from their edges take no water paint.
     let lochLevels: number[] = [];
-    // The lochs (flat on top) as a slab of the water filament WATER_LAYERS layers thick, a real part of its own rather
-    // than paint the slicer would carry further down; band edges in its way go just under it.
+    let waterParts: BandPart[] = [];
+    let slabs: MeshData[] | null = null;
+    // The lochs (flat on top) as slabs of the water filament WATER_LAYERS layers thick, real parts of their own rather
+    // than paint the slicer would carry further down; band edges in their way go a whole layer under them.
     if (top && waterN) {
-      const split = splitWater(whole, (x, y) => ctx.map.kindAt(x, y) === MapKind.Water, waterDepth, z0 + layer, (level) => filamentAt(level - waterDepth / 2) !== waterN);
+      const split = splitWater(whole, (x, y) => ctx.map.kindAt(x, y) === MapKind.Water, waterDepth, z0 + 2 * layer, (level) => filamentAt(level - waterDepth / 2) !== waterN);
       if (split) {
-        body = split.main;
-        bodyCuts = clearOfWater(cuts, split.levels, waterDepth);
-        lochLevels = split.levels;
-        let [lo, hi] = [Infinity, -Infinity];
-        for (let i = 2; i < split.water.vertices.length; i += 3) [lo, hi] = [Math.min(lo, split.water.vertices[i]), Math.max(hi, split.water.vertices[i])];
-        parts.push({ filament: waterN, vertices: split.water.vertices, triangles: split.water.triangles, low: lo - z0, high: hi - z0 });
+        const moved = clearOfWater(cuts, split.levels, waterDepth, layer);
+        const cut = sliceMesh(split.main.vertices, split.main.triangles, moved.map((c) => c.z));
+        // Every band of the rest closed, else the piece is painted as before.
+        if (cut.every((m) => !m.triangles.length || meshCheck(m.vertices, m.triangles).open === 0)) {
+          [body, bodyCuts, slabs, lochLevels] = [split.main, moved, cut, split.levels];
+          waterParts = split.waters.map((w) => {
+            let [lo, hi] = [Infinity, -Infinity];
+            for (let i = 2; i < w.mesh.vertices.length; i += 3) [lo, hi] = [Math.min(lo, w.mesh.vertices[i]), Math.max(hi, w.mesh.vertices[i])];
+            return { filament: waterN, vertices: w.mesh.vertices, triangles: w.mesh.triangles, low: lo - z0, high: hi - z0 };
+          });
+        }
       }
     }
-    const slabs = sliceMesh(body.vertices, body.triangles, bodyCuts.map((c) => c.z));
+    if (!slabs) slabs = sliceMesh(body.vertices, body.triangles, bodyCuts.map((c) => c.z));
     slabs.forEach((slab, s) => {
       if (!slab.triangles.length) return;
       const filament = s === 0 ? first : bodyCuts[s - 1].filament;
@@ -807,19 +814,23 @@ export function bandParts(bodies: Body[], z0: number, ctx: BandContext, top = tr
       }
       parts.push(part);
     });
+    // After the bands (the lowest band is the piece's own filament in the 3MF), lowest first.
+    parts.push(...waterParts);
   }
   return parts;
 }
 
 /**
- * Band edges moved clear of the lochs' slabs (each `depth` under its level): an edge inside one (or on its top) goes
- * just under it, so no band plane cuts the walls the slab shares with the rest of the piece.
+ * Band edges moved clear of the lochs' slabs (each `depth` under its level): an edge inside one (or on its top, or on
+ * its floor) goes a whole `layer` under its floor, so no band plane cuts the walls the slab shares with the rest of the
+ * piece and the edge stays on a print layer.
  */
-export function clearOfWater(cuts: { z: number; filament: number }[], levels: number[], depth: number): { z: number; filament: number }[] {
+export function clearOfWater(cuts: { z: number; filament: number }[], levels: number[], depth: number, layer: number): { z: number; filament: number }[] {
   const out: { z: number; filament: number }[] = [];
   for (const c of cuts) {
     let z = c.z;
-    for (const l of levels) if (z >= l - depth - 2 * PLANE_CLEAR && z <= l + 2 * PLANE_CLEAR) z = l - depth - 2 * PLANE_CLEAR;
+    // A whole layer under the slab's floor: still on a print layer, and clear of the floor's corners.
+    for (const l of levels) if (z > l - depth - layer / 2 && z <= l + 2 * PLANE_CLEAR) z = l - depth - layer;
     const last = out[out.length - 1];
     if (last && z <= last.z + 1e-9) last.filament = c.filament;
     else out.push({ z, filament: c.filament });
