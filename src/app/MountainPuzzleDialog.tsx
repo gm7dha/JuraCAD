@@ -262,7 +262,9 @@ export function MountainPuzzleDialog() {
   // In one piece (a solid model, not a puzzle) there's nothing to put together: it's laid on a plate as it is.
   const onePiece = !!spec.onePiece;
   const way: PrintWay = onePiece ? "apart" : printWay === "together" && colourOn ? "layers" : printWay;
-  const together = way !== "apart";
+  // One piece is sized and placed like a puzzle printed put together: centred on Bambu Studio's bed, clear of its
+  // no-print corner and (in several filaments) the prime tower's corner, on one plate.
+  const together = way !== "apart" || onePiece;
 
   const [mapLoaded, setLoaded] = useState<{ area: Area; grid: HeightGrid } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -728,13 +730,23 @@ export function MountainPuzzleDialog() {
               <input type="radio" name="mountain-make" checked={!onePiece} onChange={() => set("onePiece", undefined)} /> A puzzle of interlocking cubes
             </label>
             <label>
-              <input type="radio" name="mountain-make" checked={onePiece} onChange={() => set("onePiece", true)} /> In one piece (a solid model, not a puzzle)
+              <input type="radio" name="mountain-make" checked={onePiece} onChange={() => {
+                  setSpec((s) => ({ ...s, onePiece: true, scale: Math.min(s.scale, 1) }));
+                  setExplode(0);
+                }} /> In one piece (a solid model, not a puzzle)
             </label>
           </div>
           {onePiece && (
-            <p className="muted small">
-              {photoMode ? "The picture" : "The mountain"} prints as one solid model on a plate: the ground on top, flat sides and a flat bottom. No cubes, keys or tabs.
-            </p>
+            <>
+              <p className="muted small">
+                {photoMode ? "The picture" : "The mountain"} prints as one solid model, in the middle of one plate: the ground on top, flat sides and a flat bottom. No cubes, keys or tabs.
+              </p>
+              {multi && (
+                <label className="mountain-check">
+                  <input type="checkbox" checked={towerOff} onChange={(e) => setTowerOff(e.target.checked)} /> I'll turn the prime tower off in Bambu Studio (the model can then be bigger)
+                </label>
+              )}
+            </>
           )}
           {!onePiece && (
             <>
@@ -909,6 +921,15 @@ export function MountainPuzzleDialog() {
           </label>
           {borderOn && (
             <>
+              {onePiece && (
+                <div className="mountain-row">
+                  <span>Fit gap</span>
+                  <span>
+                    {numberBox(spec.fit, (v) => set("fit", v), 0.05, 0, 0.5, "mm")}
+                    <span className="muted small"> between the model and its border</span>
+                  </span>
+                </div>
+              )}
               <p className="muted small">
                 A low wall round the finished puzzle that hides its steep cut sides: each side as tall as the puzzle's highest point
                 along it, in pieces that fit the bed and lock together with lugs. It's a file of its own.
@@ -1039,16 +1060,20 @@ export function MountainPuzzleDialog() {
               )}
               {puzzle && placed?.fits && (
                 <p className="muted small">
-                  {way === "layers"
+                  {onePiece
+                    ? "One plate, the model in the middle, where Bambu Studio puts it."
+                    : way === "layers"
                     ? `${plates.length} plates, one per layer: plate 1 is the bottom layer. Print them in order and stack each on the one before.`
                     : `One plate, ${Math.round(stacked!.height)} mm tall. Slice with ${layerHeight.toFixed(2)} mm layers (the first layer 0.20 mm) and supports off — the breakaway layers are already in the file, on filament ${breakSlot}. About ${breakawaySwaps(stacked!, layerHeight, puzzle.keys)} filament changes for them.`}{" "}
-                  Each piece has no brim and elephant-foot compensation on, so the first layer doesn't close the gaps; don't press Arrange in Bambu Studio.
+                  {onePiece
+                    ? "It comes in with no brim and elephant-foot compensation on, so the bottom edge stays crisp."
+                    : "Each piece has no brim and elephant-foot compensation on, so the first layer doesn't close the gaps; don't press Arrange in Bambu Studio."}
                   {multi && !towerOff && " For several filaments Bambu Studio adds a prime tower at the back left, which is kept free for it."}
                   {multi && towerOff && " Turn the prime tower off in Bambu Studio (Others › Prime tower) before slicing."}
                 </p>
               )}
               {colourOn && puzzle && coloured && scale && plates.length > 0 && (
-                <ColourDownloads spec={colour} coloured={coloured} plates={plates} scale={scale} map={paintMap} fileName={fileName} bedWidth={bed[0]} settings={settings} />
+                <ColourDownloads spec={colour} coloured={coloured} plates={plates} scale={scale} map={paintMap} fileName={fileName} bedWidth={bed[0]} settings={settings} onePiece={onePiece} />
               )}
               {!colourOn && puzzle && plates.length > 0 && !slotClash && (
                 <div className="mountain-downloads">

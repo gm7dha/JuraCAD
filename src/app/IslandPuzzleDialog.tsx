@@ -574,6 +574,12 @@ export function IslandPuzzleDialog() {
         : ` For several filaments Bambu Studio adds a prime tower at the back left, which is on the island here: drag it to the free space ${where.words} of the bed.`;
   // Offered when room for the tower would cost the island size (or there's no room at all).
   const offerTowerOff = inPlace && colourOn && (towerOff || !!puzzle?.tower?.shrunk || (!!puzzle?.tower && !puzzle.tower.at));
+  // In one piece it's printed where it sits, which can't go past 100%.
+  const chooseOnePiece = () => {
+    setCutBy("one");
+    setSpec((s) => ({ ...s, scale: Math.min(s.scale, 1) }));
+    setExplode(0);
+  };
   const chooseInPlace = (on: boolean) => {
     setSpec((s) => ({ ...s, inPlace: on, scale: on ? Math.min(s.scale, 1) : s.scale }));
     if (on) setExplode(0);
@@ -702,18 +708,18 @@ export function IslandPuzzleDialog() {
           <div className="mountain-choices" role="radiogroup" aria-label="How it's cut">
             <label>
               <input type="radio" name="island-cut" checked={cutBy === "pieces"} onChange={() => setCutBy("pieces")} /> Into pieces of about{" "}
-              {numberBox(spec.piece, (v) => set("piece", v), 5, ISLAND_FLOOR, 150, "mm", autoPieces || cutBy !== "pieces")}
+              {numberBox(spec.piece, (v) => set("piece", v), 5, ISLAND_FLOOR, 150, "mm", autoPieces || onePiece)}
             </label>
             <label>
               <input type="radio" name="island-cut" checked={cutBy === "boundaries"} onChange={() => setCutBy("boundaries")} /> Along real boundaries
             </label>
             <label>
-              <input type="radio" name="island-cut" checked={onePiece} onChange={() => setCutBy("one")} /> In one piece (a solid model, not a puzzle)
+              <input type="radio" name="island-cut" checked={onePiece} onChange={() => chooseOnePiece()} /> In one piece (a solid model, not a puzzle)
             </label>
           </div>
           {onePiece && (
             <p className="muted small">
-              The island prints as one solid model — no cuts, no dovetails. Any small islands nearby print as pieces of their own, where they sit beside it.
+              The island prints as one solid model — no cuts, no dovetails. Any other islands kept print as pieces of their own, where they sit beside it.
             </p>
           )}
           {cutBy === "pieces" && (
@@ -928,7 +934,7 @@ export function IslandPuzzleDialog() {
               {puzzle && (
                 <div className="mountain-summary small">
                   <p>
-                    <strong>{onePiece ? (puzzle.pieces.length === 1 ? "Printed as one piece" : `Printed as one piece, with ${puzzle.pieces.length - 1} small ${puzzle.pieces.length === 2 ? "island" : "islands"} beside it`) : `${puzzle.pieces.length} pieces`}</strong>
+                    <strong>{onePiece ? (puzzle.pieces.length === 1 ? "Printed as one piece" : `Printed as one piece, with ${puzzle.pieces.length - 1} other ${puzzle.pieces.length === 2 ? "island" : "islands"} beside it`) : `${puzzle.pieces.length} pieces`}</strong>
                     {puzzle.alongBoundaries ? ` cut along ${levelName(usedLevel).toLowerCase()}${named ? ` (${named} named)` : ""}` : ""} — finished{" "}
                     {placed ? `${Math.round(placed.size[0])} × ${Math.round(placed.size[1])}` : `${Math.round(puzzle.width)} × ${Math.round(puzzle.height)}`} mm, {spec.base} mm thick at the coast and {Math.round(spec.base + spec.relief)} mm
                     on the highest ground ({Math.round(puzzle.high)} m). 1 mm is {formatDistance(1 / puzzle.k)} across.
@@ -982,7 +988,7 @@ export function IslandPuzzleDialog() {
               {colourOn && colouring && <p className="muted small">Colouring the pieces…</p>}
               {colourOn && colourError && <p className="error-text small">{colourError}</p>}
               {colourOn && puzzle && coloured && scale && plates.length > 0 && (
-                <ColourDownloads spec={colour} coloured={coloured} plates={plates} scale={scale} map={paintMap} fileName={fileName} bedWidth={bed[0]} settings={settings} inPlace={inPlace} />
+                <ColourDownloads spec={colour} coloured={coloured} plates={plates} scale={scale} map={paintMap} fileName={fileName} bedWidth={bed[0]} settings={settings} inPlace={inPlace} onePiece={onePiece} />
               )}
               {!colourOn && puzzle && plates.length > 0 && (
                 <div className="mountain-downloads">

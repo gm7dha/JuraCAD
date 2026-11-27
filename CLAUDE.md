@@ -2227,14 +2227,18 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
 - In one piece (the owner's wish; Island and Mountain/Photo windows): a solid model, not a puzzle. Island: `IslandSpec.onePiece`
   (the dialog's third "Pieces" radio, `cutBy` "one"; always built put together — `inPlace`, scale ≤ 100%) — buildIsland cuts
   nothing (no boundaries/Voronoi), each 4-connected bit of kept land is a piece, no dovetails (`joined` empty) or crumb pass,
-  pieceMesh with fit 0; `islandChecks` skips piece size and fit; a warning counts the small islands beside the main one. Hidden:
+  pieceMesh with `ONE_PIECE_FIT` 0.05 and the ground ≥ base + `ONE_PIECE_RISE` 0.02 (at the base's own height the whole coast
+  grazed the colour band cut there and band parts came out open); `islandChecks` skips piece size and fit; a warning counts the
+  other islands beside the biggest. Hidden:
   piece size, As many pieces, fit gap, pattern, Pull apart, the in-place tick. Mountain: `MountainSpec.onePiece` ("What it
   makes" radio in 2. Size) — `layoutFor` works in whole mm (`ONE_PIECE_UNIT`, `unitOf`) instead of cubes; `baseFor` = base
-  (≥ `ONE_PIECE_BASE` 2); `mountainChecks` only the stretch, scale and the printer's height; makeMountainPuzzle returns
-  `onePieceModel`: one top piece over the layout's rectangle less `fit` all round (`topBodies` now takes a rectangle's rows `m`;
+  (≥ `ONE_PIECE_BASE` 2); `mountainChecks` only the stretch, scale ≤ 100%, footprint ≤ bed and the printer's height; makeMountainPuzzle
+  returns `onePieceModel`: one top piece over exactly the layout's rectangle (`topBodies` now takes a rectangle's rows `m`;
   square calls unchanged), z0 0, split at the snow line, ≤ `ONE_PIECE_SAMPLES` 500 a side, grooves cut by cutTop, lochs snapped
-  from z 0; the returned `spec.cube` is 1, so `cols × cube` stays the size everywhere (border, map, colour). Print way forced
-  "apart", cubes/keys/fit/pattern/explode hidden; the top view draws just the outline. Missing = the puzzle byte for byte.
+  from z 0; the returned `spec.cube` is 1, so `cols × cube` stays the size everywhere (border, map, colour). The dialog sizes it
+  like a puzzle printed put together (`together`: centred room clear of keep-outs and, in several filaments, the tower corner —
+  "I'll turn the prime tower off" offered; `layerPlates` = one plate; IN_PLACE_SETTINGS); cubes/keys/pattern/explode hidden, the
+  fit row only with a border (the gap to it); the top view draws just the outline; ColourDownloads `onePiece` wording. Missing = the puzzle byte for byte.
   Tests: onePieceIsland, onePieceMountain (pure).
 - "As many pieces as will print well" (the owner's wish; Island and Mountain/Photo windows): a tick box under the piece / cube
   size (remembered for the session, `src/app/mostPiecesState.ts`); ticked, the box is greyed and filled in by a search. Pure

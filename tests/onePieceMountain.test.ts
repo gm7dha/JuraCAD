@@ -10,7 +10,9 @@ import { baseFor, layoutFor, makeMountainPuzzle, mountainChecks, MOUNTAIN_DEFAUL
 import { featuresAtScale, type MapFeatures } from "../src/terrain/osm";
 import { closedMesh } from "../src/terrain/waterPart";
 import { weld } from "../src/geometry/threeMf";
-import { platesFor } from "../src/terrain/puzzle3mf";
+import { bestRoom, centredRooms, platesFor, towerCorner, type BedRect } from "../src/terrain/puzzle3mf";
+import { layerPlates } from "../src/terrain/mountainInPlace";
+import { PRINTERS } from "../src/model/printBed";
 import { makeBorder } from "../src/terrain/mountainBorder";
 
 type XY = [number, number];
@@ -37,7 +39,7 @@ describe("mountain in one piece", () => {
     const c = meshCheck(b.vertices, b.triangles);
     expect(c.open).toBe(0);
     expect(c.volume).toBeGreaterThan(0);
-    // Its footprint: the layout's rectangle (in whole mm), the fit gap in from each side.
+    // Its footprint: exactly the layout's rectangle (in whole mm).
     const L = m.layout;
     const [Wm, Hm] = [L.cols * ONE_PIECE_UNIT, L.rows * ONE_PIECE_UNIT];
     let [x0, y0, x1, y1, z0] = [Infinity, Infinity, -Infinity, -Infinity, Infinity];
@@ -48,11 +50,10 @@ describe("mountain in one piece", () => {
       y1 = Math.max(y1, b.vertices[i + 1]);
       z0 = Math.min(z0, b.vertices[i + 2]);
     }
-    const f = SPEC.fit;
-    expect(x0).toBeCloseTo(f, 9);
-    expect(y0).toBeCloseTo(f, 9);
-    expect(x1).toBeCloseTo(Wm - f, 9);
-    expect(y1).toBeCloseTo(Hm - f, 9);
+    expect(x0).toBe(0);
+    expect(y0).toBe(0);
+    expect(x1).toBeCloseTo(Wm, 9);
+    expect(y1).toBeCloseTo(Hm, 9);
     expect(z0).toBe(0);
     // Fills the bed less 10 mm (to the nearest mm), and a solid's volume: about base × area plus the ground.
     expect(Math.max(Wm, Hm)).toBeGreaterThan(BED[0] - 12);
@@ -140,6 +141,75 @@ describe("mountain in one piece", () => {
     expect(border.problems).toEqual([]);
     expect(border.pieces.length).toBeGreaterThan(3);
     for (const q of border.pieces) for (const b of q.bodies) expect(meshCheck(b.vertices, b.triangles).open, q.name).toBe(0);
+  });
+
+  // The reviewer's steep, craggy mountain (5 × 4 km).
+  const [SW, SH] = [5000, 4000];
+  const steep = gridFrom(sw, SW, SH, 20, (e, n) => {
+    const [x, y] = [(e - sw.e) / SW, (n - sw.n) / SH];
+    const r = Math.hypot(x - 0.5, y - 0.5);
+    return 100 + 1200 * Math.max(0, 1 - r * 2.2) ** 0.5 + (x > 0.6 && x < 0.62 ? 300 : 0) + 80 * Math.sin(e / 60) * Math.cos(n / 75);
+  });
+
+  it("can't be bigger than the bed: scale over 100% is refused", () => {
+    const big = { ...SPEC, scale: 2 };
+    const L = layoutFor(steep, SW, SH, big);
+    const problems = mountainChecks(big, L).problems.join(" ");
+    expect(problems).toMatch(/at most|between 20% and 100%/);
+    expect(problems).toMatch(/bigger than the bed/);
+    expect(() => makeMountainPuzzle(steep, SW, SH, big)).toThrow();
+    const ok = makeMountainPuzzle(steep, SW, SH, SPEC);
+    expect(ok.layout.cols * ONE_PIECE_UNIT).toBeLessThanOrEqual(BED[0]);
+    expect(ok.layout.rows * ONE_PIECE_UNIT).toBeLessThanOrEqual(BED[1]);
+  });
+
+  it("sized and centred clear of the X1's no-print corner and the prime tower's corner", () => {
+    const x1 = PRINTERS.find((p) => p.id === "bambu-x1")!;
+    const bed = x1.size as [number, number, number];
+    const keepOut: BedRect[] = [...(x1.bedExclude ?? []), towerCorner(bed)];
+    const room = bestRoom(centredRooms(bed, keepOut), SW, SH);
+    const spec = { ...SPEC, bed: [room[2] - room[0], room[3] - room[1], bed[2]] as [number, number, number], snowline: 900 };
+    const m = makeMountainPuzzle(steep, SW, SH, spec);
+    const placed = layerPlates(m.pieces, bed, room);
+    expect(placed.fits).toBe(true);
+    expect(placed.plates.length).toBe(1);
+    const [{ move }] = placed.plates[0].pieces;
+    const [W0, H0] = [m.layout.cols * ONE_PIECE_UNIT, m.layout.rows * ONE_PIECE_UNIT];
+    const box: BedRect = [move[0], move[1], move[0] + W0, move[1] + H0];
+    // Centred on the bed, and clear of every kept-out corner.
+    expect(Math.abs(box[0] + box[2] - bed[0])).toBeLessThan(1e-6);
+    expect(Math.abs(box[1] + box[3] - bed[1])).toBeLessThan(1e-6);
+    for (const k of keepOut) expect(box[0] >= k[2] || box[2] <= k[0] || box[1] >= k[3] || box[3] <= k[1], JSON.stringify(k)).toBe(true);
+  });
+
+  it("the steep mountain with snow and every kind of mark: closed, and so are its colour bands", () => {
+    const L0 = makeMountainPuzzle(steep, SW, SH, SPEC).layout;
+    const at = (x: number, y: number): XY => [L0.e0 + x / L0.k, L0.n0 + y / L0.k];
+    const ring = (cx: number, cy: number, r: number, m = 24): XY[] => Array.from({ length: m }, (_, i) => at(cx + r * Math.cos((i / m) * 2 * Math.PI), cy + r * Math.sin((i / m) * 2 * Math.PI)));
+    const f: MapFeatures = {
+      lines: [
+        { kind: "path", pts: Array.from({ length: 80 }, (_, i): XY => at(10 + i * 2.8, 60 + 30 * Math.sin(i / 7))), thin: true, ids: ["1"] },
+        { kind: "road", pts: [at(5, 200), at(120, 180), at(240, 210)], thin: true, ids: ["2"] },
+        { kind: "track", pts: [at(128, 5), at(128, 240)], ids: ["3"] },
+        { kind: "river", pts: [at(5, 30), at(240, 20)], ids: ["4"] },
+      ],
+      shapes: [
+        { kind: "water", rings: [ring(60, 150, 12)] },
+        { kind: "water", rings: [ring(200, 80, 8, 7)] },
+        { kind: "building", rings: [[at(30, 30), at(34, 30), at(34, 34), at(30, 34)]] },
+      ],
+      names: [],
+    };
+    const m = makeMountainPuzzle(steep, SW, SH, { ...SPEC, snowline: 900, printLayer: { layer: 0.2 } }, f);
+    for (const b of m.pieces[0].bodies) expect(closed(b), b.part).toBe(true);
+    const L = m.layout;
+    const flat = makeMountainPuzzle(steep, SW, SH, { ...SPEC, printLayer: { layer: 0.2 } }, f);
+    const scale = { z0: baseFor(flat.spec), h0: L.low, mmPerM: L.k * SPEC.exaggeration };
+    const map = mapRaster(mapOnPuzzle(featuresAtScale(f, L.k).features, L.e0, L.n0, L.k), L.cols * flat.spec.cube, L.rows * flat.spec.cube);
+    const cspec: ColourSpec = { mode: "bands", bands: mountainBands(L.low, L.high, 900), base: GROUND_BROWN, water: WATER_BLUE, layer: LAYER_DEFAULT, paths: "#ff0000", roads: "#000000" };
+    const parts = bandParts(flat.pieces[0].bodies, flat.pieces[0].z0, { spec: cspec, scale, map });
+    expect(parts.length).toBeGreaterThan(3);
+    for (const part of parts) expect(closed(part), `filament ${part.filament}`).toBe(true);
   });
 
   it("leaves the puzzle exactly as it was without the option", () => {

@@ -104,6 +104,17 @@ export const ISLAND_DEFAULTS: Omit<IslandSpec, "bed"> = { scale: 1, piece: 35, b
  */
 export const IN_PLACE_FIT = 0.1;
 
+/**
+ * In one piece the outline sits this far (mm) inside the land's cells: not 0, where the coast's top edge lands exactly on
+ * the base's height and colour bands cut there come out open.
+ */
+export const ONE_PIECE_FIT = 0.05;
+/**
+ * In one piece the ground never comes within this (mm) of the base's top: the coast runs all round at the base's height,
+ * so a colour band cut there (the base's own top is a print layer) would graze it everywhere and come out open.
+ */
+export const ONE_PIECE_RISE = 0.02;
+
 /** Lines to cut along (boundaries, on the OS grid, metres) and names for the areas between them. */
 export interface IslandCuts {
   lines: XY[][];
@@ -1119,7 +1130,9 @@ function buildIsland(
 
   // Each piece's mesh.
   const lift = spec.relief / Math.max(high, 1);
-  const plainTop = (x: number, y: number) => spec.base + Math.max(0, ground(x, y)) * lift;
+  const plainTop = one
+    ? (x: number, y: number) => spec.base + Math.max(ONE_PIECE_RISE, Math.max(0, ground(x, y)) * lift)
+    : (x: number, y: number) => spec.base + Math.max(0, ground(x, y)) * lift;
   let top = plainTop;
   let meshTop = plainTop;
   let fine: ((x: number, y: number) => number) | undefined;
@@ -1171,7 +1184,7 @@ function buildIsland(
   // Numbered from the north-west, row by row.
   order.sort((p, q) => Math.round((q.y - p.y) / P) * 1e6 + (p.x - q.x) || q.y - p.y);
   order.forEach((o, n) => {
-    let body = pieceMesh(piece, nx, ny, cell, o.id, one ? 0 : spec.fit, meshTop, fine);
+    let body = pieceMesh(piece, nx, ny, cell, o.id, one ? ONE_PIECE_FIT : spec.fit, meshTop, fine);
     if (!body) return;
     if (channels) {
       const cut = cutGrooves(body, channels, meshTop, top);
@@ -1211,7 +1224,7 @@ function buildIsland(
     });
   });
   if (one && pieces.length > 1)
-    warnings.push(`${pieces.length - 1} small ${pieces.length === 2 ? "island is a piece" : "islands are pieces"} of ${pieces.length === 2 ? "its" : "their"} own beside the main one.`);
+    warnings.push(`${pieces.length - 1} other ${pieces.length === 2 ? "island is a piece" : "islands are pieces"} of ${pieces.length === 2 ? "its" : "their"} own beside the biggest.`);
   if (unjoined) warnings.push(`${unjoined} ${unjoined === 1 ? "border is" : "borders are"} too short or crowded for a dovetail; those pieces just sit side by side there.`);
   const tabs: IslandTab[] = joined.tabs
     .filter((tb) => indexOf.has(tb.from) && indexOf.has(tb.into))

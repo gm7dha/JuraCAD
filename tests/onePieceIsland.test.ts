@@ -5,9 +5,9 @@
  */
 import { describe, expect, it } from "vitest";
 import { weld } from "../src/geometry/threeMf";
-import { bandParts, islandBands, LAYER_DEFAULT, mapRaster, meshCheck, NO_MAP, SEA_BLUE, GROUND_BROWN, type ColourSpec } from "../src/terrain/colour";
+import { bandParts, islandBands, LAYER_DEFAULT, mapOnPuzzle, mapRaster, meshCheck, NO_MAP, SEA_BLUE, GROUND_BROWN, type ColourSpec } from "../src/terrain/colour";
 import { gridFrom } from "../src/terrain/elevation";
-import { ISLAND_DEFAULTS, islandChecks, makeIslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
+import { featuresForIsland, ISLAND_DEFAULTS, islandChecks, makeIslandPuzzle, type IslandSpec } from "../src/terrain/islandPuzzle";
 import type { MapFeatures } from "../src/terrain/osm";
 import { platesFor, platesInPlace } from "../src/terrain/puzzle3mf";
 import { closedMesh } from "../src/terrain/waterPart";
@@ -83,7 +83,7 @@ describe("island in one piece", () => {
     // The main island is by far the biggest, and the islet is said.
     const areas = p.pieces.map((q) => q.area).sort((a, b) => b - a);
     expect(areas[0]).toBeGreaterThan(areas[1] * 20);
-    expect(p.warnings.join(" ")).toMatch(/1 small island is a piece of its own/);
+    expect(p.warnings.join(" ")).toMatch(/1 other island is a piece of its own/);
   });
 
   it("ignores the piece size, fit and pattern", () => {
@@ -135,5 +135,49 @@ describe("island in one piece", () => {
     expect(b.pieces.length).toBe(a.pieces.length);
     a.pieces.forEach((x, i) => expect(b.pieces[i].bodies[0].vertices).toEqual(x.bodies[0].vertices));
     expect(b.tabs).toEqual(a.tabs);
+  });
+
+  // The reviewer's ragged coast (8 × 6 km): the coast all round at the base's height once left colour bands open there.
+  it("a ragged coast in colour bands: every band part closed, with and without map marks", () => {
+    const isw = { e: 300000, n: 700000 };
+    const [IW, IH] = [8000, 6000];
+    const ragged = gridFrom(isw, IW, IH, 25, (e, n) => {
+      const [x, y] = [(e - isw.e) / IW - 0.5, (n - isw.n) / IH - 0.5];
+      const a = Math.atan2(y, x);
+      const r = Math.hypot(x / 0.42, y / 0.4) + 0.12 * Math.sin(a * 7) + 0.06 * Math.sin(a * 23) + 0.03 * Math.sin(e / 90) * Math.cos(n / 70);
+      const specks = Math.sin(e / 140) * Math.sin(n / 130) > 0.97 ? 3 : 0;
+      return Math.max(0, (1 - r) * 500 + 120 * Math.sin(e / 400)) + specks;
+    });
+    const spec: IslandSpec = { ...ISLAND_DEFAULTS, bed: BED, land: "biggest", onePiece: true, inPlace: true, printLayer: { layer: 0.2 } };
+    const p0 = makeIslandPuzzle(ragged, isw, IW, IH, spec);
+    for (const withMarks of [false, true]) {
+      const o = p0.origin;
+      const k = p0.k;
+      const A = (x: number, y: number): [number, number] => [o.e + x / k, o.n + y / k];
+      const ring = (cx: number, cy: number, r: number) => Array.from({ length: 20 }, (_, i) => A(cx + r * Math.cos(i * 0.314), cy + r * Math.sin(i * 0.314)));
+      const f: MapFeatures = withMarks
+        ? {
+            lines: [
+              { kind: "path", pts: Array.from({ length: 80 }, (_, i) => A(20 + i * 2.5, 100 + 30 * Math.sin(i / 7))), thin: true, ids: ["1"] },
+              { kind: "road", pts: [A(0, 60), A(260, 70)], thin: true, ids: ["2"] },
+            ],
+            shapes: [{ kind: "water", rings: [ring(120, 120, 15)] }, { kind: "building", rings: [[A(80, 80), A(84, 80), A(84, 84), A(80, 84)]] }],
+            names: [],
+          }
+        : { lines: [], shapes: [], names: [] };
+      const p = makeIslandPuzzle(ragged, isw, IW, IH, spec, undefined, f);
+      const map = withMarks ? mapRaster(mapOnPuzzle(featuresForIsland(f, p.k).features, p.origin.e, p.origin.n, p.k), p.width, p.height) : mapRaster(NO_MAP, p.width, p.height);
+      const cspec: ColourSpec = { mode: "bands", bands: islandBands(p.high), base: GROUND_BROWN, water: SEA_BLUE, layer: LAYER_DEFAULT, paths: "#ff0000", roads: "#000000" };
+      const scale = { z0: spec.base, h0: 0, mmPerM: spec.relief / Math.max(p.high, 1) };
+      let parts = 0;
+      for (const q of p.pieces) {
+        for (const b of q.bodies) expect(sound(b), `marks ${withMarks} ${q.name}`).toBe(true);
+        for (const part of bandParts(q.bodies, q.z0, { spec: cspec, scale, map }, q.top)) {
+          parts++;
+          expect(sound(part), `marks ${withMarks} ${q.name} filament ${part.filament}`).toBe(true);
+        }
+      }
+      expect(parts).toBeGreaterThan(3);
+    }
   });
 });

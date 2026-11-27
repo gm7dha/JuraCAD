@@ -254,8 +254,10 @@ export function mountainChecks(spec: MountainSpec, layout?: MountainLayout): { p
   if (spec.onePiece) {
     // In one piece there are no tabs, keys or layers: only the stretch, the scale and the printer's height matter.
     if (!(spec.exaggeration > 0 && spec.exaggeration <= 5)) problems.push("Height stretch should be between 0.1 and 5.");
-    if (!(spec.scale >= 0.2 && spec.scale <= 10)) problems.push("Scale should be between 20% and 1000%.");
+    if (!(spec.scale >= 0.2 && spec.scale <= 1 + 1e-9)) problems.push("In one piece the model has to fit the bed: the scale should be between 20% and 100%.");
     if (layout) {
+      const [w, d] = [layout.cols * ONE_PIECE_UNIT, layout.rows * ONE_PIECE_UNIT];
+      if (w > spec.bed[0] + 1e-9 || d > spec.bed[1] + 1e-9) problems.push(`The model would be ${Math.round(w)} × ${Math.round(d)} mm — bigger than the bed (${spec.bed[0]} × ${spec.bed[1]} mm). Lower the scale.`);
       const tall = baseFor(spec) + (layout.high - layout.low) * layout.k * spec.exaggeration;
       if (tall > spec.bed[2]) problems.push(`The model would be ${Math.round(tall)} mm tall — taller than the printer (${spec.bed[2]} mm). Lower the height stretch or the scale.`);
     }
@@ -1186,8 +1188,7 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
 
 /**
  * In one piece (`MountainSpec.onePiece`): the whole layout as one solid model — the ground on top, four straight sides and
- * a flat underside on the bed, `fit` in from the layout's edge all round (so a border fits round it as round the puzzle),
- * split at the snow line into rock and snow as a top piece is. Sampled about once per height-data point (finer with map
+ * a flat underside on the bed, exactly the layout's rectangle (a border's own fit gap leaves room round it), split at the snow line into rock and snow as a top piece is. Sampled about once per height-data point (finer with map
  * marks pressed on the grid), at most `ONE_PIECE_SAMPLES` a side; paths and roads cut in exactly afterwards.
  */
 function onePieceModel(
@@ -1204,21 +1205,20 @@ function onePieceModel(
 ): MountainPuzzle {
   const W = layout.cols * ONE_PIECE_UNIT;
   const H = layout.rows * ONE_PIECE_UNIT;
-  const fit = Math.max(0, Math.min(spec.fit, Math.min(W, H) / 4));
   // Each loch's flat top on a whole print layer (the model stands on z = 0).
   marks.water?.snap((level) => onPrintLayer(level, 0, spec.printLayer?.layer, spec.printLayer?.first ?? spec.printLayer?.layer));
   const step = Math.max(pressed ? 0.45 : Math.max(0.6, grid.spacing * layout.k), Math.max(W, H) / ONE_PIECE_SAMPLES);
-  const nx = Math.max(8, Math.ceil((W - 2 * fit) / step));
-  const ny = Math.max(8, Math.ceil((H - 2 * fit) / step));
+  const nx = Math.max(8, Math.ceil(W / step));
+  const ny = Math.max(8, Math.ceil(H / step));
   const zs = Math.max(snowZ, 1);
-  const bodies = topBodies([fit, fit, W - fit, H - fit], nx, meshZ, 0, zs, null, g, ny).map((b) => cutTop(b, zs));
+  const bodies = topBodies([0, 0, W, H], nx, meshZ, 0, zs, null, g, ny).map((b) => cutTop(b, zs));
   let peak = 0;
   for (const b of bodies) for (let i = 2; i < b.vertices.length; i += 3) peak = Math.max(peak, b.vertices[i]);
   const outline: P2[] = [
-    [fit, fit],
-    [W - fit, fit],
-    [W - fit, H - fit],
-    [fit, H - fit],
+    [0, 0],
+    [W, 0],
+    [W, H],
+    [0, H],
   ];
   const piece: PuzzlePiece = { name: "Model", col: 0, row: 0, layer: 0, top: true, z0: 0, height: peak, outline, key: null, pocket: null, bodies, joints: 0, neighbours: 0 };
   return { spec: { ...spec, cube: ONE_PIECE_UNIT }, layout, keys: g, snowZ, layers: 1, pieces: [piece], warnings: [...warnings], neck: 0 };
