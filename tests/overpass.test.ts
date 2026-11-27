@@ -173,6 +173,18 @@ describe("asking both servers at once (a race)", () => {
     expect(r.stopped.sort()).toEqual([...OVERPASS_SERVERS].sort());
   });
 
+  it("one server out of memory or refusing (403) ends only its own lane: the other's answer still wins", async () => {
+    for (const fast of [{ status: 200, text: `<osm><remark>runtime error: out of memory</remark></osm>` }, { status: 403, text: "" }]) {
+      const r = racing([[{ ms: 100, answer: { status: 200, text: MAP } }], [{ ms: 0, answer: fast }]], { lanes: [{ server: 0, start: 0 }, { server: 1, start: 0 }] });
+      expect((await askOverpass("q", "coastline", r.ask)).coastline?.length).toBe(1);
+    }
+  });
+
+  it("every lane failed: the reason asking again wouldn't help is given", async () => {
+    const r = racing([[{ ms: 5, answer: "offline" }, { ms: 5, answer: "offline" }], [{ ms: 0, answer: { status: 200, text: `<osm><remark>runtime error: out of memory</remark></osm>` } }]]);
+    await expect(askOverpass("q", "coastline", r.ask)).rejects.toThrow(/too much coastline/);
+  });
+
   it("a query no server can read ends the race at once", async () => {
     const r = racing([[{ ms: 5, answer: { status: 400, text: "" } }], [{ ms: 300, answer: { status: 200, text: MAP } }]]);
     await expect(askOverpass("q", "coastline", r.ask)).rejects.toThrow(/couldn't make sense/);

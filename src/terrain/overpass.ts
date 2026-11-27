@@ -29,6 +29,8 @@ export class OverpassError extends Error {
   constructor(
     message: string,
     readonly again: boolean,
+    /** The query itself can't be read: every server would say the same, so a race ends at once. */
+    readonly everyServer = false,
   ) {
     super(message);
   }
@@ -43,7 +45,7 @@ const EMPTY: OsmData = { bounds: null, lines: [], shapes: [], names: [], boundar
 export function overpassAnswer(status: number, text: string, what: string): OsmData {
   if (status === 429 || status === 504 || status === 502 || status === 503)
     throw new OverpassError(`OpenStreetMap's map service is busy — try again in a minute, or use a map file.`, true);
-  if (status === 400) throw new OverpassError(`OpenStreetMap's map service couldn't make sense of the request for ${what}. Please use a map file instead.`, false);
+  if (status === 400) throw new OverpassError(`OpenStreetMap's map service couldn't make sense of the request for ${what}. Please use a map file instead.`, false, true);
   if (status < 200 || status >= 300) throw new OverpassError(`OpenStreetMap's map service didn't answer properly (error ${status}). Try again later, or use a map file.`, status >= 500);
   const remark = /<remark>([\s\S]*?)<\/remark>/.exec(text)?.[1] ?? "";
   if (/out of memory|memory/i.test(remark))
@@ -156,10 +158,12 @@ export async function askOverpass(query: string, what: string, ask: OverpassAsk)
       if (!left) lose(last);
       for (const l of lanes)
         lane(l).then(win, (e: unknown) => {
-          // A query no server could answer (unreadable, too big) — or a fault of our own — ends the race at once.
-          if (!(e instanceof OverpassError) || !e.again) return lose(e);
-          last = e;
-          if (--left === 0) lose(ask.signal?.aborted ? tooLong() : last);
+          // A query no server can read — or a fault of our own — ends the race at once. Anything else (one server out
+          // of memory, refusing…) ends only that server's lane: another may still be sending a good answer.
+          if (!(e instanceof OverpassError) || e.everyServer) return lose(e);
+          // When every lane has failed, the most telling reason is given: one that asking again wouldn't help.
+          if (!(last instanceof OverpassError) || last.again || !e.again) last = e;
+          if (--left === 0) lose(ask.signal?.aborted && last instanceof OverpassError && last.again ? tooLong() : last);
         });
     });
   } finally {

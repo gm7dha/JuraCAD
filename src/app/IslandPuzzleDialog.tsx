@@ -273,7 +273,8 @@ export function IslandPuzzleDialog() {
     const box = coastBox(sw, width, height) ?? key;
     (async () => {
       try {
-        const kept = coastTry ? null : await keptCoast(box);
+        // (Nothing is kept for a box whose fetch failed, so "Try again" looks too — and finds nothing — then fetches.)
+        const kept = await keptCoast(box, stop.signal);
         if (gone) return;
         if (kept) {
           coastCache.set(key, kept);

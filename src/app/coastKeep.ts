@@ -29,8 +29,32 @@ function openDb(): Promise<IDBDatabase | null> {
   });
 }
 
-/** The coastline kept for the box (coastBox), or null (none kept, too old, or storage not to be had). */
-export async function keptCoast(box: string): Promise<[number, number][][] | null> {
+/** How long (ms) the kept copy is looked for before the coastline is simply fetched (an open that never answers). */
+const LOOK_MS = 2500;
+
+/**
+ * The coastline kept for the box (coastBox), or null (none kept, too old, storage not to be had, or not found within
+ * LOOK_MS / before `signal` stops it — some browsers' IndexedDB never answers).
+ */
+export function keptCoast(box: string, signal?: AbortSignal): Promise<[number, number][][] | null> {
+  return new Promise((done) => {
+    let over = false;
+    const finish = (v: [number, number][][] | null) => {
+      if (over) return;
+      over = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", stop);
+      done(v);
+    };
+    const stop = () => finish(null);
+    const timer = setTimeout(stop, LOOK_MS);
+    if (signal?.aborted) return stop();
+    signal?.addEventListener("abort", stop);
+    lookUp(box).then(finish, stop);
+  });
+}
+
+async function lookUp(box: string): Promise<[number, number][][] | null> {
   const db = await openDb();
   if (!db) return null;
   try {
@@ -48,7 +72,7 @@ export async function keptCoast(box: string): Promise<[number, number][][] | nul
   }
 }
 
-/** Keeps the coastline (OS grid m) for the box; old entries are cleared out at the same time. Never throws. */
+/** Keeps the coastline (OS grid m) for the box; old entries are cleared out at the same time. Never throws; callers don't wait for it. */
 export async function keepCoast(box: string, lines: [number, number][][]): Promise<void> {
   const db = await openDb();
   if (!db) return;

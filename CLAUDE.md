@@ -2201,13 +2201,16 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   `src/terrain/overpass.ts` `askOverpass` — a RACE: `OVERPASS_LANES` (overpass-api.de at once, overpass.kumi.systems
   1 s later, both running together), the first good answer wins and the rest are aborted; a lane whose server was busy/
   unreachable/timed out asks it again after `OVERPASS_RETRY_WAIT` 3 s, `OVERPASS_ATTEMPTS` 2 asks per lane; `tryLimit` only
-  cuts a lane's non-last ask; 400 and out of memory end the race at once; the caller's signal ends everything. Coast: no
+  cuts a lane's non-last ask; only a 400 (`OverpassError.everyServer`: the query can't be read) ends the race at once —
+  other non-retryable answers (out of memory, 403…) end just that lane, and when every lane fails the reason asking again
+  wouldn't help is given; the caller's signal ends everything. Coast: no
   tryLimit, the whole wait `coastWaitMs` (60 s small … 150 s at Lewis and Harris's 105 km; its 18 MB coast has taken a
   server 37 s, another > 70 s), the query's own `[timeout:]` `COAST_SERVER_TIMEOUT` 180; the note counts the seconds
   (`coastFetchingNote`). Boundaries and marks keep 40/90 s. Fetched coastlines are kept in the browser for `KEEP_DAYS` 30
   (pure `src/terrain/coastStore.ts`: `packCoast`/`unpackCoast` — Float32 offsets from a rounded origin + Uint32 lengths,
   ~8 bytes a point —, `keptStale`, key `coastKeepKey(coastBox(…))`; IndexedDB glue `src/app/coastKeep.ts`, every step in
-  try/catch, stale entries dropped on write); "Try again" skips the kept copy. readOsm reads a 16 MB / 180k-point coast in
+  try/catch, stale entries dropped on write, never awaited; `keptCoast(box, signal)` gives up after `LOOK_MS` 2.5 s or on the
+  signal, as some browsers' IndexedDB never answers). readOsm reads a 16 MB / 180k-point coast in
   ~0.5 s (tests/coastBig). Failures are never cached and the note offers "Try again" (`coastTry`); the note says
   COAST_UNUSED when the puzzle didn't use it. Tests: tests/overpass. Lochs inland aren't coastline (land, at their heights). Tests: tests/coastline (pure + a Jura-like loch, a pool filled, a height gap), coastlineReal (wiggly coasts crossing
   the box's sides/corners exactly, ways shuffled, doubled points, islands touching the edge, every cell vs the true land).

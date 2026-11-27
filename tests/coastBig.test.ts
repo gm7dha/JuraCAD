@@ -105,3 +105,26 @@ describe("reading a coast the size of Lewis and Harris's", () => {
     expect(t2 - t0).toBeLessThan(20_000);
   });
 });
+
+describe("looking for a kept coastline never holds up the fetch", () => {
+  it("an IndexedDB that never answers: given up after a few seconds, or at once when stopped", async () => {
+    const { keptCoast } = await import("../src/app/coastKeep");
+    const g = globalThis as { indexedDB?: unknown };
+    const before = g.indexedDB;
+    // An open request whose events never fire (a Safari bug, a broken profile).
+    g.indexedDB = { open: () => ({}) };
+    try {
+      const stop = new AbortController();
+      const t0 = Date.now();
+      const stopped = keptCoast("box", stop.signal);
+      stop.abort();
+      expect(await stopped).toBeNull();
+      expect(Date.now() - t0).toBeLessThan(500);
+      const t1 = Date.now();
+      expect(await keptCoast("box")).toBeNull();
+      expect(Date.now() - t1).toBeLessThan(10_000);
+    } finally {
+      g.indexedDB = before;
+    }
+  });
+});
