@@ -8,6 +8,11 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.127 — Big coastlines come through
+- Island puzzle: for big islands such as Lewis and Harris, both OpenStreetMap map servers are now asked at the same time and the first good answer is used; big coasts get up to 2½ minutes instead of being cut off at 35 seconds, so their sea lochs stay open. One server refusing no longer throws away the other's answer.
+- While it waits, the note under the map counts the seconds.
+- Each coastline is remembered in your browser for a month, so a big island is only fetched once.
+
 ## v0.126 — Two layers of blue on big lochs too
 
 - Big lochs with a narrow neck (like Mull's) now get the same two-layer piece of blue filament as smaller lochs, instead of falling back to painted blue.
