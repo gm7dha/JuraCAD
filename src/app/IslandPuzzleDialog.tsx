@@ -28,7 +28,8 @@ import { NO_TRIM, noTrim, type Trim } from "../terrain/mountainCrop";
 import { PickableView, type TopViewPick } from "./PathPicker";
 import { idsOf, isDropped, islandViewBox, landIdsAfter, NONE_DROPPED, pickableLines, withoutDropped } from "../terrain/pickMarks";
 import { openMountain } from "./mountainState";
-import { coastOnGrid, coastQuery } from "../terrain/coastline";
+import { coastBox, coastOnGrid, coastQuery, coastWaitMs } from "../terrain/coastline";
+import { keepCoast, keptCoast } from "./coastKeep";
 import { loadTerrainTile } from "./mountainTiles";
 import { amsSlotsOf, loadPrinter, printerBed, savePrinter } from "./printerSetting";
 import { ISLAND_COARSE, ISLAND_FLOOR, ISLAND_START, ISLAND_STEP, islandPrintsWell, mostPiecesSize, type CountedVerdict, type SearchResult, type SearchStep } from "../terrain/mostPieces";
@@ -71,8 +72,8 @@ function areaFrom(source: Source, islandId: string, ref: string, km: [number, nu
 }
 
 /** Asking OpenStreetMap's query service from the browser: tried again on busy or unreachable servers (overpass.ts). */
-const browserAsk = (tryLimit: number, signal?: AbortSignal, retrying?: (attempt: number) => void): OverpassAsk => ({
-  tryLimit,
+const browserAsk = (tryLimit: number | undefined, signal?: AbortSignal, retrying?: (attempt: number) => void): OverpassAsk => ({
+  ...(tryLimit !== undefined ? { tryLimit } : {}),
   fetch: (url, init) => fetch(url, init),
   sleep: (ms) =>
     new Promise<void>((done) => {
@@ -105,16 +106,25 @@ async function overpassMap(query: string, what: string): Promise<OsmData> {
   }
 }
 
-/** How long (ms) the puzzle waits for the coastline before it's made from the heights alone. */
-const COAST_WAIT_MS = 60_000;
-/** One try at the coastline before the other server is asked (see overpass.ts). */
-const COAST_TRY_MS = 35_000;
+// How long the puzzle waits for the coastline before it's made from the heights alone grows with the area (coastWaitMs:
+// 60 s for a small island, up to 150 s for Lewis and Harris, whose 18 MB coast has taken a server over a minute). Both
+// servers are asked at once and no ask is cut short before that (no tryLimit), so a slow answer that's coming is kept.
 
 /** Coastlines fetched this session, by area: fetched once, used again when the same island is loaded again. */
 const coastCache = new Map<string, Coast>();
 
 /** What's known about the coastline of the area loaded: being fetched, fetched (null lines = none there), or not to be had. */
-type CoastState = { key: string; status: "fetching"; attempt?: number } | { key: string; status: "ready"; lines: Coast | null; from: "fetched" | "file" } | { key: string; status: "failed"; message: string };
+type CoastState = { key: string; status: "fetching"; attempt?: number; since?: number; wait?: number } | { key: string; status: "ready"; lines: Coast | null; from: "fetched" | "file" } | { key: string; status: "failed"; message: string };
+
+/** What the note says while the coastline is being fetched: how long so far, and that big coasts are slow. */
+function coastFetchingNote(state: CoastState | null, now: number): string {
+  if (!state || state.status !== "fetching" || state.since === undefined) return "Getting the coastline from OpenStreetMap…";
+  const s = Math.max(0, Math.round((now - state.since) / 1000));
+  const most = state.wait ? Math.round(state.wait / 1000) : 0;
+  const busy = state.attempt ? ` One map server was busy, so it's being asked again (ask ${state.attempt}).` : "";
+  const slow = s >= 10 ? ` Big, detailed coasts can take a couple of minutes — it waits up to ${most} s, and once it has the coastline this browser keeps it for next time.` : "";
+  return `Getting the coastline from OpenStreetMap (asking both map servers, ${s} s so far)…${busy}${slow}`;
+}
 
 const areaKey = (a: Area) => `${a.sw.e},${a.sw.n},${a.width},${a.height}`;
 
@@ -156,6 +166,14 @@ export function IslandPuzzleDialog() {
   const coastKey = loaded ? areaKey(loaded.area) : null;
   const coast: Coast | undefined = coastState && coastState.key === coastKey && coastState.status === "ready" ? coastState.lines ?? undefined : undefined;
   const coastPending = !!loaded && (!coastState || coastState.key !== coastKey || coastState.status === "fetching");
+  // While the coastline is coming, the note counts the seconds (a big coast can take a couple of minutes).
+  const [coastNow, setCoastNow] = useState(() => Date.now());
+  const coastFetching = coastState?.status === "fetching";
+  useEffect(() => {
+    if (!coastFetching) return;
+    const t = setInterval(() => setCoastNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [coastFetching]);
   // Whether the coastline fits the heights, judged once on the whole area loaded: a trim or "put together" (which cuts
   // the area down to the island) then uses the very same land, never judging it again on a smaller box.
   const coastOk = useMemo(() => (loaded && coast ? coastFits(loaded.grid, loaded.area.sw, loaded.area.width, loaded.area.height, coast) : undefined), [loaded, coast]);
@@ -244,17 +262,29 @@ export function IslandPuzzleDialog() {
       setCoastState({ key, status: "ready", lines: null, from: "fetched" });
       return;
     }
-    setCoastState({ key, status: "fetching" });
+    const wait = coastWaitMs(width, height);
+    const since = Date.now();
+    setCoastState({ key, status: "fetching", since, wait });
     let gone = false;
-    // The puzzle waits for the coastline, so never for long: past COAST_WAIT_MS (all tries together) it's made from the
-    // heights, and "Try again" is offered.
+    // The puzzle waits for the coastline: past `wait` (both servers together) it's made from the heights, and "Try
+    // again" is offered. A coastline fetched before (in this browser, within a month) is used straight away.
     const stop = new AbortController();
-    const timer = setTimeout(() => stop.abort(), COAST_WAIT_MS);
+    const timer = setTimeout(() => stop.abort(), wait);
+    const box = coastBox(sw, width, height) ?? key;
     (async () => {
       try {
-        const data = await askOverpass(query, "coastline", browserAsk(COAST_TRY_MS, stop.signal, (attempt) => !gone && setCoastState({ key, status: "fetching", attempt })));
+        // (Nothing is kept for a box whose fetch failed, so "Try again" looks too — and finds nothing — then fetches.)
+        const kept = await keptCoast(box, stop.signal);
+        if (gone) return;
+        if (kept) {
+          coastCache.set(key, kept);
+          setCoastState({ key, status: "ready", lines: kept.length ? kept : null, from: "fetched" });
+          return;
+        }
+        const data = await askOverpass(query, "coastline", browserAsk(undefined, stop.signal, (attempt) => !gone && setCoastState({ key, status: "fetching", attempt, since, wait })));
         const lines = data.coastline?.length ? coastOnGrid(data.coastline) : [];
         coastCache.set(key, lines);
+        void keepCoast(box, lines);
         if (!gone) setCoastState({ key, status: "ready", lines: lines.length ? lines : null, from: "fetched" });
       } catch (e) {
         if (!gone) setCoastState({ key, status: "failed", message: e instanceof Error ? e.message : String(e) });
@@ -642,7 +672,7 @@ export function IslandPuzzleDialog() {
               <AreaView grid={loaded.grid} area={loaded.area} used={used} sea={spec.sea} trimmed={!noTrim(trim)} />
               <p className="muted small">
                 {coastPending
-                  ? `Getting the coastline from OpenStreetMap${coastState?.status === "fetching" && coastState.attempt ? ` (the map service was busy — asking again, try ${coastState.attempt})` : ""}…`
+                  ? coastFetchingNote(coastState, coastNow)
                   : coastState?.status === "failed"
                     ? `${coastState.message} For now the heights decide where the sea is (narrow sea lochs may come out filled in). `
                     : !coast
