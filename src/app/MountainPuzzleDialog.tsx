@@ -259,7 +259,9 @@ export function MountainPuzzleDialog() {
   // Colour bands and full colour bring their own snow; the photo puzzle is always plain.
   const colourOn = !photoMode && colour.mode !== "plain";
   // The breakaway way is for one colour (or snow caps); colour bands and full colour print a layer at a time instead.
-  const way: PrintWay = printWay === "together" && colourOn ? "layers" : printWay;
+  // In one piece (a solid model, not a puzzle) there's nothing to put together: it's laid on a plate as it is.
+  const onePiece = !!spec.onePiece;
+  const way: PrintWay = onePiece ? "apart" : printWay === "together" && colourOn ? "layers" : printWay;
   const together = way !== "apart";
 
   const [mapLoaded, setLoaded] = useState<{ area: Area; grid: HeightGrid } | null>(null);
@@ -344,7 +346,8 @@ export function MountainPuzzleDialog() {
   const specKey = JSON.stringify(fullSpec);
   // "As many pieces as will print well": the cube size is found by building a few sizes (a moment apart, so the window
   // keeps drawing), and the puzzle at the size found is kept so it isn't built again.
-  const [most, setMostShown] = useState(() => mostPiecesTicked("mountain"));
+  const [mostTicked, setMostShown] = useState(() => mostPiecesTicked("mountain"));
+  const most = mostTicked && !onePiece;
   const setMost = (on: boolean) => {
     setMostPiecesTicked("mountain", on);
     setMostShown(on);
@@ -720,6 +723,21 @@ export function MountainPuzzleDialog() {
               {printer.printer === CUSTOM_PRINTER && <option value={CUSTOM_PRINTER}>My own size</option>}
             </select>
           </label>
+          <div className="mountain-choices" role="radiogroup" aria-label="What it makes">
+            <label>
+              <input type="radio" name="mountain-make" checked={!onePiece} onChange={() => set("onePiece", undefined)} /> A puzzle of interlocking cubes
+            </label>
+            <label>
+              <input type="radio" name="mountain-make" checked={onePiece} onChange={() => set("onePiece", true)} /> In one piece (a solid model, not a puzzle)
+            </label>
+          </div>
+          {onePiece && (
+            <p className="muted small">
+              {photoMode ? "The picture" : "The mountain"} prints as one solid model on a plate: the ground on top, flat sides and a flat bottom. No cubes, keys or tabs.
+            </p>
+          )}
+          {!onePiece && (
+            <>
           <div className="mountain-choices" role="radiogroup" aria-label="How it's printed">
             <label>
               <input type="radio" name="mountain-print" checked={printWay === "apart"} onChange={() => chooseWay("apart")} /> Pieces laid out on plates
@@ -776,6 +794,8 @@ export function MountainPuzzleDialog() {
               <input type="checkbox" checked={towerOff} onChange={(e) => setTowerOff(e.target.checked)} /> I'll turn the prime tower off in Bambu Studio (the puzzle can then be bigger)
             </label>
           )}
+            </>
+          )}
           <div className="mountain-row">
             <span>Scale</span>
             <span>
@@ -795,6 +815,8 @@ export function MountainPuzzleDialog() {
               unit={(v) => (photoMode ? `${Math.round(v)} px` : `${(v / 1000).toFixed(2)} km`)}
             />
           )}
+          {!onePiece && (
+            <>
           <div className="mountain-row">
             <span>Cube size</span>
             <span>
@@ -806,14 +828,16 @@ export function MountainPuzzleDialog() {
             </span>
           </div>
           <label className="mountain-check">
-            <input type="checkbox" checked={most} onChange={(e) => setMost(e.target.checked)} /> As many pieces as will print well
+            <input type="checkbox" checked={mostTicked} onChange={(e) => setMost(e.target.checked)} /> As many pieces as will print well
           </label>
           {most && <MostPiecesNote search={search} noun="Cubes" pieces={puzzle?.pieces.length ?? null} floorWords={`${mountainFloor(spec.fit)} mm is the smallest cube with sturdy tabs`} looking="Finding the smallest cubes that print well…" foundWords="smallest that prints well" />}
+            </>
+          )}
           <div className="mountain-row">
             <span>Side under the ground</span>
             <span>
               {numberBox(spec.base, (v) => set("base", v), 1, baseFor({ ...spec, base: 0 }), 60, "mm")}
-              <span className="muted small"> plain side below the lowest ground; the bottom layer is a thin jigsaw plate</span>
+              <span className="muted small">{onePiece ? " plain side below the lowest ground" : " plain side below the lowest ground; the bottom layer is a thin jigsaw plate"}</span>
             </span>
           </div>
           {!photoMode && (
@@ -822,6 +846,8 @@ export function MountainPuzzleDialog() {
               {numberBox(spec.exaggeration, (v) => set("exaggeration", v), 0.25, 0.25, 5, "×")}
             </div>
           )}
+          {!onePiece && (
+            <>
           <div className="mountain-row">
             <span>Fit gap</span>
             <span>
@@ -835,6 +861,8 @@ export function MountainPuzzleDialog() {
               <span className="muted small"> which way the tabs point</span>
             </span>
           </div>
+            </>
+          )}
 
           {!photoMode && (
             <>
@@ -944,11 +972,13 @@ export function MountainPuzzleDialog() {
                         }
                   }
                 />
-                <Mountain3D puzzle={puzzle} explode={explode} paint={colourOn ? (coloured?.preview ?? null) : null} border={border && !border.problems.length ? border.pieces : null} />
+                <Mountain3D puzzle={puzzle} explode={onePiece ? 0 : explode} paint={colourOn ? (coloured?.preview ?? null) : null} border={border && !border.problems.length ? border.pieces : null} />
               </div>
-              <label className="mountain-explode small">
-                Pull apart <input type="range" min={0} max={20} value={explode} onChange={(e) => setExplode(Number(e.target.value))} />
-              </label>
+              {!onePiece && (
+                <label className="mountain-explode small">
+                  Pull apart <input type="range" min={0} max={20} value={explode} onChange={(e) => setExplode(Number(e.target.value))} />
+                </label>
+              )}
               {checks.problems.map((p) => (
                 <p key={p} className="error-text small">
                   {p}
@@ -956,7 +986,25 @@ export function MountainPuzzleDialog() {
               ))}
               {buildError && <p className="error-text small">{buildError}</p>}
               {working && <p className="muted small">Working…</p>}
-              {puzzle && (
+              {puzzle && puzzle.spec.onePiece && (
+                <div className="mountain-summary small">
+                  <p>
+                    <strong>Printed as one piece</strong> — finished {puzzle.layout.cols * puzzle.spec.cube} × {puzzle.layout.rows * puzzle.spec.cube} mm and{" "}
+                    {Math.round(Math.max(...puzzle.pieces.map((p) => p.z0 + p.height)))} mm tall;{" "}
+                    {photoMode
+                      ? `${relief} mm of relief over the picture`
+                      : `1 mm is ${Math.round(1 / puzzle.layout.k)} m of ground (1 : ${Math.round(1000 / puzzle.layout.k).toLocaleString("en-GB")}). Ground from ${Math.round(puzzle.layout.low)} m to ${Math.round(puzzle.layout.high)} m`}
+                    , with {Math.round(baseFor(puzzle.spec))} mm of plain side under the lowest.
+                    {!colourOn && snowOn && snowline !== null && (snowParts ? " Its snow is a part of its own: filament 2." : " Nothing reaches the snow line.")}
+                  </p>
+                  {puzzle.warnings.map((w) => (
+                    <p key={w} className="mountain-warn">
+                      {w}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {puzzle && !puzzle.spec.onePiece && (
                 <div className="mountain-summary small">
                   <p>
                     <strong>
@@ -1052,7 +1100,7 @@ export function MountainPuzzleDialog() {
                   )}
                 </div>
               )}
-              {puzzle && (
+              {puzzle && !puzzle.spec.onePiece && (
                 <p className="muted small">
                   Pieces are named column-row-layer (C4-2: column C, row 4 from the south, layer 2 from the bottom), as on the map
                   above. Build layer 1 first, then drop each piece in from above.
@@ -1143,6 +1191,11 @@ function TopView({ grid, area, puzzle, picture, features, pick }: { grid: Height
     ctx.lineWidth = 1;
     ctx.font = "10px system-ui, sans-serif";
     ctx.fillStyle = "rgba(20,30,40,0.9)";
+    if (puzzle.spec.onePiece) {
+      // One piece: just its outline.
+      ctx.strokeRect(ax, ay, bx - ax, by - ay);
+      return;
+    }
     const cw = (bx - ax) / L.cols;
     const ch = (by - ay) / L.rows;
     for (let c = 0; c <= L.cols; c++) {
@@ -1171,7 +1224,7 @@ function TopView({ grid, area, puzzle, picture, features, pick }: { grid: Height
       <PickableView pick={pick} box={mountainViewBox(area)}>
         <canvas ref={ref} className="mountain-top" />
       </PickableView>
-      <figcaption className="muted small">From above, north up: each square is a column of cubes (name × pieces in it).</figcaption>
+      <figcaption className="muted small">{puzzle?.spec.onePiece ? "From above, north up: the outline is the model." : "From above, north up: each square is a column of cubes (name × pieces in it)."}</figcaption>
     </figure>
   );
 }

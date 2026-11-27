@@ -21,7 +21,7 @@
  */
 import { insideGap, offsetPolygon } from "../library/outlines";
 import { heightAt, type HeightGrid } from "./elevation";
-import { groundMarks, onPrintLayer, type PrintLayers } from "./groundMarks";
+import { groundMarks, onPrintLayer, type GroundMarks, type PrintLayers } from "./groundMarks";
 import { cutGrooves } from "./grooveCut";
 import { weld } from "../geometry/threeMf";
 import { featuresAtScale, NO_FEATURES, type MapFeatures } from "./osm";
@@ -49,7 +49,19 @@ export interface MountainSpec {
   fit: number;
   /** Pattern number: which way the tabs point. */
   seed: number;
+  /**
+   * In one piece: a solid relief model, not a puzzle — the ground on a plain side `base` thick, no cubes, layers, keys or
+   * tabs (missing: the puzzle). The layout is then in whole millimetres (`ONE_PIECE_UNIT`), not whole cubes.
+   */
+  onePiece?: boolean;
 }
+
+/** One piece: the layout's unit (mm) in place of the cube, the thinnest plain side (mm), and the most samples a side. */
+export const ONE_PIECE_UNIT = 1;
+export const ONE_PIECE_BASE = 2;
+export const ONE_PIECE_SAMPLES = 500;
+/** The size the layout is in whole steps of: the cube, or 1 mm in one piece. */
+const unitOf = (spec: Pick<MountainSpec, "cube" | "onePiece">) => (spec.onePiece ? ONE_PIECE_UNIT : spec.cube);
 
 export const MOUNTAIN_DEFAULTS: Omit<MountainSpec, "bed"> = { scale: 1, cube: 30, exaggeration: 1.5, base: 10, snowline: null, fit: 0.15, seed: 1 };
 
@@ -185,7 +197,8 @@ const HEADROOM = 1.5;
 const thinnestTop = (spec: Pick<MountainSpec, "cube" | "fit">) => keySizes(spec).depth + 2;
 
 /** The plain side under the lowest ground (mm): as asked, but room for the bottom plate and the thinnest top piece. */
-export function baseFor(spec: Pick<MountainSpec, "base" | "cube" | "fit">): number {
+export function baseFor(spec: Pick<MountainSpec, "base" | "cube" | "fit" | "onePiece">): number {
+  if (spec.onePiece) return Math.max(spec.base, ONE_PIECE_BASE);
   return Math.max(spec.base, PLATE_MIN + thinnestTop(spec) + HEADROOM);
 }
 
@@ -214,11 +227,12 @@ export interface MountainLayout {
 export function layoutFor(grid: HeightGrid, areaWidth: number, areaHeight: number, spec: MountainSpec): MountainLayout {
   const fitBed = Math.min((spec.bed[0] - 10) / areaWidth, (spec.bed[1] - 10) / areaHeight);
   const target = fitBed * spec.scale;
-  const cols = Math.max(1, Math.round((areaWidth * target) / spec.cube));
-  const rows = Math.max(1, Math.round((areaHeight * target) / spec.cube));
-  const k = Math.min((cols * spec.cube) / areaWidth, (rows * spec.cube) / areaHeight);
-  const width = (cols * spec.cube) / k;
-  const height = (rows * spec.cube) / k;
+  const cube = unitOf(spec);
+  const cols = Math.max(1, Math.round((areaWidth * target) / cube));
+  const rows = Math.max(1, Math.round((areaHeight * target) / cube));
+  const k = Math.min((cols * cube) / areaWidth, (rows * cube) / areaHeight);
+  const width = (cols * cube) / k;
+  const height = (rows * cube) / k;
   const e0 = grid.e0 + (areaWidth - width) / 2;
   const n0 = grid.n0 + (areaHeight - height) / 2;
   let low = Infinity;
@@ -237,6 +251,16 @@ export function layoutFor(grid: HeightGrid, areaWidth: number, areaHeight: numbe
 export function mountainChecks(spec: MountainSpec, layout?: MountainLayout): { problems: string[]; warnings: string[] } {
   const problems: string[] = [];
   const warnings: string[] = [];
+  if (spec.onePiece) {
+    // In one piece there are no tabs, keys or layers: only the stretch, the scale and the printer's height matter.
+    if (!(spec.exaggeration > 0 && spec.exaggeration <= 5)) problems.push("Height stretch should be between 0.1 and 5.");
+    if (!(spec.scale >= 0.2 && spec.scale <= 10)) problems.push("Scale should be between 20% and 1000%.");
+    if (layout) {
+      const tall = baseFor(spec) + (layout.high - layout.low) * layout.k * spec.exaggeration;
+      if (tall > spec.bed[2]) problems.push(`The model would be ${Math.round(tall)} mm tall — taller than the printer (${spec.bed[2]} mm). Lower the height stretch or the scale.`);
+    }
+    return { problems, warnings };
+  }
   const neck = neckFor(spec.cube, spec.fit);
   const smallest = smallestCube(spec.fit, MIN_NECK);
   const good = smallestCube(spec.fit, GOOD_NECK);
@@ -583,13 +607,15 @@ function topBodies(
   zs: number,
   pocket: Key | null,
   g: KeySizes,
+  /** Samples up the sides (missing: `n`, a square grid); `n` is then the samples across. */
+  m = n,
 ): Body[] {
   const [xa, ya, xb, yb] = square;
   const N = n + 1;
   const X = (i: number) => (i === n ? xb : xa + ((xb - xa) * i) / n);
-  const Y = (j: number) => (j === n ? yb : ya + ((yb - ya) * j) / n);
-  const H = new Float64Array(N * N);
-  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) H[j * N + i] = Z(X(i), Y(j));
+  const Y = (j: number) => (j === m ? yb : ya + ((yb - ya) * j) / m);
+  const H = new Float64Array(N * (m + 1));
+  for (let j = 0; j <= m; j++) for (let i = 0; i < N; i++) H[j * N + i] = Z(X(i), Y(j));
   interface V {
     x: number;
     y: number;
@@ -622,7 +648,7 @@ function topBodies(
     for (let k = 1; k + 1 < ids.length; k++) up ? m.tri(ids[0], ids[k], ids[k + 1]) : m.tri(ids[0], ids[k + 1], ids[k]);
   };
   // The ground, triangle by triangle, cut at the snow line.
-  for (let j = 0; j < n; j++)
+  for (let j = 0; j < m; j++)
     for (let i = 0; i < n; i++) {
       const a = j * N + i;
       const b = a + 1;
@@ -653,9 +679,9 @@ function topBodies(
   // Round the edge, anticlockwise, with the snow line's crossings in their places.
   const ring: number[] = [];
   for (let i = 0; i < n; i++) ring.push(i);
-  for (let j = 0; j < n; j++) ring.push(j * N + n);
-  for (let i = n; i > 0; i--) ring.push(n * N + i);
-  for (let j = n; j > 0; j--) ring.push(j * N);
+  for (let j = 0; j < m; j++) ring.push(j * N + n);
+  for (let i = n; i > 0; i--) ring.push(m * N + i);
+  for (let j = m; j > 0; j--) ring.push(j * N);
   const edge: V[] = [];
   ring.forEach((id, k) => {
     const next = ring[(k + 1) % ring.length];
@@ -964,7 +990,7 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
   const checks = mountainChecks(spec, layout);
   if (checks.problems.length) throw new Error(checks.problems[0]);
   const { cols, rows, k } = layout;
-  const cube = spec.cube;
+  const cube = unitOf(spec);
   const fit = spec.fit;
   const g = keySizes(spec);
   const base = baseFor(spec);
@@ -991,6 +1017,7 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
     const cut = cutGrooves(w, marks.channels, meshZ, height);
     return cut ? { part: b.part, vertices: cut.vertices, triangles: cut.triangles } : b;
   };
+  if (spec.onePiece) return onePieceModel(spec, layout, grid, g, snowZ, meshZ, cutTop, marks, !baseMarks.empty, checks.warnings);
   const thinnest = g.depth + 2;
   // Layer 0 is the thin plate, the rest full cubes.
   const plate = plateFor(spec);
@@ -1155,4 +1182,44 @@ export function makeMountainPuzzle(grid: HeightGrid, areaWidth: number, areaHeig
   const tallest = Math.max(...pieces.map((p) => p.height));
   if (tallest > spec.bed[2]) warnings.push(`The tallest piece is ${Math.round(tallest)} mm — taller than the printer (${spec.bed[2]} mm). Lower the height stretch.`);
   return { spec, layout, keys: g, snowZ, layers, pieces, warnings, neck: Number.isFinite(neck) ? neck : neckFor(cube, fit), ...(clashes ? { keyClashes: clashes } : {}) };
+}
+
+/**
+ * In one piece (`MountainSpec.onePiece`): the whole layout as one solid model — the ground on top, four straight sides and
+ * a flat underside on the bed, `fit` in from the layout's edge all round (so a border fits round it as round the puzzle),
+ * split at the snow line into rock and snow as a top piece is. Sampled about once per height-data point (finer with map
+ * marks pressed on the grid), at most `ONE_PIECE_SAMPLES` a side; paths and roads cut in exactly afterwards.
+ */
+function onePieceModel(
+  spec: MountainSpec,
+  layout: MountainLayout,
+  grid: HeightGrid,
+  g: KeySizes,
+  snowZ: number,
+  meshZ: (x: number, y: number) => number,
+  cutTop: (b: Body, zs: number) => Body,
+  marks: GroundMarks,
+  pressed: boolean,
+  warnings: string[],
+): MountainPuzzle {
+  const W = layout.cols * ONE_PIECE_UNIT;
+  const H = layout.rows * ONE_PIECE_UNIT;
+  const fit = Math.max(0, Math.min(spec.fit, Math.min(W, H) / 4));
+  // Each loch's flat top on a whole print layer (the model stands on z = 0).
+  marks.water?.snap((level) => onPrintLayer(level, 0, spec.printLayer?.layer, spec.printLayer?.first ?? spec.printLayer?.layer));
+  const step = Math.max(pressed ? 0.45 : Math.max(0.6, grid.spacing * layout.k), Math.max(W, H) / ONE_PIECE_SAMPLES);
+  const nx = Math.max(8, Math.ceil((W - 2 * fit) / step));
+  const ny = Math.max(8, Math.ceil((H - 2 * fit) / step));
+  const zs = Math.max(snowZ, 1);
+  const bodies = topBodies([fit, fit, W - fit, H - fit], nx, meshZ, 0, zs, null, g, ny).map((b) => cutTop(b, zs));
+  let peak = 0;
+  for (const b of bodies) for (let i = 2; i < b.vertices.length; i += 3) peak = Math.max(peak, b.vertices[i]);
+  const outline: P2[] = [
+    [fit, fit],
+    [W - fit, fit],
+    [W - fit, H - fit],
+    [fit, H - fit],
+  ];
+  const piece: PuzzlePiece = { name: "Model", col: 0, row: 0, layer: 0, top: true, z0: 0, height: peak, outline, key: null, pocket: null, bodies, joints: 0, neighbours: 0 };
+  return { spec: { ...spec, cube: ONE_PIECE_UNIT }, layout, keys: g, snowZ, layers: 1, pieces: [piece], warnings: [...warnings], neck: 0 };
 }

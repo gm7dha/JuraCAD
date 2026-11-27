@@ -2224,6 +2224,18 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   mm × patterns 1–3, every piece one outer loop and no hole, every tab catching; those 36 builds are byte-identical to v0.74.
   Tests: tests/islandPuzzle (pure; over seeds/sizes on a ragged coast: ≥ 2 joints per piece, outlines from the meshes never
   cross or come within 2·fit, every tab catches when pulled, median play ≤ 0.5 mm — `tests/support/outlineGeom.ts`), tests/islandMarks.
+- In one piece (the owner's wish; Island and Mountain/Photo windows): a solid model, not a puzzle. Island: `IslandSpec.onePiece`
+  (the dialog's third "Pieces" radio, `cutBy` "one"; always built put together — `inPlace`, scale ≤ 100%) — buildIsland cuts
+  nothing (no boundaries/Voronoi), each 4-connected bit of kept land is a piece, no dovetails (`joined` empty) or crumb pass,
+  pieceMesh with fit 0; `islandChecks` skips piece size and fit; a warning counts the small islands beside the main one. Hidden:
+  piece size, As many pieces, fit gap, pattern, Pull apart, the in-place tick. Mountain: `MountainSpec.onePiece` ("What it
+  makes" radio in 2. Size) — `layoutFor` works in whole mm (`ONE_PIECE_UNIT`, `unitOf`) instead of cubes; `baseFor` = base
+  (≥ `ONE_PIECE_BASE` 2); `mountainChecks` only the stretch, scale and the printer's height; makeMountainPuzzle returns
+  `onePieceModel`: one top piece over the layout's rectangle less `fit` all round (`topBodies` now takes a rectangle's rows `m`;
+  square calls unchanged), z0 0, split at the snow line, ≤ `ONE_PIECE_SAMPLES` 500 a side, grooves cut by cutTop, lochs snapped
+  from z 0; the returned `spec.cube` is 1, so `cols × cube` stays the size everywhere (border, map, colour). Print way forced
+  "apart", cubes/keys/fit/pattern/explode hidden; the top view draws just the outline. Missing = the puzzle byte for byte.
+  Tests: onePieceIsland, onePieceMountain (pure).
 - "As many pieces as will print well" (the owner's wish; Island and Mountain/Photo windows): a tick box under the piece / cube
   size (remembered for the session, `src/app/mostPiecesState.ts`); ticked, the box is greyed and filled in by a search. Pure
   `src/terrain/mostPieces.ts`: `islandPrintsWell` (no dovetail dropped as too thin — `IslandPuzzle.droppedTabs` —, necks ≥
