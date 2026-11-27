@@ -1,20 +1,28 @@
 /**
  * Asking OpenStreetMap's query service (Overpass) for a map (pure: the fetch and the wait are passed in, so tests need no
  * network). Public Overpass servers are often busy: a request that can't get through, is turned away as busy, or runs
- * out of time on the server is tried again — after a short wait, and on another public server — within an overall time
- * limit. Answers that would come out the same again (a query the server can't read, an area with too much in it) aren't.
+ * out of time on the server is tried again after a short wait, within an overall time limit; and every public server is
+ * asked at once, so the quickest answers. Answers that would come out the same again (a query the server can't read, an area with too much in it) aren't.
  */
 import { readOsm, type OsmData } from "./osm";
 
 /** Public Overpass servers (any web page may ask them; no key), tried in this order. */
 export const OVERPASS_SERVERS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
 
-/** The tries: which server (index into the list) and how long (ms) to wait before asking. */
-export const OVERPASS_TRIES: { server: number; wait: number }[] = [
-  { server: 0, wait: 0 },
-  { server: 1, wait: 1000 },
-  { server: 0, wait: 3000 },
+/**
+ * The servers are asked AT THE SAME TIME (a race): each "lane" is one server, first asked `start` ms after the ask
+ * begins. The first good answer wins and the others are stopped. Big, detailed coasts (Lewis and Harris: 18 MB) can take
+ * either server anything from a few seconds to over a minute, and which is quicker changes from day to day, so a slow
+ * answer is never thrown away just because another server was due its turn.
+ */
+export const OVERPASS_LANES: { server: number; start: number }[] = [
+  { server: 0, start: 0 },
+  { server: 1, start: 1000 },
 ];
+/** A lane whose server was busy, unreachable or ran out of time asks it again after this long (ms)… */
+export const OVERPASS_RETRY_WAIT = 3000;
+/** …up to this many times in all per lane. */
+export const OVERPASS_ATTEMPTS = 2;
 
 /** Why a request for a map didn't work, in plain words; `again`: worth asking again (busy, unreachable, timed out). */
 export class OverpassError extends Error {
@@ -55,34 +63,42 @@ export interface OverpassAsk {
   sleep: (ms: number) => Promise<void>;
   /** Stops everything: the overall time limit, or the window moving on. */
   signal?: AbortSignal;
-  /** Called before each try after the first (1-based try number), so the window can say it's trying again. */
+  /** Called before a server is asked again after it failed (the number of the ask, counting every server's: 2, 3…). */
   retrying?: (attempt: number) => void;
-  tries?: { server: number; wait: number }[];
+  lanes?: { server: number; start: number }[];
   servers?: string[];
-  /** The longest (ms) one try may take before the next server is asked (missing: no limit but `signal`; the last try has only `signal`'s). */
+  /** Asks per lane (default OVERPASS_ATTEMPTS) and the wait before asking a lane's server again (default OVERPASS_RETRY_WAIT). */
+  attempts?: number;
+  retryWait?: number;
+  /**
+   * The longest (ms) one ask may take before that server is asked afresh (missing: no limit but `signal`). A lane's last
+   * ask has only `signal`'s limit, so a slow answer that is coming is never cut off.
+   */
   tryLimit?: number;
 }
 
-/** The map from the query, tried on the servers in turn (see OVERPASS_TRIES). The last error when every try failed. */
+/** The map from the query, asked of every server at once (see OVERPASS_LANES): the first good answer. The last error when every ask failed. */
 export async function askOverpass(query: string, what: string, ask: OverpassAsk): Promise<OsmData> {
-  const tries = ask.tries ?? OVERPASS_TRIES;
+  const lanes = ask.lanes ?? OVERPASS_LANES;
   const servers = ask.servers ?? OVERPASS_SERVERS;
-  let last: OverpassError = new OverpassError(`Couldn't reach OpenStreetMap's map service for the ${what}.`, true);
-  for (let t = 0; t < tries.length; t++) {
-    if (ask.signal?.aborted) break;
-    if (t > 0) {
-      ask.retrying?.(t + 1);
-      if (tries[t].wait > 0) await ask.sleep(tries[t].wait);
-      if (ask.signal?.aborted) break;
-    }
-    const url = servers[tries[t].server % servers.length];
-    // This try stops with the whole ask, or on its own once it has taken `tryLimit`.
+  const attempts = Math.max(1, ask.attempts ?? OVERPASS_ATTEMPTS);
+  const retryWait = ask.retryWait ?? OVERPASS_RETRY_WAIT;
+  const tooLong = () => new OverpassError(`OpenStreetMap's map service took too long to send the ${what}.`, true);
+  if (ask.signal?.aborted) throw tooLong();
+  // Everything stops when the race is decided, or with the whole ask.
+  const all = new AbortController();
+  const stopAll = () => all.abort();
+  ask.signal?.addEventListener("abort", stopAll);
+  let asks = 0;
+
+  /** One ask of one server; `limited`: cut off after tryLimit. */
+  const once = async (url: string, limited: boolean): Promise<OsmData> => {
     const one = new AbortController();
     const stopOne = () => one.abort();
-    ask.signal?.addEventListener("abort", stopOne);
+    all.signal.addEventListener("abort", stopOne);
     let slow = false;
     const timer =
-      ask.tryLimit !== undefined && t + 1 < tries.length
+      limited && ask.tryLimit !== undefined
         ? setTimeout(() => {
             slow = true;
             one.abort();
@@ -93,26 +109,61 @@ export async function askOverpass(query: string, what: string, ask: OverpassAsk)
       try {
         res = await ask.fetch(url, { method: "POST", body: new URLSearchParams({ data: query }), signal: one.signal });
       } catch {
-        throw slow
-          ? new OverpassError(`OpenStreetMap's map service took too long to send the ${what}.`, true)
-          : new OverpassError(`Couldn't reach OpenStreetMap's map service for the ${what} — check you're online, or use a map file.`, true);
+        throw slow || ask.signal?.aborted ? tooLong() : new OverpassError(`Couldn't reach OpenStreetMap's map service for the ${what} — check you're online, or use a map file.`, true);
       }
       let text: string;
       try {
         text = await res.text();
       } catch {
-        throw new OverpassError(slow ? `OpenStreetMap's map service took too long to send the ${what}.` : `OpenStreetMap's map service stopped part-way through sending the ${what}.`, true);
+        throw slow || ask.signal?.aborted ? tooLong() : new OverpassError(`OpenStreetMap's map service stopped part-way through sending the ${what}.`, true);
       }
+      if (all.signal.aborted) throw tooLong();
       return overpassAnswer(res.status, text, what);
-    } catch (e) {
-      if (!(e instanceof OverpassError)) throw e;
-      last = e;
-      if (!e.again) throw e;
     } finally {
       if (timer !== null) clearTimeout(timer);
-      ask.signal?.removeEventListener("abort", stopOne);
+      all.signal.removeEventListener("abort", stopOne);
     }
+  };
+
+  /** One server: asked, and asked again while it's busy, unreachable or out of time. */
+  const lane = async (l: { server: number; start: number }): Promise<OsmData> => {
+    const url = servers[l.server % servers.length];
+    if (l.start > 0) await ask.sleep(l.start);
+    let last: OverpassError = new OverpassError(`Couldn't reach OpenStreetMap's map service for the ${what}.`, true);
+    for (let a = 0; a < attempts; a++) {
+      if (all.signal.aborted) throw tooLong();
+      if (a > 0) {
+        ask.retrying?.(asks + 1);
+        if (retryWait > 0) await ask.sleep(retryWait);
+        if (all.signal.aborted) throw tooLong();
+      }
+      asks++;
+      try {
+        return await once(url, a + 1 < attempts);
+      } catch (e) {
+        if (!(e instanceof OverpassError)) throw e;
+        last = e;
+        if (!e.again) throw e;
+      }
+    }
+    throw last;
+  };
+
+  try {
+    return await new Promise<OsmData>((win, lose) => {
+      let left = lanes.length;
+      let last: unknown = new OverpassError(`Couldn't reach OpenStreetMap's map service for the ${what}.`, true);
+      if (!left) lose(last);
+      for (const l of lanes)
+        lane(l).then(win, (e: unknown) => {
+          // A query no server could answer (unreadable, too big) — or a fault of our own — ends the race at once.
+          if (!(e instanceof OverpassError) || !e.again) return lose(e);
+          last = e;
+          if (--left === 0) lose(ask.signal?.aborted ? tooLong() : last);
+        });
+    });
+  } finally {
+    all.abort();
+    ask.signal?.removeEventListener("abort", stopAll);
   }
-  if (ask.signal?.aborted) throw new OverpassError(`OpenStreetMap's map service took too long to send the ${what}.`, true);
-  throw last;
 }

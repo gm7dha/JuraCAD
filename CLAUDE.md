@@ -2198,11 +2198,18 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   skips coastAgrees after that) → makeIslandPuzzle's `coastOk` (missing = judged on its own area), trimmedIsland's
   `rule.coastOk`, the worker's `coastOk` — put together (cut down to the island) re-judged on its own box used to fail
   (the island's blurred shore alone > 10%) and went back to the heights' shape. Fetches go through pure
-  `src/terrain/overpass.ts` `askOverpass` (OVERPASS_SERVERS overpass-api.de then overpass.kumi.systems, OVERPASS_TRIES
-  de → kumi after 1 s → de after 3 s, `tryLimit` per try but the last, the caller's signal for the whole; busy/unreachable/timed-out
-  answers tried again, 400 and out of memory not) — coast (35 s a try, 60 s in all), boundaries and marks (40/90 s);
-  failures are never cached and the note offers "Try again" (`coastTry`); the note says COAST_UNUSED when the puzzle
-  didn't use it. Tests: tests/overpass. Lochs inland aren't coastline (land, at their heights). Tests: tests/coastline (pure + a Jura-like loch, a pool filled, a height gap), coastlineReal (wiggly coasts crossing
+  `src/terrain/overpass.ts` `askOverpass` — a RACE: `OVERPASS_LANES` (overpass-api.de at once, overpass.kumi.systems
+  1 s later, both running together), the first good answer wins and the rest are aborted; a lane whose server was busy/
+  unreachable/timed out asks it again after `OVERPASS_RETRY_WAIT` 3 s, `OVERPASS_ATTEMPTS` 2 asks per lane; `tryLimit` only
+  cuts a lane's non-last ask; 400 and out of memory end the race at once; the caller's signal ends everything. Coast: no
+  tryLimit, the whole wait `coastWaitMs` (60 s small … 150 s at Lewis and Harris's 105 km; its 18 MB coast has taken a
+  server 37 s, another > 70 s), the query's own `[timeout:]` `COAST_SERVER_TIMEOUT` 180; the note counts the seconds
+  (`coastFetchingNote`). Boundaries and marks keep 40/90 s. Fetched coastlines are kept in the browser for `KEEP_DAYS` 30
+  (pure `src/terrain/coastStore.ts`: `packCoast`/`unpackCoast` — Float32 offsets from a rounded origin + Uint32 lengths,
+  ~8 bytes a point —, `keptStale`, key `coastKeepKey(coastBox(…))`; IndexedDB glue `src/app/coastKeep.ts`, every step in
+  try/catch, stale entries dropped on write); "Try again" skips the kept copy. readOsm reads a 16 MB / 180k-point coast in
+  ~0.5 s (tests/coastBig). Failures are never cached and the note offers "Try again" (`coastTry`); the note says
+  COAST_UNUSED when the puzzle didn't use it. Tests: tests/overpass. Lochs inland aren't coastline (land, at their heights). Tests: tests/coastline (pure + a Jura-like loch, a pool filled, a height gap), coastlineReal (wiggly coasts crossing
   the box's sides/corners exactly, ways shuffled, doubled points, islands touching the edge, every cell vs the true land).
   Plugs and pinholes (v0.75): a hole in a piece's outline is given to it whole — thin cells of others, a bit of another
   piece cut off from its body (`mainBody`), sea that isn't kept (`FilledHoles.keptCells`), a pinhole — unless it's kept

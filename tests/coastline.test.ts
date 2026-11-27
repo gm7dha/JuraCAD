@@ -226,6 +226,23 @@ describe("a sea loch with a narrow mouth", () => {
     expect(byCoast.warnings.join(" ")).not.toMatch(/filled in/);
   });
 
+  it("a list island (one island only, with sea points as Lewis and Harris has) keeps the loch open too", () => {
+    // Keep points on the island's far side and by the loch, a sea point in the loch: keepOnly and the hole filling
+    // must not close it up again, laid out, put together or trimmed.
+    const only = { keep: [{ e: CX + 1500, n: CY }, { e: LOCH.e, n: LOCH.n + LOCH.ry + 400 }], sea: [{ e: LOCH.e, n: LOCH.n }] };
+    for (const spec of [{ ...SPEC, only }, { ...SPEC, only, inPlace: true }]) {
+      const p = makeIslandPuzzle(grid, sw, W, H, spec, undefined, undefined, coast);
+      expect(p.coastline).toBe(true);
+      expect(onAPiece(p, ...toPuzzle(p, LOCH.e, LOCH.n))).toBe(false);
+      expect(onAPiece(p, ...toPuzzle(p, LOCH.e - LOCH.rx - 100, CY))).toBe(false);
+      expect(onAPiece(p, ...toPuzzle(p, CX + 1500, CY))).toBe(true);
+    }
+    const t = trimmedIsland({ sw, width: W, height: H }, grid, { n: 0.05, e: 0.05, s: 0.05, w: 0 }, { sea: 0.5, land: "islands", only, coast });
+    const p = makeIslandPuzzle(t.grid, t.sw, t.width, t.height, { ...SPEC, land: "all" }, undefined, undefined, coast);
+    expect(p.coastline).toBe(true);
+    expect(onAPiece(p, ...toPuzzle(p, LOCH.e, LOCH.n))).toBe(false);
+  });
+
   it("put together, the land is boxed by the coastline too", () => {
     const b = landBox(grid, sw, W, H, SPEC.sea, SPEC.land, undefined, coast);
     expect(b.w).toBeGreaterThan(5800);

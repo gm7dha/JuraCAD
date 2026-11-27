@@ -20,8 +20,8 @@ export const COAST_MOST = 130_000;
 /** Fetched this far (m) past the area's edges, so every coastline way crossing it comes too. */
 const COAST_MARGIN = 2000;
 
-/** The query for the coastline round an area, as an .osm file (read with readOsm: its `coastline`). Null when too big. */
-export function coastQuery(sw: GridPoint, width: number, height: number): string | null {
+/** The box (south,west,north,east, degrees to 4 places) the coastline round an area is fetched for. Null when too big. */
+export function coastBox(sw: GridPoint, width: number, height: number): string | null {
   if (Math.max(width, height) > COAST_MOST) return null;
   const m = COAST_MARGIN;
   const corners = [
@@ -31,8 +31,29 @@ export function coastQuery(sw: GridPoint, width: number, height: number): string
     gridToLatLon({ e: sw.e + width + m, n: sw.n + height + m }),
   ];
   const r = (x: number) => x.toFixed(4);
-  const box = [Math.min(...corners.map((c) => c.lat)), Math.min(...corners.map((c) => c.lon)), Math.max(...corners.map((c) => c.lat)), Math.max(...corners.map((c) => c.lon))].map(r).join(",");
-  return `[out:xml][timeout:50][maxsize:62914560];way["natural"="coastline"](${box});(._;>;);out qt;`;
+  return [Math.min(...corners.map((c) => c.lat)), Math.min(...corners.map((c) => c.lon)), Math.max(...corners.map((c) => c.lat)), Math.max(...corners.map((c) => c.lon))].map(r).join(",");
+}
+
+/**
+ * How long (s) the map service may take over the coastline query. A big, detailed coast (Lewis and Harris: 18 MB, ~180k
+ * points) has taken over a minute to come; the server's own limit must not stop it before the window gives up.
+ */
+export const COAST_SERVER_TIMEOUT = 180;
+
+/** The query for the coastline round an area, as an .osm file (read with readOsm: its `coastline`). Null when too big. */
+export function coastQuery(sw: GridPoint, width: number, height: number): string | null {
+  const box = coastBox(sw, width, height);
+  if (!box) return null;
+  return `[out:xml][timeout:${COAST_SERVER_TIMEOUT}][maxsize:62914560];way["natural"="coastline"](${box});(._;>;);out qt;`;
+}
+
+/**
+ * How long (ms) the window waits for the coastline of an area, every server together: a small island ~60 s, growing with
+ * the area's longer side up to 150 s for one Lewis and Harris's size (105 km), as big coasts take the servers longer.
+ */
+export function coastWaitMs(width: number, height: number): number {
+  const km = Math.max(width, height) / 1000;
+  return Math.round(Math.min(150, Math.max(60, 60 + (km - 20) * 1.1)) * 1000);
 }
 
 /** Coastline ways (as the map gives them, land on the left) on the OS grid (m). */
