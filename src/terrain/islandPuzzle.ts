@@ -58,6 +58,11 @@ export interface IslandSpec {
   tower?: boolean;
   /** One island only (a list entry's): only its land is kept, whatever `land` says, and parted from land it's joined to. */
   only?: IslandOnly;
+  /**
+   * In one piece: a solid model, not a puzzle — each separate bit of land kept is one piece (no cuts, dovetails or fit
+   * gap; `piece`, `fit` and `seed` are not used). Missing: the jigsaw.
+   */
+  onePiece?: boolean;
 }
 
 /**
@@ -98,6 +103,17 @@ export const ISLAND_DEFAULTS: Omit<IslandSpec, "bed"> = { scale: 1, piece: 35, b
  * pieces measures about 0.3 mm (0.4 at 0.15): the clearance print-in-place joints use on a 0.4 mm nozzle.
  */
 export const IN_PLACE_FIT = 0.1;
+
+/**
+ * In one piece the outline sits this far (mm) inside the land's cells: not 0, where the coast's top edge lands exactly on
+ * the base's height and colour bands cut there come out open.
+ */
+export const ONE_PIECE_FIT = 0.05;
+/**
+ * In one piece the ground never comes within this (mm) of the base's top: the coast runs all round at the base's height,
+ * so a colour band cut there (the base's own top is a print layer) would graze it everywhere and come out open.
+ */
+export const ONE_PIECE_RISE = 0.02;
 
 /** Lines to cut along (boundaries, on the OS grid, metres) and names for the areas between them. */
 export interface IslandCuts {
@@ -182,10 +198,10 @@ export const LEAST_PIECE_SIZE = 10;
 
 export function islandChecks(spec: IslandSpec): string[] {
   const out: string[] = [];
-  if (!(spec.piece >= LEAST_PIECE_SIZE && spec.piece <= 150)) out.push(`Pieces should be between ${LEAST_PIECE_SIZE} and 150 mm.`);
+  if (!spec.onePiece && !(spec.piece >= LEAST_PIECE_SIZE && spec.piece <= 150)) out.push(`Pieces should be between ${LEAST_PIECE_SIZE} and 150 mm.`);
   if (!(spec.base >= LEAST_BASE && spec.base <= 30)) out.push("The base should be between 1.5 and 30 mm.");
   if (!(spec.relief >= 0 && spec.relief <= 150)) out.push("The highest ground should be between 0 and 150 mm above the base.");
-  if (!(spec.fit >= 0 && spec.fit <= 0.5)) out.push("The fit gap should be between 0 and 0.5 mm.");
+  if (!spec.onePiece && !(spec.fit >= 0 && spec.fit <= 0.5)) out.push("The fit gap should be between 0 and 0.5 mm.");
   if (spec.inPlace && !(spec.scale <= 1 + 1e-9)) out.push("Printed put together, the whole island has to fit on the bed — the scale can be at most 100%.");
   return out;
 }
@@ -936,7 +952,9 @@ function buildIsland(
   // Who owns each land cell: the area between boundaries it's in, or the nearest of a seeded scatter of points.
   const names: (string | undefined)[] = [];
   let alongBoundaries = false;
-  if (cuts?.lines.length) {
+  // In one piece nothing is cut: every bit of land is a piece of its own.
+  const one = !!spec.onePiece;
+  if (cuts?.lines.length && !one) {
     const wall = new Uint8Array(N);
     const mark = (x: number, y: number) => {
       const [i, j] = [Math.floor(x / cell), Math.floor(y / cell)];
@@ -972,7 +990,7 @@ function buildIsland(
       }
     } else warnings.push("The map's boundaries don't divide this land, so it's cut into pieces instead.");
   }
-  if (!alongBoundaries) {
+  if (!alongBoundaries && !one) {
     const rnd = seeded(spec.seed * 7919 + 3);
     const P = spec.piece;
     const [cx, cy] = [Math.ceil(W / P) + 1, Math.ceil(H / P) + 1];
@@ -1077,7 +1095,9 @@ function buildIsland(
   const P = spec.piece;
   const neck = Math.min(12, Math.max(4, 0.26 * P));
   const before = piece.slice();
-  let joined = joinPieces(piece, nx, ny, cell, neck, spec);
+  let joined: Joined = one
+    ? { joints: new Map<number, number>(), made: 0, unjoined: 0, weak: [], loose: 0, touching: new Map<number, Map<number, number>>(), tabs: [] }
+    : joinPieces(piece, nx, ny, cell, neck, spec);
   for (let pass = 0; pass < MAX_JOIN_PASSES && joined.weak.length; pass++) {
     // Each weak piece joins the neighbour it shares most border with (before the tabs were painted).
     const into = new Map<number, number>();
@@ -1095,7 +1115,7 @@ function buildIsland(
   // one, beside a dovetail) would print as loose crumbs with a gap round them: they go to the piece beside them instead.
   // A knob already cut off from its piece (a loose plug in its socket) goes to the piece round it, and that dovetail is
   // dropped; others are left alone. Who touches whom, and the dovetails, are counted again.
-  const crumbs = giveAwayCrumbs(piece, nx, ny, cell, spec.fit, joined.tabs, holes.keptCells);
+  const crumbs = one ? { moved: false, dropped: [] as Joined["tabs"] } : giveAwayCrumbs(piece, nx, ny, cell, spec.fit, joined.tabs, holes.keptCells);
   if (crumbs.moved) joined.touching = touchingOf(piece, nx, ny);
   if (crumbs.dropped.length) {
     joined.tabs = joined.tabs.filter((tb) => !crumbs.dropped.includes(tb));
@@ -1110,7 +1130,9 @@ function buildIsland(
 
   // Each piece's mesh.
   const lift = spec.relief / Math.max(high, 1);
-  const plainTop = (x: number, y: number) => spec.base + Math.max(0, ground(x, y)) * lift;
+  const plainTop = one
+    ? (x: number, y: number) => spec.base + Math.max(ONE_PIECE_RISE, Math.max(0, ground(x, y)) * lift)
+    : (x: number, y: number) => spec.base + Math.max(0, ground(x, y)) * lift;
   let top = plainTop;
   let meshTop = plainTop;
   let fine: ((x: number, y: number) => number) | undefined;
@@ -1162,7 +1184,7 @@ function buildIsland(
   // Numbered from the north-west, row by row.
   order.sort((p, q) => Math.round((q.y - p.y) / P) * 1e6 + (p.x - q.x) || q.y - p.y);
   order.forEach((o, n) => {
-    let body = pieceMesh(piece, nx, ny, cell, o.id, spec.fit, meshTop, fine);
+    let body = pieceMesh(piece, nx, ny, cell, o.id, one ? ONE_PIECE_FIT : spec.fit, meshTop, fine);
     if (!body) return;
     if (channels) {
       const cut = cutGrooves(body, channels, meshTop, top);
@@ -1201,6 +1223,8 @@ function buildIsland(
       neighbours: joined.touching.get(o.id)?.size ?? 0,
     });
   });
+  if (one && pieces.length > 1)
+    warnings.push(`${pieces.length - 1} other ${pieces.length === 2 ? "island is a piece" : "islands are pieces"} of ${pieces.length === 2 ? "its" : "their"} own beside the biggest.`);
   if (unjoined) warnings.push(`${unjoined} ${unjoined === 1 ? "border is" : "borders are"} too short or crowded for a dovetail; those pieces just sit side by side there.`);
   const tabs: IslandTab[] = joined.tabs
     .filter((tb) => indexOf.has(tb.from) && indexOf.has(tb.into))

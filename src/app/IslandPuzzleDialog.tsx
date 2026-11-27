@@ -145,7 +145,9 @@ export function IslandPuzzleDialog() {
   const [printer, setPrinter] = useState(() => loadPrinter());
   const bed = printerBed(printer);
   const [spec, setSpec] = useState<Omit<IslandSpec, "bed">>(() => ({ ...ISLAND_DEFAULTS }));
-  const [cutBy, setCutBy] = useState<"pieces" | "boundaries">("pieces");
+  // How the island is cut: into pieces, along boundaries, or not at all — one solid model ("one").
+  const [cutBy, setCutBy] = useState<"pieces" | "boundaries" | "one">("pieces");
+  const onePiece = cutBy === "one";
   const [level, setLevel] = useState(6);
   const [map, setMap] = useState<{ name: string; data: OsmData; covers?: IslandArea } | null>(null);
   const [mapBusy, setMapBusy] = useState(false);
@@ -422,11 +424,14 @@ export function IslandPuzzleDialog() {
   // no-print corner (and, on the H2D, of what only the other nozzle reaches); in several filaments it leaves a spot for the
   // prime tower.
   const printerInfo = printerOf(printer.printer);
-  const placeBed: [number, number, number] = spec.inPlace ? (printerInfo?.slicerBed ?? bed) : bed;
+  // In one piece the island is always printed where it sits (the land filling the bed), as one plate.
+  const putTogether = !!spec.inPlace || onePiece;
+  const placeBed: [number, number, number] = putTogether ? (printerInfo?.slicerBed ?? bed) : bed;
   const keepOut: BedRect[] = [...(printerInfo?.bedExclude ?? []), ...(printerInfo?.oneNozzleOnly ?? [])];
   const only = loaded?.area.only;
   const fullSpec: IslandSpec = {
-    ...(spec.inPlace ? { ...spec, bed: placeBed, keepOut, tower: colourOn && !towerOff } : { ...spec, bed }),
+    ...(putTogether ? { ...spec, inPlace: true, bed: placeBed, keepOut, tower: colourOn && !towerOff } : { ...spec, bed }),
+    ...(onePiece ? { onePiece: true, scale: Math.min(spec.scale, 1) } : {}),
     // Trimmed: the land was already chosen on the whole area (trimmedIsland), so build all that's left.
     // (Its sea lochs still stay sea: `only` with no keep points.)
     ...(used?.decided ? { land: "all" as const, ...(only?.sea ? { only: { keep: [], sea: only.sea } } : {}) } : only ? { only } : {}),
@@ -549,7 +554,7 @@ export function IslandPuzzleDialog() {
 
   // Colour bands: pieces at different heights get plates of their own, so a plate changes colour on the same layers.
   const byLevel = colourOn && colour.mode === "bands";
-  const inPlace = !!spec.inPlace;
+  const inPlace = putTogether;
   // Put together: one plate, every piece where it sits in the finished puzzle (it must fit the bed less its margins).
   const placed = useMemo(() => (puzzle && inPlace ? platesInPlace(puzzle.pieces, placeBed, puzzle.room) : null), [puzzle, placeBed[0], placeBed[1], placeBed[2], inPlace]);
   const plates = useMemo(
@@ -569,6 +574,12 @@ export function IslandPuzzleDialog() {
         : ` For several filaments Bambu Studio adds a prime tower at the back left, which is on the island here: drag it to the free space ${where.words} of the bed.`;
   // Offered when room for the tower would cost the island size (or there's no room at all).
   const offerTowerOff = inPlace && colourOn && (towerOff || !!puzzle?.tower?.shrunk || (!!puzzle?.tower && !puzzle.tower.at));
+  // In one piece it's printed where it sits, which can't go past 100%.
+  const chooseOnePiece = () => {
+    setCutBy("one");
+    setSpec((s) => ({ ...s, scale: Math.min(s.scale, 1) }));
+    setExplode(0);
+  };
   const chooseInPlace = (on: boolean) => {
     setSpec((s) => ({ ...s, inPlace: on, scale: on ? Math.min(s.scale, 1) : s.scale }));
     if (on) setExplode(0);
@@ -697,12 +708,20 @@ export function IslandPuzzleDialog() {
           <div className="mountain-choices" role="radiogroup" aria-label="How it's cut">
             <label>
               <input type="radio" name="island-cut" checked={cutBy === "pieces"} onChange={() => setCutBy("pieces")} /> Into pieces of about{" "}
-              {numberBox(spec.piece, (v) => set("piece", v), 5, ISLAND_FLOOR, 150, "mm", autoPieces)}
+              {numberBox(spec.piece, (v) => set("piece", v), 5, ISLAND_FLOOR, 150, "mm", autoPieces || onePiece)}
             </label>
             <label>
               <input type="radio" name="island-cut" checked={cutBy === "boundaries"} onChange={() => setCutBy("boundaries")} /> Along real boundaries
             </label>
+            <label>
+              <input type="radio" name="island-cut" checked={onePiece} onChange={() => chooseOnePiece()} /> In one piece (a solid model, not a puzzle)
+            </label>
           </div>
+          {onePiece && (
+            <p className="muted small">
+              The island prints as one solid model — no cuts, no dovetails. Any other islands kept print as pieces of their own, where they sit beside it.
+            </p>
+          )}
           {cutBy === "pieces" && (
             <>
               <label className="mountain-check">
@@ -804,14 +823,18 @@ export function IslandPuzzleDialog() {
               {printer.printer === CUSTOM_PRINTER && <option value={CUSTOM_PRINTER}>My own size</option>}
             </select>
           </label>
+          {!onePiece && (
           <label className="mountain-row">
             <span>Print</span>
             <span>
               <input type="checkbox" checked={inPlace} onChange={(e) => chooseInPlace(e.target.checked)} /> Print it put together (in place)
             </span>
           </label>
+          )}
           <p className="muted small">
-            {inPlace
+            {onePiece
+              ? "The island prints on one plate, as big as the bed allows."
+              : inPlace
               ? `The whole island prints on one plate with every piece where it sits in the finished puzzle, so it can be as big as the bed. The gap between pieces is what keeps them apart — nothing is printed there. At a fit gap of ${IN_PLACE_FIT} mm the narrowest gap between pieces comes out about 0.3 mm, the room print-in-place parts need with a 0.4 mm nozzle. Print a small test first.`
               : "Pieces are laid out apart on as many plates as they need. Tick this to print the island put together on one plate instead."}
           </p>
@@ -840,6 +863,8 @@ export function IslandPuzzleDialog() {
               <span className="muted small"> the highest ground stands above the base</span>
             </span>
           </div>
+          {!onePiece && (
+            <>
           <div className="mountain-row">
             <span>Fit gap</span>
             <span>
@@ -858,6 +883,8 @@ export function IslandPuzzleDialog() {
               <span className="muted small"> where the pieces and tabs go</span>
             </span>
           </div>
+            </>
+          )}
 
           <h3 className="library-heading">5. Colour</h3>
           <ColourPanel
@@ -890,11 +917,13 @@ export function IslandPuzzleDialog() {
                   pick={puzzle && loaded ? { lines: pickableLines(featuresForIsland(mapFeatures, puzzle.k).features.lines, dropped, landIds.current), dropped, onChange: setDropped, pending: working } : null}
                   origin={puzzle ? (puzzle.origin ?? used?.sw ?? loaded?.area.sw ?? null) : null}
                 />
-                <Mountain3D puzzle={puzzle} explode={explode} paint={colourOn ? (coloured?.preview ?? null) : null} />
+                <Mountain3D puzzle={puzzle} explode={onePiece ? 0 : explode} paint={colourOn ? (coloured?.preview ?? null) : null} />
               </div>
-              <label className="mountain-explode small">
-                Pull apart <input type="range" min={0} max={20} value={explode} onChange={(e) => setExplode(Number(e.target.value))} />
-              </label>
+              {!onePiece && (
+                <label className="mountain-explode small">
+                  Pull apart <input type="range" min={0} max={20} value={explode} onChange={(e) => setExplode(Number(e.target.value))} />
+                </label>
+              )}
               {problems.map((p) => (
                 <p key={p} className="error-text small">
                   {p}
@@ -905,14 +934,15 @@ export function IslandPuzzleDialog() {
               {puzzle && (
                 <div className="mountain-summary small">
                   <p>
-                    <strong>{puzzle.pieces.length} pieces</strong>
+                    <strong>{onePiece ? (puzzle.pieces.length === 1 ? "Printed as one piece" : `Printed as one piece, with ${puzzle.pieces.length - 1} other ${puzzle.pieces.length === 2 ? "island" : "islands"} beside it`) : `${puzzle.pieces.length} pieces`}</strong>
                     {puzzle.alongBoundaries ? ` cut along ${levelName(usedLevel).toLowerCase()}${named ? ` (${named} named)` : ""}` : ""} — finished{" "}
                     {placed ? `${Math.round(placed.size[0])} × ${Math.round(placed.size[1])}` : `${Math.round(puzzle.width)} × ${Math.round(puzzle.height)}`} mm, {spec.base} mm thick at the coast and {Math.round(spec.base + spec.relief)} mm
                     on the highest ground ({Math.round(puzzle.high)} m). 1 mm is {formatDistance(1 / puzzle.k)} across.
                   </p>
                   <p className="muted">
-                    {puzzle.joins} dovetails hold the pieces together
-                    {puzzle.warnings.some((w) => w.includes("fewer than two")) ? "" : ` — at least two on every piece${puzzle.loose ? " that has a neighbour" : ""}`}.
+                    {onePiece ? "" : `${puzzle.joins} dovetails hold the pieces together`}
+                    {onePiece || puzzle.warnings.some((w) => w.includes("fewer than two")) ? "" : ` — at least two on every piece${puzzle.loose ? " that has a neighbour" : ""}`}
+                    {onePiece ? "" : "."}
                     {puzzle.marks.shown ? ` ${puzzle.marks.shown} things from the map are pressed into the ground.` : ""}
                   </p>
                   {[...(used?.notes ?? []).filter((w) => !puzzle.warnings.includes(w)), ...puzzle.warnings].map((w) => (
@@ -924,14 +954,14 @@ export function IslandPuzzleDialog() {
               )}
               {placed && !placed.fits && (
                 <p className="error-text small">
-                  Put together, the island is {Math.round(placed.size[0])} × {Math.round(placed.size[1])} mm — too big for the free part of the bed. Lower the scale,
-                  or untick “Print it put together”.
+                  Put together, the island is {Math.round(placed.size[0])} × {Math.round(placed.size[1])} mm — too big for the free part of the bed. Lower the scale{onePiece ? "." : ", or untick “Print it put together”."}
                 </p>
               )}
               {placed?.fits && (
                 <p className="muted small">
-                  One plate, the pieces put together as above. In Bambu Studio don't use Arrange (it would spread the pieces out); each piece comes in with
-                  no brim and elephant-foot compensation on, so the first layer doesn't join them.
+                  {onePiece
+                    ? "One plate. It comes in with no brim and elephant-foot compensation on, so the bottom edge stays crisp."
+                    : "One plate, the pieces put together as above. In Bambu Studio don't use Arrange (it would spread the pieces out); each piece comes in with no brim and elephant-foot compensation on, so the first layer doesn't join them."}
                   {" "}Bambu Studio puts the island in the middle of the bed when it opens the file; it's sized to fit there.
                   {printerInfo?.bedExclude?.length ? " It keeps clear of the front-left corner, where this printer wipes its nozzle." : ""}
                   {printerInfo?.oneNozzleOnly?.length ? " It stays within what one nozzle reaches." : ""}
@@ -958,7 +988,7 @@ export function IslandPuzzleDialog() {
               {colourOn && colouring && <p className="muted small">Colouring the pieces…</p>}
               {colourOn && colourError && <p className="error-text small">{colourError}</p>}
               {colourOn && puzzle && coloured && scale && plates.length > 0 && (
-                <ColourDownloads spec={colour} coloured={coloured} plates={plates} scale={scale} map={paintMap} fileName={fileName} bedWidth={bed[0]} settings={settings} inPlace={inPlace} />
+                <ColourDownloads spec={colour} coloured={coloured} plates={plates} scale={scale} map={paintMap} fileName={fileName} bedWidth={bed[0]} settings={settings} inPlace={inPlace} onePiece={onePiece} />
               )}
               {!colourOn && puzzle && plates.length > 0 && (
                 <div className="mountain-downloads">
@@ -980,7 +1010,7 @@ export function IslandPuzzleDialog() {
                   </button>
                 </div>
               )}
-              {puzzle && <p className="muted small">Pieces are numbered from the north-west, as on the map above.</p>}
+              {puzzle && !onePiece && <p className="muted small">Pieces are numbered from the north-west, as on the map above.</p>}
             </>
           )}
         </div>

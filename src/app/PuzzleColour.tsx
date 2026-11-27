@@ -412,6 +412,7 @@ export function ColourDownloads({
   bedWidth,
   settings,
   inPlace,
+  onePiece,
 }: {
   spec: ColourSpec;
   coloured: Coloured;
@@ -424,6 +425,8 @@ export function ColourDownloads({
   settings?: Readonly<Record<string, string>>;
   /** The pieces are on one plate where they sit in the finished puzzle. */
   inPlace?: boolean;
+  /** A solid model in one piece, not a puzzle (the wording talks of the model, not pieces). */
+  onePiece?: boolean;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const plateName = (i: number) => `${fileName} - plate ${i + 1} of ${plates.length}`;
@@ -483,10 +486,12 @@ export function ColourDownloads({
         </div>
         <p className="muted small">
           Filament changes, roughly: {swaps.map((n, i) => `plate ${i + 1} about ${n}`).join(", ")}.{" "}
-          {inPlace
+          {onePiece
+            ? "Everything is on one plate."
+            : inPlace
             ? "The whole island is on one plate, put together, so every piece changes colour on the same layers."
             : "Pieces standing at different heights in the puzzle are on plates of their own, so every piece on a plate changes colour on the same layers."}
-          {banded.uncut ? ` ${banded.uncut} ${banded.uncut === 1 ? "piece" : "pieces"} couldn't be split and stay one colour.` : ""}
+          {banded.uncut ? (onePiece ? " The model couldn't be split, so it stays one colour." : ` ${banded.uncut} ${banded.uncut === 1 ? "piece" : "pieces"} couldn't be split and stay one colour.`) : ""}
         </p>
         {quieter && quieter.some((n, i) => n < swaps[i]) && (
           <p className="muted small">
@@ -531,7 +536,7 @@ export function ColourDownloads({
           </button>
         </div>
         <div className="mountain-downloads">
-          <span className="small">For print services, every piece in one file:</span>
+          <span className="small">{onePiece ? "For print services, in one file:" : "For print services, every piece in one file:"}</span>
           <button
             className="text-button"
             disabled={!!busy}

@@ -8,6 +8,12 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.128 — Puzzles in one piece
+- Island puzzle and Mountain / Photo relief puzzle: a new choice, "In one piece (a solid model, not a puzzle)", makes a single solid model instead of a jigsaw — no cuts, dovetails, cubes or keys.
+- Map marks, flat lochs, the snow line, colour bands and full colour all still work on the one-piece model.
+- It's sized to fit your printer's bed (up to 100%), centred, clear of the no-print corner and the prime tower, on one plate. Islands lying beside the main one come out as pieces of their own.
+- Puzzle-only settings (piece or cube size, fit gap, pattern, pull apart) are hidden while it's chosen.
+
 ## v0.127 — Big coastlines come through
 - Island puzzle: for big islands such as Lewis and Harris, both OpenStreetMap map servers are now asked at the same time and the first good answer is used; big coasts get up to 2½ minutes instead of being cut off at 35 seconds, so their sea lochs stay open. One server refusing no longer throws away the other's answer.
 - While it waits, the note under the map counts the seconds.
