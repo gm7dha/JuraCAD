@@ -3,7 +3,7 @@
  * "Select other". Pure — the app draws it (src/app/SketchContextMenu.tsx) and runs the choices.
  */
 import { distToCurve } from "./hit";
-import { ALL_RELATIONS, RELATION_LABELS, relationsFor, type RelationTool } from "./ops";
+import { ALL_RELATIONS, isPlaneCurve, RELATION_LABELS, relationsFor, type RelationTool } from "./ops";
 import { canBeCentreline, canSwitchRound } from "./dimensionKinds";
 import { relationKey } from "./sketchView";
 import { patternIdOf } from "./patternEdit";
@@ -51,7 +51,8 @@ export function sketchMenuItems(s: SketchData, selection: string[], ctx: SketchM
   const rels = relationsFor(s, selection);
   if (rels.length) groups.push(rels.map((r) => ({ label: RELATION_LABELS[r], key: relationKey(r) || undefined, action: { kind: "relation", relation: r } })));
   const own: SketchMenuItem[] = [];
-  const curves = selection.filter((id) => s.curves.some((c) => c.id === id));
+  // Planes' lines brought in stay references: they can't be made solid.
+  const curves = selection.filter((id) => s.curves.some((c) => c.id === id && !isPlaneCurve(c)));
   if (curves.length) {
     const toSolid = curves.every((id) => s.curves.find((c) => c.id === id)?.construction);
     own.push({ label: toSolid ? "Make it solid (not construction)" : "Make it construction", key: "Q", action: { kind: "construction" } });

@@ -11,7 +11,7 @@ import { curvatureAt, curveParam, ellipseSpan, nearestParam } from "./curves";
 import { startingLength } from "../model/units";
 import { analyzeSketch, solveSketch } from "./solver";
 import { isFaceEdge, linkEdge, linkPoint, type RefEdge } from "./links";
-import { isDefaultPlaneId, isPlaneRef } from "./planeRefs";
+import { isDefaultPlaneId, isPlaneLink, isPlaneRef } from "./planeRefs";
 import {
   isAngleDimension,
   isDimension,
@@ -665,8 +665,17 @@ export function deleteItems(s: SketchData, ids: string[]): SketchData {
   return solveSketch({ ...s, points, curves, constraints }).sketch;
 }
 
+/**
+ * Whether a curve is a plane's (or the origin's) line brought in as a reference: it stays a fixed construction
+ * reference — never made solid, and no relation of its own (Horizontal, Fix…) is offered for it alone.
+ */
+export function isPlaneCurve(c: SketchCurve | undefined): boolean {
+  const link = c?.link;
+  return !!link && "item" in link && "sketch" in link && isPlaneLink(link as { sketch: string; item: string });
+}
+
 export function toggleConstruction(s: SketchData, curveIds: string[]): SketchData {
-  const ids = new Set(curveIds);
+  const ids = new Set(curveIds.filter((id) => !isPlaneCurve(curveById(s, id))));
   const targets = s.curves.filter((c) => ids.has(c.id));
   if (!targets.length) return s;
   const makeConstruction = targets.some((c) => !c.construction);
@@ -887,6 +896,8 @@ export const ALL_RELATIONS: readonly RelationTool[] = ["coincident", "horizontal
 export function relationsFor(s: SketchData, selection: string[]): RelationTool[] {
   const sel = [...new Set(selection)].filter((id) => !s.constraints.some((c) => c.id === id));
   if (!sel.length) return [];
+  // Only planes' lines picked: they're fixed already, so nothing is offered for them on their own.
+  if (sel.every((id) => isPlaneCurve(curveById(s, id)))) return [];
   return ALL_RELATIONS.filter((tool) => {
     if (tool === "pierce") {
       const pts = sel.filter((id) => isPointId(s, id));

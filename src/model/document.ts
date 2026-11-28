@@ -80,6 +80,14 @@ function parseAreaPicks(raw: unknown): AreaPick[] {
     : [];
 }
 
+/** Features that make no part (sketches, curves, planes, mate connectors): they don't make Add the usual choice. */
+const NO_PART_TYPES: ReadonlySet<FeatureType> = new Set<FeatureType>(["sketch", "curve", "plane", "mateConnector"]);
+
+/** Whether anything before makes a part, so a new solid feature starts on Add (as in Onshape); else New. */
+export function hasPartBefore(features: Feature[]): boolean {
+  return features.some((f) => !f.suppressed && !NO_PART_TYPES.has(f.type));
+}
+
 export function createFeature(doc: JuraCADDocument, type: FeatureType, operation?: Operation): Feature {
   const feature: Feature = {
     id: newId(),
@@ -98,7 +106,7 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     if (type === "extrude") feature.extrude = { end: "blind", flip: false };
     else feature.revolve = { axis: sketch?.sketch ? defaultAxis(sketch.sketch.data) : "vertical", flip: false };
     // Like Onshape: the first solid is a new part, later extrudes add to it.
-    const hasSolid = doc.features.some((f) => f.type !== "sketch" && f.type !== "curve" && !f.suppressed);
+    const hasSolid = hasPartBefore(doc.features);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
     // Pieces that don't touch become separate parts (as in Onshape); Intersect works on every part it reaches.
     feature.apart = true;
@@ -106,7 +114,7 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
   }
   if (type === "sweep" || type === "loft") {
     const sketches = doc.features.filter((f) => f.type === "sketch" && !f.suppressed);
-    const hasSolid = doc.features.some((f) => f.type !== "sketch" && f.type !== "curve" && !f.suppressed);
+    const hasSolid = hasPartBefore(doc.features);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
     if (type === "sweep") {
       feature.apart = true;
@@ -121,7 +129,7 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     }
   }
   if (type === "text") {
-    const hasSolid = doc.features.some((f) => f.type !== "sketch" && f.type !== "curve" && !f.suppressed);
+    const hasSolid = hasPartBefore(doc.features);
     feature.operation = operation ?? (hasSolid ? "add" : "new");
     feature.text = { value: "JuraCAD", plane: { kind: "default", name: "Top" }, bold: false, flip: false };
   }

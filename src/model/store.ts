@@ -51,7 +51,7 @@ import { hasManipulators } from "./manipulators";
 import { isPatternFeature, isPickFeature, isSketchSolid, isSolidFeature, resolveParams } from "./features";
 import { setMirrorReference } from "./patternRefs";
 import { defaultAxis } from "../sketch/axis";
-import { areaSelectionLapses, followedSketch, freeAreas, selectionStart, type AreaSelection } from "../sketch/areaClicks";
+import { areaSelectionLapses, followedSketch, freeAreas, selectionStart, sketchToExtrude, type AreaSelection } from "../sketch/areaClicks";
 import type { Assembly, AssemblyPattern, ExplodeStep, IntendedFit, Replicate, Drawing, Feature, FeatureType, ImportedFile, Instance, Mate, MateConnector, MateRelation, MateType, JuraCADDocument, PartProperties, PlaneName, DatumName } from "./types";
 import { boundsOfVertices } from "../assembly/assembly";
 import { nextPatternName, removePattern, syncPattern } from "../assembly/patterns";
@@ -1102,6 +1102,14 @@ export const useStore = create<AppState>((set, get) => {
         if (picked) {
           draft.sketchRef = picked.id;
           if (type === "revolve" && picked.sketch) draft.revolve = { axis: defaultAxis(picked.sketch.data), flip: false };
+        } else {
+          // Else the last sketch with closed shapes left to use (as Hole's), else none: never a used-up sketch.
+          const bar = s.rollbackTo ? features.findIndex((f) => f.id === s.rollbackTo) : -1;
+          const before = bar >= 0 ? features.slice(0, bar + 1) : features;
+          const id = sketchToExtrude(before, usedSketches(features), (f) => followedSketch(f, s.sketchLinks)?.data);
+          draft.sketchRef = id;
+          const chosen = id ? features.find((f) => f.id === id) : undefined;
+          if (type === "revolve") draft.revolve = { axis: chosen?.sketch ? defaultAxis(chosen.sketch.data) : "vertical", flip: false };
         }
       }
       if (isSketchSolid(type) || type === "sweep") {
