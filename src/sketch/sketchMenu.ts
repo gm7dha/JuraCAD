@@ -68,9 +68,11 @@ export function sketchMenuItems(s: SketchData, selection: string[], ctx: SketchM
   if (pattern) own.push({ label: "Edit pattern…", action: { kind: "editPattern", pattern } });
   if (own.length) groups.push(own);
   const edit: SketchMenuItem[] = [];
-  if (selection.length) edit.push({ label: "Copy", key: "Ctrl+C", action: { kind: "copy" } });
+  // Only planes' lines picked: nothing of the sketch's own to copy or delete (as Onshape's origin and planes).
+  const ownPicked = selection.length > 0 && !selection.every((id) => isPlaneCurve(s.curves.find((c) => c.id === id)));
+  if (ownPicked) edit.push({ label: "Copy", key: "Ctrl+C", action: { kind: "copy" } });
   if (ctx.canPaste) edit.push({ label: "Paste", key: "Ctrl+V", action: { kind: "paste" } });
-  if (selection.length) edit.push({ label: "Delete", key: "Del", action: { kind: "delete" } });
+  if (ownPicked) edit.push({ label: "Delete", key: "Del", action: { kind: "delete" } });
   if (edit.length) groups.push(edit);
   const view: SketchMenuItem[] = [
     { label: ctx.showConstraints ? "Hide all constraints" : "Show all constraints", action: { kind: "showConstraints" } },

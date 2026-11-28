@@ -81,7 +81,7 @@ describe("Accept waits for what must be picked", () => {
     expect(missingPick(feat("f", "split", { splitDef: { plane: { kind: "default", name: "Top" }, keep: "both" } as Feature["splitDef"] }))).toBeNull();
     expect(missingPick(feat("f", "composite", { compositeParts: ["a"] }))).toMatch(/two or more/);
     expect(missingPick(feat("f", "hole", { hole: { kind: "simple", standard: "M3", fit: "clearance", end: "throughAll", flip: false } }))).toMatch(/Click a face/);
-    expect(missingPick(feat("f", "extrude"))).toBeNull();
+    expect(missingPick(feat("f", "extrude", { sketchRef: "s" }))).toBeNull();
     const edge = { partId: "b", ref: { kind: "edge" as const, curve: "LINE", a: [0, 0, 0] as [number, number, number], b: [1, 0, 0] as [number, number, number], mid: [0.5, 0, 0] as [number, number, number] } };
     expect(missingPick(feat("f", "fillet", { picks: [edge] }))).toBeNull();
     // Shell's faces only: an edge clicked by mistake doesn't count.

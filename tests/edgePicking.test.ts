@@ -5,8 +5,9 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { emptyDocument, historyOf, pickingPreview, picksPartsBefore, withoutPicking } from "../src/model/document";
-import { madeByOpenFeature, showingResult, withStartPicking } from "../src/model/edgePicking";
+import { emptyDocument, historyOf, picksPartsBefore, withoutPicking } from "../src/model/document";
+import { checkWhilePicking, madeByOpenFeature, showingResult, withPickingOf, withStartPicking } from "../src/model/edgePicking";
+import { manipulatorsFor } from "../src/model/manipulators";
 import { useStore } from "../src/model/store";
 import type { Feature } from "../src/model/types";
 
@@ -19,11 +20,18 @@ describe("picking a fillet's edges on the part as it was", () => {
     const f = feat("f", "fillet", { picks: [] });
     const picking = withStartPicking(f);
     expect(picking.edgesPicking).toBe(true);
-    expect(picksPartsBefore(picking)).toBe(true);
-    expect(picksPartsBefore(feat("c", "chamfer", { edgesPicking: true }))).toBe(true);
-    expect(picksPartsBefore(f)).toBe(false);
+    // Built and checked (its error shown), but the parts left as they were; later features wait.
+    expect(picksPartsBefore(picking)).toBe(false);
     const list = [feat("b", "box"), picking, feat("later", "fillet")];
-    expect(pickingPreview(list, picking).map((x) => x.id)).toEqual(["b"]);
+    const built = checkWhilePicking(list, picking);
+    expect(built.map((x) => x.id)).toEqual(["b", "f"]);
+    expect(built[1].edgesCheck).toBe(true);
+    expect(checkWhilePicking(list, f)).toBe(list);
+    // No arrows on the edges being clicked.
+    expect(manipulatorsFor({ ...picking, picks: [edgePick as never] }, { parts: [] } as never)).toEqual([]);
+    // Undoing a dialog step keeps picking as it is now.
+    expect(withPickingOf(f, picking).edgesPicking).toBe(true);
+    expect("edgesPicking" in withPickingOf(picking, f)).toBe(false);
     expect(withStartPicking({ ...f, picks: [edgePick as never] }).edgesPicking).toBeUndefined();
     expect(withStartPicking(feat("s", "shell", { picks: [] })).edgesPicking).toBeUndefined();
     expect("edgesPicking" in showingResult(picking)).toBe(false);
@@ -45,7 +53,8 @@ describe("picking a fillet's edges on the part as it was", () => {
     expect(madeByOpenFeature(mesh, { kind: "face", index: 1 }, "fil")).toBe(false);
     expect(madeByOpenFeature(mesh, { kind: "edge", index: 0 }, "fil")).toBe(true);
     expect(madeByOpenFeature(mesh, { kind: "edge", index: 1 }, "fil")).toBe(false);
-    expect(madeByOpenFeature({ ...mesh, faceMakers: undefined }, { kind: "face", index: 0 }, "fil")).toBe(false);
+    // Not known (a part too big to keep its faces' makers): treated as the result's, so the view goes back to picking.
+    expect(madeByOpenFeature({ ...mesh, faceMakers: undefined }, { kind: "face", index: 1 }, "fil")).toBe(true);
   });
 
   it("in the app: a new Fillet picks on the part as it was; typing the radius shows the result; Accept saves no flag", () => {

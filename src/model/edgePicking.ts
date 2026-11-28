@@ -15,6 +15,22 @@ export function withStartPicking(f: Feature): Feature {
   return picksEdges(f) && !(f.picks ?? []).length ? { ...f, edgesPicking: true } : f;
 }
 
+/**
+ * What the engine builds while picking: the features before it, then it marked `edgesCheck` — built and checked (its
+ * error or warning shown as usual), but the parts left as they were, so they're what's clicked.
+ */
+export function checkWhilePicking(features: Feature[], draft: Feature | null): Feature[] {
+  if (!draft || !picksEdges(draft) || !draft.edgesPicking) return features;
+  const at = features.findIndex((f) => f.id === draft.id);
+  return at < 0 ? features : [...features.slice(0, at), { ...features[at], edgesCheck: true }];
+}
+
+/** A dialog undo step taken back: the feature as it was then, but picking (or showing the result) as it is now. */
+export function withPickingOf(restored: Feature, now: Feature): Feature {
+  if (restored.edgesPicking === now.edgesPicking) return restored;
+  return now.edgesPicking ? { ...restored, edgesPicking: true } : showingResult(restored);
+}
+
 /** The feature showing its result again (picking off), or the same object when it already does. */
 export function showingResult(f: Feature): Feature {
   if (f.edgesPicking === undefined) return f;
@@ -28,7 +44,8 @@ export function showingResult(f: Feature): Feature {
  */
 export function madeByOpenFeature(part: FaceEdgeMesh & { faceMakers?: string[] }, item: { kind: string; index: number }, featureId: string): boolean {
   const makers = part.faceMakers;
-  if (!makers) return false;
+  // Not known (a part too big to keep its faces' makers): it may well be the result's — go back to picking to be safe.
+  if (!makers) return true;
   if (item.kind === "face") return makers[item.index] === featureId;
   if (item.kind !== "edge") return false;
   for (let f = 0; f < makers.length; f++) if (makers[f] === featureId && edgesOfFace(part, f).includes(item.index)) return true;

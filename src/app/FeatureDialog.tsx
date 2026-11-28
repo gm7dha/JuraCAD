@@ -2687,6 +2687,8 @@ export function FeatureDialog() {
   const refHint = draft.type === "mirror" ? "Choose the mirror plane first" : draft.type === "circularPattern" ? "Choose the axis first" : "Choose the direction first";
   // Nothing picked yet where something must be (a fillet with no edges): the ✓ waits, saying what to click.
   const missing = needsRef ? null : acceptBlocker(draft, mode === "edit" ? original : null, draft.type === "variable" ? { table: (useStore.getState().history.present.variables ?? []).map((v) => v.name), features: activeFeatures(useStore.getState()) } : undefined);
+  // Picking a Fillet/Chamfer's edges (its result not shown): one that fails can't be accepted unseen.
+  const blindFailure = draft.edgesPicking && buildError ? buildError : null;
   const groups: { title: string; params: ParamDef[] }[] = [
     { title: draft.type === "plane" ? "Placement" : draft.type === "extrude" ? "Depth" : draft.type === "revolve" ? "How far round" : draft.type === "shell" ? "Walls" : isPatternFeature(draft.type) ? "Copies" : draft.type === "transform" ? "Turn" : "Size", params: def.params.filter((p) => p.group === "size") },
     { title: draft.type === "transform" ? "Move" : draft.type === "circularPattern" ? "Axis goes through" : "Position", params: def.params.filter((p) => p.group === "position") },
@@ -2699,7 +2701,7 @@ export function FeatureDialog() {
       aria-label={`${def.label} feature`}
       onSubmit={(e) => {
         e.preventDefault();
-        if (!needsRef && !missing) commitDraft();
+        if (!needsRef && !missing && !blindFailure) commitDraft();
       }}
     >
       <header className="feature-dialog-header">
@@ -2709,8 +2711,8 @@ export function FeatureDialog() {
           <button
             type="submit"
             className="dialog-ok"
-            disabled={hasErrors || needsRef || !!missing}
-            title={hasErrors ? "Fix the highlighted values first" : needsRef ? refHint : missing ?? "Accept (Enter)"}
+            disabled={hasErrors || needsRef || !!missing || !!blindFailure}
+            title={hasErrors ? "Fix the highlighted values first" : needsRef ? refHint : missing ?? blindFailure ?? "Accept (Enter)"}
             aria-label="Accept"
           >
             <Icons.Tick size={18} />

@@ -365,12 +365,13 @@ export function sketchUsedUp(features: Feature[], sketchId: string, data: Sketch
  * closed shapes nothing uses, else none — the dialog then asks for areas to be clicked, rather than extruding a
  * used-up sketch "using every closed shape" again.
  */
-export function sketchToExtrude(features: Feature[], used: ReadonlySet<string>, dataOf: (f: Feature) => SketchData | undefined): string | undefined {
+export function sketchToExtrude(features: Feature[], used: ReadonlySet<string>, dataOf: (f: Feature) => SketchData | undefined, closedOnly = false): string | undefined {
   for (let i = features.length - 1; i >= 0; i--) {
     const f = features[i];
     if (f.type !== "sketch" || f.suppressed || !f.sketch?.plane) continue;
     const data = dataOf(f);
-    if (data && !sketchUsedUp(features, f.id, data, used)) return f.id;
+    // (A sweep's profile needs a closed shape: a sketch of open lines is its path.)
+    if (data && (!closedOnly || sketchAreas(data).areas.length > 0) && !sketchUsedUp(features, f.id, data, used)) return f.id;
   }
   return undefined;
 }

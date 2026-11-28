@@ -91,7 +91,7 @@
   features placed so far this build, reset per build) — later/deleted/suppressed/now parallel = lost (`fromPlanesNote`).
   Tests: sketchPlaneRefs (pure), sketchPlaneRefsStore, sketchPlaneRefsEngine, sketchPlaneRefsRevolve (a plane's line as a revolve axis).
   A plane's (or origin's) line brought in stays construction: `isPlaneCurve` (ops.ts) — Q/`toggleConstruction` and the menu's
-  Make it solid skip it; picked alone, `relationsFor` offers nothing (with own geometry the usual relations). tests/auditFixes.
+  Make it solid skip it; picked alone, `relationsFor` offers nothing and the menu no Copy/Delete (with own geometry as usual). tests/auditFixes.
   Drawing feel (Onshape's, controller.ts): `linePlan` decides a line's end + inferred relation (Shift: none; a point/curve snap:
   just that; an "align" snap still gets H or V — whichever the lining up doesn't give —; else H/V within 4°; else `lineRelation`:
   parallel/perpendicular to a "woken" line (`woken`: own lines hovered while drawing + the chain's last line, ≤ `WOKEN_MAX`;
@@ -1274,11 +1274,15 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   (`manipPatch` writes the point; `noEdit` — typed in the list). Claude: fillet `variable` [{edge, at, radius}] / false,
   `variable_straight`. Not done: vertex radii shared by a chain's edges in one box (each edge's point is its own), `allEdges` +
   variable, conic sections. Picking (Onshape's: clicks on the original edges): `Feature.edgesPicking` (Fillet/Chamfer, never
-  saved — withoutPicking) → `picksPartsBefore`, so the view shows the part as before it, picked edges lit, and a picked edge can
-  be clicked again (unpick, or a radius point). Pure `src/model/edgePicking.ts`: new with nothing picked starts picking; typing
-  a size, dragging an arrow or "Done — show the result" shows the result (`showingResult`); ticking Variable picks; showing the
-  result, a click on what the feature made (`madeByOpenFeature`: faceMakers, edges round those faces via faceEdges) or on
-  nothing goes back to picking with a toast (Viewport). tests/edgePicking. Tests: tests/variableFillet (pure), engineVariableFillet (1 → 4 probed at both ends, three points smooth
+  saved — withoutPicking): connect.ts builds `checkWhilePicking` (features before it + it with `edgesCheck`: the engine's
+  applyEdgeFeature builds and checks it, errors/warnings as usual, but leaves the parts as they were; later features wait),
+  so the view shows the part as before it, picked edges lit, and a picked edge can be clicked again (unpick, or a radius
+  point); no arrows while picking (`manipulatorsFor`); a failure blocks Accept while picking (it can't be seen). Pure
+  `src/model/edgePicking.ts`: new with nothing picked starts picking; typing a size, dragging an arrow or "Done — show the
+  result" shows the result (`showingResult`); ticking Variable picks; dialog undo keeps the mode (`withPickingOf`); showing the
+  result, a click on what the feature made (`madeByOpenFeature`: faceMakers — unknown counts as made — and edges round those
+  faces via faceEdges) or on nothing goes back to picking with a toast (Viewport). Not done: the result drawn see-through
+  while picking. engineEdgePicking, tests/edgePicking. Tests: tests/variableFillet (pure), engineVariableFillet (1 → 4 probed at both ends, three points smooth
   and straight, a reversed pick, main radius on the rest, a tangent run, the ordinary fillet unchanged, too big refused), mcpVariableFillet.
 - Move face types (Onshape's Offset / Translate / Rotate): `Feature.moveFace` (`MoveFaceDef`: `mode`, `axis` X/Y/Z or `along`
   (TopoPick, followed via the engine's `pickedAxis`; Translate: straight edge or flat face's normal, Rotate: straight/round edge or
@@ -1389,7 +1393,8 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   startCreate, setDraftField, toggleDraftPart/Source. Edits never change. New solid features start on New until a feature
   that makes a part comes before (`hasPartBefore`: sketches, curves, Planes, mate connectors don't count). A new
   Extrude/Revolve with none highlighted takes `sketchToExtrude` (areaClicks.ts: the last sketch with closed shapes left —
-  `sketchUsedUp` —, else none). A new Hole's sketch: `holeSketchFor` (highlighted,
+  `sketchUsedUp` —, else none; `missingPick` then waits for areas); a Sweep's profile the same (closed shapes only), its path
+  the last other sketch. A new Hole's sketch: `holeSketchFor` (highlighted,
   else the last feature if an unused sketch with points, else none). Hole face clicks (Viewport handlePick, create mode):
   `placeHoleAt(plane, point)` puts a standalone point in a sketch on that face made for the hole (store closure `holeSketch`:
   written into `history.present` without an undo step; Cancel/startCreate/startEdit put `before` back only while nothing

@@ -422,6 +422,8 @@ export interface Feature {
   mergeScopePicking?: boolean;
   /** Fillet/Chamfer: clicking edges on the part as it was before the feature (never saved; see edgePicking.ts). */
   edgesPicking?: boolean;
+  /** Engine only, while `edgesPicking`: built and checked, but the parts left as they were. */
+  edgesCheck?: boolean;
   /**
    * Extrude, revolve and sweep (solids): areas from other sketches as well as
    * `sketchRef`'s (as Onshape lets one feature use regions of several

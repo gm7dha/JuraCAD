@@ -355,7 +355,6 @@ export function picksPartsBefore(draft: Feature | null): boolean {
   if (!draft) return false;
   if (draft.type === "composite") return true;
   if (draft.mergeScopePicking) return true;
-  if ((draft.type === "fillet" || draft.type === "chamfer") && draft.edgesPicking) return true;
   if (draft.pattern?.of && draft.pattern.picking === "items") return true;
   return draft.mirror?.of === "face" && draft.mirror.picking === "faces";
 }

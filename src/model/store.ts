@@ -87,7 +87,7 @@ import { deleteFeatures as deleteFeaturesIn, findDependents } from "./dependents
 import { designOf, withVersionsOf } from "./versions";
 import { newKeepId, readKept } from "./browserKeep";
 import { rememberOptions, withRemembered, type OptionsMemory } from "./lastOptions";
-import { picksEdges, showingResult } from "./edgePicking";
+import { picksEdges, showingResult, withPickingOf } from "./edgePicking";
 import { holeSketchFor, withAutoValues, type AutoContext, type AutoValues } from "./newFeatureDefaults";
 import { holePositionCount } from "../sketch/holePositions";
 import { acceptBlocker } from "./draftReady";
@@ -1050,7 +1050,8 @@ export const useStore = create<AppState>((set, get) => {
       const s = get();
       const steps = s.draftSteps;
       if (!s.editing || !steps || steps.id !== s.editing.draft.id || !steps.drafts.length) return false;
-      const draft = steps.drafts[steps.drafts.length - 1];
+      // (Picking edges or showing the result isn't a step: it stays as it is now.)
+      const draft = withPickingOf(steps.drafts[steps.drafts.length - 1], s.editing.draft);
       set({ editing: { ...s.editing, draft }, draftSteps: { id: steps.id, drafts: steps.drafts.slice(0, -1) }, transformLive: null });
       return true;
     },
@@ -1112,6 +1113,14 @@ export const useStore = create<AppState>((set, get) => {
           const chosen = id ? features.find((f) => f.id === id) : undefined;
           if (type === "revolve") draft.revolve = { axis: chosen?.sketch ? defaultAxis(chosen.sketch.data) : "vertical", flip: false };
         }
+      }
+      if (type === "sweep") {
+        // The profile: the last sketch with closed shapes left (else none); the path: the last other sketch.
+        const bar = s.rollbackTo ? features.findIndex((f) => f.id === s.rollbackTo) : -1;
+        const before = bar >= 0 ? features.slice(0, bar + 1) : features;
+        const profile = sketchToExtrude(before, usedSketches(features), (f) => followedSketch(f, s.sketchLinks)?.data, true);
+        draft.sketchRef = profile;
+        draft.pathRef = before.filter((f) => f.type === "sketch" && !f.suppressed && f.id !== profile).at(-1)?.id;
       }
       if (isSketchSolid(type) || type === "sweep") {
         // Areas clicked in the 3D view beforehand (as in Onshape): use them.

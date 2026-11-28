@@ -88,6 +88,7 @@ describe("a plane's line brought into a sketch", () => {
     const menu = sketchMenuItems(brought.sketch, [id], ctx);
     expect(menu.some((m) => m.action.kind === "construction")).toBe(false);
     expect(menu.some((m) => m.action.kind === "relation")).toBe(false);
+    expect(menu.some((m) => m.action.kind === "copy" || m.action.kind === "delete")).toBe(false);
     expect(relationsFor(brought.sketch, [id])).toEqual([]);
     // Q leaves it construction.
     const after = toggleConstruction(brought.sketch, [id]);
@@ -121,6 +122,32 @@ describe("small things", () => {
     s().setSketchMessage("Pattern changed.", "info");
     s().sketchRedo();
     expect(s().sketch!.message).toBeNull();
+    s().cancelDraft();
+  });
+});
+
+describe("Accept waits for an Extrude's sketch; a Sweep's profile isn't used up", () => {
+  it("says what to click when there's no sketch, and starts a Sweep on a fresh closed shape", async () => {
+    const { missingPick } = await import("../src/model/draftReady");
+    expect(missingPick(feat("e", "extrude"))).toMatch(/Click the areas to extrude/);
+    expect(missingPick(feat("e", "revolve", { sketchRef: "s" }))).toBeNull();
+    expect(missingPick(feat("w", "sweep"))).toMatch(/area to sweep/);
+    expect(missingPick(feat("w", "sweep", { sweepControl: { face: { partId: "p", ref: { kind: "face", surface: "PLANE", center: [0, 0, 0], normal: [0, 0, 1] } } } as never }))).toBeNull();
+    // Profile used up by an extrude, a path of open lines after it: no profile, the path kept.
+    const prof = sketch("prof");
+    const used = feat("e1", "extrude", { sketchRef: "prof", apart: true, extrude: { end: "blind", flip: false }, params: { depth: "5" } });
+    const path = sketch("path", addLine(emptySketch(), { x: 0, y: 0 }, { x: 0, y: 30 }).sketch);
+    reset([prof, used, path]);
+    s().startCreate("sweep");
+    expect(s().editing!.draft.sketchRef).toBeUndefined();
+    expect(s().editing!.draft.pathRef).toBe("path");
+    s().cancelDraft();
+    // A fresh circle before the path: it's the profile.
+    const fresh = sketch("fresh");
+    reset([prof, used, fresh, path]);
+    s().startCreate("sweep");
+    expect(s().editing!.draft.sketchRef).toBe("fresh");
+    expect(s().editing!.draft.pathRef).toBe("path");
     s().cancelDraft();
   });
 });
