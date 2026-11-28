@@ -88,3 +88,17 @@ describe("sketch toolbar layout", () => {
     expect(MAIN_RELATIONS.length).toBeLessThanOrEqual(5);
   });
 });
+
+describe("Part Studio toolbar on a narrow touch screen", () => {
+  it("has every tool exactly once, in fewer groups", async () => {
+    const { STUDIO_TOUCH_TOOLBAR } = await import("../src/app/toolbarLayout");
+    const placed = toolsIn(STUDIO_TOUCH_TOOLBAR);
+    expect(placed).toEqual(toolsIn(STUDIO_TOOLBAR));
+    const touchSlots = STUDIO_TOUCH_TOOLBAR.filter((e): e is ToolbarSlot => typeof e !== "string");
+    expect(touchSlots.length).toBe(slots.length - 3);
+    const joined = touchSlots.find((s) => s.id === "touch-surface-frame-sheet")!;
+    for (const b of ["frame", "sheetMetal", "unfold"]) expect(joined.breaks).toContain(b);
+    // No two dividers side by side.
+    STUDIO_TOUCH_TOOLBAR.forEach((e, i) => expect(e === "|" && STUDIO_TOUCH_TOOLBAR[i + 1] === "|").toBe(false));
+  });
+});

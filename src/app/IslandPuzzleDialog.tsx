@@ -17,6 +17,7 @@ import { formatGridRef, parseGridRef, type GridPoint } from "../terrain/osGrid";
 import { boundariesOnGrid, boundaryLevels, featuresOnGrid, featureSummary, levelName, MAX_OSM_BYTES, NO_FEATURES, OsmError, readOsm, type MapFeatures, type OsmData, type OsmDetail } from "../terrain/osm";
 import { allPlatesZip, IN_PLACE_SETTINGS, plate3mf, platesByLevel, platesFor, platesInPlace, TOWER_ROOM, towerWhere, type BedRect } from "../terrain/puzzle3mf";
 import { GROUND_BROWN, islandBands, mapOnPuzzle, mapRaster, NO_MAP, SEA_BLUE, type HeightScale } from "../terrain/colour";
+import { undersideLoops } from "../terrain/topOutline";
 import { ColourDownloads, ColourPanel, useBandsFollow, useColoured, useUsualColour } from "./PuzzleColour";
 import { lochLayers } from "../terrain/groundMarks";
 import { downloadFile, safeFileName } from "./download";
@@ -32,7 +33,7 @@ import { coastBox, coastOnGrid, coastQuery, coastWaitMs } from "../terrain/coast
 import { keepCoast, keptCoast } from "./coastKeep";
 import { loadTerrainTile } from "./mountainTiles";
 import { amsSlotsOf, loadPrinter, printerBed, savePrinter } from "./printerSetting";
-import { ISLAND_COARSE, ISLAND_FLOOR, ISLAND_START, ISLAND_STEP, islandPrintsWell, mostPiecesSize, type CountedVerdict, type SearchResult, type SearchStep } from "../terrain/mostPieces";
+import { ISLAND_COARSE, ISLAND_FLOOR, ISLAND_START, ISLAND_STEP, beatsKept, islandPrintsWell, mostPiecesSize, type CountedVerdict, type SearchResult, type SearchStep } from "../terrain/mostPieces";
 import { MostPiecesNote } from "./MostPiecesNote";
 import { mostPiecesTicked, setMostPiecesTicked } from "./mostPiecesState";
 
@@ -453,7 +454,8 @@ export function IslandPuzzleDialog() {
     }
     let stopped = false;
     const inputs: unknown[] = [used, cuts, features, coast, coastOk];
-    const builtAt = new Map<number, IslandBuilt>();
+    // Only the best puzzle so far is kept (every size tried, each a full set of meshes, filled the tab's memory).
+    let kept: { size: number; pieces: number; puzzle: IslandBuilt } | null = null;
     setSearch({ key: searchKey, steps: [], result: null });
     const timer = setTimeout(() => {
       mostPiecesSize({
@@ -472,8 +474,9 @@ export function IslandPuzzleDialog() {
                 // Too slow or too big for the browser depends on the size; anything else (no land, say) doesn't.
                 if ("error" in reply) resolve(/took too long|part-way/.test(reply.error) ? { ok: false, why: "smaller pieces couldn't be made in time", pieces: 0 } : { ok: false, why: reply.error, pieces: 0, final: true });
                 else {
-                  builtAt.set(piece, reply.puzzle);
-                  resolve({ ...islandPrintsWell(reply.puzzle), pieces: reply.puzzle.pieces.length });
+                  const verdict: CountedVerdict = { ...islandPrintsWell(reply.puzzle), pieces: reply.puzzle.pieces.length };
+                  if (beatsKept(kept, piece, verdict)) kept = { size: piece, pieces: verdict.pieces, puzzle: reply.puzzle };
+                  resolve(verdict);
                 }
               },
             );
@@ -481,10 +484,14 @@ export function IslandPuzzleDialog() {
       })
         .then((result) => {
           if (stopped) return;
+          // Done: the search's worker (and what it holds) goes.
+          searchBuilder.current.stop();
           if (result.size !== null) {
-            found.current = { specKey: JSON.stringify({ ...fullSpec, piece: result.size }), inputs, puzzle: builtAt.get(result.size)! };
+            const best: { size: number; puzzle: IslandBuilt } | null = kept;
+            if (best && best.size === result.size) found.current = { specKey: JSON.stringify({ ...fullSpec, piece: result.size }), inputs, puzzle: best.puzzle };
             set("piece", result.size);
           }
+          kept = null;
           setSearch({ key: searchKey, steps: result.steps, result });
         })
         .catch(() => undefined);
@@ -993,7 +1000,7 @@ export function IslandPuzzleDialog() {
               {!colourOn && puzzle && plates.length > 0 && (
                 <div className="mountain-downloads">
                   <span className="small">
-                    {plates.length} {plates.length === 1 ? "plate" : "plates"} for Bambu Studio:
+                    {plates.length === 1 ? "One plate" : `${plates.length} plates`} for Bambu Studio:
                   </span>
                   {plates.map((p, i) => (
                     <button
@@ -1002,12 +1009,14 @@ export function IslandPuzzleDialog() {
                       onClick={() => downloadFile(blobOf(plate3mf(p, `${fileName} - plate ${i + 1}`, settings), "model/3mf"), `${fileName} - plate ${i + 1} of ${plates.length}.3mf`)}
                       title={p.pieces.map((x) => x.piece.name).join(", ")}
                     >
-                      Plate {i + 1} ({p.pieces.length})
+                      {plates.length > 1 ? `Plate ${i + 1} (${p.pieces.length})` : onePiece ? "The model (.3mf)" : `All ${p.pieces.length} pieces (.3mf)`}
                     </button>
                   ))}
-                  <button className="primary-button" onClick={() => downloadFile(blobOf(allPlatesZip(plates, fileName, settings), "application/zip"), `${fileName}.zip`)}>
-                    All plates (.zip)
-                  </button>
+                  {plates.length > 1 && (
+                    <button className="primary-button" onClick={() => downloadFile(blobOf(allPlatesZip(plates, fileName, settings), "application/zip"), `${fileName}.zip`)}>
+                      All plates (.zip)
+                    </button>
+                  )}
                 </div>
               )}
               {puzzle && !onePiece && <p className="muted small">Pieces are numbered from the north-west, as on the map above.</p>}
@@ -1152,16 +1161,15 @@ function IslandTopView({ puzzle, pick, origin }: { puzzle: IslandBuilt | null; p
     ctx.font = "10px system-ui, sans-serif";
     ctx.textAlign = "center";
     puzzle.pieces.forEach((p, n) => {
-      const b = p.bodies[0];
       ctx.fillStyle = `hsl(${(n * 137) % 360} 45% 62%)`;
+      // The underside's outline loops (not its triangles: thousands of sub-paths took the browser a minute to fill).
       ctx.beginPath();
-      for (let t = 0; t < b.triangles.length; t += 3) {
-        const ids = [b.triangles[t], b.triangles[t + 1], b.triangles[t + 2]];
-        if (ids.some((i) => b.vertices[i * 3 + 2] !== 0)) continue;
-        ids.forEach((i, k) => (k ? ctx.lineTo(b.vertices[i * 3] * s, h - b.vertices[i * 3 + 1] * s) : ctx.moveTo(b.vertices[i * 3] * s, h - b.vertices[i * 3 + 1] * s)));
+      for (const loop of undersideLoops(p.bodies[0])) {
+        ctx.moveTo(loop[0] * s, h - loop[1] * s);
+        for (let k = 2; k < loop.length; k += 2) ctx.lineTo(loop[k] * s, h - loop[k + 1] * s);
         ctx.closePath();
       }
-      ctx.fill();
+      ctx.fill("nonzero");
     });
     // The map's marks, only where there's land (drawn onto the pieces just painted).
     ctx.save();
@@ -1203,7 +1211,9 @@ function IslandTopView({ puzzle, pick, origin }: { puzzle: IslandBuilt | null; p
       <PickableView pick={pick} box={puzzle && origin ? islandViewBox(puzzle, origin) : null}>
         <canvas ref={ref} className="mountain-top" />
       </PickableView>
-      <figcaption className="muted small">From above, north up: each piece numbered, with the map's paths, rivers and lochs.</figcaption>
+      <figcaption className="muted small">
+        {puzzle?.pieces.length === 1 ? "From above, north up: the outline is the model, with the map's paths, rivers and lochs." : "From above, north up: each piece numbered, with the map's paths, rivers and lochs."}
+      </figcaption>
     </figure>
   );
 }

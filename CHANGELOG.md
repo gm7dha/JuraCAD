@@ -8,6 +8,13 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.130 — Puzzle windows quicker, iPad toolbar fits
+- Island puzzle "In one piece" no longer freezes the window for a minute: the view from above is drawn in a moment.
+- "As many pieces as will print well" uses less memory while it searches.
+- The puzzle 3D previews (and Enlarge) now show the whole model instead of cutting off its corners.
+- One-piece wording: the windows talk about "the model", and a single plate has one download button.
+- On an iPad held sideways the Part Studio toolbar now fits (icons only, a few groups joined); upright it still scrolls with the arrows.
+
 ## v0.129 — Measured variables
 - New: Variables ▾ › Measured variable (as in Onshape). Give it a name and click things in the view: it measures a distance (shortest, or along X/Y/Z), the length of edges, a diameter or radius, or an angle, and keeps that number up to date as the model changes.
 - Features and sketch dimensions after it in the list can use its name, e.g. a depth of "width / 2". Its value shows on its row and in the Variables window.

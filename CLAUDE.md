@@ -2165,6 +2165,11 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   ignored. The dialog builds in `src/app/islandPuzzle.worker.ts` (`IslandBuilder`: a new build terminates one still
   running, as do settings becoming invalid; a worker that never answers is stopped after `BUILD_LIMIT_MS` 2 min; `IslandBuilt` = the
   puzzle without `groundAt`). The plates' .zip and .3mf are stored, not compressed (`zipStored` has no deflate).
+  The top view fills each piece's underside OUTLINE (`undersideLoops`, src/terrain/topOutline.ts: edges one z = 0 triangle
+  uses, corners joined by place, nonzero fill), never its triangles — a one-piece island's triangles as sub-paths took the
+  browser over a minute. One plate (one piece, put together): no "All plates (.zip)"; the button reads "The model (.3mf)" /
+  "All N pieces (.3mf)" (both windows, plain and colour). (Huge puzzle props make React's DEV build log for seconds and can
+  crash a dev tab on big coloured puzzles; production is unaffected.)
   Printed put together (`IslandSpec.inPlace`, "Print it put together (in place)"; missing = laid out, byte for byte as before):
   `makeIslandPuzzle` crops the area to the kept land (`landBox`: `keepLand` on a ~1500-a-side grid; + 1% and a cell of sea
   only where the land doesn't reach the area's edge — never past the area) and sizes it for the biggest rectangle CENTRED on
@@ -2281,7 +2286,8 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   `MOST_TRIES` 10, stop when settings change (`stopped`). Island: its own `IslandBuilder` worker; mountain: `MountainBuilder`
   (src/app/mountainBuilder.ts → `mountainPuzzle.worker.ts`, built and judged off the page; photo grids made on the page).
   The search is keyed by the spec without the size; the found puzzle is kept (`found`, with what it was built from) so it
-  isn't built again; unticked = the old path exactly. `MostPiecesNote.tsx` says the sizes tried (with counts) and why not
+  isn't built again — only the best so far is held while searching (`beatsKept`: most pieces, ties bigger; mountain: the
+  smallest that prints well), and the search's worker is stopped once it settles; unticked = the old path exactly. `MostPiecesNote.tsx` says the sizes tried (with counts) and why not
   smaller. Tests: mostPieces (pure, fake builders: a count curve, non-monotone verdicts), mostPiecesReal (heavy: a low coast
   finds < 15 mm with > 1.15 × the pieces at 15, every piece held by ≥ 2 catching dovetails, gaps ≥ 2·fit, each one solid; a
   pretend-tile hill at 3× scale finds 32 with 31 over 400 cubes a layer).
@@ -2557,7 +2563,8 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   slots"), `colourWarnings(…, slots)`; the usual bands are always the three above (the old 5/6-band sets and
   `usualBandCount` are gone). Modal ignores Esc while a
   `[data-keeps-escape]` element is up (the spool popup, the enlarged 3D view). `Mountain3D` is taller (clamp 380 px–62vh) with
-  "⤢ Enlarge" (fixed, inset 12 px; Esc or the button back); puzzle windows 1280 wide. `fullColours` pushes corners one by one
+  "⤢ Enlarge" (fixed, inset 12 px; Esc or the button back; framed afresh on resize and for each new puzzle unless turned by
+  hand — `fitDistance` in src/viewport/fitView.ts: every corner of the model's box in view, × `FIT_ROOM` 1.08); puzzle windows 1280 wide. `fullColours` pushes corners one by one
   (a spread overflowed the stack on big pieces). Tests: tests/puzzleColour8 (8 filaments in the 3MF, paint codes 4C/5C, spools).
 - Puzzle designs (`src/library/puzzleDesigns.ts` `PUZZLE_DESIGNS`, group "Puzzles", first in the print tab's GROUP_ORDER;
   LibraryDialog's `GroupedCards` shows the tools first under the same heading). Cylinder maze box (`designs/mazeBox.ts`,
@@ -2623,6 +2630,11 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   (`SKETCH_TOOLBAR_TOOLS` each in one place: `SKETCH_SINGLE_TOOLS`, families — Point under Spline, Round + Chamfer their own
   "round" family —, 5 main relations; Construction icon-only; Extrude/Revolve one ▾, Copy/Paste/Delete one compact ▾; long
   tool names get a `short` button label so the width doesn't change with the tool shown). Smoke: click tools with `tool(name)` (opens the ▾ when needed).
+  Touch screens ≤ 1300 px (`useNarrowTouch`, src/app/narrowTouch.ts, `(pointer: coarse) and (max-width: 1300px)`): toolbar
+  buttons show icons only (`.tool-button:has(> svg) > span` hidden; 42 px, ▾ 20 px) and the Part Studio uses
+  `STUDIO_TOUCH_TOOLBAR` (`joinedSlots`: surfaces + frames + sheet metal, insert + tables share a ▾), so it fits an iPad
+  sideways (1180 px, ~88 px spare; the smoke test fails if not and warns under 20); upright (820) and the sketch toolbar
+  (~1380 px on touch) scroll with the ‹ › arrows.
   Top bar: its buttons never shrink (`.topbar > *`); the name and save state give way (ellipsis), labels go in steps
   (`early-label` Install/New/Open/Save ≤ 1260 px, the rest ≤ 1120 bar Claude's, all ≤ 1000); each button has an aria-label so
   it keeps its name (the smoke test checks nothing is cut off at 1024–1366). Fonts differ, so the bar also
