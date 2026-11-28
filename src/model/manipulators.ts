@@ -359,32 +359,21 @@ function extrudeRevolveHandles(draft: Feature, sketch: { plane: SketchPlane; dat
 }
 
 /**
- * The hole or boss Move face's round picks make, where it was before the move (the handles start there). The parts
- * shown may already have it moved by the dialog's own preview (or, editing, by the feature itself): then it's found
- * where the move puts it and taken back. Kept per pick set, so a drag (shown parts a step behind) never loses it.
+ * The hole or boss Move face's round picks make, where it was before the move (the handles start there), found among
+ * the parts shown as the engine finds picks (so it follows earlier changes). Those parts may already have it moved by
+ * the dialog's own preview (or, editing, by the feature itself): then it's found where the move puts it, and its opening
+ * taken back across its axis (along it, a hole's or boss's opening stays on its face).
  */
-const pieceCache = new Map<string, { axis: Vec3; mouth: Vec3 }>();
-/** Forget the kept holes and bosses (tests). */
-export const forgetMovedPieces = () => pieceCache.clear();
 function movedPiece(picks: readonly TopoPick[], parts: readonly MeshFaces[], mode: "translate" | "rotate", ax: { dir: Vec3; through: Vec3 }, value: number): { axis: Vec3; mouth: Vec3 } | null {
-  const key = JSON.stringify(picks.map((p) => [p.partId, p.ref]));
-  const kept = pieceCache.get(key);
-  if (kept) return kept;
-  let piece = pieceOfPicks(picks, parts);
-  if (!piece && Number.isFinite(value) && Math.abs(value) > 1e-9) {
-    const fwdP = (p: Vec3): Vec3 => (mode === "translate" ? add(p, scale(ax.dir, value)) : turnPoint(p, ax.through, ax.dir, value));
-    const fwdD = (d: Vec3): Vec3 => (mode === "translate" ? d : turnPoint(d, [0, 0, 0], ax.dir, value));
-    const backP = (p: Vec3): Vec3 => (mode === "translate" ? sub(p, scale(ax.dir, value)) : turnPoint(p, ax.through, ax.dir, -value));
-    const backD = (d: Vec3): Vec3 => (mode === "translate" ? d : turnPoint(d, [0, 0, 0], ax.dir, -value));
-    const moved = picks.map((p) => (p.ref.kind === "face" ? { ...p, ref: { ...p.ref, center: fwdP(p.ref.center), normal: fwdD(p.ref.normal) } } : p));
-    const found = pieceOfPicks(moved, parts);
-    if (found) piece = { axis: backD(found.axis), mouth: backP(found.mouth) };
-  }
-  if (piece) {
-    if (pieceCache.size > 32) pieceCache.delete(pieceCache.keys().next().value!);
-    pieceCache.set(key, piece);
-  }
-  return piece;
+  const v = Number.isFinite(value) ? value : 0;
+  const fwd = (p: Vec3): Vec3 => (mode === "translate" ? add(p, scale(ax.dir, v)) : turnPoint(p, ax.through, ax.dir, v));
+  const piece = pieceOfPicks(picks, parts, Math.abs(v) > 1e-9 ? fwd : undefined);
+  if (!piece) return null;
+  if (!piece.moved) return { axis: piece.axis, mouth: piece.mouth };
+  if (mode === "rotate") return { axis: turnPoint(piece.axis, [0, 0, 0], ax.dir, -v), mouth: turnPoint(piece.mouth, ax.through, ax.dir, -v) };
+  const shift = scale(ax.dir, v);
+  const across = sub(shift, scale(piece.axis, dot(shift, piece.axis)));
+  return { axis: piece.axis, mouth: sub(piece.mouth, across) };
 }
 
 function otherHandles(draft: Feature, ctx: ManipContext, base: (key: string, label: string) => Base): Manipulator[] {

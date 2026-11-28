@@ -67,14 +67,14 @@ function leastSpread(vs: Vec3[]): Vec3 | null {
   return best[k] < 0 ? [-best[0], -best[1], -best[2]] : best;
 }
 
-/** A round face's axis (a cylinder's, a cone's) from its mesh, with where along it the face starts and ends. */
-export function roundFaceAxis(mesh: PieceMesh, ref: FaceRef): { dir: Vec3; through: Vec3; lo: number; hi: number } | null {
-  const i = faceIndex(mesh, ref);
+/** A face's axis (a cylinder's, a cone's) from its mesh (face `i`), with where along it the face starts and ends. */
+function axisAt(mesh: PieceMesh, i: number): { dir: Vec3; through: Vec3; lo: number; hi: number } | null {
+  const ref = mesh.faceRefs?.[i];
   const g = mesh.faceGroups?.[i];
   const tris = mesh.triangles;
   const vs = mesh.vertices;
   const ns = mesh.normals;
-  if (!g || !tris || !vs || !ns) return null;
+  if (!ref || !g || !tris || !vs || !ns) return null;
   const normals: Vec3[] = [];
   const points: Vec3[] = [];
   const seen = new Set<number>();
@@ -99,42 +99,110 @@ export function roundFaceAxis(mesh: PieceMesh, ref: FaceRef): { dir: Vec3; throu
   return { dir, through, lo, hi };
 }
 
+/** A round face's axis (a cylinder's, a cone's) from its mesh, with where along it the face starts and ends. */
+export function roundFaceAxis(mesh: PieceMesh, ref: FaceRef): { dir: Vec3; through: Vec3; lo: number; hi: number } | null {
+  return axisAt(mesh, faceIndex(mesh, ref));
+}
+
+const sub3 = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+
+/** How far a face (centre `c`, axis `dir`) is from where one was wanted: mostly across its axis (moved along it, a hole's middle shifts by less). */
+function offBy(c: Vec3, dir: Vec3, want: Vec3): number {
+  const d = sub3(c, want);
+  const along = dot(d, dir);
+  const across = Math.hypot(d[0] - dir[0] * along, d[1] - dir[1] * along, d[2] - dir[2] * along);
+  return across + 0.25 * Math.abs(along);
+}
+
+function sizeOf(mesh: PieceMesh): number {
+  const v = mesh.vertices;
+  if (!v || v.length < 3) return 1;
+  const lo: Vec3 = [Infinity, Infinity, Infinity];
+  const hi: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i + 2 < v.length; i += 3)
+    for (let k = 0; k < 3; k++) {
+      lo[k] = Math.min(lo[k], v[i + k]);
+      hi[k] = Math.max(hi[k], v[i + k]);
+    }
+  return Math.max(1, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]));
+}
+
 /**
  * The piece the picked faces make (when one of them is round): its axis, and the middle of its opening — the end of
  * the round faces away from any picked flat face (a blind hole's floor, a boss's top); with none, the end its axis
- * points to (the top, for a hole in a top face). Null when there's no round face or its mesh isn't known.
+ * points to (the top, for a hole in a top face). The picked faces are found among the part's faces as the engine
+ * finds them (near and unambiguous, so they follow earlier changes); `guess` says where the move being made puts a
+ * point, for parts shown with it already moved — `moved` then says it was found there. Null when there's no round
+ * face, its mesh isn't known, or it can't be told which face it is.
  */
-export function pieceOfPicks(picks: readonly TopoPick[] | undefined, parts: readonly PieceMesh[]): { axis: Vec3; mouth: Vec3 } | null {
+export function pieceOfPicks(picks: readonly TopoPick[] | undefined, parts: readonly PieceMesh[], guess?: (p: Vec3) => Vec3): { axis: Vec3; mouth: Vec3; moved: boolean } | null {
   const faces = (picks ?? []).filter((p): p is TopoPick & { ref: FaceRef } => p.ref.kind === "face");
   const round = faces.find((p) => p.ref.surface !== "PLANE");
   if (!round) return null;
   const mesh = parts.find((m) => m.id === round.partId);
-  if (!mesh) return null;
-  const ax = roundFaceAxis(mesh, round.ref);
-  if (!ax) return null;
+  if (!mesh?.faceRefs) return null;
+  const refs = mesh.faceRefs;
+  const axes = new Map<number, ReturnType<typeof axisAt>>();
+  const axis = (i: number) => {
+    if (!axes.has(i)) axes.set(i, axisAt(mesh, i));
+    return axes.get(i)!;
+  };
+  const size = sizeOf(mesh);
+  const ways = guess ? [(p: Vec3) => p, guess] : [(p: Vec3) => p];
+  /** The face of the part a picked round face is now, by way `w`: nearest and unambiguous, else -1. */
+  const find = (ref: FaceRef, w: number): { i: number; d: number } => {
+    const want = ways[w](ref.center);
+    let best = -1;
+    let bestD = Infinity;
+    let second = Infinity;
+    refs.forEach((r, i) => {
+      if (r.surface !== ref.surface) return;
+      const ax = axis(i);
+      if (!ax) return;
+      const d = offBy(r.center, ax.dir, want);
+      if (d < bestD) {
+        second = bestD;
+        bestD = d;
+        best = i;
+      } else if (d < second) second = d;
+    });
+    if (best < 0 || bestD > Math.max(0.5, 0.1 * size) || (bestD > 1e-3 && second < 1.5 * bestD)) return { i: -1, d: Infinity };
+    return { i: best, d: bestD };
+  };
+  let way = 0;
+  let hit = find(round.ref, 0);
+  if (guess) {
+    const other = find(round.ref, 1);
+    if (other.d < hit.d - 1e-6) {
+      hit = other;
+      way = 1;
+    }
+  }
+  if (hit.i < 0) return null;
+  const ax = axis(hit.i)!;
   let lo = ax.lo;
   let hi = ax.hi;
   for (const f of faces) {
     if (f === round || f.ref.surface === "PLANE" || f.partId !== round.partId) continue;
-    const other = roundFaceAxis(mesh, f.ref);
+    const at = find(f.ref, way);
+    const other = at.i >= 0 ? axis(at.i) : null;
     if (!other || Math.abs(dot(other.dir, ax.dir)) < 0.9999) continue;
     for (const e of [other.lo, other.hi]) {
       const p: Vec3 = [other.through[0] + other.dir[0] * e, other.through[1] + other.dir[1] * e, other.through[2] + other.dir[2] * e];
-      const t = dot([p[0] - ax.through[0], p[1] - ax.through[1], p[2] - ax.through[2]], ax.dir);
+      const t = dot(sub3(p, ax.through), ax.dir);
       lo = Math.min(lo, t);
       hi = Math.max(hi, t);
     }
   }
-  const flats = faces.filter((f) => f.ref.surface === "PLANE").map((f) => dot([f.ref.center[0] - ax.through[0], f.ref.center[1] - ax.through[1], f.ref.center[2] - ax.through[2]], ax.dir));
+  const flats = faces.filter((f) => f.ref.surface === "PLANE").map((f) => dot(sub3(ways[way](f.ref.center), ax.through), ax.dir));
   let t = hi;
   if (flats.length) {
     const mean = flats.reduce((a, b) => a + b, 0) / flats.length;
     t = Math.abs(mean - lo) > Math.abs(mean - hi) ? lo : hi;
   }
   const mouth: Vec3 = [ax.through[0] + ax.dir[0] * t, ax.through[1] + ax.dir[1] * t, ax.through[2] + ax.dir[2] * t];
-  return { axis: ax.dir, mouth };
+  return { axis: ax.dir, mouth, moved: way === 1 };
 }
-
 /** The first of X, Y, Z most square to `dir` (a sideways way to slide a hole along that axis). */
 export function sidewaysAxis(dir: Vec3): Axis {
   const ks: Axis[] = ["x", "y", "z"];
