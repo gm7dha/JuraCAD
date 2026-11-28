@@ -6,6 +6,28 @@ import { useDocument, useLengthUnit, useStore } from "../model/store";
 import { isAngleVariable, resolveVariables, usageCount, type Variable } from "../model/variables";
 import { Icons } from "./icons";
 import { Modal } from "./Modal";
+import { allFeatures } from "../model/studios";
+import { measuredText } from "../model/measuredVariable";
+
+/** Measured variables (features in the list, see measuredVariable.ts): shown here with their values now, read only. */
+function MeasuredList() {
+  const doc = useDocument();
+  const values = useStore((s) => s.measuredValues);
+  const measured = allFeatures(doc).filter((f) => f.type === "variable" && f.measured);
+  if (!measured.length) return null;
+  return (
+    <>
+      <p className="small">Measured from the model (change them in the feature list — each can be used by the features after it):</p>
+      <ul className="small">
+        {measured.map((f) => (
+          <li key={f.id}>
+            <code>{f.measured!.name}</code> = {values[f.id] ? measuredText(values[f.id]) : f.suppressed ? "switched off" : "not measured"} <span className="muted">({f.name})</span>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
 
 /** A free name like "size1", "size2"… */
 function freeName(rows: Variable[]): string {
@@ -124,6 +146,7 @@ export function VariablesDialog() {
       <button className="text-button add-variable" onClick={() => setRows((rs) => [...rs, { id: newId("v"), name: freeName(rs), value: "10" }])}>
         + Add variable
       </button>
+      <MeasuredList />
       <p className="muted small">Renaming a variable updates every box that uses it. Plain numbers here are millimetres{unit === "in" ? " (even in an inch design, since a variable can also be a count)" : ""} — add a unit for others, e.g. <code>1/4 in</code>. Angles: <code>30 deg</code>. Functions work too, e.g. <code>sqrt(width ^ 2 + 20 ^ 2)</code>, <code>width * cos(30 deg)</code>, <code>max(2, wall)</code>.</p>
     </Modal>
   );

@@ -549,6 +549,13 @@ export const FEATURE_DEFS: Record<FeatureType, FeatureDef> = {
       { key: "angle", label: "Tilt", defaultValue: "30", group: "size", unit: "°" },
     ],
   },
+  variable: {
+    type: "variable",
+    label: "Measured variable",
+    namePrefix: "Variable",
+    description: "A variable whose value is measured from the model here: a distance, a length, a diameter or radius, or an angle. Features after it can use it by name, and it updates when the model changes.",
+    params: [],
+  },
   mateConnector: {
     type: "mateConnector",
     label: "Mate connector",

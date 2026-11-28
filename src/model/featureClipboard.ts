@@ -12,7 +12,7 @@
 import { withoutGone } from "./dependents";
 import { parseFeatures } from "./document";
 import type { Feature } from "./types";
-import { resolveSketches, resolveVariables, type Variable } from "./variables";
+import { renameInFeatures, resolveSketches, resolveVariables, type Variable } from "./variables";
 
 export const CLIP_FORMAT = "juracad-features";
 
@@ -205,6 +205,24 @@ export function pasteFeatures(
     return out;
   });
   const addVariables = opts.addVariables ? missingVariables(clip, opts.variables ?? []).map((v) => ({ ...v, id: opts.makeId("v") })) : [];
+  // A measured variable whose name is taken here (the Variables table, or a measured variable in this Part Studio)
+  // gets a free one, and the pasted features using it follow.
+  const namesTaken = new Set([...(opts.variables ?? []), ...addVariables].map((v) => v.name));
+  for (const f of features) if (f.type === "variable" && f.measured) namesTaken.add(f.measured.name);
+  for (const f of [...pasted]) {
+    const was = f.measured?.name;
+    if (!was || !namesTaken.has(was)) {
+      if (was) namesTaken.add(was);
+      continue;
+    }
+    let k = 2;
+    while (namesTaken.has(`${was}_${k}`)) k++;
+    const now = `${was}_${k}`;
+    namesTaken.add(now);
+    const at = pasted.indexOf(f);
+    pasted[at] = { ...f, measured: { ...f.measured!, name: now } };
+    pasted.splice(0, pasted.length, ...renameInFeatures(pasted, was, now));
+  }
   // Sketches sized by variables take this design's values (a width "w" is 20 here even if it was 50 where copied).
   const { values } = resolveVariables([...(opts.variables ?? []), ...addVariables]);
   const solved = resolveSketches({ format: "partsmith", version: 1, name: "", features: pasted }, values).features;

@@ -27,6 +27,7 @@ import type { Session } from "./session";
 import { buildSketch } from "./sketchShapes";
 import { applyConnector, applyPlane, basePlane, CONNECTOR_KEYS, PLANE_KEYS } from "./planeSpec";
 import { applyCurve, CURVE_KEYS } from "./curveSpec";
+import { applyMeasured, MEASURED_KEYS } from "./measuredSpec";
 import { applyFrame, applyGusset, applyTrimFrame, FRAME_KEYS, GUSSET_KEYS, TRIM_KEYS } from "./frameSpec";
 import type { SketchData, SketchLine } from "../sketch/types";
 
@@ -60,6 +61,7 @@ export const FEATURE_KINDS = {
   face_blend: "faceBlend",
   move_face: "moveFace",
   scale_part: "transform",
+  measured_variable: "variable",
 } as const satisfies Record<string, FeatureType>;
 export type FeatureKind = keyof typeof FEATURE_KINDS;
 export const KIND_OF: Partial<Record<FeatureType, FeatureKind>> = Object.fromEntries(Object.entries(FEATURE_KINDS).map(([k, v]) => [v, k as FeatureKind]));
@@ -96,6 +98,7 @@ export const KIND_KEYS: Record<FeatureKind, string[]> = {
   face_blend: ["part", "faces", "part2", "faces2", "radius", "flip1", "flip2", "trim"],
   move_face: ["part", "faces", "move", "distance", "angle", "direction", "axis", "flip"],
   scale_part: ["part", "scale", "about", "copy"],
+  measured_variable: MEASURED_KEYS,
 };
 
 /** Most copies in one direction of a pattern, and in all (bigger takes minutes to build). */
@@ -1122,6 +1125,9 @@ export function applyFeature(f: Feature, kind: FeatureKind, a: Obj, ctx: SpecCon
       break;
     case "curve":
       applyCurve(f, a, ctx);
+      break;
+    case "measured_variable":
+      applyMeasured(f, a, ctx);
       break;
     case "scale_part": {
       // Onshape's Transform › Scale uniformly (Move / copy in the app). A Move / copy made in the app that moves or turns

@@ -43,10 +43,31 @@ export type Scope = Readonly<Record<string, number>>;
  * rebuild, so every box, dimension and feature sees the same values.
  */
 let currentScope: Scope = {};
+/** Measured variables' values from the last build (the app only; see setMeasuredScope). */
+let measuredScope: Scope = {};
+let baseScope: Scope = {};
 export function setCurrentScope(scope: Scope): void {
-  currentScope = scope;
+  baseScope = scope;
+  currentScope = Object.keys(measuredScope).length ? { ...measuredScope, ...scope } : scope;
 }
+/**
+ * The app (not the geometry worker, nor the Claude extension's engine, which work measured variables out where they
+ * sit in the feature list): measured variables' values as last built, under the document's own, so dialogs and open
+ * sketches can use their names. Empty = none.
+ */
+export function setMeasuredScope(values: Scope): void {
+  measuredScope = values;
+  setCurrentScope(baseScope);
+}
+/**
+ * The scope as last set by setCurrentScope — WITHOUT the measured layer, so saving it and setting it back (as the
+ * library's insert and the extension's pauses do) never bakes old measured values in. `evaluate` uses both.
+ */
 export function getCurrentScope(): Scope {
+  return baseScope;
+}
+/** What `evaluate` reads by default: the document's values over the measured layer. */
+export function getScopeInUse(): Scope {
   return currentScope;
 }
 

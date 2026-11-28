@@ -57,6 +57,8 @@ export interface Build {
   curves?: Record<string, number[][]>;
   /** Frames' path pieces from part edges and curves (see RebuildResult.framePaths). */
   framePaths?: RebuildResult["framePaths"];
+  /** Measured variables: the value each came to (see RebuildResult.measuredValues). */
+  measured?: RebuildResult["measuredValues"];
 }
 
 /**
@@ -204,7 +206,7 @@ export class Session {
   }
 
   private keepBuild(key: string, r: RebuildResult): Build {
-    this.built = { parts: r.parts.filter((p) => !p.configuration), errors: r.featureErrors, warnings: r.featureWarnings ?? {}, notes: r.featureNotes ?? {}, links: r.sketchLinks ?? {}, ...(r.followed ? { followed: r.followed } : {}), ...(r.curves ? { curves: r.curves } : {}), ...(r.framePaths ? { framePaths: r.framePaths } : {}) };
+    this.built = { parts: r.parts.filter((p) => !p.configuration), errors: r.featureErrors, warnings: r.featureWarnings ?? {}, notes: r.featureNotes ?? {}, links: r.sketchLinks ?? {}, ...(r.followed ? { followed: r.followed } : {}), ...(r.curves ? { curves: r.curves } : {}), ...(r.framePaths ? { framePaths: r.framePaths } : {}), ...(r.measuredValues ? { measured: r.measuredValues } : {}) };
     this.builtKey = key;
     return this.built;
   }

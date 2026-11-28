@@ -1,4 +1,5 @@
 import { shownFaceColours } from "../model/faceColours";
+import { toggleTarget, type MeasureTarget } from "../model/measuredVariable";
 import { partsAfterSketch } from "../model/finalPreview";
 import { edgesOfFace } from "../model/faceEdges";
 import { cornerThen, edgeThen, meshSize, NOT_THERE_YET } from "../sketch/rolledBack";
@@ -304,6 +305,19 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   }
   // Onshape's other Plane types, a Mate connector being placed, or a mate connector clicked.
   if (geomPick(viewportApi.current, target)) return;
+  // A measured variable: what it measures (faces, edges, corners and planes), clicked again to leave it out.
+  if (s.editing?.draft.type === "variable" && s.editing.draft.measured) {
+    const m = s.editing.draft.measured;
+    let t: MeasureTarget | null = null;
+    if (target?.kind === "plane") t = { plane: target.plane };
+    else if (target?.kind === "customPlane" && target.id !== s.editing.draft.id) t = { plane: target.id };
+    else if (target?.kind === "part" && !isContextPartId(target.item.partId)) t = target.item.kind === "vertex" ? cornerPickFor(s.parts, target.item) : pickFor(s.parts, target.item);
+    if (!t) return;
+    const r = toggleTarget(m, t);
+    if (r.error) s.showToast(r.error, "info");
+    else s.setDraftField({ measured: r.def });
+    return;
+  }
   // A new Hole: a flat face clicked puts a hole where it was clicked (a point in a sketch on that face, made for it).
   if (s.editing?.mode === "create" && s.editing.draft.type === "hole" && target?.kind === "part" && target.item.kind === "face" && target.point && !isContextPartId(target.item.partId)) {
     const plane = planeForFace(target.item);
