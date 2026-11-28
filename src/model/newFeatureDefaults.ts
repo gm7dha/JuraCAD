@@ -9,6 +9,7 @@
 import type { PartMesh } from "../kernel/protocol";
 import { planeFrame, type SketchPlane, type Vec3 } from "../sketch/planes";
 import { sketchLine3D, AXIS_DIRS } from "./patternRefs";
+import { pieceOfPicks, sidewaysAxis, type PieceMesh } from "./movePiece";
 import type { Axis, Feature, MoveFaceDef } from "./types";
 
 /**
@@ -149,10 +150,15 @@ export const moveDirKey = (def: MoveFaceDef | undefined): string => JSON.stringi
 /**
  * The direction a new Translate should start with, from its first picked face (as Onshape): a flat face moves
  * straight out of itself — along X, Y or Z when it faces that way, else square to the face (the face as direction);
- * a round face (a hole, a boss) sideways, along the axis its picked side faces most. Null = no face picked yet.
+ * a round face picked (a hole, a boss) sideways, along the first of X, Y, Z square to its axis (found from the parts'
+ * mesh). Null = no face picked yet, or a round face's mesh not known.
  */
-export function translateDirection(draft: Pick<Feature, "type" | "moveFace" | "picks">): Pick<MoveFaceDef, "axis" | "along"> | null {
+export function translateDirection(draft: Pick<Feature, "type" | "moveFace" | "picks">, parts: readonly PieceMesh[] = []): Pick<MoveFaceDef, "axis" | "along"> | null {
   if (draft.type !== "moveFace" || draft.moveFace?.mode !== "translate") return null;
+  if ((draft.picks ?? []).some((p) => p.ref.kind === "face" && p.ref.surface !== "PLANE")) {
+    const piece = pieceOfPicks(draft.picks, parts);
+    return piece ? { axis: sidewaysAxis(piece.axis) } : null;
+  }
   const pick = (draft.picks ?? []).find((p) => p.ref.kind === "face");
   if (!pick || pick.ref.kind !== "face") return null;
   const n = pick.ref.normal;
@@ -160,7 +166,7 @@ export function translateDirection(draft: Pick<Feature, "type" | "moveFace" | "p
   if (!(l > 1e-9)) return null;
   const k = [0, 1, 2].reduce((a, b) => (Math.abs(n[b]) > Math.abs(n[a]) ? b : a), 0);
   const axis = (["x", "y", "z"] as Axis[])[k];
-  if (pick.ref.surface !== "PLANE" || Math.abs(n[k]) / l > 1 - 1e-9) return { axis };
+  if (Math.abs(n[k]) / l > 1 - 1e-9) return { axis };
   return { along: { partId: pick.partId, ref: pick.ref } };
 }
 
@@ -200,7 +206,7 @@ export function withAutoValues(draft: Feature, auto: AutoValues, ctx: AutoContex
     }
   }
   if (draft.type === "moveFace" && draft.moveFace?.mode === "translate" && moveDirKey(draft.moveFace) === (next.moveDir ?? moveDirKey(undefined))) {
-    const dir = translateDirection(out);
+    const dir = translateDirection(out, ctx.parts);
     if (dir) {
       const { axis: _a, along: _p, ...rest } = out.moveFace!;
       const moveFace: MoveFaceDef = { ...rest, ...dir };

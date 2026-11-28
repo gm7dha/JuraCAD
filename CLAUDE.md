@@ -1288,14 +1288,19 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   handlePick, edges allowed then); manipulators: Translate arrow along the direction, Rotate arc round a straight/X/Y/Z axis (none
   round a round face's axis). Claude: add_feature "move_face" (`move`, `distance`/`angle`, `direction`/`axis` "x"|"y"|"z"|{edge}|{face},
   `flip`). Dependents: `along`'s part (not for Offset). A new Translate starts straight out of its first picked face (newFeatureDefaults
-  `translateDirection`: X/Y/Z it faces, else the face as direction; a round face its normal's main axis; `AutoValues.moveDir`, until
-  chosen by hand; toggleDraftPick runs `withAuto`). Translate/Rotate with any round face picked = the whole piece
+  `translateDirection`: X/Y/Z it faces, else the face as direction; a round pick: `sidewaysAxis` of its axis — whole cylinders'
+  faceRefs have normal [0,0,0], so pure `src/model/movePiece.ts` `roundFaceAxis` takes it from the mesh's vertex normals (least
+  spread about their mean, so cones work) and `pieceOfPicks` the opening (`mouth`: the round faces' end away from picked flats, else
+  the end the axis points to); `AutoValues.moveDir`, until chosen by hand; toggleDraftPick runs `withAuto`). Manipulators for round
+  picks: the arrow at the mouth along the direction; a Rotate arc only about an axis along the piece's. Translate/Rotate with any round face picked = the whole piece
   (`movePieceOfFaces`): facePattern's `regionOfFaces(…, keepCaps)` (+ `caps`: point, normal away from the tool) gives the hole's space or
-  boss's solid; caps whose far side is space (hole) / material (boss) are its mouth/foot (`mouth`; others, e.g. an unpicked floor, are
+  boss's solid (picked faces split into touching groups, `touchingGroups`: several holes move together); caps whose far side is space (hole) / material (boss) are its mouth/foot (`mouth`; others, e.g. an unpicked floor, are
   part of it). Filled (hole) / taken off (boss), then made again moved — slid, a mouth cap is carried on by −move·n (deeper hole, lifted
   boss); turned, mouth caps must stay in their planes ("squarely"). Refused: moved piece (less beyond its mouth planes) not wholly in the
   filled part (hole: "out of the part") / touching the rest (boss: "into the rest"), a 0.05 slab past the moved mouth meeting material /
-  foot not on material ("hang off"), volume ≠ expected, > 1 solid. Not done: a round face tilted on its own (only whole pieces turn),
+  foot not on material ("hang off"; + "foot isn't picked" when an unpicked round face runs along it), nothing changes (slid along
+  itself), < 5% left inside ("right out of the part"), carried on through / pushed into its mouth where its sides aren't straight
+  (a slab of the cap that deep ∩ tool: a filleted foot or countersink would be lost or stretched), volume ≠ expected, > 1 solid. Not done: a round face tilted on its own (only whole pieces turn),
   neighbours that aren't square carried on to meet (warned), filling the corner where two moved faces meet. Tests: tests/moveFace
   (pure), engineMoveFace (exact volumes: box ±2, Ø10 hole → Ø10.4 and Ø9.6, boss +1, pocket floor, slanted face up Z, along an
   edge, 5° about an edge, refusals, an old Move face as before; a Ø10 hole slid 12 (old place filled), off the edge, blind hole sideways/deeper/

@@ -252,13 +252,14 @@ beforeEach(() => reset([]));
 describe("a Move face Translate's direction", () => {
   const side = { partId: "a", ref: { kind: "face" as const, surface: "PLANE", center: [40, 15, 5] as [number, number, number], normal: [1, 0, 0] as [number, number, number] } };
   const slant = { partId: "a", ref: { kind: "face" as const, surface: "PLANE", center: [20, 15, 8] as [number, number, number], normal: [0.6, 0, 0.8] as [number, number, number] } };
-  const holeWall = { partId: "a", ref: { kind: "face" as const, surface: "CYLINDRE", center: [15, 15, 5] as [number, number, number], normal: [0, -1, 0] as [number, number, number] } };
+  // A whole cylinder's face keeps no normal: its axis comes from the mesh (tests/engineMovePiece), so with none known: no opinion.
+  const holeWall = { partId: "a", ref: { kind: "face" as const, surface: "CYLINDRE", center: [15, 15, 5] as [number, number, number], normal: [0, 0, 0] as [number, number, number] } };
 
   it("starts straight out of the first picked face, not along Z", () => {
     const mf = (picks: Feature["picks"]) => ({ type: "moveFace" as const, moveFace: { mode: "translate" as const }, picks });
     expect(translateDirection(mf([side]))).toEqual({ axis: "x" });
     expect(translateDirection(mf([slant]))).toEqual({ along: slant });
-    expect(translateDirection(mf([holeWall]))).toEqual({ axis: "y" });
+    expect(translateDirection(mf([holeWall]))).toBeNull();
     expect(translateDirection(mf([]))).toBeNull();
     expect(translateDirection({ ...mf([side]), moveFace: { mode: "offset" } })).toBeNull();
   });
@@ -270,11 +271,11 @@ describe("a Move face Translate's direction", () => {
     s().toggleDraftPick(side);
     expect(s().editing!.draft.moveFace).toEqual({ mode: "translate", axis: "x" });
     s().toggleDraftPick(side);
-    s().toggleDraftPick(holeWall);
-    expect(s().editing!.draft.moveFace).toEqual({ mode: "translate", axis: "y" });
+    s().toggleDraftPick(slant);
+    expect(s().editing!.draft.moveFace).toEqual({ mode: "translate", along: slant });
     // Chosen by hand: a later pick leaves it.
     s().setDraftField({ moveFace: { mode: "translate", axis: "z" } });
-    s().toggleDraftPick(holeWall);
+    s().toggleDraftPick(slant);
     s().toggleDraftPick(side);
     expect(s().editing!.draft.moveFace).toEqual({ mode: "translate", axis: "z" });
     s().cancelDraft();
