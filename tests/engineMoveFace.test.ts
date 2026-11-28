@@ -5,7 +5,9 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { GeometryEngine } from "../src/kernel/engine";
 import type { Feature, MoveFaceDef } from "../src/model/types";
-import { feature, loadOpenCascade } from "./support/engineHelpers";
+import { addPoint } from "../src/sketch/ops";
+import { emptySketch } from "../src/sketch/types";
+import { feature, loadOpenCascade, sketchFeature } from "./support/engineHelpers";
 
 beforeAll(loadOpenCascade);
 
@@ -205,10 +207,9 @@ describe("Move face: Rotate", () => {
     const plate = feature("box", { width: 30, depth: 30, height: 20 });
     const hole = feature("cylinder", { diameter: 10, height: 20, x: 15, y: 15 }, "remove");
     const wall = faces(build([plate, hole]), (f) => f.surface === "CYLINDRE");
+    // A through hole turned about X would no longer meet its faces squarely: refused in plain words.
     const bad = move({ mode: "rotate", axis: "x" }, { angle: 5 }, wall);
-    expect(build([plate, hole, bad]).featureErrors[bad.id]).toMatch(/flat faces/);
-    const slide = move({ mode: "translate", axis: "x" }, { distance: 1 }, wall);
-    expect(build([plate, hole, slide]).featureErrors[slide.id]).toMatch(/use Offset/);
+    expect(build([plate, hole, bad]).featureErrors[bad.id]).toMatch(/squarely/);
   });
 });
 
@@ -225,5 +226,186 @@ describe("an older Move face (no type)", () => {
     const wall = faces(build([plate, hole]), (f) => f.surface === "CYLINDRE");
     const oldRound: Feature = { ...feature("moveFace", { distance: -0.2 }), picks: wall };
     expect(build([plate, hole, oldRound]).featureErrors[oldRound.id]).toMatch(/flat faces/);
+  });
+});
+
+describe("Move face: round faces moved as a whole hole or boss", () => {
+  // A 40 × 30 × 10 block centred on the origin (x −20…20, y −15…15, z 0…10) with a Ø10 hole through it at (−8, 0).
+  const block = () => feature("box", { width: 40, depth: 30, height: 10, x: -20, y: -15 });
+  const drill = (x: number, y: number, d = 10, h = 10, z = 0) => feature("cylinder", { diameter: d, height: h, x, y, z }, "remove");
+  const hollowAt = (fs: Feature[], x: number, y: number) => {
+    // Drilling Ø10 again there takes nothing away if the hole is already there, and the whole Ø10 × 10 if not.
+    const v0 = volume();
+    build([...fs, drill(x, y)]);
+    const taken = v0 - volume();
+    return taken;
+  };
+  const full = 40 * 30 * 10;
+  const ring = Math.PI * 25 * 10;
+
+  it("moves a Ø10 through hole 12 mm along X: same volume, open at the new place, filled at the old", () => {
+    const b = block();
+    const h = drill(-8, 0);
+    const wall = faces(build([b, h]), (f) => f.surface === "CYLINDRE");
+    expect(wall).toHaveLength(1);
+    const mv = move({ mode: "translate", axis: "x" }, { distance: 12 }, wall);
+    const fs = [b, h, mv];
+    const r = build(fs);
+    expect(r.featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(full - ring, 5);
+    expect(engine.check("normal").parts[0].geometryValid).toBe(true);
+    expect(hollowAt(fs, 4, 0)).toBeCloseTo(0, 4);
+    build(fs);
+    expect(hollowAt(fs, -8, 0)).toBeCloseTo(ring, 4);
+    // Flipped: 12 the other way (x −20) would break out of the side: refused.
+    expect(build([b, h, { ...mv, moveFace: { mode: "translate", axis: "x", flip: true } }]).featureErrors[mv.id]).toMatch(/out of the part/);
+  });
+
+  it("refuses to move a hole off the edge", () => {
+    const b = block();
+    const h = drill(-8, 0);
+    const wall = faces(build([b, h]), (f) => f.surface === "CYLINDRE");
+    const mv = move({ mode: "translate", axis: "x" }, { distance: 25 }, wall);
+    expect(build([b, h, mv]).featureErrors[mv.id]).toMatch(/out of the part/);
+  });
+
+  it("moves a blind hole (wall + floor) sideways and deeper, and the wall alone", () => {
+    const b = block();
+    const h = drill(-8, 0, 10, 6, 4); // from z 4 up to the top: 6 deep
+    const r0 = build([b, h]);
+    const both = faces(r0, (f) => f.surface === "CYLINDRE" || (f.surface === "PLANE" && f.normal![2] > 0.99 && Math.abs(f.center![2] - 4) < 1e-6));
+    expect(both).toHaveLength(2);
+    const blind = Math.PI * 25 * 6;
+    const side = move({ mode: "translate", axis: "y" }, { distance: 5 }, both);
+    expect(build([b, h, side]).featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(full - blind, 5);
+    // Deeper: 2 mm down along Z (flipped) — the hole stays open at the top and gets 2 deeper.
+    const down = move({ mode: "translate", axis: "z", flip: true }, { distance: 2 }, both);
+    expect(build([b, h, down]).featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(full - Math.PI * 25 * 8, 5);
+    // Shallower: 2 up.
+    expect(build([b, h, { ...down, moveFace: { mode: "translate", axis: "z" } }]).featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(full - Math.PI * 25 * 4, 5);
+    // The wall alone (its floor not picked) moves the same way.
+    const wall = both.filter((p) => p.ref.kind === "face" && (p.ref as FaceInfo).surface === "CYLINDRE");
+    expect(build([b, h, { ...side, picks: wall }]).featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(full - blind, 5);
+    // Down through the bottom: refused.
+    expect(build([b, h, { ...down, params: { distance: "5" } }]).featureErrors[down.id]).toMatch(/out of the part/);
+  });
+
+  it("moves a round boss sideways, and refuses it hanging off its face or running into another", () => {
+    const base = feature("box", { width: 40, depth: 30, height: 5, x: -20, y: -15 });
+    const boss = feature("cylinder", { diameter: 10, height: 10, x: -8, y: 0, z: 5 }, "add");
+    const r0 = build([base, boss]);
+    const v0 = volume();
+    expect(v0).toBeCloseTo(6000 + Math.PI * 25 * 10, 5);
+    const picks = faces(r0, (f) => f.surface === "CYLINDRE" || (f.surface === "PLANE" && f.normal![2] > 0.99 && Math.abs(f.center![2] - 15) < 1e-6));
+    expect(picks).toHaveLength(2);
+    const mv = move({ mode: "translate", axis: "x" }, { distance: 12 }, picks);
+    expect(build([base, boss, mv]).featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(v0, 5);
+    // Moved up 3: it stands on its face still, 3 taller.
+    expect(build([base, boss, { ...mv, moveFace: { mode: "translate", axis: "z" }, params: { distance: "3" } }]).featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(v0 + Math.PI * 25 * 3, 5);
+    // Off the edge (x −8 + 18 = 10 + 5 radius = 15 < 20 is fine; 25 → 17…27 hangs off).
+    expect(build([base, boss, { ...mv, params: { distance: "25" } }]).featureErrors[mv.id]).toMatch(/hang off/);
+    // Into a second boss at x 8: refused.
+    const other = feature("cylinder", { diameter: 6, height: 6, x: 8, y: 0, z: 5 }, "add");
+    const r1 = build([base, boss, other]);
+    const first = faces(r1, (f) => (f.surface === "CYLINDRE" && f.center![0] < 0) || (f.surface === "PLANE" && f.normal![2] > 0.99 && Math.abs(f.center![2] - 15) < 1e-6));
+    expect(first).toHaveLength(2);
+    expect(build([base, boss, other, { ...mv, picks: first }]).featureErrors[mv.id]).toMatch(/into the rest/);
+  });
+
+  it("moves a countersunk hole's faces together", () => {
+    const b = feature("box", { width: 40, depth: 30, height: 10, x: -20, y: -15, z: -10 });
+    let data = emptySketch();
+    data = addPoint(data, { x: -8, y: 0 }).sketch;
+    const sk = sketchFeature({ kind: "default", name: "Top" }, data);
+    const hole: Feature = {
+      ...feature("hole", { diameter: 4.5, cskDiameter: 9.4, cskAngle: 90 }, "remove"),
+      hole: { sketchRef: sk.id, kind: "countersink", standard: "Custom", fit: "clearance", end: "throughAll", flip: false },
+    };
+    const r0 = build([b, sk, hole]);
+    expect(r0.featureErrors).toEqual({});
+    const v0 = volume();
+    const picks = faces(r0, (f) => f.surface === "CYLINDRE" || f.surface === "CONE");
+    expect(picks.length).toBeGreaterThanOrEqual(2);
+    const mv = move({ mode: "translate", axis: "x" }, { distance: 10 }, picks);
+    const r = build([b, sk, hole, mv]);
+    expect(r.featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(v0, 4);
+    expect(engine.check("normal").parts[0].geometryValid).toBe(true);
+    // Only the cone picked (not the hole's wall): it doesn't close up into one piece.
+    const cone = picks.filter((p) => (p.ref as FaceInfo).surface === "CONE");
+    const half = { ...mv, picks: cone };
+    expect(build([b, sk, hole, half]).featureErrors[mv.id]).toBeTruthy();
+  });
+
+  it("turns a hole 90° about Z round the origin", () => {
+    const b = block();
+    const h = drill(8, 0);
+    const wall = faces(build([b, h]), (f) => f.surface === "CYLINDRE");
+    const turn = move({ mode: "rotate", axis: "z" }, { angle: 90 }, wall);
+    const fs = [b, h, turn];
+    expect(build(fs).featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(full - ring, 5);
+    expect(hollowAt(fs, 0, 8)).toBeCloseTo(0, 4);
+    build(fs);
+    expect(hollowAt(fs, 8, 0)).toBeCloseTo(ring, 4);
+  });
+
+  it("says when a move changes nothing or takes the hole right out, and moves several holes at once", () => {
+    const b = block();
+    const h = drill(-8, 0);
+    const wall = faces(build([b, h]), (f) => f.surface === "CYLINDRE");
+    // A through hole slid along its own axis: nothing changes, and it says so.
+    const along = move({ mode: "translate", axis: "z" }, { distance: 5 }, wall);
+    expect(build([b, h, along]).featureErrors[along.id]).toMatch(/nothing would change/);
+    // A blind Ø6 × 4 hole (its wall picked) moved up 4 or 5: gone out of the top, refused.
+    const blind = drill(-10, 0, 6, 4, 6);
+    const bw = faces(build([b, blind]), (f) => f.surface === "CYLINDRE");
+    for (const d of [4, 5]) {
+      const up = move({ mode: "translate", axis: "z" }, { distance: d }, bw);
+      expect(build([b, blind, up]).featureErrors[up.id]).toMatch(/right out of the part/);
+    }
+    // Two holes picked together both move.
+    const one = drill(-10, -5, 6);
+    const two = drill(-10, 5, 6);
+    const both = faces(build([b, one, two]), (f) => f.surface === "CYLINDRE");
+    expect(both).toHaveLength(2);
+    const fs = [b, one, two, move({ mode: "translate", axis: "x" }, { distance: 15 }, both)];
+    expect(build(fs).featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(full - 2 * Math.PI * 9 * 10, 5);
+    const v = volume();
+    build([...fs, feature("cylinder", { diameter: 5.9, height: 9.98, x: 5, y: 5, z: 0.01 }, "remove")]);
+    expect(volume()).toBeCloseTo(v, 5);
+    build([...fs, feature("cylinder", { diameter: 5.9, height: 9.98, x: -10, y: -5, z: 0.01 }, "remove")]);
+    expect(v - volume()).toBeCloseTo(Math.PI * 2.95 * 2.95 * 9.98, 4);
+  });
+
+  it("a boss with a rounded foot slides, but won't be raised or sunk (the rounding would be lost), and asks for its foot", () => {
+    const base = feature("box", { width: 40, depth: 30, height: 5, x: -20, y: -15 });
+    const boss = feature("cylinder", { diameter: 10, height: 10, x: -8, y: 0, z: 5 }, "add");
+    const r0 = build([base, boss]);
+    const foot = r0.parts[0].edgeRefs.filter((e) => (e as FaceInfo).curve === "CIRCLE" && Math.abs(((e as FaceInfo).a ?? [0, 0, 0])[2] - 5) < 1e-6);
+    expect(foot).toHaveLength(1);
+    const fil: Feature = { ...feature("fillet", { radius: 2 }), picks: foot.map((ref) => ({ partId: r0.parts[0].id, ref })) };
+    const fs = [base, boss, fil];
+    const r1 = build(fs);
+    const v0 = volume();
+    const top = (f: FaceInfo) => f.surface === "PLANE" && f.normal![2] > 0.99 && Math.abs(f.center![2] - 15) < 1e-6;
+    const all = faces(r1, (f) => f.surface !== "PLANE" || top(f));
+    expect(all).toHaveLength(3);
+    const side = move({ mode: "translate", axis: "x" }, { distance: 12 }, all);
+    expect(build([...fs, side]).featureErrors).toEqual({});
+    expect(volume()).toBeCloseTo(v0, 5);
+    for (const flip of [false, true]) {
+      const lift = move({ mode: "translate", axis: "z", flip }, { distance: 3 }, all);
+      expect(build([...fs, lift]).featureErrors[lift.id]).toMatch(/aren't straight at its foot/);
+    }
+    const noFoot = faces(r1, (f) => f.surface === "CYLINDRE" || top(f));
+    expect(build([...fs, { ...side, picks: noFoot }]).featureErrors[side.id]).toMatch(/foot isn't picked/);
   });
 });

@@ -22,7 +22,7 @@ import { solveSketch } from "../sketch/solver";
 import { geometrySound } from "../model/checkReport";
 import { MESH_TOLERANCES, type Axis, type Feature, type GeomPick, type ImportedFile, type MateConnectorDef, type MeshQuality, type Operation, type PlaneMoreMode, type PlaneOptions, type TransformFrame } from "../model/types";
 import { deleteFaces, draftFaces, extrudeSketch, segmentsWire } from "./extrude";
-import { moveFacesBy, MoveFaceError, rotateFaces } from "./moveFace";
+import { moveFacesBy, MoveFaceError, movePieceOfFaces, rotateFaces } from "./moveFace";
 import { axisInPlane, centreRevolve, revolveAxis, revolveSketch, twoWayAngle, twoWayRevolve } from "./revolve";
 import { thinSketches } from "../sketch/thin";
 import { axisInSketch } from "../sketch/axis";
@@ -5736,11 +5736,14 @@ export class GeometryEngine {
       if (mv.mode === "translate") {
         const d = values.distance * k;
         if (Math.abs(d) < 1e-9) return "Enter a distance to move the faces by.";
+        // Round faces picked: they move as a whole hole, boss or pocket.
+        if (faces.some((f) => f.geomType !== "PLANE")) return movePieceOfFaces(shape, faces, { move: [axis.dir[0] * d, axis.dir[1] * d, axis.dir[2] * d] });
         const r = moveFacesBy(shape, faces, { move: [axis.dir[0] * d, axis.dir[1] * d, axis.dir[2] * d] });
         if (r.warning) this.warnings[feature.id] = r.warning;
         return r.shape;
       }
       if (Math.abs(values.angle) < 1e-9) return "Enter an angle to turn the faces by.";
+      if (faces.some((f) => f.geomType !== "PLANE")) return movePieceOfFaces(shape, faces, { turn: { through: axis.through, dir: axis.dir, degrees: values.angle * k } });
       return rotateFaces(shape, faces, axis.through, axis.dir, values.angle * k);
     } catch (e) {
       if (e instanceof MoveFaceError) return e.message;

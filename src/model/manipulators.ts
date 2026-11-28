@@ -19,7 +19,8 @@ import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 import { holePositionsIn } from "../sketch/holePositions";
 import { strictMatch, type EdgeRef, type FaceRef, type TopoPick } from "../geometry/topoRef";
-import { moveFaceAxisNow } from "./moveFace";
+import { moveFaceAxisNow, turnPoint } from "./moveFace";
+import { pieceOfPicks } from "./movePiece";
 
 export interface Manipulator {
   /** Which handle (unique within the draft): "depth", "depthBack", "depth2", "angle", "radius"… */
@@ -359,6 +360,24 @@ function extrudeRevolveHandles(draft: Feature, sketch: { plane: SketchPlane; dat
   return out;
 }
 
+/**
+ * The hole or boss Move face's round picks make, where it was before the move (the handles start there), found among
+ * the parts shown as the engine finds picks (so it follows earlier changes). Those parts may already have it moved by
+ * the dialog's own preview (or, editing, by the feature itself): then it's found where the move puts it, and its opening
+ * taken back across its axis (along it, a hole's or boss's opening stays on its face).
+ */
+function movedPiece(picks: readonly TopoPick[], parts: readonly MeshFaces[], mode: "translate" | "rotate", ax: { dir: Vec3; through: Vec3 }, value: number): { axis: Vec3; mouth: Vec3 } | null {
+  const v = Number.isFinite(value) ? value : 0;
+  const fwd = (p: Vec3): Vec3 => (mode === "translate" ? add(p, scale(ax.dir, v)) : turnPoint(p, ax.through, ax.dir, v));
+  const piece = pieceOfPicks(picks, parts, Math.abs(v) > 1e-9 ? fwd : undefined);
+  if (!piece) return null;
+  if (!piece.moved) return { axis: piece.axis, mouth: piece.mouth };
+  if (mode === "rotate") return { axis: turnPoint(piece.axis, [0, 0, 0], ax.dir, -v), mouth: turnPoint(piece.mouth, ax.through, ax.dir, -v) };
+  const shift = scale(ax.dir, v);
+  const across = sub(shift, scale(piece.axis, dot(shift, piece.axis)));
+  return { axis: piece.axis, mouth: sub(piece.mouth, across) };
+}
+
 function otherHandles(draft: Feature, ctx: ManipContext, base: (key: string, label: string) => Base): Manipulator[] {
   const out: Manipulator[] = [];
   const partOf = (partId: string) => ctx.parts.find((p) => p.id === partId);
@@ -400,6 +419,27 @@ function otherHandles(draft: Feature, ctx: ManipContext, base: (key: string, lab
   if (!facePick) return [];
   if (draft.type === "draft") return draftHandles(draft, facePick.ref as FaceRef, base);
   // Shell and Thicken: on the face as it's built now (a part an earlier feature moved carries its face along).
+  // Move face's Translate / Rotate with a round face picked moves the whole hole or boss: its handle sits at the opening.
+  if (draft.type === "moveFace" && (draft.moveFace?.mode === "translate" || draft.moveFace?.mode === "rotate") && (draft.picks ?? []).some((p) => p.ref.kind === "face" && p.ref.surface !== "PLANE")) {
+    const ax = moveFaceAxisNow(draft.moveFace);
+    if (!ax) return out;
+    const mode = draft.moveFace.mode;
+    const value = base(mode === "translate" ? "distance" : "angle", "").values[mode === "translate" ? "distance" : "angle"] ?? 0;
+    const piece = movedPiece(draft.picks ?? [], ctx.parts, mode, ax, value);
+    if (!piece) return out;
+    if (draft.moveFace.mode === "translate") {
+      out.push(make(base("distance", "Distance"), { id: "distance", kind: "arrow", origin: piece.mouth, dir: ax.dir, scale: 1, angle: false, flips: false, signed: true, max: Infinity, tip: "Drag to move the hole or boss along the direction (back past it moves it the other way)" }));
+      return out;
+    }
+    // Turned only about an axis along its own (square to the face it opens onto), and not about itself.
+    if (Math.abs(dot(ax.dir, piece.axis)) < 0.9999) return out;
+    const off = sub(piece.mouth, ax.through);
+    const radial = sub(off, scale(ax.dir, dot(off, ax.dir)));
+    const r = unit(radial);
+    if (!r || length(radial) < 1e-6) return out;
+    out.push(make(base("angle", "Angle"), { id: "angle", kind: "arc", origin: piece.mouth, dir: r, axis: { through: ax.through, dir: ax.dir }, scale: 1, angle: true, flips: false, signed: true, max: 179, tip: "Drag round to turn the hole or boss about the axis" }));
+    return out;
+  }
   const face = draft.type === "shell" || draft.type === "thicken" ? faceNow(facePick, partOf(facePick.partId)) : (facePick.ref as FaceRef);
   const n = unit(face.normal);
   if (!n) return [];
