@@ -19,7 +19,7 @@ import { planeFrame, toWorld, type SketchPlane } from "../sketch/planes";
 import type { SketchData } from "../sketch/types";
 import { holePositionsIn } from "../sketch/holePositions";
 import { strictMatch, type EdgeRef, type FaceRef, type TopoPick } from "../geometry/topoRef";
-import { moveFaceAxisNow } from "./moveFace";
+import { moveFaceAxisNow, turnPoint } from "./moveFace";
 import { pieceOfPicks } from "./movePiece";
 
 export interface Manipulator {
@@ -358,6 +358,35 @@ function extrudeRevolveHandles(draft: Feature, sketch: { plane: SketchPlane; dat
   return out;
 }
 
+/**
+ * The hole or boss Move face's round picks make, where it was before the move (the handles start there). The parts
+ * shown may already have it moved by the dialog's own preview (or, editing, by the feature itself): then it's found
+ * where the move puts it and taken back. Kept per pick set, so a drag (shown parts a step behind) never loses it.
+ */
+const pieceCache = new Map<string, { axis: Vec3; mouth: Vec3 }>();
+/** Forget the kept holes and bosses (tests). */
+export const forgetMovedPieces = () => pieceCache.clear();
+function movedPiece(picks: readonly TopoPick[], parts: readonly MeshFaces[], mode: "translate" | "rotate", ax: { dir: Vec3; through: Vec3 }, value: number): { axis: Vec3; mouth: Vec3 } | null {
+  const key = JSON.stringify(picks.map((p) => [p.partId, p.ref]));
+  const kept = pieceCache.get(key);
+  if (kept) return kept;
+  let piece = pieceOfPicks(picks, parts);
+  if (!piece && Number.isFinite(value) && Math.abs(value) > 1e-9) {
+    const fwdP = (p: Vec3): Vec3 => (mode === "translate" ? add(p, scale(ax.dir, value)) : turnPoint(p, ax.through, ax.dir, value));
+    const fwdD = (d: Vec3): Vec3 => (mode === "translate" ? d : turnPoint(d, [0, 0, 0], ax.dir, value));
+    const backP = (p: Vec3): Vec3 => (mode === "translate" ? sub(p, scale(ax.dir, value)) : turnPoint(p, ax.through, ax.dir, -value));
+    const backD = (d: Vec3): Vec3 => (mode === "translate" ? d : turnPoint(d, [0, 0, 0], ax.dir, -value));
+    const moved = picks.map((p) => (p.ref.kind === "face" ? { ...p, ref: { ...p.ref, center: fwdP(p.ref.center), normal: fwdD(p.ref.normal) } } : p));
+    const found = pieceOfPicks(moved, parts);
+    if (found) piece = { axis: backD(found.axis), mouth: backP(found.mouth) };
+  }
+  if (piece) {
+    if (pieceCache.size > 32) pieceCache.delete(pieceCache.keys().next().value!);
+    pieceCache.set(key, piece);
+  }
+  return piece;
+}
+
 function otherHandles(draft: Feature, ctx: ManipContext, base: (key: string, label: string) => Base): Manipulator[] {
   const out: Manipulator[] = [];
   const partOf = (partId: string) => ctx.parts.find((p) => p.id === partId);
@@ -401,9 +430,12 @@ function otherHandles(draft: Feature, ctx: ManipContext, base: (key: string, lab
   // Shell and Thicken: on the face as it's built now (a part an earlier feature moved carries its face along).
   // Move face's Translate / Rotate with a round face picked moves the whole hole or boss: its handle sits at the opening.
   if (draft.type === "moveFace" && (draft.moveFace?.mode === "translate" || draft.moveFace?.mode === "rotate") && (draft.picks ?? []).some((p) => p.ref.kind === "face" && p.ref.surface !== "PLANE")) {
-    const piece = pieceOfPicks(draft.picks, ctx.parts);
     const ax = moveFaceAxisNow(draft.moveFace);
-    if (!piece || !ax) return out;
+    if (!ax) return out;
+    const mode = draft.moveFace.mode;
+    const value = base(mode === "translate" ? "distance" : "angle", "").values[mode === "translate" ? "distance" : "angle"] ?? 0;
+    const piece = movedPiece(draft.picks ?? [], ctx.parts, mode, ax, value);
+    if (!piece) return out;
     if (draft.moveFace.mode === "translate") {
       out.push(make(base("distance", "Distance"), { id: "distance", kind: "arrow", origin: piece.mouth, dir: ax.dir, scale: 1, angle: false, flips: false, signed: true, max: Infinity, tip: "Drag to move the hole or boss along the direction (back past it moves it the other way)" }));
       return out;

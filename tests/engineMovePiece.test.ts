@@ -4,7 +4,7 @@
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import { GeometryEngine } from "../src/kernel/engine";
-import { manipulatorsFor } from "../src/model/manipulators";
+import { forgetMovedPieces, manipulatorsFor } from "../src/model/manipulators";
 import { pieceOfPicks, sidewaysAxis } from "../src/model/movePiece";
 import { translateDirection } from "../src/model/newFeatureDefaults";
 import type { Feature } from "../src/model/types";
@@ -70,5 +70,30 @@ describe("a hole or boss for Move face", () => {
       expect(r).toHaveLength(1);
       expect(r[0].kind).toBe("arc");
     }
+  });
+
+  it("still finds the hole when the parts shown already have it moved (the dialog's preview, or editing)", () => {
+    const box = feature("box", { width: 40, depth: 30, height: 10, x: -20, y: -15 });
+    const hole = feature("cylinder", { diameter: 10, height: 6, x: -8, y: 0, z: 4 }, "remove");
+    const p0 = parts([box, hole])[0];
+    const wall = p0.faceRefs.find((f) => f.surface !== "PLANE")!;
+    const floor = p0.faceRefs.find((f) => f.surface === "PLANE" && Math.abs(f.center[2] - 4) < 1e-6)!;
+    const picks = [wall, floor].map((ref) => ({ partId: p0.id, ref }));
+    for (const d of [0, 2, 6]) {
+      const mv: Feature = { ...feature("moveFace", { distance: d }), moveFace: { mode: "translate", axis: "x" }, picks };
+      const shown = parts(d ? [box, hole, mv] : [box, hole]);
+      forgetMovedPieces();
+      const m = manipulatorsFor(mv, { sketch: null, parts: shown });
+      expect(m).toHaveLength(1);
+      expect(near(m[0].origin, [-8, 0, 10])).toBe(true);
+      expect(m[0].value).toBeCloseTo(d, 9);
+    }
+    const turn: Feature = { ...feature("moveFace", { angle: 30 }), moveFace: { mode: "rotate", axis: "z" }, picks };
+    const turned = parts([box, hole, turn]);
+    forgetMovedPieces();
+    const r = manipulatorsFor(turn, { sketch: null, parts: turned });
+    expect(r).toHaveLength(1);
+    expect(r[0].kind).toBe("arc");
+    expect(near(r[0].origin, [-8, 0, 10])).toBe(true);
   });
 });

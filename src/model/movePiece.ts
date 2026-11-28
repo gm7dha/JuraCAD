@@ -29,7 +29,7 @@ function faceIndex(mesh: PieceMesh, ref: FaceRef): number {
   const refs = mesh.faceRefs ?? [];
   const same = refs.indexOf(ref);
   if (same >= 0) return same;
-  return refs.findIndex((r) => r.surface === ref.surface && Math.hypot(r.center[0] - ref.center[0], r.center[1] - ref.center[1], r.center[2] - ref.center[2]) < 1e-6);
+  return refs.findIndex((r) => r.surface === ref.surface && Math.hypot(r.center[0] - ref.center[0], r.center[1] - ref.center[1], r.center[2] - ref.center[2]) < 1e-4);
 }
 
 /** The direction that the vectors spread least along (the smallest eigenvector of their scatter about their mean). */

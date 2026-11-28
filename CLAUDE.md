@@ -1292,7 +1292,9 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   faceRefs have normal [0,0,0], so pure `src/model/movePiece.ts` `roundFaceAxis` takes it from the mesh's vertex normals (least
   spread about their mean, so cones work) and `pieceOfPicks` the opening (`mouth`: the round faces' end away from picked flats, else
   the end the axis points to); `AutoValues.moveDir`, until chosen by hand; toggleDraftPick runs `withAuto`). Manipulators for round
-  picks: the arrow at the mouth along the direction; a Rotate arc only about an axis along the piece's. Translate/Rotate with any round face picked = the whole piece
+  picks: the arrow at the mouth along the direction; a Rotate arc only about an axis along the piece's (`movedPiece`: the shown
+  parts may already have it moved — preview or editing — so it's also looked for where the current value puts it and taken back;
+  kept per pick set). Translate/Rotate with any round face picked = the whole piece
   (`movePieceOfFaces`): facePattern's `regionOfFaces(…, keepCaps)` (+ `caps`: point, normal away from the tool) gives the hole's space or
   boss's solid (picked faces split into touching groups, `touchingGroups`: several holes move together); caps whose far side is space (hole) / material (boss) are its mouth/foot (`mouth`; others, e.g. an unpicked floor, are
   part of it). Filled (hole) / taken off (boss), then made again moved — slid, a mouth cap is carried on by −move·n (deeper hole, lifted
