@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addArc, addCircle, addDimension, addLine, addRectangle, pointPos, radiusOf, setDimensionValue } from "../src/sketch/ops";
+import { addArc, addCircle, addDimension, addLine, addRectangle, measure, pointPos, radiusOf, setDimensionValue } from "../src/sketch/ops";
 import { findChains, findRegions } from "../src/sketch/regions";
 import { analyzeSketch, solveSketch } from "../src/sketch/solver";
 import { filletCorner } from "../src/sketch/tools";
@@ -171,9 +171,14 @@ describe("slot along a curve", () => {
     expect(regions).toHaveLength(1);
     expect(regions[0].outer.area).toBeCloseTo(30 * 6 + Math.PI * 9, 0);
     expect(s.constraints.filter((c) => c.type === "offset")).toHaveLength(1);
+    // The one dimension is the slot's width (as Onshape shows it), measured across both sides.
+    const dim = s.constraints.find((c) => c.id === r.dimensionId)!;
+    expect(dim.value).toBe("6");
+    expect(dim.doubled).toBe(true);
+    expect(measure(s, dim)).toBeCloseTo(6, 6);
     expect(analyzeSketch(s).freedom).toBe(0);
-    // Wider, and it follows when the line grows.
-    const wider = setDimensionValue(s, r.dimensionId, "4");
+    // Wider (8 across), and it follows when the line grows.
+    const wider = setDimensionValue(s, r.dimensionId, "8");
     expect(findRegions(wider.sketch).regions[0].outer.area).toBeCloseTo(30 * 8 + Math.PI * 16, 0);
   });
 

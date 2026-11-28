@@ -8,6 +8,20 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.132 — Move holes and bosses
+- Move face › Translate now moves a whole hole or boss: pick its faces (wall, floor, chamfer…), and it slides across to the new place, the old place filled in. Slid along its own axis, a hole goes deeper or shallower and a boss taller or shorter. Several holes can move together.
+- Move face › Rotate turns a hole or boss about an axis square to its face.
+- A new Translate starts in a direction that works (sideways for a hole, straight out for a flat face), and the drag arrow sits at the hole's opening.
+- Moves that would go wrong are refused with a plain message: out of the part, into another hole, a rounded foot moved up or down, or a move that changes nothing.
+- Claude can move holes too.
+
+## v0.131 — Everyday modelling fixes
+- Your first Extrude or Loft after making a Plane (or mate connector, or measured variable) now starts on "New" instead of failing on "Add".
+- Fillet and Chamfer: while you click edges you see the part as it was, so picked edges stay lit and clicking one again takes it off; variable fillet radius points can be clicked anywhere on an edge. A radius that can't work says so straight away and Accept waits.
+- Extrude, Revolve and Sweep wait until something is picked, and no longer start on a sketch that's already used up.
+- In a sketch, a plane's line you clicked by mistake can't be turned into real geometry.
+- Slot on a curve's dimension now shows the slot's full width; dialogs show "what to click" as a plain hint, not a red error; sketch messages clear on undo; the 3MF filament list names the app's own swatch colours.
+
 ## v0.130 — Puzzle windows quicker, iPad toolbar fits
 - Island puzzle "In one piece" no longer freezes the window for a minute: the view from above is drawn in a moment.
 - "As many pieces as will print well" uses less memory while it searches.

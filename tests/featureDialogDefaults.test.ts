@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { PartMesh } from "../src/kernel/protocol";
 import { emptyDocument, historyOf } from "../src/model/document";
 import { acceptBlocker, missingPick } from "../src/model/draftReady";
-import { aimedFlip, clearSpacing, holeSketchFor, materialBehind, sizeAlong, suggestedSpacing } from "../src/model/newFeatureDefaults";
+import { aimedFlip, clearSpacing, holeSketchFor, materialBehind, sizeAlong, suggestedSpacing, translateDirection } from "../src/model/newFeatureDefaults";
 import { activeFeatures, useStore } from "../src/model/store";
 import type { Feature, JuraCADDocument } from "../src/model/types";
 import { addCircle, addPoint } from "../src/sketch/ops";
@@ -81,7 +81,7 @@ describe("Accept waits for what must be picked", () => {
     expect(missingPick(feat("f", "split", { splitDef: { plane: { kind: "default", name: "Top" }, keep: "both" } as Feature["splitDef"] }))).toBeNull();
     expect(missingPick(feat("f", "composite", { compositeParts: ["a"] }))).toMatch(/two or more/);
     expect(missingPick(feat("f", "hole", { hole: { kind: "simple", standard: "M3", fit: "clearance", end: "throughAll", flip: false } }))).toMatch(/Click a face/);
-    expect(missingPick(feat("f", "extrude"))).toBeNull();
+    expect(missingPick(feat("f", "extrude", { sketchRef: "s" }))).toBeNull();
     const edge = { partId: "b", ref: { kind: "edge" as const, curve: "LINE", a: [0, 0, 0] as [number, number, number], b: [1, 0, 0] as [number, number, number], mid: [0.5, 0, 0] as [number, number, number] } };
     expect(missingPick(feat("f", "fillet", { picks: [edge] }))).toBeNull();
     // Shell's faces only: an edge clicked by mistake doesn't count.
@@ -248,3 +248,43 @@ describe("a Linear pattern's spacing", () => {
 });
 
 beforeEach(() => reset([]));
+
+describe("a Move face Translate's direction", () => {
+  const side = { partId: "a", ref: { kind: "face" as const, surface: "PLANE", center: [40, 15, 5] as [number, number, number], normal: [1, 0, 0] as [number, number, number] } };
+  const slant = { partId: "a", ref: { kind: "face" as const, surface: "PLANE", center: [20, 15, 8] as [number, number, number], normal: [0.6, 0, 0.8] as [number, number, number] } };
+  // A whole cylinder's face keeps no normal: its axis comes from the mesh (tests/engineMovePiece), so with none known: no opinion.
+  const holeWall = { partId: "a", ref: { kind: "face" as const, surface: "CYLINDRE", center: [15, 15, 5] as [number, number, number], normal: [0, 0, 0] as [number, number, number] } };
+
+  it("starts straight out of the first picked face, not along Z", () => {
+    const mf = (picks: Feature["picks"]) => ({ type: "moveFace" as const, moveFace: { mode: "translate" as const }, picks });
+    expect(translateDirection(mf([side]))).toEqual({ axis: "x" });
+    expect(translateDirection(mf([slant]))).toEqual({ along: slant });
+    expect(translateDirection(mf([holeWall]))).toBeNull();
+    expect(translateDirection(mf([]))).toBeNull();
+    expect(translateDirection({ ...mf([side]), moveFace: { mode: "offset" } })).toBeNull();
+  });
+
+  it("follows the picks in the dialog until a direction is chosen", () => {
+    reset([feat("a", "box")]);
+    s().startCreate("moveFace");
+    s().setDraftField({ moveFace: { mode: "translate" } });
+    s().toggleDraftPick(side);
+    expect(s().editing!.draft.moveFace).toEqual({ mode: "translate", axis: "x" });
+    s().toggleDraftPick(side);
+    s().toggleDraftPick(slant);
+    expect(s().editing!.draft.moveFace).toEqual({ mode: "translate", along: slant });
+    // Chosen by hand: a later pick leaves it.
+    s().setDraftField({ moveFace: { mode: "translate", axis: "z" } });
+    s().toggleDraftPick(slant);
+    s().toggleDraftPick(side);
+    expect(s().editing!.draft.moveFace).toEqual({ mode: "translate", axis: "z" });
+    s().cancelDraft();
+    // Faces picked first, Translate chosen after.
+    reset([feat("a", "box")]);
+    s().startCreate("moveFace");
+    s().toggleDraftPick(side);
+    s().setDraftField({ moveFace: { mode: "translate" } });
+    expect(s().editing!.draft.moveFace).toEqual({ mode: "translate", axis: "x" });
+    s().cancelDraft();
+  });
+});

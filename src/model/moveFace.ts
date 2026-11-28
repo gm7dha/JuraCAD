@@ -16,8 +16,8 @@ export type MoveFaceMode = MoveFaceDef["mode"];
 /** The three types, as the dialog's segmented choice shows them (Onshape's names). */
 export const MOVE_FACE_MODES: readonly { mode: MoveFaceMode; label: string; hint: string }[] = [
   { mode: "offset", label: "Offset", hint: "Each face moves straight out from itself (or in, with a minus distance) — round faces too: a hole's wall moved in by 0.2 makes the hole 0.4 mm bigger across" },
-  { mode: "translate", label: "Translate", hint: "Flat faces slide along a direction you choose (X, Y, Z or a clicked edge or face); the faces round them stretch to meet" },
-  { mode: "rotate", label: "Rotate", hint: "Flat faces turn about an axis (a clicked straight edge, a hole's middle, or X, Y, Z) by an angle; the faces round them stretch to meet" },
+  { mode: "translate", label: "Translate", hint: "Faces slide along a direction you choose (X, Y, Z or a clicked edge or face); the faces round them stretch to meet. Pick a hole's wall (and its floor or countersink) or a boss's faces to move the whole hole or boss" },
+  { mode: "rotate", label: "Rotate", hint: "Faces turn about an axis (a clicked straight edge, a hole's middle, or X, Y, Z) by an angle; the faces round them stretch to meet. A hole or boss turns as a whole about an axis square to its face" },
 ];
 
 /** Which type a Move face is ("classic" = an older one with no type: flat faces pushed out). */

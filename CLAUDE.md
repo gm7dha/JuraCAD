@@ -90,6 +90,8 @@
   default planes and the origin always. Engine `followSketch` re-finds them with `seePlaneLink` from `planeFrames` (Plane
   features placed so far this build, reset per build) — later/deleted/suppressed/now parallel = lost (`fromPlanesNote`).
   Tests: sketchPlaneRefs (pure), sketchPlaneRefsStore, sketchPlaneRefsEngine, sketchPlaneRefsRevolve (a plane's line as a revolve axis).
+  A plane's (or origin's) line brought in stays construction: `isPlaneCurve` (ops.ts) — Q/`toggleConstruction` and the menu's
+  Make it solid skip it; picked alone, `relationsFor` offers nothing and the menu no Copy/Delete (with own geometry as usual). tests/auditFixes.
   Drawing feel (Onshape's, controller.ts): `linePlan` decides a line's end + inferred relation (Shift: none; a point/curve snap:
   just that; an "align" snap still gets H or V — whichever the lining up doesn't give —; else H/V within 4°; else `lineRelation`:
   parallel/perpendicular to a "woken" line (`woken`: own lines hovered while drawing + the chain's last line, ≤ `WOKEN_MAX`;
@@ -216,7 +218,8 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   with the same size while the tool stays on (controller `lastEdge`, reset on tool change), a round is `equal` to the first
   (`sizeOfRound` / `equalTo` in filletCorner) and an Equal chamfer's size line `equal` to the first's — one dimension sizes
   them all (only while the first is still that size). Slot on a curve (tool "slotAlong", `src/sketch/slotAlong.ts`): offsetCurves/offsetWavy both sides at
-  `halfWidthText`, the two offset constraints merged into ONE (its id returned), round end caps centred on the run's end points
+  `halfWidthText`, the two offset constraints merged into ONE (its id returned) holding the WIDTH as typed with `doubled` (solver,
+  curveOffsets halve it; measure ×2; layout draws across both sides; label without ⌀; validate keeps it on offsets), round end caps centred on the run's end points
   with `tangent` to each copy (open runs only), the source made construction. Drag-trim: in Trim a press starts
   `trimStroke`; let go unmoved = the old click trim, dragged = `trimAlong` (crossing nothing from a press on a curve = still the click trim) (`src/sketch/trimStroke.ts`: the path as a
   CurveParam, `crossings` with every curve in path order, each place's curve found again after each trim) — one undo step;
@@ -1270,7 +1273,16 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   edge, start/part way %/end, radius; Smooth/Straight). Manipulators: an arrow per placeable point (`radiusPointAt`), key `vf:<i>`
   (`manipPatch` writes the point; `noEdit` — typed in the list). Claude: fillet `variable` [{edge, at, radius}] / false,
   `variable_straight`. Not done: vertex radii shared by a chain's edges in one box (each edge's point is its own), `allEdges` +
-  variable, conic sections. Tests: tests/variableFillet (pure), engineVariableFillet (1 → 4 probed at both ends, three points smooth
+  variable, conic sections. Picking (Onshape's: clicks on the original edges): `Feature.edgesPicking` (Fillet/Chamfer, never
+  saved — withoutPicking): connect.ts builds `checkWhilePicking` (features before it + it with `edgesCheck`: the engine's
+  applyEdgeFeature builds and checks it, errors/warnings as usual, but leaves the parts as they were; later features wait),
+  so the view shows the part as before it, picked edges lit, and a picked edge can be clicked again (unpick, or a radius
+  point); no arrows while picking (`manipulatorsFor`); a failure blocks Accept while picking (it can't be seen). Pure
+  `src/model/edgePicking.ts`: new with nothing picked starts picking; typing a size, dragging an arrow or "Done — show the
+  result" shows the result (`showingResult`); ticking Variable picks; dialog undo keeps the mode (`withPickingOf`); showing the
+  result, a click on what the feature made (`madeByOpenFeature`: faceMakers — unknown counts as made — and edges round those
+  faces via faceEdges) or on nothing goes back to picking with a toast (Viewport). Not done: the result drawn see-through
+  while picking. engineEdgePicking, tests/edgePicking. Tests: tests/variableFillet (pure), engineVariableFillet (1 → 4 probed at both ends, three points smooth
   and straight, a reversed pick, main radius on the rest, a tangent run, the ordinary fillet unchanged, too big refused), mcpVariableFillet.
 - Move face types (Onshape's Offset / Translate / Rotate): `Feature.moveFace` (`MoveFaceDef`: `mode`, `axis` X/Y/Z or `along`
   (TopoPick, followed via the engine's `pickedAxis`; Translate: straight edge or flat face's normal, Rotate: straight/round edge or
@@ -1287,10 +1299,27 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   neighbours re-trim. Dialog `src/app/MoveFaceOptions.tsx` (segmented choice; Direction/Axis slot → view clicks in Viewport's
   handlePick, edges allowed then); manipulators: Translate arrow along the direction, Rotate arc round a straight/X/Y/Z axis (none
   round a round face's axis). Claude: add_feature "move_face" (`move`, `distance`/`angle`, `direction`/`axis` "x"|"y"|"z"|{edge}|{face},
-  `flip`). Dependents: `along`'s part (not for Offset). Not done: Translate of round faces (moving a hole), Rotate of curved faces,
+  `flip`). Dependents: `along`'s part (not for Offset). A new Translate starts straight out of its first picked face (newFeatureDefaults
+  `translateDirection`: X/Y/Z it faces, else the face as direction; a round pick: `sidewaysAxis` of its axis — whole cylinders'
+  faceRefs have normal [0,0,0], so pure `src/model/movePiece.ts` `roundFaceAxis` takes it from the mesh's vertex normals (least
+  spread about their mean, so cones work) and `pieceOfPicks` the opening (`mouth`: the round faces' end away from picked flats, else
+  the end the axis points to); `AutoValues.moveDir`, until chosen by hand; toggleDraftPick runs `withAuto`). Manipulators for round
+  picks: the arrow at the mouth along the direction; a Rotate arc only about an axis along the piece's (`movedPiece`: no cache;
+  `pieceOfPicks(…, guess)` finds the picks among the shown part's faces as strictMatch would — nearest by distance across the
+  face's own axis + ¼ along it, within 0.1 × size, unambiguous — both where picked and where the current value moves them
+  (preview/editing); found moved, the opening is taken back across the axis only, as it stays on its face). Translate/Rotate with any round face picked = the whole piece
+  (`movePieceOfFaces`): facePattern's `regionOfFaces(…, keepCaps)` (+ `caps`: point, normal away from the tool) gives the hole's space or
+  boss's solid (picked faces split into touching groups, `touchingGroups`: several holes move together); caps whose far side is space (hole) / material (boss) are its mouth/foot (`mouth`; others, e.g. an unpicked floor, are
+  part of it). Filled (hole) / taken off (boss), then made again moved — slid, a mouth cap is carried on by −move·n (deeper hole, lifted
+  boss); turned, mouth caps must stay in their planes ("squarely"). Refused: moved piece (less beyond its mouth planes) not wholly in the
+  filled part (hole: "out of the part") / touching the rest (boss: "into the rest"), a 0.05 slab past the moved mouth meeting material /
+  foot not on material ("hang off"; + "foot isn't picked" when an unpicked round face runs along it), nothing changes (slid along
+  itself), < 5% left inside ("right out of the part"), carried on through / pushed into its mouth where its sides aren't straight
+  (a slab of the cap that deep ∩ tool: a filleted foot or countersink would be lost or stretched), volume ≠ expected, > 1 solid. Not done: a round face tilted on its own (only whole pieces turn),
   neighbours that aren't square carried on to meet (warned), filling the corner where two moved faces meet. Tests: tests/moveFace
   (pure), engineMoveFace (exact volumes: box ±2, Ø10 hole → Ø10.4 and Ø9.6, boss +1, pocket floor, slanted face up Z, along an
-  edge, 5° about an edge, refusals, an old Move face as before), mcpMoveFace.
+  edge, 5° about an edge, refusals, an old Move face as before; a Ø10 hole slid 12 (old place filled), off the edge, blind hole sideways/deeper/
+  shallower, boss slid/lifted/off its face/into another, countersunk hole, hole turned 90° about Z), mcpMoveFace.
 - Everyday picking and views (Onshape's): selection filter `src/viewport/selectionFilter.ts` (pure; `store.selectFilter`, session
   only; empty = everything; kinds face/edge/vertex ("Corners")/part/plane/sketch; `partHitAs`: a face/edge
   whose kind is off becomes its whole part when Parts is on (`PickTarget.whole`, handlePick → `selectedParts`; only with nothing
@@ -1378,7 +1407,11 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   (`aimedFlip`: a sketch on a part's face — `materialBehind`, its plane normal vs the face pick's outward normal — Remove/
   Intersect point in, New/Add out; plain planes unknown = left), a Linear pattern's `spacing`/`spacing2` (`suggestedSpacing`:
   the repeated parts' box along the direction × 1.2, rounded up; parts picked, or the parts its sources made), run from
-  startCreate, setDraftField, toggleDraftPart/Source. Edits never change. A new Hole's sketch: `holeSketchFor` (highlighted,
+  startCreate, setDraftField, toggleDraftPart/Source. Edits never change. New solid features start on New until a feature
+  that makes a part comes before (`hasPartBefore`: sketches, curves, Planes, mate connectors don't count). A new
+  Extrude/Revolve with none highlighted takes `sketchToExtrude` (areaClicks.ts: the last sketch with closed shapes left —
+  `sketchUsedUp` —, else none; `missingPick` then waits for areas); a Sweep's profile the same (closed shapes only), its path
+  the last other sketch. A new Hole's sketch: `holeSketchFor` (highlighted,
   else the last feature if an unused sketch with points, else none). Hole face clicks (Viewport handlePick, create mode):
   `placeHoleAt(plane, point)` puts a standalone point in a sketch on that face made for the hole (store closure `holeSketch`:
   written into `history.present` without an undo step; Cancel/startCreate/startEdit put `before` back only while nothing
@@ -1386,7 +1419,7 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   back (a rename mid-dialog, New/Open); Accept inserts it just before the hole in ONE step; another face is refused; the
   toolbar's Hole needs only a part). Accept waits: pure `src/model/draftReady.ts` `missingPick` (fillet/
   chamfer with no picks, Shell Open with no face, face features, split face, part lists, part/face patterns, a hole with no
-  sketch…) — the ✓ disabled with it as the tooltip, commitDraft refuses with a toast; `acceptBlocker` lets an edited feature
+  sketch…) — the ✓ disabled with it as the tooltip (and the engine's matching error shown as a plain hint), commitDraft refuses with a toast; `acceptBlocker` lets an edited feature
   that was already missing it when opened (picks lost upstream, an old Open shell with no face) be accepted, so no one's trapped. After Accept nothing is selected (a
   sketch stays highlighted). Engine: solid Extrude/Revolve/Sweep/Loft Add/Remove/Intersect (not a pattern/mirror source) that
   leaves every solid part's id, volume (1e-8) and face count as it was gets the `noChangeMessage` warning ("This doesn't
@@ -1674,7 +1707,8 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   quietly; the 3MF's painted triangles are exactly the face's; STEP face style); the smoke test colours the block's top face
   PETG HF Black and checks the 3MF's paint, then undoes. The 3D print panel's 3MF (`exportPrint3mf(…, faces)`) paints faces the same way, laid on
   the bed (filament words in its sent message); Claude's `set_appearance` takes `faces` (list_faces' names; with a colour, not a finish)
-  (tests/mcpAppearance, engineFaceColours). `filamentsFor` = 0 unless a chosen part has face colours (the dialog's note), `lostFacesNote`.
+  (tests/mcpAppearance, engineFaceColours). `filamentsFor` = 0 unless a chosen part has face colours (the dialog's note), `lostFacesNote`; `filamentsNote` names the app's own
+  swatches ("orange (any orange filament)", PART_COLOURS).
   3D view: `src/viewport/studio.ts` (`finishMaterial`: matte in the quick view is still the original Phong material and grey
   matte parts share the old one, so the everyday view is unchanged; `studioEnvironment`: three's RoomEnvironment made in code,
   turned Z-up, through PMREM — no downloaded assets; `studioRig`: four slightly spread shadow-casting key lights = a soft

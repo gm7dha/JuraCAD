@@ -249,8 +249,9 @@ export interface SketchConstraint {
    */
   driven?: boolean;
   /**
-   * pointLineDistance only: measured as a diameter about a centreline (Onshape's revolve-profile dimension) — the value is
-   * twice the point's distance from the line. Missing = the plain distance.
+   * pointLineDistance: measured as a diameter about a centreline (Onshape's revolve-profile dimension) — the value is
+   * twice the point's distance from the line. offset: a Slot on a curve's width — the copies sit half the value either
+   * side (the solver halves it). Missing = the plain distance.
    */
   doubled?: boolean;
   /**

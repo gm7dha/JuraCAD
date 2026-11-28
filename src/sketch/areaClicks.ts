@@ -344,3 +344,34 @@ export function pathChange(draft: Pick<Feature, "moreAreas">, pathRef: string | 
   const rest = draft.moreAreas.filter((m) => m.sketch !== pathRef);
   return { pathRef, moreAreas: rest.length ? rest : undefined };
 }
+
+/**
+ * Whether every closed shape of a sketch is already taken by solid Extrudes, Revolves or Sweeps (nothing left to
+ * extrude). A sketch with no closed shapes counts as used up once anything uses it; a very busy sketch once a feature
+ * uses all of it (no areas picked).
+ */
+export function sketchUsedUp(features: Feature[], sketchId: string, data: SketchData, used: ReadonlySet<string>): boolean {
+  const map = sketchAreas(data);
+  if (!map.areas.length) return used.has(sketchId);
+  if (map.areas.length > MAX_SHADED_AREAS) return features.some((f) => !f.suppressed && usesAreas(f) && !f.thin && f.sketchRef === sketchId && !f.areas?.length);
+  const all = [...areasUsedByAll(data)];
+  if (!all.length) return used.has(sketchId);
+  const taken = areasTaken(features, sketchId, data);
+  return all.every((i) => taken.has(i));
+}
+
+/**
+ * The sketch a new Extrude or Revolve starts with when none is highlighted (as Hole's): the last sketch that still has
+ * closed shapes nothing uses, else none — the dialog then asks for areas to be clicked, rather than extruding a
+ * used-up sketch "using every closed shape" again.
+ */
+export function sketchToExtrude(features: Feature[], used: ReadonlySet<string>, dataOf: (f: Feature) => SketchData | undefined, closedOnly = false): string | undefined {
+  for (let i = features.length - 1; i >= 0; i--) {
+    const f = features[i];
+    if (f.type !== "sketch" || f.suppressed || !f.sketch?.plane) continue;
+    const data = dataOf(f);
+    // (A sweep's profile needs a closed shape: a sketch of open lines is its path.)
+    if (data && (!closedOnly || sketchAreas(data).areas.length > 0) && !sketchUsedUp(features, f.id, data, used)) return f.id;
+  }
+  return undefined;
+}
