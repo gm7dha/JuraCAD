@@ -885,7 +885,7 @@ export function MountainPuzzleDialog() {
               {!slotClash && !tooMany && amsCount > amsSlotsOf(printer) && (
                 <p className="mountain-warn small">
                   That's {amsCount} filaments in the AMS{onSecond && second?.ownFeed ? ` (the breakaway one is on the ${second.name} nozzle)` : ", the breakaway one included"}, and yours
-                  hold{amsSlotsOf(printer) === 1 ? "s" : ""} {amsSlotsOf(printer)}: use the spool holder for the rest, or fewer colours.
+                  hold {amsSlotsOf(printer)}: use the spool holder for the rest, or fewer colours.
                 </p>
               )}
               {onSecond && second && (
@@ -976,6 +976,7 @@ export function MountainPuzzleDialog() {
           <h3 className="library-heading">3. Colour</h3>
           <MaterialSelect value={material} onChange={setMaterial} />
           <ColourPanel
+            extraLoad={bandsTogether && !slotClash ? [{ n: breakSlot, label: `Breakaway layers — ${advice.filament}${onSecond && second ? `, on the ${second.name} nozzle` : ""}` }] : undefined}
             material={material}
             spec={colour}
             setSpec={setColour}

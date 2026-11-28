@@ -62,7 +62,10 @@ export function ColourPanel({
   slots,
   setSlots,
   material = USUAL_MATERIAL,
+  extraLoad,
 }: {
+  /** More filaments to load beside the colours (the breakaway layers'), shown in the Load list. */
+  extraLoad?: { n: number; label: string }[];
   /** The filament the puzzle is printed in: the usual colours are that line's nearest. */
   material?: PuzzleMaterial;
   spec: ColourSpec;
@@ -275,6 +278,12 @@ export function ColourPanel({
                   <span key={f.n} className="colour-filament">
                     <span className="colour-swatch" style={{ background: f.colour }} /> {f.n} {f.uses.join(", ")}
                     {f.spool ? <span className="muted"> — {f.spool}</span> : null}
+                  </span>
+                ))}
+                {extraLoad?.map((x) => (
+                  <span key={`extra${x.n}`} className="colour-filament">
+                    {" "}
+                    {x.n} {x.label}
                   </span>
                 ))}
               </p>
