@@ -72,6 +72,12 @@ export function missingPick(f: Feature): string | null {
     case "mirror":
       if (f.mirror?.of === "face" && none(f)) return "Click the faces to mirror first.";
       return null;
+    case "extrude":
+    case "revolve":
+      return !f.sketchRef ? `Click the areas to ${f.type} in the 3D view (or choose a sketch) first.` : null;
+    case "sweep":
+      // (A part's flat face can be the profile instead.)
+      return !f.sketchRef && !f.sweepControl?.face ? "Click the area to sweep in the 3D view (or choose a sketch) first." : null;
     case "hole":
       return f.hole && !f.hole.sketchRef ? "Click a face to place a hole, or choose a sketch with points first." : null;
     default:

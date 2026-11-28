@@ -351,3 +351,12 @@ export function resultText(r: SearchResult, floorWords: string): string {
   if (r.atFloor) return `${floorWords}, and it prints well.`;
   return `${r.capped ? "Stopped looking after " + r.steps.length + " tries: " : ""}${r.why ? r.why.charAt(0).toUpperCase() + r.why.slice(1) : "Smaller doesn't print as well"}.`;
 }
+
+/**
+ * Whether a size tried (`pieces` when it printed well) beats the best kept so far, by the search's own rule (most
+ * pieces, ties to the bigger size): the windows keep only that one puzzle while searching, not every size tried.
+ */
+export function beatsKept(kept: { size: number; pieces: number } | null, size: number, v: CountedVerdict): boolean {
+  if (!v.ok) return false;
+  return !kept || v.pieces > kept.pieces || (v.pieces === kept.pieces && size > kept.size);
+}

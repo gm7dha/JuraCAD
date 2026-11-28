@@ -7,7 +7,8 @@ import type { FeatureType } from "../model/types";
 import { planeForFace, viewportApi } from "../viewport/Viewport";
 import { Icons } from "./icons";
 import { ToolGroupButton, type GroupItem } from "./ToolGroupButton";
-import { STUDIO_TOOLBAR, type StudioTool } from "./toolbarLayout";
+import { STUDIO_TOOLBAR, STUDIO_TOUCH_TOOLBAR, type StudioTool } from "./toolbarLayout";
+import { useNarrowTouch } from "./narrowTouch";
 import { CURVE_KINDS, curveName, newCurveDef } from "../model/curves";
 import type { CurveKind } from "../model/types";
 import { detectPlatform, shortcut } from "./platform";
@@ -116,6 +117,8 @@ export function startMateConnectorFromSelection() {
 }
 
 export function Toolbar() {
+  // A touch screen up to 1300 px wide: icons only (styles.css) and the rarer groups joined, so the tools fit.
+  const narrowTouch = useNarrowTouch();
   const editing = useStore((s) => s.editing !== null);
   const canUndo = useStore((s) => s.history.past.length > 0) && !editing;
   const canRedo = useStore((s) => s.history.future.length > 0) && !editing;
@@ -486,7 +489,7 @@ export function Toolbar() {
     if (run.length) groups.push(<div className="tool-group" key={`g${groups.length}`}>{run}</div>);
     run = [];
   };
-  for (const entry of STUDIO_TOOLBAR) {
+  for (const entry of narrowTouch ? STUDIO_TOUCH_TOOLBAR : STUDIO_TOOLBAR) {
     if (entry === "|" || entry === "~") {
       endRun();
       groups.push(<div className={entry === "|" ? "tool-divider" : "toolbar-spacer"} key={`d${groups.length}`} />);

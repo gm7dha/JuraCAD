@@ -43,6 +43,7 @@ import { loadTerrainTile } from "./mountainTiles";
 import { PickableView, type TopViewPick } from "./PathPicker";
 import { mountainViewBox, NONE_DROPPED, pickableLines, withoutDropped } from "../terrain/pickMarks";
 import { amsSlotsOf, loadPrinter, printerBed, savePrinter } from "./printerSetting";
+import { fitDistance } from "../viewport/fitView";
 import { CUBE_STEP, mountainFloor, mountainLayoutVerdict, smallestThatPrints, type SearchResult, type SearchStep, type Verdict } from "../terrain/mostPieces";
 import { mostPiecesTicked, setMostPiecesTicked } from "./mostPiecesState";
 import { MostPiecesNote } from "./MostPiecesNote";
@@ -373,7 +374,8 @@ export function MountainPuzzleDialog() {
     }
     let stopped = false;
     const inputs = buildInputs;
-    const builtAt = new Map<number, MountainPuzzle>();
+    // Only the smallest cube size that printed well so far is kept (not every size tried: each is a full set of meshes).
+    let kept: { size: number; puzzle: MountainPuzzle } | null = null;
     const from = cubeNow.current;
     setSearch({ key: searchKey, steps: [], result: null });
     const timer = setTimeout(() => {
@@ -397,7 +399,7 @@ export function MountainPuzzleDialog() {
             searchBuilder.current.build({ grid: u.grid, width: u.width, height: u.height, spec: s, features }, (reply) => {
               if ("error" in reply) resolve({ ok: false, why: "smaller cubes couldn't be made" });
               else {
-                builtAt.set(cube, reply.puzzle);
+                if (reply.verdict.ok && (!kept || cube < kept.size)) kept = { size: cube, puzzle: reply.puzzle };
                 resolve(reply.verdict);
               }
             });
@@ -406,11 +408,13 @@ export function MountainPuzzleDialog() {
       })
         .then((result) => {
           if (stopped) return;
+          searchBuilder.current.stop();
           if (result.size !== null) {
-            const puzzle = builtAt.get(result.size);
-            if (puzzle) found.current = { specKey: JSON.stringify({ ...fullSpec, cube: result.size }), inputs, puzzle };
+            const best: { size: number; puzzle: MountainPuzzle } | null = kept;
+            if (best && best.size === result.size) found.current = { specKey: JSON.stringify({ ...fullSpec, cube: result.size }), inputs, puzzle: best.puzzle };
             set("cube", result.size);
           }
+          kept = null;
           setSearch({ key: searchKey, steps: result.steps, result });
         })
         .catch(() => undefined);
@@ -1078,7 +1082,7 @@ export function MountainPuzzleDialog() {
               {!colourOn && puzzle && plates.length > 0 && !slotClash && (
                 <div className="mountain-downloads">
                   <span className="small">
-                    {plates.length} {plates.length === 1 ? "plate" : "plates"} for Bambu Studio:
+                    {plates.length === 1 ? "One plate" : `${plates.length} plates`} for Bambu Studio:
                   </span>
                   {plates.map((p, i) => (
                     <button
@@ -1087,12 +1091,18 @@ export function MountainPuzzleDialog() {
                       onClick={() => downloadFile(blobOf(plate3mf(p, `${fileName} - plate ${i + 1}`, settings, filaments), "model/3mf"), `${fileName} - plate ${i + 1} of ${plates.length}.3mf`)}
                       title={p.pieces.map((x) => x.piece.name).join(", ")}
                     >
-                      {way === "layers" ? `Layer ${i + 1}` : `Plate ${i + 1}`} ({p.pieces.filter((x) => x.piece.col >= 0).length})
+                      {plates.length === 1
+                        ? onePiece
+                          ? "The model (.3mf)"
+                          : `All ${p.pieces.filter((x) => x.piece.col >= 0).length} pieces (.3mf)`
+                        : `${way === "layers" ? `Layer ${i + 1}` : `Plate ${i + 1}`} (${p.pieces.filter((x) => x.piece.col >= 0).length})`}
                     </button>
                   ))}
-                  <button className="primary-button" onClick={() => downloadFile(blobOf(allPlatesZip(plates, fileName, settings, filaments), "application/zip"), `${fileName}.zip`)}>
-                    All plates (.zip)
-                  </button>
+                  {plates.length > 1 && (
+                    <button className="primary-button" onClick={() => downloadFile(blobOf(allPlatesZip(plates, fileName, settings, filaments), "application/zip"), `${fileName}.zip`)}>
+                      All plates (.zip)
+                    </button>
+                  )}
                 </div>
               )}
               {border && (
@@ -1254,10 +1264,13 @@ function TopView({ grid, area, puzzle, picture, features, pick }: { grid: Height
   );
 }
 
+/** How much further back than just touching the edges the 3D preview stands (a little room round the model). */
+const FIT_ROOM = 1.08;
+
 /** The puzzle in 3D, to turn round; pulled apart by `explode` mm per step. */
 export function Mountain3D({ puzzle, explode, paint, border }: { puzzle: { pieces: PuzzlePiece[] } | null; explode: number; paint?: PreviewMesh[] | null; border?: BorderPiece[] | null }) {
   const host = useRef<HTMLDivElement>(null);
-  const view = useRef<{ renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera; controls: OrbitControls; group: THREE.Group; framed: boolean } | null>(null);
+  const view = useRef<{ renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera; controls: OrbitControls; group: THREE.Group; framed: boolean; fit: () => void; moved: () => boolean } | null>(null);
 
   useEffect(() => {
     const el = host.current;
@@ -1283,17 +1296,37 @@ export function Mountain3D({ puzzle, explode, paint, border }: { puzzle: { piece
     scene.add(group);
     const draw = () => renderer.render(scene, camera);
     controls.addEventListener("change", draw);
+    // Turned or zoomed by hand: a resize (Enlarge) no longer frames it afresh.
+    let moved = false;
+    controls.addEventListener("start", () => (moved = true));
+    // The whole model in view with a little room round it, whatever the view's shape.
+    const fit = () => {
+      if (!group.children.length) return;
+      const box = new THREE.Box3().setFromObject(group);
+      const centre = box.getCenter(new THREE.Vector3());
+      const dir = new THREE.Vector3(0.9, -1.9, 1.4).normalize();
+      const corners = [0, 1, 2, 3, 4, 5, 6, 7].map((k) => [k & 1 ? box.max.x : box.min.x, k & 2 ? box.max.y : box.min.y, k & 4 ? box.max.z : box.min.z].map((v, i) => v - centre.getComponent(i)) as [number, number, number]);
+      const distance = fitDistance(corners, [dir.x, dir.y, dir.z], camera.fov, camera.aspect) * FIT_ROOM;
+      controls.target.copy(centre);
+      camera.position.copy(centre).addScaledVector(dir, distance);
+      camera.near = distance / 100;
+      camera.far = distance * 10;
+      camera.updateProjectionMatrix();
+      controls.update();
+      moved = false;
+    };
     const resize = () => {
       const w = el.clientWidth || 380;
       const h = el.clientHeight || 300;
       renderer.setSize(w, h);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
+      if (view.current?.framed && !moved) fit();
       draw();
     };
     const ro = new ResizeObserver(resize);
     ro.observe(el);
-    view.current = { renderer, scene, camera, controls, group, framed: false };
+    view.current = { renderer, scene, camera, controls, group, framed: false, fit, moved: () => moved };
     resize();
     return () => {
       ro.disconnect();
@@ -1307,6 +1340,7 @@ export function Mountain3D({ puzzle, explode, paint, border }: { puzzle: { piece
 
   // Seen whole again when the border is switched on or off.
   const hadBorder = useRef(false);
+  const shownPuzzle = useRef<{ pieces: PuzzlePiece[] } | null>(null);
   useEffect(() => {
     const v = view.current;
     if (!v) return;
@@ -1316,6 +1350,7 @@ export function Mountain3D({ puzzle, explode, paint, border }: { puzzle: { piece
     }
     for (const child of [...v.group.children]) {
       (child as THREE.Mesh).geometry?.dispose();
+      ((child as THREE.Mesh).material as THREE.Material | undefined)?.dispose?.();
       v.group.remove(child);
     }
     if (!puzzle) return void v.renderer.render(v.scene, v.camera);
@@ -1376,18 +1411,12 @@ export function Mountain3D({ puzzle, explode, paint, border }: { puzzle: { piece
         geo.computeVertexNormals();
         v.group.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: words ? WORDS : FRAME, roughness: 0.85, flatShading: true })));
       }
-    if (!v.framed) {
-      const box = new THREE.Box3().setFromObject(v.group);
-      const centre = box.getCenter(new THREE.Vector3());
-      const r = box.getSize(new THREE.Vector3()).length() / 2;
-      v.controls.target.copy(centre);
-      v.camera.position.set(centre.x + r * 0.9, centre.y - r * 1.9, centre.z + r * 1.4);
-      v.camera.near = r / 50;
-      v.camera.far = r * 20;
-      v.camera.updateProjectionMatrix();
-      v.controls.update();
+    // Framed when first shown, and again for each new puzzle (its size can change a lot) unless turned by hand since.
+    if (!v.framed || (puzzle !== shownPuzzle.current && !v.moved())) {
+      v.fit();
       v.framed = true;
     }
+    shownPuzzle.current = puzzle;
     v.renderer.render(v.scene, v.camera);
   }, [puzzle, explode, paint, border]);
 

@@ -4,7 +4,7 @@ import { useEditToolOptions } from "../sketch/editToolOptions";
 import { editPattern, type PatternChange } from "../sketch/patternEdit";
 import { activeFeatures, useStore, type SketchTool } from "../model/store";
 import { sketchPlaneRefs } from "../sketch/planeRefsFor";
-import { applyRelation, relationMayTakeAWhile, RELATION_LABELS, setDimensionDriven, setMeasureTo, toggleConstruction, type MeasureTo, type RelationTool } from "../sketch/ops";
+import { applyRelation, isPlaneCurve, relationMayTakeAWhile, RELATION_LABELS, setDimensionDriven, setMeasureTo, toggleConstruction, type MeasureTo, type RelationTool } from "../sketch/ops";
 import { patternCurves, readPatternSettings, readTransformSettings } from "../sketch/tools";
 import { readScale, transformCopy, transformSelection } from "../sketch/transformSelection";
 import { viewportApi } from "../viewport/Viewport";
@@ -172,8 +172,12 @@ export function toggleSketchConstruction() {
   const s = useStore.getState();
   const data = sketchData();
   if (!data || !s.sketch) return;
-  const curves = s.sketch.selection.filter((id) => data.curves.some((c) => c.id === id));
+  const curves = s.sketch.selection.filter((id) => data.curves.some((c) => c.id === id && !isPlaneCurve(c)));
   const texts = s.sketch.selection.filter((id) => textById(data, id));
+  if (!curves.length && !texts.length && s.sketch.selection.some((id) => isPlaneCurve(data.curves.find((c) => c.id === id)))) {
+    s.setSketchMessage("A plane's line is a reference: it stays construction, so it can't be made solid.", "info");
+    return;
+  }
   if (curves.length || texts.length) {
     let next: SketchData = curves.length ? toggleConstruction(data, curves) : data;
     for (const id of texts) next = changeText(next, id, { construction: !textById(data, id)!.construction }).sketch;

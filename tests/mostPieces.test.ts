@@ -201,3 +201,15 @@ describe("mostPiecesSize (the island: most pieces, not just smallest)", () => {
     expect(thrown instanceof SearchStopped).toBe(true);
   });
 });
+
+describe("beatsKept", () => {
+  it("keeps the puzzle the search would choose: most pieces, ties to the bigger size, never one that doesn't print well", async () => {
+    const { beatsKept } = await import("../src/terrain/mostPieces");
+    expect(beatsKept(null, 12, { ok: true, pieces: 90 })).toBe(true);
+    expect(beatsKept(null, 12, { ok: false, pieces: 90 })).toBe(false);
+    expect(beatsKept({ size: 12, pieces: 90 }, 11, { ok: true, pieces: 99 })).toBe(true);
+    expect(beatsKept({ size: 12, pieces: 90 }, 13, { ok: true, pieces: 85 })).toBe(false);
+    expect(beatsKept({ size: 12, pieces: 90 }, 13, { ok: true, pieces: 90 })).toBe(true);
+    expect(beatsKept({ size: 12, pieces: 90 }, 11, { ok: true, pieces: 90 })).toBe(false);
+  });
+});

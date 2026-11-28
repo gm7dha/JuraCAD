@@ -126,7 +126,8 @@ export function slotAlong(original: SketchData, curveId: string, widthText: stri
   const made = d.constraints.filter((k) => !before.has(k.id) && k.type === "offset");
   if (made.length !== 2) return fail("The slot couldn't be made along that curve.");
   const [k1, k2] = made;
-  const joined: SketchConstraint = { ...k1, refs: [...k1.refs, ...k2.refs], extra: [...(k1.extra ?? []), ...(k2.extra ?? [])], value: halfText };
+  // It holds the slot's whole width, as typed (Onshape's slot width): the copies sit half of it either side.
+  const joined: SketchConstraint = { ...k1, refs: [...k1.refs, ...k2.refs], extra: [...(k1.extra ?? []), ...(k2.extra ?? [])], value: widthText.trim(), doubled: true };
   d = { ...d, constraints: d.constraints.filter((k) => k.id !== k2.id).map((k) => (k.id === k1.id ? joined : k)) };
   const copies = [...one.curveIds, ...two.curveIds];
   const extra: SketchCurve[] = [];

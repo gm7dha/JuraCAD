@@ -7,7 +7,7 @@
  * Pure: the 3D view, the export and the Parts list all use these.
  */
 import { parsePick, sameRef, strictMatch, type FaceRef } from "../geometry/topoRef";
-import { DEFAULT_PART_COLOUR, normaliseColour } from "./colours";
+import { DEFAULT_PART_COLOUR, normaliseColour, PART_COLOURS } from "./colours";
 import { spoolFor, spoolLabel } from "../terrain/bambuColours";
 import type { JuraCADDocument } from "./types";
 
@@ -208,7 +208,9 @@ export function filamentsFor(doc: Pick<JuraCADDocument, "appearance" | "faceAppe
 export function filamentsNote(filaments: readonly { colour: string; spool?: string }[]): string {
   const named = filaments.map((f, i) => {
     const s = spoolFor(f.colour, f.spool);
-    return `${i + 1} ${s ? spoolLabel(s) : f.colour.toLowerCase() === DEFAULT_PART_COLOUR ? "the usual grey (any filament you like)" : `your own colour ${f.colour}`}`;
+    // JuraCAD's own swatches (Orange, Teal…) by their names, as Bambu's.
+    const usual = PART_COLOURS.find((c) => c.hex === f.colour.toLowerCase());
+    return `${i + 1} ${s ? spoolLabel(s) : f.colour.toLowerCase() === DEFAULT_PART_COLOUR ? "the usual grey (any filament you like)" : usual ? `${usual.name.toLowerCase()} (any ${usual.name.toLowerCase()} filament)` : `your own colour ${f.colour}`}`;
   });
   return `${filaments.length === 1 ? "1 filament" : `${filaments.length} filaments`}, load them in this order: ${named.join(", ")}.`;
 }

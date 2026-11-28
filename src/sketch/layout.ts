@@ -77,6 +77,8 @@ export function dimensionLayout(s: SketchData, c: SketchConstraint): DimensionLa
           const [m, n] = linePts(s, orig);
           const d = unit(sub(n, m));
           const foot = add(m, scale(d, dotp(sub(p, m), d)));
+          // A slot's width (doubled): across both sides, the label in the middle.
+          if (c.doubled) return { lines: [[p, sub(scale(foot, 2), p)]], label: add(foot, offset), anchor: foot };
           return { lines: [[p, foot]], label: add(mid(p, foot), offset), anchor: mid(p, foot) };
         }
         if ((copy?.type === "arc" || copy?.type === "circle") && (orig?.type === "arc" || orig?.type === "circle")) {
@@ -91,6 +93,7 @@ export function dimensionLayout(s: SketchData, c: SketchConstraint): DimensionLa
           }
           const p = add(centre, scale(dir, radiusOf(s, copy)));
           const q = add(centre, scale(dir, radiusOf(s, orig)));
+          if (c.doubled) return { lines: [[p, sub(scale(q, 2), p)]], label: add(q, offset), anchor: q };
           return { lines: [[p, q]], label: add(mid(p, q), offset), anchor: mid(p, q) };
         }
         if (copy?.type === "spline" && (orig?.type === "spline" || orig?.type === "ellipse")) {
@@ -99,6 +102,7 @@ export function dimensionLayout(s: SketchData, c: SketchConstraint): DimensionLa
           const p = path.at((path.lo + path.hi) / 2);
           const o = curveParam(s, orig);
           const q = o.at(nearestParam(o, p));
+          if (c.doubled) return { lines: [[p, sub(scale(q, 2), p)]], label: add(q, offset), anchor: q };
           return { lines: [[p, q]], label: add(mid(p, q), offset), anchor: mid(p, q) };
         }
         return null;

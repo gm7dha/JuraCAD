@@ -7591,6 +7591,11 @@ export class GeometryEngine {
       results.forEach((r) => r.shape.delete());
       return describeError(e, `Couldn't make this ${def.label.toLowerCase()}.`);
     }
+    // Its edges being clicked (the dialog's picking): checked, but the parts left as they were, as they're what's clicked.
+    if (feature.edgesCheck) {
+      results.forEach((r) => r.shape.delete());
+      return null;
+    }
     for (const { part, shape } of results) {
       part.shape.delete();
       part.shape = shape;

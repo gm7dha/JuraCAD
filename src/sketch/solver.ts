@@ -358,6 +358,8 @@ function buildSystem(sketch: SketchData): System {
       }
       value = r.value;
     }
+    // A slot's width (Slot on a curve): the copies sit half of it either side.
+    if (con.type === "offset" && con.doubled) value /= 2;
     const [a, b] = con.refs;
     try {
       pending.length = 0;
@@ -1614,7 +1616,7 @@ function curveOffsets(s: SketchData): { con: SketchConstraint; pair: number; cop
       const copy = byId.get(k.refs[i]);
       const orig = byId.get(k.refs[i + 1]);
       if (copy?.type !== "spline" || !copy.offsetParams || (orig?.type !== "spline" && orig?.type !== "ellipse")) continue;
-      out.push({ con: k, pair: i / 2, copy: copy.id, orig: orig.id, dist: (k.extra?.[i / 2] ?? 1) * v.value });
+      out.push({ con: k, pair: i / 2, copy: copy.id, orig: orig.id, dist: ((k.extra?.[i / 2] ?? 1) * v.value) / (k.doubled ? 2 : 1) });
     }
   }
   return out;
