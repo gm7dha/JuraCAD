@@ -80,8 +80,8 @@ function parseAreaPicks(raw: unknown): AreaPick[] {
     : [];
 }
 
-/** Features that make no part (sketches, curves, planes, mate connectors): they don't make Add the usual choice. */
-const NO_PART_TYPES: ReadonlySet<FeatureType> = new Set<FeatureType>(["sketch", "curve", "plane", "mateConnector"]);
+/** Features that make no part (sketches, curves, planes, mate connectors, measured variables): they don't make Add the usual choice. */
+const NO_PART_TYPES: ReadonlySet<FeatureType> = new Set<FeatureType>(["sketch", "curve", "plane", "mateConnector", "variable"]);
 
 /** Whether anything before makes a part, so a new solid feature starts on Add (as in Onshape); else New. */
 export function hasPartBefore(features: Feature[]): boolean {

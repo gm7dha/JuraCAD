@@ -28,7 +28,7 @@ const reset = (features: Feature[], extra: Record<string, unknown> = {}) =>
 
 describe("the first solid after planes and mate connectors", () => {
   it("is New: planes, connectors, sketches and curves make no part", () => {
-    const datums = [feat("p", "plane", { planeDef: { mode: "offset", ref: { kind: "default", name: "Top" }, axis: "u" } }), feat("m", "mateConnector"), sketch("sk"), feat("c", "curve")];
+    const datums = [feat("p", "plane", { planeDef: { mode: "offset", ref: { kind: "default", name: "Top" }, axis: "u" } }), feat("m", "mateConnector"), sketch("sk"), feat("c", "curve"), feat("v", "variable")];
     expect(hasPartBefore(datums)).toBe(false);
     for (const type of ["extrude", "revolve", "sweep", "loft", "text"] as const) expect(createFeature(docOf(datums), type).operation).toBe("new");
     const withBox = [feat("b", "box"), ...datums];
