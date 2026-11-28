@@ -1,3 +1,4 @@
+import { checkWhilePicking } from "../model/edgePicking";
 import { convertPreview, featuresToBuild, featuresWithDraft, pickingPreview, previewFeatures, previewOf } from "../model/document";
 import { resolveVariables } from "../model/variables";
 import { useStore } from "../model/store";
@@ -34,7 +35,7 @@ function currentStudios(): StudioInput[] {
     return withContexts(s.history.present, {
     id: st.id,
     ...(preview ? { preview: true } : {}),
-    features: convertPreview(
+    features: checkWhilePicking(convertPreview(
       // Picking parts or faces for the open feature: shown as they were before it (see pickingPreview).
       pickingPreview(st.id === here && bar
         ? featuresToBuild(st.id === editingIn ? previewFeatures(st.features) : st.features, st.id === editingIn ? featureForEngine(previewOf(s.editing?.draft ?? null)) : null, bar)
@@ -42,7 +43,7 @@ function currentStudios(): StudioInput[] {
           ? featuresWithDraft(previewFeatures(st.features), featureForEngine(previewOf(s.editing?.draft ?? null)))
           : st.features, st.id === editingIn ? s.editing?.draft ?? null : null),
       st.id === editingIn ? s.editing?.draft ?? null : null,
-    ),
+    ), st.id === editingIn ? s.editing?.draft ?? null : null),
   });
   }), ...configuredStudios(s.history.present), ...versionStudios(s.versionCompare)];
 }

@@ -299,6 +299,8 @@ function radiusPointHandles(draft: Feature, facesOf: (partId: string) => readonl
 /** The handles to show for the open dialog's draft (none for kinds and settings that have none). */
 export function manipulatorsFor(draft: Feature, ctx: ManipContext): Manipulator[] {
   if (!hasManipulators(draft.type)) return [];
+  // Fillet/Chamfer picking edges on the part as it was: no arrows on the edges being clicked (see edgePicking.ts).
+  if ((draft.type === "fillet" || draft.type === "chamfer") && draft.edgesPicking) return [];
   const { values } = resolveParams(draft);
   const params = draft.params;
   const base = (key: string, label: string): Base => ({ key, label, values, params });
