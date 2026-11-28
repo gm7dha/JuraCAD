@@ -420,6 +420,8 @@ export interface Feature {
   mergeScope?: string[];
   /** The dialog's merge-scope box is taking clicks (never saved; not sent to the engine). */
   mergeScopePicking?: boolean;
+  /** Fillet/Chamfer: clicking edges on the part as it was before the feature (never saved; see edgePicking.ts). */
+  edgesPicking?: boolean;
   /**
    * Extrude, revolve and sweep (solids): areas from other sketches as well as
    * `sketchRef`'s (as Onshape lets one feature use regions of several

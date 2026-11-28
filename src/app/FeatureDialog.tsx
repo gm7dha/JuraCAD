@@ -11,6 +11,7 @@ import { AreaPicker } from "./AreaPicker";
 import { LoftOptions } from "./LoftOptions";
 import { VariableFilletOptions } from "./VariableFilletOptions";
 import { areasTaken, followedSketch, pathChange, sketchesOffered, takesSeveral } from "../sketch/areaClicks";
+import { PICKING_NOTE, picksEdges } from "../model/edgePicking";
 import { FEATURE_DEFS, isPatternFeature, isPickFeature, isSketchSolid, OPERATION_LABELS, resolveParams, revolveWay, visibleParamKeys, type ParamDef } from "../model/features";
 import { describeHole, SCREW_SIZES, standardParams } from "../model/holes";
 import type { HoleOptions as HoleSettings } from "../model/types";
@@ -2457,6 +2458,22 @@ function PicksField() {
           </button>
         </div>
       )}
+      {picksEdges(draft) && picks.length > 0 && (
+        <div className="pick-footer edge-picking">
+          {draft.edgesPicking ? (
+            <>
+              <span className="muted small">{PICKING_NOTE}</span>
+              <button type="button" className="text-button small-text" onClick={() => setDraftField({ edgesPicking: undefined })} title="Stop picking and show the rounded (or bevelled) edges">
+                Done — show the result
+              </button>
+            </>
+          ) : (
+            <button type="button" className="link-button" onClick={() => setDraftField({ edgesPicking: true })} title="Show the part as it was before this feature, to click its edges">
+              Pick edges on the part as it was
+            </button>
+          )}
+        </div>
+      )}
     </fieldset>
     {draft.type === "fillet" && <VariableFilletOptions />}
     </>
@@ -2804,7 +2821,9 @@ export function FeatureDialog() {
           </fieldset>
         ))}
 
-        {buildError && !hasErrors && !needsRef && (
+        {/* Nothing picked yet: what to click, said plainly rather than as a failure. */}
+        {buildError && !hasErrors && !needsRef && missing && <p className="dialog-hint pick-hint">{missing}</p>}
+        {buildError && !hasErrors && !needsRef && !missing && (
           <div className="dialog-error" role="alert">
             <Icons.Warning size={16} /> {buildError}
           </div>

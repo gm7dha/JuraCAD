@@ -355,6 +355,7 @@ export function picksPartsBefore(draft: Feature | null): boolean {
   if (!draft) return false;
   if (draft.type === "composite") return true;
   if (draft.mergeScopePicking) return true;
+  if ((draft.type === "fillet" || draft.type === "chamfer") && draft.edgesPicking) return true;
   if (draft.pattern?.of && draft.pattern.picking === "items") return true;
   return draft.mirror?.of === "face" && draft.mirror.picking === "faces";
 }
@@ -376,6 +377,10 @@ export function withoutPicking(f: Feature): Feature {
   if (out.mirror?.picking !== undefined) {
     const { picking: _p, ...mirror } = out.mirror;
     out = { ...out, mirror };
+  }
+  if (out.edgesPicking !== undefined) {
+    const { edgesPicking: _e, ...rest } = out;
+    out = rest;
   }
   if (out.mergeScopePicking !== undefined) {
     const { mergeScopePicking: _m, ...rest } = out;

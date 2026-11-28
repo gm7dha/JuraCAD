@@ -173,17 +173,18 @@ export function measure(s: SketchData, c: SketchConstraint): number {
       return ((c.doubled ? 2 : 1) * Math.abs(dx * (py - ay) - dy * (px - ax))) / (Math.hypot(dx, dy) || 1);
     }
     case "offset": {
-      // The first pair: how far the copy is from the original.
+      // The first pair: how far the copy is from the original (a slot's width: twice that, `doubled`).
+      const k = c.doubled ? 2 : 1;
       const copy = curveById(s, a);
       const orig = curveById(s, b);
-      if (copy?.type === "line" && orig?.type === "line") return measure(s, { id: "", type: "pointLineDistance", refs: [copy.p1, orig.id] });
-      if ((copy?.type === "arc" || copy?.type === "circle") && (orig?.type === "arc" || orig?.type === "circle")) return Math.abs(radiusOf(s, copy) - radiusOf(s, orig));
+      if (copy?.type === "line" && orig?.type === "line") return k * measure(s, { id: "", type: "pointLineDistance", refs: [copy.p1, orig.id] });
+      if ((copy?.type === "arc" || copy?.type === "circle") && (orig?.type === "arc" || orig?.type === "circle")) return k * Math.abs(radiusOf(s, copy) - radiusOf(s, orig));
       if (copy?.type === "spline" && (orig?.type === "spline" || orig?.type === "ellipse")) {
         // From the copy's first point to the nearest place on the original.
         const q = pointPos(s, copy.points[0]);
         const path = curveParam(s, orig);
         const f = path.at(nearestParam(path, q));
-        return Math.hypot(q[0] - f[0], q[1] - f[1]);
+        return k * Math.hypot(q[0] - f[0], q[1] - f[1]);
       }
       return 0;
     }

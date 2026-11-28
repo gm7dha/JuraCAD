@@ -24,7 +24,8 @@ export function VariableFilletOptions() {
   return (
     <>
       <label className="check-row" title="Set the radius at the ends of edges and at points along them; the fillet changes between them">
-        <input type="checkbox" checked={!!vf} onChange={(e) => set(e.target.checked ? { points: [] } : undefined)} />
+        {/* Ticked: the part is shown as it was, so a picked edge can be clicked where a radius goes. */}
+        <input type="checkbox" checked={!!vf} onChange={(e) => (e.target.checked ? setDraftField({ variableFillet: { points: [] }, edgesPicking: true }) : set(undefined))} />
         Variable (different radii along the edges)
       </label>
       {vf && (

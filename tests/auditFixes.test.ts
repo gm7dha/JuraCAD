@@ -102,3 +102,25 @@ describe("a plane's line brought into a sketch", () => {
     expect(sketchMenuItems(line.sketch, [id, lineId], ctx).find((m) => m.action.kind === "construction")!.label).toBe("Make it construction");
   });
 });
+
+describe("small things", () => {
+  it("names JuraCAD's own swatch colours in the 3MF's filament list", async () => {
+    const { filamentsNote } = await import("../src/model/faceColours");
+    expect(filamentsNote([{ colour: "#ef8a2f" }, { colour: "#123456" }])).toBe("2 filaments, load them in this order: 1 orange (any orange filament), 2 your own colour #123456.");
+  });
+
+  it("a sketch's message goes with an undo or redo", () => {
+    const sk = sketch("s1", emptySketch());
+    reset([sk]);
+    s().startEdit("s1");
+    const before = s().editing!.draft.sketch!.data;
+    s().updateSketch(addCircle(before, { x: 0, y: 0 }, 5).sketch, { record: true });
+    s().setSketchMessage("Pattern changed.", "info");
+    s().sketchUndo();
+    expect(s().sketch!.message).toBeNull();
+    s().setSketchMessage("Pattern changed.", "info");
+    s().sketchRedo();
+    expect(s().sketch!.message).toBeNull();
+    s().cancelDraft();
+  });
+});

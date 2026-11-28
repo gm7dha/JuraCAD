@@ -43,7 +43,7 @@ function dimensionText(c: SketchConstraint, unit: LengthUnit, data?: SketchData,
   // Show expressions: what was typed (a variable or a sum) rather than its number.
   const typed = expressions ? expressionText(c) : null;
   if (typed !== null) {
-    const shown = c.type === "diameter" || c.doubled ? `⌀${typed}` : c.type === "radius" ? `R${typed}` : isAngleDimension(c) ? `${typed}°` : c.type === "arcLength" ? `⌒${typed}` : typed;
+    const shown = c.type === "diameter" || (c.doubled && c.type !== "offset") ? `⌀${typed}` : c.type === "radius" ? `R${typed}` : isAngleDimension(c) ? `${typed}°` : c.type === "arcLength" ? `⌒${typed}` : typed;
     return shown;
   }
   let value: number | null = null;
@@ -59,7 +59,7 @@ function dimensionText(c: SketchConstraint, unit: LengthUnit, data?: SketchData,
   }
   const shown = value === null ? c.value ?? "?" : isAngleDimension(c) ? String(Math.round(value * 100) / 100) : lengthNumber(value, unit);
   // An arc's length gets the arc sign (⌒) in front, like a drawing.
-  const text = c.type === "diameter" || c.doubled ? `⌀${shown}` : c.type === "radius" ? `R${shown}` : isAngleDimension(c) ? `${shown}°` : c.type === "arcLength" ? `⌒${shown}` : shown;
+  const text = c.type === "diameter" || (c.doubled && c.type !== "offset") ? `⌀${shown}` : c.type === "radius" ? `R${shown}` : isAngleDimension(c) ? `${shown}°` : c.type === "arcLength" ? `⌒${shown}` : shown;
   return c.driven ? `(${text})` : text;
 }
 

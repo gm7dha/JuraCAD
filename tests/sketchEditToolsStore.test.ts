@@ -120,7 +120,7 @@ describe("the sketch's newer editing tools, clicked", () => {
     click(c, 15, 0);
     const d = draftData();
     expect(d.curves.filter((k) => k.type === "arc")).toHaveLength(2);
-    expect(d.constraints.find((k) => k.type === "offset")?.value).toBe("3");
+    expect(d.constraints.find((k) => k.type === "offset")?.value).toBe("6");
   });
 });
 

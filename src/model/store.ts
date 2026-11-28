@@ -87,6 +87,7 @@ import { deleteFeatures as deleteFeaturesIn, findDependents } from "./dependents
 import { designOf, withVersionsOf } from "./versions";
 import { newKeepId, readKept } from "./browserKeep";
 import { rememberOptions, withRemembered, type OptionsMemory } from "./lastOptions";
+import { picksEdges, showingResult } from "./edgePicking";
 import { holeSketchFor, withAutoValues, type AutoContext, type AutoValues } from "./newFeatureDefaults";
 import { holePositionCount } from "../sketch/holePositions";
 import { acceptBlocker } from "./draftReady";
@@ -446,7 +447,7 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "mergeScope" | "mergeScopePicking" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert" | "connector" | "thin" | "loft" | "modifyFillet" | "allEdges" | "curve" | "pathEdges" | "frame" | "trimFrame" | "gusset" | "boundary" | "blend" | "moveFace" | "variableFillet" | "importUnits" | "measured">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "mergeScope" | "mergeScopePicking" | "edgesPicking" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert" | "connector" | "thin" | "loft" | "modifyFillet" | "allEdges" | "curve" | "pathEdges" | "frame" | "trimFrame" | "gusset" | "boundary" | "blend" | "moveFace" | "variableFillet" | "importUnits" | "measured">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Part pattern / Composite part: add a part to the open feature's parts, or take it out. */
@@ -1037,7 +1038,7 @@ export const useStore = create<AppState>((set, get) => {
       set((s) => {
         if (!s.editing) return {};
         const d = s.editing.draft;
-        return { editing: { ...s.editing, draft: { ...d, ...patch.fields, ...(patch.params ? { params: { ...d.params, ...patch.params } } : {}) } } };
+        return { editing: { ...s.editing, draft: { ...showingResult(d), ...patch.fields, ...(patch.params ? { params: { ...d.params, ...patch.params } } : {}) } } };
       }),
     endDraftDrag: (before, cancel) =>
       set((s) => {
@@ -1258,6 +1259,8 @@ export const useStore = create<AppState>((set, get) => {
           .filter((item) => type !== "shell" || item.kind === "face")
           .map((item) => pickFor(s.parts, item))
           .filter((p): p is TopoPick => p !== null);
+        // Fillet/Chamfer with nothing picked: shown as before it, so its edges can be clicked (see edgePicking.ts).
+        if (picksEdges(draft) && !draft.picks.length) draft.edgesPicking = true;
       }
       autoParts = studioParts(s);
       autoValues = { id: draft.id, flip: draft.extrude?.flip ?? false, spacing: draft.params.spacing, spacing2: draft.params.spacing2 };
@@ -1371,6 +1374,8 @@ export const useStore = create<AppState>((set, get) => {
             future: [s.editing.draft.sketch.data, ...s.sketch.future],
             selection: [],
             editingDimension: null,
+            // What the step undone said ("Pattern changed.") no longer holds.
+            message: null,
           },
         };
       }),
@@ -1381,7 +1386,7 @@ export const useStore = create<AppState>((set, get) => {
         const [next, ...rest] = s.sketch.future;
         return {
           editing: { ...s.editing, draft: { ...s.editing.draft, sketch: { ...s.editing.draft.sketch, data: next } } },
-          sketch: { ...s.sketch, past: [...s.sketch.past, s.editing.draft.sketch.data], future: rest, selection: [], editingDimension: null },
+          sketch: { ...s.sketch, past: [...s.sketch.past, s.editing.draft.sketch.data], future: rest, selection: [], editingDimension: null, message: null },
         };
       }),
 
@@ -1437,7 +1442,8 @@ export const useStore = create<AppState>((set, get) => {
         const d = s.editing.draft;
         // Move / copy keeps its own undo: typing in a box is a step (typing on in the same box adds to it).
         const steps = keepsSteps(d) ? { draftSteps: draftStepAfter(s.draftSteps, d, `param:${key}`) } : {};
-        return { editing: { ...s.editing, draft: { ...d, params: { ...d.params, [key]: value } } }, ...steps };
+        // A size typed into a Fillet/Chamfer that's picking edges: show the result.
+        return { editing: { ...s.editing, draft: { ...showingResult(d), params: { ...d.params, [key]: value } } }, ...steps };
       }),
 
     setDraftField: (patch) =>
@@ -1449,7 +1455,7 @@ export const useStore = create<AppState>((set, get) => {
         // Move / copy: a change is a step of its own undo — except only choosing what a click picks next.
         const { picking: _a, ...was } = d.transform ?? ({} as NonNullable<Feature["transform"]>);
         const { picking: _b, ...now } = next.transform ?? ({} as NonNullable<Feature["transform"]>);
-        const onlyPicking = Object.keys(patch).every((k) => k === "transform") && JSON.stringify(was) === JSON.stringify(now);
+        const onlyPicking = (Object.keys(patch).every((k) => k === "transform") && JSON.stringify(was) === JSON.stringify(now)) || Object.keys(patch).every((k) => k === "edgesPicking");
         const steps = keepsSteps(d) && !onlyPicking ? { draftSteps: draftStepAfter(s.draftSteps, d, Object.keys(patch).join(",") === "name" ? "name" : undefined) } : {};
         return { editing: { ...s.editing, draft: withAuto(next, s.editing.mode) }, ...steps };
       }),

@@ -15,6 +15,7 @@ import { indexOfRef, sameRef, type TopoPick } from "../geometry/topoRef";
 import { cornersOf, indexOfVertex } from "../geometry/vertexRef";
 import { isPatternFeature, isPickFeature } from "../model/features";
 import { madeByDraft } from "../model/document";
+import { BACK_TO_PICKING, madeByOpenFeature, picksEdges } from "../model/edgePicking";
 import { planeVisible, sketchVisible, usedSketches } from "../model/visibility";
 import { activeAssembly, activeDrawing, activeFeatures, activeHiddenDatums, activeStudioId, cornerPickFor, pickFor, studioParts, useLengthUnit, useStore, type PlaneName, type SelectionItem } from "../model/store";
 import { ghostParts } from "../app/versionActions";
@@ -810,10 +811,28 @@ function handlePick(target: PickTarget | null, additive: boolean) {
   }
   // Picking edges and faces for a fillet, chamfer or shell.
   if (s.editing && isPickFeature(s.editing.draft.type)) {
+    // Showing a Fillet/Chamfer's result: a click on what it made (a round face, an edge round one) — or where a
+    // rounded-away edge was, which now misses the part — goes back to showing the part as it was, so the edge
+    // itself can be clicked (Onshape picks on the original edges).
+    const d = s.editing.draft;
+    const showingResult = picksEdges(d) && !d.edgesPicking && (d.picks ?? []).length > 0;
+    if (showingResult && target?.kind !== "part") {
+      s.setDraftField({ edgesPicking: true });
+      s.showToast(BACK_TO_PICKING, "info");
+      return;
+    }
     if (target?.kind !== "part") return;
     if (s.editing.draft.type === "shell" && target.item.kind !== "face") {
       s.showToast("Shell removes faces — click a face (such as the top) rather than an edge.");
       return;
+    }
+    if (showingResult) {
+      const part = s.parts.find((p) => p.id === target.item.partId);
+      if (part && madeByOpenFeature(part, target.item, d.id)) {
+        s.setDraftField({ edgesPicking: true });
+        s.showToast(BACK_TO_PICKING, "info");
+        return;
+      }
     }
     const pick = pickFor(s.parts, target.item);
     // A variable fillet's click point says where along an edge to put a radius.
