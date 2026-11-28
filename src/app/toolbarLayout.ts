@@ -147,6 +147,43 @@ export const STUDIO_TOOLBAR: readonly ToolbarEntry[] = [
   one("selectFilter"),
 ];
 
+/**
+ * A layout with some groups joined into one ▾ (each joined group's first tool starts a new section of its list), and
+ * the joined groups' other places dropped. Every tool stays exactly once.
+ */
+export function joinedSlots(layout: readonly ToolbarEntry[], joins: readonly { id: string; name: string; ids: readonly string[] }[]): ToolbarEntry[] {
+  const out: ToolbarEntry[] = [];
+  const slotOf = new Map(layout.filter((e): e is ToolbarSlot => typeof e !== "string").map((e) => [e.id, e]));
+  for (const e of layout) {
+    if (typeof e === "string") {
+      // No two dividers in a row (a joined group's own divider goes).
+      if (!(e === "|" && out[out.length - 1] === "|")) out.push(e);
+      continue;
+    }
+    const join = joins.find((j) => j.ids.includes(e.id));
+    if (!join) out.push(e);
+    else if (join.ids[0] === e.id) {
+      const parts = join.ids.map((id) => slotOf.get(id)).filter((x): x is ToolbarSlot => !!x);
+      out.push({
+        id: join.id,
+        name: join.name,
+        tools: parts.flatMap((p) => p.tools),
+        breaks: parts.flatMap((p, i) => [...(i > 0 ? [p.tools[0]] : []), ...(p.breaks ?? [])]),
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * The Part Studio's toolbar on a touch screen up to 1300 px wide (an iPad held sideways is 1180): the buttons show just
+ * their icons (styles.css) and the rarer groups share a ▾, so it fits without scrolling. Upright (820 px) it scrolls.
+ */
+export const STUDIO_TOUCH_TOOLBAR: readonly ToolbarEntry[] = joinedSlots(STUDIO_TOOLBAR, [
+  { id: "touch-surface-frame-sheet", name: "surface, frame and sheet metal", ids: ["surfaces", "frames", "sheet-metal"] },
+  { id: "touch-insert-tables", name: "insert and table", ids: ["insert", "settings-tables"] },
+]);
+
 /** The tools in a toolbar layout, in order (a tool listed twice shows twice). */
 export function toolsIn(layout: readonly ToolbarEntry[]): string[] {
   return layout.flatMap((e) => (typeof e === "string" ? [] : e.tools));

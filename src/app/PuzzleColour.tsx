@@ -430,6 +430,8 @@ export function ColourDownloads({
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const plateName = (i: number) => `${fileName} - plate ${i + 1} of ${plates.length}`;
+  // One plate (a model in one piece, or a puzzle put together): no zip, and the button says what it is.
+  const plateLabel = (i: number, n: number) => (plates.length > 1 ? `Plate ${i + 1} (${n})` : onePiece ? "The model (.3mf)" : `All ${n} pieces (.3mf)`);
   const banded = spec.mode === "bands" ? coloured.banded ?? null : null;
   const swaps = useMemo(() => (banded ? plateSwaps(plates, banded, spec.layer) : []), [banded, plates, spec.layer]);
   // The painted paths and roads, and what the count would be without them.
@@ -456,7 +458,7 @@ export function ColourDownloads({
       <>
         <div className="mountain-downloads">
           <span className="small">
-            {plates.length} {plates.length === 1 ? "plate" : "plates"} in colour bands for Bambu Studio:
+            {plates.length === 1 ? "One plate" : `${plates.length} plates`} in colour bands for Bambu Studio:
           </span>
           {plates.map((p, i) => (
             <button
@@ -466,10 +468,10 @@ export function ColourDownloads({
               onClick={() => save(`p${i}`, async () => [await file(i), "model/3mf", `${plateName(i)}.3mf`])}
               title={`${p.pieces.map((x) => x.piece.name).join(", ")} — about ${swaps[i]} filament changes`}
             >
-              Plate {i + 1} ({p.pieces.length})
+              {plateLabel(i, p.pieces.length)}
             </button>
           ))}
-          <button
+          {plates.length > 1 && <button
             className="primary-button"
             disabled={!!busy}
             onClick={() =>
@@ -481,11 +483,11 @@ export function ColourDownloads({
             }
           >
             All plates (.zip)
-          </button>
+          </button>}
           {busy && <span className="muted small">Making the file…</span>}
         </div>
         <p className="muted small">
-          Filament changes, roughly: {swaps.map((n, i) => `plate ${i + 1} about ${n}`).join(", ")}.{" "}
+          {swaps.length === 1 ? `About ${swaps[0]} filament changes.` : `Filament changes, roughly: ${swaps.map((n, i) => `plate ${i + 1} about ${n}`).join(", ")}.`}{" "}
           {onePiece
             ? "Everything is on one plate."
             : inPlace
@@ -518,10 +520,10 @@ export function ColourDownloads({
           <span className="small">Full colour, 3MF:</span>
           {plates.map((p, i) => (
             <button key={i} className="text-button" disabled={!!busy} onClick={() => save(`p${i}`, async () => [await plate3mf(i), "model/3mf", `${plateName(i)} - full colour.3mf`])} title={p.pieces.map((x) => x.piece.name).join(", ")}>
-              Plate {i + 1} ({p.pieces.length})
+              {plateLabel(i, p.pieces.length)}
             </button>
           ))}
-          <button
+          {plates.length > 1 && <button
             className="text-button"
             disabled={!!busy}
             onClick={() =>
@@ -533,7 +535,7 @@ export function ColourDownloads({
             }
           >
             All plates (.zip)
-          </button>
+          </button>}
         </div>
         <div className="mountain-downloads">
           <span className="small">{onePiece ? "For print services, in one file:" : "For print services, every piece in one file:"}</span>
