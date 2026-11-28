@@ -28,9 +28,9 @@ export const LAYER_HEIGHTS = [0.12, 0.16, 0.2, 0.24, 0.28] as const;
 export const CAP_CLEAR = 0.05;
 
 /** The first print layer boundary at or above z (mm). */
-export function boundaryAtOrAbove(z: number, layer: number): number {
-  if (z <= FIRST_LAYER + 1e-6) return FIRST_LAYER;
-  return FIRST_LAYER + Math.ceil((z - FIRST_LAYER) / layer - 1e-6) * layer;
+export function boundaryAtOrAbove(z: number, layer: number, first = FIRST_LAYER): number {
+  if (z <= first + 1e-6) return first;
+  return first + Math.ceil((z - first) / layer - 1e-6) * layer;
 }
 
 function boxOf(pieces: PuzzlePiece[]): [number, number, number, number] {
@@ -74,7 +74,7 @@ function undersides(pieces: PuzzlePiece[]): number[] {
  * How far each layer is lifted (mm) so its underside lands on a print layer boundary at least one print layer above the
  * top of the layer below — the room the breakaway layer fills. Layer 0 stays on the bed.
  */
-export function liftsFor(pieces: PuzzlePiece[], layer: number): number[] {
+export function liftsFor(pieces: PuzzlePiece[], layer: number, first = FIRST_LAYER): number[] {
   const z = undersides(pieces);
   const lifts: number[] = [];
   for (let L = 0; L < z.length; L++) {
@@ -84,7 +84,7 @@ export function liftsFor(pieces: PuzzlePiece[], layer: number): number[] {
     }
     // The layer below's whole cubes end where this layer starts.
     const below = z[L] + lifts[L - 1];
-    lifts[L] = boundaryAtOrAbove(below, layer) + layer - z[L];
+    lifts[L] = boundaryAtOrAbove(below, layer, first) + layer - z[L];
   }
   return lifts;
 }
@@ -107,16 +107,21 @@ export interface Stacked {
   lifts: number[];
   /** How tall it all is (mm). */
   height: number;
+  /** The puzzle's own piece for each lifted copy (the breakaway pieces have none). */
+  originals: Map<PuzzlePiece, PuzzlePiece>;
 }
 
 /** The whole mountain stacked as it's printed together, with the breakaway layers between. */
-export function stackWithBreakaway(puzzle: MountainPuzzle, layer: number): Stacked {
-  const lifts = liftsFor(puzzle.pieces, layer);
+export function stackWithBreakaway(puzzle: MountainPuzzle, layer: number, first = FIRST_LAYER): Stacked {
+  const lifts = liftsFor(puzzle.pieces, layer, first);
   const z = undersides(puzzle.pieces);
   const g = puzzle.keys;
+  const originals = new Map<PuzzlePiece, PuzzlePiece>();
   const pieces: PuzzlePiece[] = puzzle.pieces.map((p) => {
     const dz = lifts[p.layer] ?? 0;
-    return dz ? { ...p, z0: p.z0 + dz, bodies: p.bodies.map((b) => lifted(b, dz)) } : p;
+    const q = dz ? { ...p, z0: p.z0 + dz, bodies: p.bodies.map((b) => lifted(b, dz)) } : p;
+    originals.set(q, p);
+    return q;
   });
   for (let L = 1; L < z.length; L++) {
     const onIt = puzzle.pieces.filter((p) => p.layer === L);
@@ -161,7 +166,7 @@ export function stackWithBreakaway(puzzle: MountainPuzzle, layer: number): Stack
   }
   let height = 0;
   for (const p of pieces) height = Math.max(height, p.z0 + p.height);
-  return { pieces, lifts, height };
+  return { pieces, lifts, height, originals };
 }
 
 /** The stacked puzzle on one plate, centred on the bed, at the heights it's printed at. */
@@ -179,4 +184,67 @@ export function breakawaySwaps(stacked: Stacked, layer: number, keys: KeySizes):
   // The cap reaches the pocket's depth above the breakaway layer's top; the layer itself is breakaway alone.
   const shared = Math.ceil(keys.depth / layer) + 1;
   return joints * shared * 2;
+}
+
+/**
+ * The stacked plate with the puzzle's own pieces (not their lifted copies), each moved up by its layer's lift instead —
+ * so pieces coloured in bands (worked out on the puzzle's own pieces) keep their parts. The breakaway pieces stay.
+ */
+export function unliftedPlate(plate: Plate, stacked: Stacked): Plate {
+  return {
+    pieces: plate.pieces.map(({ piece, move }) => {
+      const own = stacked.originals.get(piece);
+      if (!own || own === piece) return { piece, move };
+      return { piece: own, move: [move[0], move[1], move[2] + (piece.z0 - own.z0)] as [number, number, number] };
+    }),
+  };
+}
+
+/** The breakaway pieces as colour-band parts of their own filament (heights from their own undersides, as band parts). */
+export function breakawayParts(stacked: Stacked, filament: number): Map<PuzzlePiece, { filament: number; vertices: number[]; triangles: number[]; low: number; high: number }[]> {
+  const out = new Map<PuzzlePiece, { filament: number; vertices: number[]; triangles: number[]; low: number; high: number }[]>();
+  for (const p of stacked.pieces)
+    if (!stacked.originals.has(p)) out.set(p, p.bodies.map((b) => ({ filament, vertices: b.vertices, triangles: b.triangles, low: 0, high: p.height })));
+  return out;
+}
+
+/**
+ * The filament the breakaway layers use when none is chosen: the next after every filament the puzzle uses (plain
+ * puzzles keep the usual 3, after rock and snow).
+ */
+export function freeBreakawaySlot(used: readonly number[], plain: boolean): number {
+  if (plain && !used.includes(3)) return 3;
+  return (used.length ? Math.max(...used) : 0) + 1;
+}
+
+/**
+ * Roughly how often a stacked print switches between its two nozzles when the breakaway filament is on the second one:
+ * layer by layer (heights as printed, from the bed), the nozzle it ended on is used first if it's needed there.
+ * `parts`: every part on the plate, heights from the bed.
+ */
+export function nozzleSwitches(parts: { filament: number; low: number; high: number }[], layer: number, second: number): number {
+  let top = 0;
+  for (const p of parts) top = Math.max(top, p.high);
+  const n = Math.ceil(top / layer - 1e-6);
+  const main = new Array<boolean>(n).fill(false);
+  const aux = new Array<boolean>(n).fill(false);
+  for (const p of parts) {
+    const a = Math.max(0, Math.floor(p.low / layer + 1e-6));
+    const b = Math.min(n, Math.ceil(p.high / layer - 1e-6));
+    for (let l = a; l < b; l++) (p.filament === second ? aux : main)[l] = true;
+  }
+  let last = 0;
+  let switches = 0;
+  for (let l = 0; l < n; l++) {
+    const want = [main[l] ? 1 : 0, aux[l] ? 2 : 0].filter(Boolean);
+    if (!want.length) continue;
+    if (want.length === 2) {
+      switches += 1;
+      last = last === 2 ? 1 : 2;
+    } else {
+      if (last && want[0] !== last) switches += 1;
+      last = want[0];
+    }
+  }
+  return switches;
 }

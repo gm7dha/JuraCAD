@@ -11,6 +11,7 @@ import {
   LEAST_BANDS,
   MOST_BANDS,
   SPARE_COLOURS,
+  type BandPart,
   type ColourBand,
   type ColourMode,
   type ColourSpec,
@@ -27,8 +28,10 @@ import {
   usualColour,
 } from "../terrain/colour";
 import { SpoolPick } from "./SpoolPick";
+import { familyOf, inMaterial, matchNotes, USUAL_MATERIAL, type PuzzleMaterial } from "../terrain/puzzleMaterial";
 import type { ColourJob, ColourReply } from "../terrain/colourJob";
-import { allItems, bandPlateFile, colour3mfFiles, colourObjFiles, colourWrl, MANY_SWAPS, plateItems, plateSwaps, zipDeflated, type BandedPuzzle } from "../terrain/colourFiles";
+import { allItems, bandPlateFile, colour3mfFiles, colourObjFiles, colourWrl, MANY_SWAPS, platedParts, plateItems, plateSwaps, zipDeflated, type BandedPuzzle } from "../terrain/colourFiles";
+import { nozzleSwitches } from "../terrain/mountainInPlace";
 import type { PuzzlePiece } from "../terrain/mountainPuzzle";
 import { zipStored } from "../geometry/threeMf";
 import type { Plate } from "../terrain/puzzle3mf";
@@ -58,7 +61,10 @@ export function ColourPanel({
   ground,
   slots,
   setSlots,
+  material = USUAL_MATERIAL,
 }: {
+  /** The filament the puzzle is printed in: the usual colours are that line's nearest. */
+  material?: PuzzleMaterial;
   spec: ColourSpec;
   setSpec: (s: ColourSpec) => void;
   /** The usual bands for the ground loaded now (Lowland, Upland, Snow). */
@@ -75,14 +81,47 @@ export function ColourPanel({
   slots: 4 | 8;
   setSlots: (n: 4 | 8) => void;
 }) {
+  // The usual colours in the puzzle's material (as they are for the usual PLA), with the spools they come from.
+  const usualSpools = (hexes: (string | null | undefined)[]): Record<string, string> => {
+    if (material === USUAL_MATERIAL) return { ...USUAL_SPOOLS };
+    const out: Record<string, string> = {};
+    for (const h of hexes) {
+      if (!h) continue;
+      const m = inMaterial(h, material);
+      if (m.code) out[m.hex.toLowerCase()] = m.code;
+    }
+    return out;
+  };
+  const inM = <T extends string | null>(hex: T): T => (hex ? (inMaterial(hex, material).hex as T) : hex);
+  const opensOn = material === USUAL_MATERIAL ? undefined : familyOf(material);
   const choose = (mode: ColourMode) => {
     if (mode === "plain" || spec.bands.length) return setSpec({ ...spec, mode });
-    const next: ColourSpec = { ...spec, mode, base: usualBase, water: usualWater, paths: PATH_RED, roads: ROAD_BLACK, spools: { ...spec.spools, ...USUAL_SPOOLS } };
-    setSpec({ ...next, bands: usual() });
+    const bands = usual();
+    const next: ColourSpec = {
+      ...spec,
+      mode,
+      base: inM(usualBase),
+      water: inM(usualWater),
+      paths: inM(PATH_RED),
+      roads: inM(ROAD_BLACK),
+      spools: { ...spec.spools, ...usualSpools([usualBase, usualWater, PATH_RED, ROAD_BLACK]), ...usualSpools(bandsUsualHexes(bands)) },
+    };
+    setSpec({ ...next, bands });
   };
   /** "Usual colours and heights": the usual bands, and the base back to its usual colour (if it has one). */
-  const usualAgain = () =>
-    setSpec({ ...spec, bands: usual(), base: spec.base !== null ? usualBase ?? spec.base : null, spools: { ...spec.spools, ...USUAL_SPOOLS } });
+  const usualAgain = () => {
+    const bands = usual();
+    setSpec({ ...spec, bands, base: spec.base !== null ? inM(usualBase) ?? spec.base : null, spools: { ...spec.spools, ...usualSpools([usualBase, usualWater, PATH_RED, ROAD_BLACK]), ...usualSpools(bandsUsualHexes(bands)) } });
+  };
+  const notes = matchNotes(
+    [
+      ...(usualBase ? [{ name: "the base", hex: usualBase }] : []),
+      { name: "water", hex: usualWater },
+      { name: "paths", hex: PATH_RED },
+      { name: "roads", hex: ROAD_BLACK },
+    ],
+    material,
+  );
   /** A colour picked from Bambu's list (code) or your own (no code). */
   const picked = (s: ColourSpec, hex: string, code?: string): ColourSpec => {
     const spools = { ...s.spools };
@@ -145,6 +184,7 @@ export function ColourPanel({
           {spec.bands.map((b, i) => (
             <div key={i} className="colour-band">
               <SpoolPick
+                opensOn={opensOn}
                 value={b.colour}
                 chosen={spec.spools?.[b.colour.toLowerCase()]}
                 label={b.name}
@@ -179,24 +219,24 @@ export function ColourPanel({
           </div>
           {ground && <p className="muted small">The ground here goes from {Math.round(ground[0])} m to {Math.round(ground[1])} m.</p>}
           <label className="mountain-check">
-            <input type="checkbox" checked={spec.base !== null} onChange={(e) => setSpec({ ...spec, base: e.target.checked ? usualBase ?? "#5a4a3a" : null })} /> The base (below the
+            <input type="checkbox" checked={spec.base !== null} onChange={(e) => setSpec({ ...spec, base: e.target.checked ? inM(usualBase) ?? "#5a4a3a" : null, spools: e.target.checked && material !== USUAL_MATERIAL ? { ...spec.spools, ...usualSpools([usualBase]) } : spec.spools })} /> The base (below the
             ground) in its own colour
-            {spec.base !== null && <SpoolPick value={spec.base} chosen={spec.spools?.[spec.base.toLowerCase()]} label="the base" onPick={(hex, code) => setSpec(picked({ ...spec, base: hex }, hex, code))} />}
+            {spec.base !== null && <SpoolPick opensOn={opensOn} value={spec.base} chosen={spec.spools?.[spec.base.toLowerCase()]} label="the base" onPick={(hex, code) => setSpec(picked({ ...spec, base: hex }, hex, code))} />}
           </label>
           <label className="mountain-check">
-            <input type="checkbox" checked={spec.water !== null} onChange={(e) => setSpec({ ...spec, water: e.target.checked ? usualWater : null })} /> Lochs and rivers from
-            the map {inColour(spec.water, usualWater, "blue")}
-            {spec.water !== null && <SpoolPick value={spec.water} chosen={spec.spools?.[spec.water.toLowerCase()]} label="water" onPick={(hex, code) => setSpec(picked({ ...spec, water: hex }, hex, code))} />}
+            <input type="checkbox" checked={spec.water !== null} onChange={(e) => setSpec({ ...spec, water: e.target.checked ? inM(usualWater) : null, spools: e.target.checked && material !== USUAL_MATERIAL ? { ...spec.spools, ...usualSpools([usualWater]) } : spec.spools })} /> Lochs and rivers from
+            the map {inColour(spec.water, inM(usualWater), "blue")}
+            {spec.water !== null && <SpoolPick opensOn={opensOn} value={spec.water} chosen={spec.spools?.[spec.water.toLowerCase()]} label="water" onPick={(hex, code) => setSpec(picked({ ...spec, water: hex }, hex, code))} />}
           </label>
           <label className="mountain-check">
-            <input type="checkbox" checked={!!spec.paths} onChange={(e) => setSpec({ ...spec, paths: e.target.checked ? PATH_RED : null })} /> Footpaths and tracks
-            from the map {inColour(spec.paths, PATH_RED, "red")}
-            {!!spec.paths && <SpoolPick value={spec.paths} chosen={spec.spools?.[spec.paths.toLowerCase()]} label="paths" onPick={(hex, code) => setSpec(picked({ ...spec, paths: hex }, hex, code))} />}
+            <input type="checkbox" checked={!!spec.paths} onChange={(e) => setSpec({ ...spec, paths: e.target.checked ? inM(PATH_RED) : null, spools: e.target.checked && material !== USUAL_MATERIAL ? { ...spec.spools, ...usualSpools([PATH_RED]) } : spec.spools })} /> Footpaths and tracks
+            from the map {inColour(spec.paths, inM(PATH_RED), "red")}
+            {!!spec.paths && <SpoolPick opensOn={opensOn} value={spec.paths} chosen={spec.spools?.[spec.paths.toLowerCase()]} label="paths" onPick={(hex, code) => setSpec(picked({ ...spec, paths: hex }, hex, code))} />}
           </label>
           <label className="mountain-check">
-            <input type="checkbox" checked={!!spec.roads} onChange={(e) => setSpec({ ...spec, roads: e.target.checked ? ROAD_BLACK : null })} /> Roads from the map{" "}
-            {inColour(spec.roads, ROAD_BLACK, "black")}
-            {!!spec.roads && <SpoolPick value={spec.roads} chosen={spec.spools?.[spec.roads.toLowerCase()]} label="roads" onPick={(hex, code) => setSpec(picked({ ...spec, roads: hex }, hex, code))} />}
+            <input type="checkbox" checked={!!spec.roads} onChange={(e) => setSpec({ ...spec, roads: e.target.checked ? inM(ROAD_BLACK) : null, spools: e.target.checked && material !== USUAL_MATERIAL ? { ...spec.spools, ...usualSpools([ROAD_BLACK]) } : spec.spools })} /> Roads from the map{" "}
+            {inColour(spec.roads, inM(ROAD_BLACK), "black")}
+            {!!spec.roads && <SpoolPick opensOn={opensOn} value={spec.roads} chosen={spec.spools?.[spec.roads.toLowerCase()]} label="roads" onPick={(hex, code) => setSpec(picked({ ...spec, roads: hex }, hex, code))} />}
           </label>
           {(spec.water !== null || !!spec.paths || !!spec.roads) && !hasMap && (
             <p className="muted small">Load the map's paths, rivers and lochs (From the map; roads with "Everything") to colour them.</p>
@@ -240,6 +280,11 @@ export function ColourPanel({
               </p>
             </>
           )}
+          {notes.map((n) => (
+            <p key={n} className="muted small">
+              {n}
+            </p>
+          ))}
           {problems.map((p) => (
             <p key={p} className="error-text small">
               {p}
@@ -256,6 +301,9 @@ export function ColourPanel({
     </>
   );
 }
+
+/** A band list's colours (none mapped: they're the dialog's usual ones already). */
+const bandsUsualHexes = (bands: ColourBand[]) => bands.map((b) => b.colour);
 
 export interface Coloured {
   /** What it was made for (pieces + choices), so an old one isn't used for new pieces. */
@@ -413,7 +461,21 @@ export function ColourDownloads({
   settings,
   inPlace,
   onePiece,
+  breakaway,
+  blocked,
 }: {
+  /** Printed stacked with breakaway layers: their parts (by piece), filament, name, nozzle per filament, layer height. */
+  breakaway?: {
+    parts: Map<PuzzlePiece, { filament: number; vertices: number[]; triangles: number[]; low: number; high: number }[]>;
+    slot: number;
+    label: string;
+    nozzles?: number[];
+    layer: number;
+    /** The second nozzle's name when the breakaway layers are on it. */
+    second: string | null;
+  };
+  /** Nothing to download yet (a choice above needs changing first; it says why). */
+  blocked?: boolean;
   spec: ColourSpec;
   coloured: Coloured;
   plates: Plate[];
@@ -432,8 +494,18 @@ export function ColourDownloads({
   const plateName = (i: number) => `${fileName} - plate ${i + 1} of ${plates.length}`;
   // One plate (a model in one piece, or a puzzle put together): no zip, and the button says what it is.
   const plateLabel = (i: number, n: number) => (plates.length > 1 ? `Plate ${i + 1} (${n})` : onePiece ? "The model (.3mf)" : `All ${n} pieces (.3mf)`);
-  const banded = spec.mode === "bands" ? coloured.banded ?? null : null;
-  const swaps = useMemo(() => (banded ? plateSwaps(plates, banded, spec.layer) : []), [banded, plates, spec.layer]);
+  const bandedOnly = spec.mode === "bands" ? coloured.banded ?? null : null;
+  // With breakaway layers, their pieces are parts of the plate too (their own filament).
+  const banded = useMemo(
+    () => (bandedOnly && breakaway ? { parts: new Map<PuzzlePiece, BandPart[]>([...bandedOnly.parts, ...breakaway.parts]), uncut: bandedOnly.uncut } : bandedOnly),
+    [bandedOnly, breakaway],
+  );
+  // On the second nozzle, the breakaway layers are nozzle changes, not filament changes: counted apart.
+  const swaps = useMemo(() => (banded ? plateSwaps(plates, breakaway?.second ? bandedOnly! : banded, spec.layer) : []), [banded, bandedOnly, plates, spec.layer, breakaway]);
+  const nozzleChanges = useMemo(
+    () => (banded && breakaway?.second ? plates.map((pl) => nozzleSwitches(platedParts(pl, banded), spec.layer, breakaway.slot)) : null),
+    [banded, plates, spec.layer, breakaway],
+  );
   // The painted paths and roads, and what the count would be without them.
   const lineFilaments = useMemo(() => {
     const fs = filaments(spec, map);
@@ -451,9 +523,11 @@ export function ColourDownloads({
       setBusy(null);
     }
   };
+  if (blocked) return null;
   if (banded) {
     const ctx = { spec, scale, map };
-    const file = (i: number) => bandPlateFile(plates[i], `${fileName} - plate ${i + 1}`, banded, ctx, settings);
+    const file = (i: number) =>
+      bandPlateFile(plates[i], `${fileName} - plate ${i + 1}`, banded, ctx, settings, breakaway ? { labels: { [breakaway.slot]: breakaway.label }, nozzles: breakaway.nozzles } : undefined);
     return (
       <>
         <div className="mountain-downloads">
@@ -468,7 +542,7 @@ export function ColourDownloads({
               onClick={() => save(`p${i}`, async () => [await file(i), "model/3mf", `${plateName(i)}.3mf`])}
               title={`${p.pieces.map((x) => x.piece.name).join(", ")} — about ${swaps[i]} filament changes`}
             >
-              {plateLabel(i, p.pieces.length)}
+              {plateLabel(i, p.pieces.filter((x) => x.piece.col >= 0 || !x.piece.bodies.some((b) => b.part === "breakaway")).length)}
             </button>
           ))}
           {plates.length > 1 && <button
@@ -487,8 +561,11 @@ export function ColourDownloads({
           {busy && <span className="muted small">Making the file…</span>}
         </div>
         <p className="muted small">
-          {swaps.length === 1 ? `About ${swaps[0]} filament changes.` : `Filament changes, roughly: ${swaps.map((n, i) => `plate ${i + 1} about ${n}`).join(", ")}.`}{" "}
-          {onePiece
+          {swaps.length === 1 ? `About ${swaps[0]} filament changes` : `Filament changes, roughly: ${swaps.map((n, i) => `plate ${i + 1} about ${n}`).join(", ")}`}
+          {breakaway ? (breakaway.second ? `, and about ${nozzleChanges?.reduce((a, b) => a + b, 0) ?? 0} changes to the ${breakaway.second} nozzle and back for the breakaway layers` : ", the breakaway layers' included") : ""}.{" "}
+          {breakaway
+            ? "The whole mountain is on one plate, stacked as it's put together, with the breakaway layers between its layers."
+            : onePiece
             ? "Everything is on one plate."
             : inPlace
             ? "The whole island is on one plate, put together, so every piece changes colour on the same layers."
@@ -520,7 +597,7 @@ export function ColourDownloads({
           <span className="small">Full colour, 3MF:</span>
           {plates.map((p, i) => (
             <button key={i} className="text-button" disabled={!!busy} onClick={() => save(`p${i}`, async () => [await plate3mf(i), "model/3mf", `${plateName(i)} - full colour.3mf`])} title={p.pieces.map((x) => x.piece.name).join(", ")}>
-              {plateLabel(i, p.pieces.length)}
+              {plateLabel(i, p.pieces.filter((x) => x.piece.col >= 0 || !x.piece.bodies.some((b) => b.part === "breakaway")).length)}
             </button>
           ))}
           {plates.length > 1 && <button

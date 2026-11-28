@@ -56,11 +56,18 @@ export function bandPuzzle(pieces: PuzzlePiece[], ctx: BandContext): BandedPuzzl
 }
 
 /** A banded plate's .3mf. */
-export function bandPlateFile(plate: Plate, title: string, banded: BandedPuzzle, ctx: BandContext, settings?: Readonly<Record<string, string>>): Promise<Uint8Array> {
+export function bandPlateFile(
+  plate: Plate,
+  title: string,
+  banded: BandedPuzzle,
+  ctx: BandContext,
+  settings?: Readonly<Record<string, string>>,
+  extra?: { labels?: Readonly<Record<number, string>>; nozzles?: readonly number[] },
+): Promise<Uint8Array> {
   const fs = filaments(ctx.spec, ctx.map);
-  const label = (n: number) => fs.find((f) => f.n === n)?.uses.join(" and ") ?? `filament ${n}`;
+  const label = (n: number) => extra?.labels?.[n] ?? fs.find((f) => f.n === n)?.uses.join(" and ") ?? `filament ${n}`;
   const partsOf = (p: PuzzlePiece): BandPartFile[] => (banded.parts.get(p) ?? []).map((b) => ({ ...b, label: `${label(b.filament)} (filament ${b.filament})` }));
-  return bandPlate3mf(plate, title, partsOf, paintCode, settings);
+  return bandPlate3mf(plate, title, partsOf, paintCode, settings, extra?.nozzles);
 }
 
 /** Roughly how many filament changes each plate takes. */
@@ -70,7 +77,20 @@ export function plateSwaps(plates: Plate[], banded: BandedPuzzle, layer: number,
     if (!without.length || !p.paintRanges) return p;
     return { ...p, paint: undefined, paintRanges: p.paintRanges.filter((r) => !without.includes(r.filament)) };
   };
-  return plates.map((pl) => filamentSwaps(pl.pieces.flatMap((x) => (banded.parts.get(x.piece) ?? []).map(strip)), layer));
+  return plates.map((pl) => filamentSwaps(platedParts(pl, banded).map(strip), layer));
+}
+
+/**
+ * A plate's band parts with their heights as printed on that plate: a piece standing on the bed (the usual: moved down
+ * by its own underside) keeps them; one lifted (printed stacked, all in one go) is counted from the bed.
+ */
+export function platedParts(plate: Plate, banded: BandedPuzzle): BandPart[] {
+  return plate.pieces.flatMap(({ piece, move }) => {
+    const up = piece.z0 + move[2];
+    const parts = banded.parts.get(piece) ?? [];
+    if (Math.abs(up) < 1e-9) return parts;
+    return parts.map((b) => ({ ...b, low: b.low + up, high: b.high + up, ...(b.paintRanges ? { paintRanges: b.paintRanges.map((r) => ({ ...r, low: r.low + up, high: r.high + up })) } : {}) }));
+  });
 }
 
 /** Above this many filament changes on a plate the window warns (each change flushes filament; hours on a big plate). */

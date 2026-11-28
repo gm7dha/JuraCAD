@@ -25,6 +25,13 @@ export interface Printer {
   slicerBed?: [number, number, number];
   /** Strips of `slicerBed` only one of the two nozzles reaches: a print on one nozzle, centred, keeps out of both. */
   oneNozzleOnly?: [number, number, number, number][];
+  /**
+   * The second nozzle, for printing one filament on it (the Mountain puzzle's breakaway layers): what Bambu Studio calls
+   * it, the strips of the bed (as `slicerBed ?? size`) it can't reach beyond `oneNozzleOnly`, its height limit, whether it
+   * has its own feed (so it takes none of the AMS's slots) and whether the breakaway layers go there to start with.
+   * From Bambu Studio's machine profiles (`extruder_printable_area`, `extruder_printable_height`).
+   */
+  secondNozzle?: { name: string; missing: [number, number, number, number][]; height: number; ownFeed: boolean; usual: boolean };
 }
 
 export const PRINTERS: Printer[] = [
@@ -40,6 +47,8 @@ export const PRINTERS: Printer[] = [
       [0, 0, 25, 320],
       [325, 0, 350, 320],
     ],
+    // Its nozzles reach x 0–325 and 25–350 (both strips are kept out anyway); its AMS units feed either nozzle.
+    secondNozzle: { name: "right", missing: [], height: 325, ownFeed: false, usual: false },
   },
   {
     // From 3D Printing Industry's launch article: 256 × 256 × 260 with the main nozzle; 235.5 × 256 × 256 for the
@@ -48,6 +57,10 @@ export const PRINTERS: Printer[] = [
     name: "Bambu Lab X2D",
     size: [256, 256, 260],
     bothNozzles: [235.5, 256, 256],
+    // Bambu Studio's X2D profile (resources/profiles/BBL/machine/Bambu Lab X2D 0.4 nozzle.json, master 930fe93):
+    // extruder_printable_area "0x0,256x0,256x256,0x256" (main, direct drive) and "20.5x0,256x0,256x256,20.5x256" (aux,
+    // Bowden); extruder_printable_height 261 and 256.
+    secondNozzle: { name: "aux", missing: [[0, 0, 20.5, 256]], height: 256, ownFeed: true, usual: true },
     note: "Two nozzles: 256 × 256 × 260 mm with the main nozzle; 235.5 × 256 × 256 mm with the second nozzle or both (two colours). Nozzles up to 300 °C, heated chamber up to 65 °C.",
   },
   {
