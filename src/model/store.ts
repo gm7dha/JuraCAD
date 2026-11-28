@@ -40,10 +40,11 @@ import { cornersOf, type VertexPick } from "../geometry/vertexRef";
 import { dot, planeFrame, toSketch, type SketchPlane, type Vec3 } from "../sketch/planes";
 import { emptySketch, type SketchData } from "../sketch/types";
 import { setCurrentScope } from "./expr";
+import { NO_MEASURED, type MeasuredValue } from "./measuredVariable";
 import { addConfiguration, removeConfiguration, renameConfiguration, switchConfiguration } from "./configurations";
 import { framesOf, planeAsSketchPlane, refreshDocumentPlanes } from "../sketch/planeFeature";
 import { lengthUnit, setLengthUnit, startingLength, storeLength, type LengthUnit } from "./units";
-import { applyVariables, resolveVariables, type Variable } from "./variables";
+import { applyVariables, renameInFeatures, resolveVariables, type Variable } from "./variables";
 import { editInsert, findDesign, insertDesign } from "../library/insert";
 import type { DesignValues } from "../library/types";
 import { hasManipulators } from "./manipulators";
@@ -445,7 +446,7 @@ export interface AppState {
   /** Start importing a STEP or STL file (opens the Import dialog with a preview). */
   startImport: (file: ImportedFile) => void;
   setDraftParam: (key: string, value: string) => void;
-  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "mergeScope" | "mergeScopePicking" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert" | "connector" | "thin" | "loft" | "modifyFillet" | "allEdges" | "curve" | "pathEdges" | "frame" | "trimFrame" | "gusset" | "boundary" | "blend" | "moveFace" | "variableFillet" | "importUnits">>) => void;
+  setDraftField: (patch: Partial<Pick<Feature, "name" | "operation" | "sketchRef" | "areas" | "extrude" | "revolve" | "picks" | "pattern" | "mirror" | "hole" | "transform" | "import" | "pathRef" | "sections" | "loftRuled" | "text" | "planeDef" | "booleanDef" | "splitDef" | "replaceDef" | "flipSide" | "closeCorners" | "neutral" | "deleteParts" | "simplifyParts" | "compositeParts" | "mergeScope" | "mergeScopePicking" | "simplify" | "fastener" | "derived" | "reliefShape" | "cornerRelief" | "surface" | "hollow" | "flangePosition" | "mitreCorners" | "keepOtherSide" | "extendTo" | "bothSides" | "continuity" | "breakStyle" | "leaveOpen" | "chamferType" | "sweepControl" | "moreAreas" | "sheetConvert" | "connector" | "thin" | "loft" | "modifyFillet" | "allEdges" | "curve" | "pathEdges" | "frame" | "trimFrame" | "gusset" | "boundary" | "blend" | "moveFace" | "variableFillet" | "importUnits" | "measured">>) => void;
   /** Fillet/chamfer: add a picked edge or face, or remove it if it's already picked. */
   toggleDraftPick: (pick: TopoPick) => void;
   /** Part pattern / Composite part: add a part to the open feature's parts, or take it out. */
@@ -728,6 +729,8 @@ export interface AppState {
   ) => void;
   /** Curve features (Helix, Fit spline…) as the engine built them: lines to draw (RebuildResult.curves, every Part Studio). */
   builtCurves: Record<string, number[][]>;
+  /** Measured variables (by feature id): the value each came to in the last build (RebuildResult.measuredValues). */
+  measuredValues: Record<string, MeasuredValue>;
   /**
    * Where Plane features that follow the model and mate connectors are, as the engine built them (RebuildResult.followed,
    * every Part Studio). Shown and used instead of what the design's numbers give; the design stays as clicked.
@@ -1053,6 +1056,7 @@ export const useStore = create<AppState>((set, get) => {
     sketchLinks: NO_LINKS,
     builtFrames: NO_FRAMES,
     builtCurves: NO_CURVES,
+    measuredValues: NO_MEASURED,
     sketchCandidates: null,
     setSketchCandidates: (sketchCandidates) => set({ sketchCandidates }),
     lastRebuildMs: null,
@@ -1504,7 +1508,7 @@ export const useStore = create<AppState>((set, get) => {
       if (Object.keys(errors).length > 0) return false;
       // Nothing picked yet where something must be (a fillet with no edges): not accepted, as Onshape's greyed ✓.
       const original = editing.mode === "edit" ? activeFeatures(get()).find((f) => f.id === editing.draft.id) : null;
-      const missing = acceptBlocker(editing.draft, original);
+      const missing = acceptBlocker(editing.draft, original, { table: (get().history.present.variables ?? []).map((v) => v.name), features: activeFeatures(get()) });
       if (missing) {
         get().showToast(missing, "info");
         return false;
@@ -1520,7 +1524,13 @@ export const useStore = create<AppState>((set, get) => {
       // A sketch the Hole's face clicks made goes in just before it, in the same undo step.
       const made = holeSketch && holeSketch.draftId === draft.id && draft.hole?.sketchRef === holeSketch.sketch.id ? holeSketch.sketch : null;
       dropHoleSketch();
-      const placeOne = (doc: JuraCADDocument) => (editing.mode === "create" ? (at ? insertFeatureAfter(doc, draft, at) : addFeature(doc, draft)) : replaceFeature(doc, keepVisibility(doc, draft)));
+      // A measured variable renamed: the features using it follow the new name (as a renamed variable's do).
+      const renamed = (doc: JuraCADDocument) => {
+        const from = original?.measured?.name;
+        const to = draft.measured?.name;
+        return from && to && from !== to ? { ...doc, features: renameInFeatures(doc.features, from, to) } : doc;
+      };
+      const placeOne = (doc: JuraCADDocument) => (editing.mode === "create" ? (at ? insertFeatureAfter(doc, draft, at) : addFeature(doc, draft)) : renamed(replaceFeature(doc, keepVisibility(doc, draft))));
       const place = made ? (doc: JuraCADDocument) => (at ? insertFeatureAfter(insertFeatureAfter(doc, made, at), draft, made.id) : addFeature(addFeature(doc, made), draft)) : placeOne;
       if (fitted.variables !== get().history.present.variables) {
         const vars = fitted.variables;
@@ -1638,7 +1648,7 @@ export const useStore = create<AppState>((set, get) => {
     },
     deleteFeatures: (ids, justThese = false) => {
       const features = activeFeatures(get());
-      const plan = findDependents(features, ids);
+      const plan = findDependents(features, ids, new Set((get().history.present.variables ?? []).map((v) => v.name)));
       const going = new Set(justThese ? plan.picked : plan.going);
       set({ deleteAsk: null });
       if (!going.size) return 0;

@@ -257,6 +257,8 @@ export function cornerWanted(
     return m === "point" || m === "pointNormal" || m === "threePoint" || m === "fit";
   }
   if (d.type === "mateConnector") return true;
+  // A measured variable can measure to a corner.
+  if (d.type === "variable") return true;
   if (d.type === "transform") {
     const k = d.transform?.picking;
     return k === "triad" || k === "from" || k === "to";

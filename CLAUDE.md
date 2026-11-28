@@ -1457,6 +1457,30 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   `functionMatches` ("sin(") after variables — prefixes only, never after a number/")" (a unit goes there). Older
   expressions give exactly what they gave (tests/exprFunctions). Library designs keep `trigOf` (six-place numbers;
   switching would change what they make).
+  Measured variables (Onshape's Variable › Measured): feature type "variable" with `Feature.measured` (`MeasuredDef`: `name`,
+  `kind` distance | length | diameter | radius | angle, `along` x/y/z (distance; missing = shortest), `targets` = TopoPick |
+  VertexPick | `{plane}` ("Top"/"Front"/"Right" or a Plane feature id)); pure `src/model/measuredVariable.ts` (`toggleTarget`,
+  `withKind`, `measuredProblem` — draftReady's Accept —, `namesUsedBy` (params, sketch dimensions, variable-fillet radii),
+  `usedTooEarly`, `measuredUses`, `parseMeasuredDef`). Engine `applyMeasured` at its place in `featureSteps`: picks found
+  STRICTLY (`measuredPick(…, strict)`: strictMatch; corners by findCorner; planes from `planeFrames` / default frames, a big
+  square `measureSheet` for closestPoints; angles from the faces/edges AS FOUND — `foundDirection`: a plane's normal, a cylinder's
+  axis, a line's ends — never the click's ref; `measuredAngle`: two edges sharing an end are taken leaving it, 0–180°, else 0–90°), the value put into the scope for the features after it (angle → `ANGLE_KEY`); a
+  feature using a measured name before it (or after a failed one) fails with `tooEarlyMessage`/`notMeasuredMessage`, one switched off with `switchedOffMessage`, one only another Part Studio
+  measures (`measuredInStudios`, all studios being rebuilt) with `otherStudioMessage` — sketches too; names in
+  the Variables table win (the measured one fails "already has"); sketches after it whose dimensions use its name are solved
+  again with `solveSketch` and given to the app as `SketchLinkInfo.sketch`. `RebuildResult.measuredValues` (feature id →
+  `MeasuredValue`) → `store.measuredValues` (connect.ts `keepMeasuredValues`) → expr.ts `setMeasuredScope` (a layer under the
+  document's own values, app only — never in the worker or the extension's engine; connect.ts `refreshMeasuredScope`: only the
+  studio on show's, above the feature open — `measuredScopeFor`), so dialogs and open sketches can use the names;
+  `getCurrentScope` returns the base scope only (save/restore never bakes measured values in), `getScopeInUse` both; shown on the feature row, in the dialog and the Variables window (read only). Renaming one renames its uses
+  (store commitDraft / edit_feature via `renameInFeatures`, never to an unusable name); Accept waits for a usable name the table
+  and the studio's other measured variables don't have (`acceptBlocker(…, names)` → `measuredNameProblem`); a pasted one whose
+  name is taken becomes `<name>_2` with its pasted users following. Delete with dependents: its parts/Plane are needed; features using
+  its name go with it (not when the Variables table has that name: `findDependents(…, tableNames)`). UI `src/app/MeasuredVariableOptions.tsx`; toolbar "Measured variable" in the Variables ▾; view clicks in
+  Viewport handlePick right after geomPick (`cornerWanted` on). Claude: add_feature "measured_variable" (`src/mcp/measuredSpec.ts`;
+  add_feature's context scope includes the last build's measured values). Not done: a plain "#name = expression" Variable
+  feature, offering measured names while typing (varComplete), inch display of the row's value.
+  Tests: measuredVariable (pure), engineMeasuredVariable, mcpMeasuredVariable.
 - Zustand selectors must not return a fresh array/object each call (use a shared constant), or React loops.
 - Keep pure logic (model, geometry, reports) out of React and covered by Vitest tests.
 - Every change: `npm run typecheck && npm test && npm run build`. CI runs the same and publishes `main`

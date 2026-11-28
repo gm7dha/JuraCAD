@@ -20,6 +20,7 @@
  * deleted *Add* feature changed (the part is older, so it stays). Those show
  * as errors afterwards, as a plain Delete leaves them.
  */
+import { measuredUses, namesUsedBy } from "./measuredVariable";
 import { tidyRadiusPoints } from "./variableFillet";
 import { curveUses } from "./curves";
 import { loftUses, loftWithoutGone } from "./loft";
@@ -123,6 +124,10 @@ function usesOf(f: Feature): Uses {
 
   need(f.sketchRef);
   need(f.pathRef);
+  // A measured variable: every part it measures on, and a Plane feature it measures to.
+  const measured = measuredUses(f);
+  measured.parts.forEach(needPart);
+  measured.features.forEach(need);
   need(f.hole?.sketchRef);
   for (const plane of planesOf(f)) {
     if (plane.kind !== "face") continue;
@@ -279,7 +284,8 @@ function usesLatestPart(f: Feature): boolean {
  * The features that use the picked ones (in `features`, one Part Studio's list),
  * transitively: a feature that goes takes the features using it with it.
  */
-export function findDependents(features: Feature[], ids: Iterable<string>): Dependents {
+/** `tableNames`: the Variables table's names — a feature using one of those isn't using a measured variable of that name. */
+export function findDependents(features: Feature[], ids: Iterable<string>, tableNames: ReadonlySet<string> = new Set()): Dependents {
   const wanted = new Set(ids);
   const gone = new Set<string>();
   const picked: string[] = [];
@@ -287,6 +293,11 @@ export function findDependents(features: Feature[], ids: Iterable<string>): Depe
   const partial: PartialUse[] = [];
   const featureGone = (id: string) => gone.has(id);
   const partGone = (id: string) => gone.has(partMaker(id));
+  // Measured variables that go: features using their names can't be built without them.
+  const goneNames = new Set<string>();
+  const nameGoes = (f: Feature) => {
+    if (f.type === "variable" && f.measured?.name && !tableNames.has(f.measured.name)) goneNames.add(f.measured.name);
+  };
   const makers = new Set<string>();
   let latest: string | null = null;
   const made = (f: Feature) => {
@@ -297,6 +308,7 @@ export function findDependents(features: Feature[], ids: Iterable<string>): Depe
   for (const f of features) {
     if (wanted.has(f.id)) {
       gone.add(f.id);
+      nameGoes(f);
       picked.push(f.id);
       made(f);
       continue;
@@ -306,7 +318,7 @@ export function findDependents(features: Feature[], ids: Iterable<string>): Depe
       continue;
     }
     const u = usesOf(f);
-    let goes = u.features.some(featureGone) || u.parts.some(partGone) || (latest !== null && gone.has(latest) && usesLatestPart(f));
+    let goes = u.features.some(featureGone) || u.parts.some(partGone) || (latest !== null && gone.has(latest) && usesLatestPart(f)) || (goneNames.size > 0 && namesUsedBy(f).some((n) => goneNames.has(n)));
     const loses: string[] = [];
     if (!goes) {
       for (const list of u.lists) {
@@ -323,6 +335,7 @@ export function findDependents(features: Feature[], ids: Iterable<string>): Depe
     made(f);
     if (goes) {
       gone.add(f.id);
+      nameGoes(f);
       dependents.push(f.id);
       continue;
     }
@@ -442,7 +455,7 @@ export interface DeletePlan extends Dependents {
 /** The plan for deleting features of the Part Studio `studioId` (with their dependents, or `justThese`). */
 export function deletePlan(doc: JuraCADDocument, studioId: string, ids: string[], justThese = false): DeletePlan {
   const features = studiosOf(doc).find((s) => s.id === studioId)?.features ?? [];
-  const deps = findDependents(features, ids);
+  const deps = findDependents(features, ids, new Set((doc.variables ?? []).map((v) => v.name)));
   return { ...deps, outside: outsideUsers(doc, studioId, justThese ? deps.picked : deps.going) };
 }
 

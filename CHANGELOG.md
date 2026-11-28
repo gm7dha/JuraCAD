@@ -8,6 +8,12 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.129 — Measured variables
+- New: Variables ▾ › Measured variable (as in Onshape). Give it a name and click things in the view: it measures a distance (shortest, or along X/Y/Z), the length of edges, a diameter or radius, or an angle, and keeps that number up to date as the model changes.
+- Features and sketch dimensions after it in the list can use its name, e.g. a depth of "width / 2". Its value shows on its row and in the Variables window.
+- Using it above where it is, from another Part Studio, or with a name that's already taken is refused with a plain message.
+- Claude can make them too.
+
 ## v0.128 — Puzzles in one piece
 - Island puzzle and Mountain / Photo relief puzzle: a new choice, "In one piece (a solid model, not a puzzle)", makes a single solid model instead of a jigsaw — no cuts, dovetails, cubes or keys.
 - Map marks, flat lochs, the snow line, colour bands and full colour all still work on the one-piece model.

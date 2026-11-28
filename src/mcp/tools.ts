@@ -8,12 +8,13 @@ import { loftProfiles } from "../model/loft";
 import { mirrorReferenceText, patternReferenceText } from "../model/patternRefs";
 import { createFeature, emptyDocument, renamePart, replaceFeature, addFeature, newId } from "../model/document";
 import { readDocumentFile, serializeDocument, nameFromFileName, FILE_EXTENSION, OLD_FILE_EXTENSION } from "../model/fileFormat";
-import { applyVariables, resolveVariables, checkName, type Variable } from "../model/variables";
+import { applyVariables, renameInFeatures, resolveVariables, checkName, type Variable } from "../model/variables";
 import { describeHole } from "../model/holes";
 import { describeRef, type FaceRef } from "../geometry/topoRef";
 import type { Feature, JuraCADDocument } from "../model/types";
 import { describeMore, LINE_HELP, POINT_HELP } from "./planeSpec";
 import { CURVE_HELP } from "./curveSpec";
+import { MEASURED_HELP } from "./measuredSpec";
 import { FRAME_HELP, FRAME_TOOLS, GUSSET_HELP, TRIM_HELP } from "./frameSpec";
 import { describeCurve } from "../model/curves";
 import { SIMPLIFY_LEVELS } from "../model/simplify";
@@ -207,6 +208,10 @@ export function summarize(f: Feature, doc: JuraCADDocument, built?: Record<strin
       return `cylinder ⌀${p.diameter} × ${p.height} mm at (${p.x}, ${p.y}, ${p.z}), ${op}`;
     case "sphere":
       return `sphere ⌀${p.diameter} mm at (${p.x}, ${p.y}, ${p.z}), ${op}`;
+    case "variable": {
+      const m = f.measured;
+      return m ? `measured variable "${m.name}": the ${m.kind === "distance" ? (m.along ? `distance along ${m.along.toUpperCase()}` : "shortest distance") : m.kind} of ${m.targets.length === 1 ? "1 thing" : `${m.targets.length} things`} (features after it can use "${m.name}")` : "measured variable";
+    }
     case "curve":
       return `${describeCurve(f)} (a curve: sweeps and curve patterns can follow it)`;
     case "plane":
@@ -394,7 +399,10 @@ async function tryChange(s: Session, next: JuraCADDocument, featureId: string | 
 
 function context(s: Session, before: Feature[] | null, editing: boolean): SpecContext {
   const features = before ?? s.doc.features;
-  return { session: s, doc: s.doc, parts: s.build(features).parts, scope: s.scope(), editing };
+  const built = s.build(features);
+  // Measured variables before it can be used by name too (as last measured).
+  const measured = Object.fromEntries(Object.values(built.measured ?? {}).flatMap((v): [string, number][] => [[v.name, v.value], ...(v.angle ? ([[`°${v.name}`, 1]] as [string, number][]) : [])]));
+  return { session: s, doc: s.doc, parts: built.parts, scope: { ...measured, ...s.scope() }, editing };
 }
 
 const featureLine = (f: Feature, doc: JuraCADDocument, errors: Record<string, string>, built?: Record<string, FollowedFrame>) =>
@@ -435,6 +443,7 @@ const KIND_HELP: Record<FeatureKind, string> = {
   split_face: 'split_face (Onshape\'s Split, type Face: the part keeps its shape, the faces are divided so part of a face can be picked — e.g. Draft only the top half): faces (of one part), plane ("Top"|"Front"|"Right") with offset, or sketch (its lines and curves pushed straight through, square to the sketch), part',
   mate_connector: 'mate_connector (a point with its own X/Y/Z that belongs to a part: mate to it in assemblies with add_mate\'s "connector", sketch on it with add_sketch "plane", move parts by it): at (a point — see plane; or {"edge": "E3", "part": name}: an edge\'s middle with Z along it, a round edge\'s centre with Z along its axis; or {"face": "F2", "part": name}: a flat face\'s centre, Z out of it), or on_plane ("Top"|"Front"|"Right" or a Plane name: at its origin), spot ("start"|"end"|"middle" on an edge), owner (the part it belongs to; default the part it\'s on), flip_z, move ([x, y, z] mm along its own axes), turn ([x, y, z]° about its own axes)',
   curve: CURVE_HELP,
+  measured_variable: MEASURED_HELP,
   frame: FRAME_HELP,
   trim_frame: TRIM_HELP,
   gusset: GUSSET_HELP,
@@ -560,7 +569,8 @@ export const TOOLS: ToolDef[] = [
       }
       applyFeature(f, kind, a, ctx);
       const report = await tryChange(s, addFeature(s.doc, f), f.id, `add the ${kind.replace("_", " ")}`);
-      return say(`Added ${f.name} [id ${f.id}]: ${summarize(f, s.doc, s.build().followed)}.`, ...report);
+      const value = f.type === "variable" ? s.build().measured?.[f.id] : undefined;
+      return say(`Added ${f.name} [id ${f.id}]: ${summarize(f, s.doc, s.build().followed)}.${value ? ` It measures ${value.value}${value.angle ? "°" : " mm"} now.` : ""}`, ...report);
     },
   },
   {
@@ -604,7 +614,12 @@ export const TOOLS: ToolDef[] = [
         } else applyFeature(f, kind, a, ctx);
       }
       if (JSON.stringify(f) === JSON.stringify(old)) return say(`${old.name} already has those settings; nothing changed.`);
-      const report = await tryChange(s, replaceFeature(s.doc, f), f.id, `change ${old.name}`);
+      // A measured variable renamed: the features using it follow (as in the app).
+      const replaced = replaceFeature(s.doc, f);
+      const from = old.measured?.name;
+      const to = f.measured?.name;
+      const next = from && to && from !== to ? { ...replaced, features: renameInFeatures(replaced.features, from, to) } : replaced;
+      const report = await tryChange(s, next, f.id, `change ${old.name}`);
       // Sketches on faces stay where the face was when they were drawn (as in the app).
       const onFaces = s.doc.features.slice(at + 1).filter((x) => x.type === "sketch" && x.sketch?.plane?.kind === "face" && !x.sketch.plane.planeRef && / face of /.test(x.sketch.plane.label));
       return say(

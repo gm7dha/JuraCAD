@@ -418,6 +418,16 @@ export function Toolbar() {
       disabled: editing,
       title: editing ? finishFirst : "Variables — name sizes (like wall = 2) and use them in any box",
     },
+    measuredVariable: {
+      key: "measuredVariable",
+      label: "Measured variable",
+      short: "Measured",
+      icon: <Icons.Variables />,
+      onClick: () => useStore.getState().startCreate("variable"),
+      disabled: !ready,
+      active: editingType === "variable",
+      title: "Measured variable — a variable whose value is measured from the model (a distance, length, diameter or angle); features after it can use it by name",
+    },
     configurations: {
       key: "configurations",
       label: "Configurations",

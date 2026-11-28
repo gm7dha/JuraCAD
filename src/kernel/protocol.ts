@@ -230,6 +230,8 @@ export interface RebuildResult {
   followed?: Record<string, FollowedFrame>;
   /** Curve features (Helix, Fit spline…) in every Part Studio (configuration on show): each as lines to draw (flat x, y, z…). */
   curves?: Record<string, number[][]>;
+  /** Measured variables (by feature id) in every Part Studio (configuration on show): the value each came to. Missing = none. */
+  measuredValues?: Record<string, import("../model/measuredVariable").MeasuredValue>;
 }
 
 export interface PartCheck {

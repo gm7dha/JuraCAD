@@ -35,6 +35,7 @@ import { studiosOf } from "../model/studios";
 import type { Operation } from "../model/types";
 import { DeleteFaceHelp } from "./DeleteFaceHelp";
 import { MoveFaceOptions } from "./MoveFaceOptions";
+import { MeasuredVariableOptions } from "./MeasuredVariableOptions";
 import { Icons } from "./icons";
 import { FASTENER_KINDS, FASTENER_LABELS, FASTENER_SIZES, type FastenerKind } from "../model/fasteners";
 import { ISO_COARSE } from "../kernel/thread";
@@ -2668,7 +2669,7 @@ export function FeatureDialog() {
   const needsRef = draft.type === "mirror" ? !!draft.mirror?.unset : (draft.type === "circularPattern" || draft.type === "linearPattern") && !!draft.pattern?.unset;
   const refHint = draft.type === "mirror" ? "Choose the mirror plane first" : draft.type === "circularPattern" ? "Choose the axis first" : "Choose the direction first";
   // Nothing picked yet where something must be (a fillet with no edges): the ✓ waits, saying what to click.
-  const missing = needsRef ? null : acceptBlocker(draft, mode === "edit" ? original : null);
+  const missing = needsRef ? null : acceptBlocker(draft, mode === "edit" ? original : null, draft.type === "variable" ? { table: (useStore.getState().history.present.variables ?? []).map((v) => v.name), features: activeFeatures(useStore.getState()) } : undefined);
   const groups: { title: string; params: ParamDef[] }[] = [
     { title: draft.type === "plane" ? "Placement" : draft.type === "extrude" ? "Depth" : draft.type === "revolve" ? "How far round" : draft.type === "shell" ? "Walls" : isPatternFeature(draft.type) ? "Copies" : draft.type === "transform" ? "Turn" : "Size", params: def.params.filter((p) => p.group === "size") },
     { title: draft.type === "transform" ? "Move" : draft.type === "circularPattern" ? "Axis goes through" : "Position", params: def.params.filter((p) => p.group === "position") },
@@ -2711,7 +2712,7 @@ export function FeatureDialog() {
           onChange={(e) => setDraftField({ name: e.target.value })}
         />
 
-        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "mateConnector" && draft.type !== "curve" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "composite" && draft.type !== "simplify" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "modifyFillet" && draft.type !== "frame" && draft.type !== "trimFrame" && draft.type !== "gusset" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "cornerBreak" && draft.type !== "tab" && draft.type !== "bend" && draft.type !== "jog" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && draft.type !== "extendSurface" && draft.type !== "ruled" && draft.type !== "boundary" && draft.type !== "faceBlend" && !draft.surface && (
+        {!isPickFeature(draft.type) && !isPatternFeature(draft.type) && draft.type !== "hole" && draft.type !== "transform" && draft.type !== "plane" && draft.type !== "mateConnector" && draft.type !== "curve" && draft.type !== "boolean" && draft.type !== "deletePart" && draft.type !== "composite" && draft.type !== "simplify" && draft.type !== "fastener" && draft.type !== "split" && draft.type !== "rib" && draft.type !== "draft" && draft.type !== "moveFace" && draft.type !== "replaceFace" && draft.type !== "deleteFace" && draft.type !== "modifyFillet" && draft.type !== "frame" && draft.type !== "trimFrame" && draft.type !== "gusset" && draft.type !== "sheetMetal" && draft.type !== "flange" && draft.type !== "hem" && draft.type !== "cornerBreak" && draft.type !== "tab" && draft.type !== "bend" && draft.type !== "jog" && draft.type !== "fullRound" && draft.type !== "thread" && draft.type !== "wrap" && draft.type !== "fill" && draft.type !== "enclose" && draft.type !== "offsetSurface" && draft.type !== "extendSurface" && draft.type !== "ruled" && draft.type !== "boundary" && draft.type !== "faceBlend" && draft.type !== "variable" && !draft.surface && (
         <div className="segmented four" role="radiogroup" aria-label="Operation">
           {OPERATIONS.map((op) => (
             <button
@@ -2743,6 +2744,7 @@ export function FeatureDialog() {
         <ThinOptions />
         <PlaneDefOptions />
         <MateConnectorOptions />
+        <MeasuredVariableOptions />
         <CurveOptions />
         <BoundaryOptions />
         <FaceBlendOptions />
