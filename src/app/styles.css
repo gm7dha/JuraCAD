@@ -4278,6 +4278,32 @@ kbd {
   }
 }
 
+/* A touch screen up to 1300 px wide (an iPad: 1180 sideways): toolbar buttons show just their icons (the name is in the
+   tooltip and the list), and the Part Studio's rarer groups share a ▾ (STUDIO_TOUCH_TOOLBAR), so its tools fit 1180 px
+   without scrolling; held upright the ‹ › arrows scroll the rest. */
+@media (pointer: coarse) and (max-width: 1300px) {
+  .toolbar {
+    gap: 2px;
+    padding: 0 4px;
+  }
+  .toolbar .tool-button:has(> svg) > span {
+    display: none;
+  }
+  .toolbar .tool-button {
+    min-width: 42px;
+    padding: 2px;
+  }
+  .toolbar .tool-button.icon-only {
+    min-width: 42px;
+  }
+  .toolbar .tool-split-arrow {
+    width: 20px;
+  }
+  .toolbar .tool-divider {
+    margin: 0 2px;
+  }
+}
+
 /* A narrow touch screen (an iPad held upright): a slimmer feature list leaves the view more room. */
 @media (pointer: coarse) and (max-width: 900px) {
   .workspace {

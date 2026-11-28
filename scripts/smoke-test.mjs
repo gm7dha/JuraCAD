@@ -4514,6 +4514,26 @@ try {
         const [need, have] = await tab.locator('.toolbar[aria-label="Tools"]').evaluate((b) => [b.scrollWidth, b.clientWidth]);
         await shot("toolbaripad", { pg: tab, clip: { x: 0, y: 0, width: 1024, height: 140 }, width: 1024 });
         touchReport += `the toolbar ${need > have ? `scrolls ${need - have} px` : "fits"} at 1024 px; `;
+        // An iPad's own sizes: sideways (1180) the Part Studio's toolbar fits (icons only, rarer groups joined); upright
+        // (820) the ‹ › arrows scroll the rest. Only icons, so the room left doesn't depend on CI's font.
+        const room = () =>
+          tab.locator('.toolbar[aria-label="Tools"]').evaluate((b) => {
+            const gap = b.querySelector(".toolbar-spacer");
+            return [b.scrollWidth, b.clientWidth, Math.round(gap ? gap.getBoundingClientRect().width : 0)];
+          });
+        await tab.setViewportSize({ width: 1180, height: 820 });
+        await tab.waitForFunction(() => (document.querySelector('.toolbar[aria-label="Tools"]')?.clientWidth ?? 0) > 1100);
+        const [needL, haveL, spareL] = await room();
+        if (needL > haveL) throw new Error(`on a touch screen 1180 px wide the Part Studio toolbar needs ${needL} px but has ${haveL}`);
+        await shot("toolbaripad1180", { pg: tab, clip: { x: 0, y: 0, width: 1180, height: 140 }, width: 1180 });
+        await tab.setViewportSize({ width: 820, height: 1180 });
+        await tab.waitForTimeout(200);
+        const [needP, haveP] = await room();
+        const ipadRoom = `On an iPad's touch screen the Part Studio toolbar fits 1180 px with ${spareL} px to spare; upright (820 px) it scrolls ${Math.max(0, needP - haveP)} px`;
+        annotate(spareL < 20 ? "warning" : "notice", "Toolbar room (iPad)", ipadRoom);
+        touchReport += `${ipadRoom}; `;
+        await tab.setViewportSize({ width: 1024, height: 768 });
+        await tab.waitForTimeout(200);
       }
       const cdp = await touchContext.newCDPSession(tab);
       const touches = (type, points) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: points.map(([x, y], i) => ({ x, y, id: i + 1, radiusX: 4, radiusY: 4, force: 1 })) });
