@@ -71,4 +71,15 @@ describe("move_face, from Claude", () => {
     // A curved face for the direction of a translate.
     expect(await fails(s, "add_feature", { type: "move_face", move: "translate", faces: ["top"], direction: { face: { near: [15, 15, 10] } }, distance: 1 })).toMatch(/curved/);
   });
+
+  it("moves and turns a hole as a whole (its wall picked)", async () => {
+    const s = newSession();
+    await ok(s, "add_feature", { type: "box", width: 40, depth: 30, height: 10 });
+    await ok(s, "add_feature", { type: "cylinder", diameter: 10, height: 10, x: 12, y: 15, operation: "remove" });
+    const v = volume(s);
+    await ok(s, "add_feature", { type: "move_face", move: "translate", faces: [{ near: [12, 20, 5] }], direction: "x", distance: 10 });
+    expect(volume(s)).toBeCloseTo(v, 4);
+    // Turned 90° about Z (through the origin) it would leave the block: refused in plain words.
+    expect(await fails(s, "add_feature", { type: "move_face", move: "rotate", faces: [{ near: [22, 20, 5] }], axis: "z", angle: 90 })).toMatch(/out of the part/);
+  });
 });

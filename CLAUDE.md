@@ -1287,10 +1287,17 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   neighbours re-trim. Dialog `src/app/MoveFaceOptions.tsx` (segmented choice; Direction/Axis slot → view clicks in Viewport's
   handlePick, edges allowed then); manipulators: Translate arrow along the direction, Rotate arc round a straight/X/Y/Z axis (none
   round a round face's axis). Claude: add_feature "move_face" (`move`, `distance`/`angle`, `direction`/`axis` "x"|"y"|"z"|{edge}|{face},
-  `flip`). Dependents: `along`'s part (not for Offset). Not done: Translate of round faces (moving a hole), Rotate of curved faces,
+  `flip`). Dependents: `along`'s part (not for Offset). Translate/Rotate with any round face picked = the whole piece
+  (`movePieceOfFaces`): facePattern's `regionOfFaces(…, keepCaps)` (+ `caps`: point, normal away from the tool) gives the hole's space or
+  boss's solid; caps whose far side is space (hole) / material (boss) are its mouth/foot (`mouth`; others, e.g. an unpicked floor, are
+  part of it). Filled (hole) / taken off (boss), then made again moved — slid, a mouth cap is carried on by −move·n (deeper hole, lifted
+  boss); turned, mouth caps must stay in their planes ("squarely"). Refused: moved piece (less beyond its mouth planes) not wholly in the
+  filled part (hole: "out of the part") / touching the rest (boss: "into the rest"), a 0.05 slab past the moved mouth meeting material /
+  foot not on material ("hang off"), volume ≠ expected, > 1 solid. Not done: a round face tilted on its own (only whole pieces turn),
   neighbours that aren't square carried on to meet (warned), filling the corner where two moved faces meet. Tests: tests/moveFace
   (pure), engineMoveFace (exact volumes: box ±2, Ø10 hole → Ø10.4 and Ø9.6, boss +1, pocket floor, slanted face up Z, along an
-  edge, 5° about an edge, refusals, an old Move face as before), mcpMoveFace.
+  edge, 5° about an edge, refusals, an old Move face as before; a Ø10 hole slid 12 (old place filled), off the edge, blind hole sideways/deeper/
+  shallower, boss slid/lifted/off its face/into another, countersunk hole, hole turned 90° about Z), mcpMoveFace.
 - Everyday picking and views (Onshape's): selection filter `src/viewport/selectionFilter.ts` (pure; `store.selectFilter`, session
   only; empty = everything; kinds face/edge/vertex ("Corners")/part/plane/sketch; `partHitAs`: a face/edge
   whose kind is off becomes its whole part when Parts is on (`PickTarget.whole`, handlePick → `selectedParts`; only with nothing

@@ -11,8 +11,9 @@
  * round each one properly: the turned plane is reached by leaning the face about the line where it meets its turned
  * self (`rotationPivot`).
  */
-import { asDir, basicFaceExtrusion, cast, getOC, makeBox, makePln, makeSphere, measureArea, measureVolume, Vector, type Face, type Shape3D } from "replicad";
-import { rotationPivot } from "../model/moveFace";
+import { asDir, basicFaceExtrusion, cast, getOC, makeBox, makePln, makePolygon, makeSphere, measureArea, measureVolume, Vector, type Face, type Shape3D } from "replicad";
+import { rotationPivot, turnPoint } from "../model/moveFace";
+import { regionOfFaces } from "./facePattern";
 import { facesOf, edgesOf, solidsOf } from "./topology";
 
 type Vec3 = [number, number, number];
@@ -313,4 +314,170 @@ export function rotateFaces(shape: Shape3D, faces: Face[], through: Vec3, dir: V
     made.forEach((x) => x.delete());
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+
+/** How a whole hole, boss or pocket moves: slid by `move`, or turned by `degrees` about the line through `through` along unit `dir`. */
+export type PieceMotion = { move: Vec3 } | { turn: { through: Vec3; dir: Vec3; degrees: number } };
+
+/** A slab of the half-space beyond the plane through `p` with normal `n` (on the side `n` points to), `size` across and deep. */
+function beyond(p: Vec3, n: Vec3, size: number): Shape3D {
+  const t = Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+  const u0: Vec3 = [n[1] * t[2] - n[2] * t[1], n[2] * t[0] - n[0] * t[2], n[0] * t[1] - n[1] * t[0]];
+  const ul = Math.hypot(...u0);
+  const u: Vec3 = [u0[0] / ul, u0[1] / ul, u0[2] / ul];
+  const v: Vec3 = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]];
+  const at = (a: number, b: number): Vec3 => [p[0] + u[0] * a + v[0] * b, p[1] + u[1] * a + v[1] * b, p[2] + u[2] * a + v[2] * b];
+  const face = makePolygon([at(-size, -size), at(size, -size), at(size, size), at(-size, size)]);
+  const slab = basicFaceExtrusion(face, new Vector([n[0] * size, n[1] * size, n[2] * size])) as Shape3D;
+  face.delete();
+  return slab;
+}
+
+/** The volume two shapes share (0 when they don't meet). */
+function shared(a: Shape3D, b: Shape3D): number {
+  try {
+    const common = a.clone().intersect(b);
+    const v = measureVolume(common);
+    common.delete();
+    return Math.max(0, v);
+  } catch {
+    return NaN;
+  }
+}
+
+/**
+ * Translate or Rotate of round faces (Onshape's Move face on a hole, a boss, a round pocket): the picked faces stand
+ * for the piece of space (a hole) or solid (a boss) they bound, closed up with flat caps where they meet the rest of
+ * the part (as a face pattern finds it). That piece is filled in (a hole) or taken away (a boss) where it was and made
+ * again where it goes. Moved towards a face it opens onto it's carried on to it, so a hole moved deeper stays open and a
+ * boss lifted keeps standing on its face. Refused in plain words when it would leave the part, run into another face,
+ * hang off the face it stands on, or (turned) no longer reach the face it opens onto.
+ */
+export function movePieceOfFaces(shape: Shape3D, faces: Face[], motion: PieceMotion): Shape3D {
+  let region;
+  try {
+    region = regionOfFaces(faces, shape, true);
+  } catch (e) {
+    const said = e instanceof Error ? e.message : "";
+    if (/isn't flat/.test(said)) throw new MoveFaceError("Where the picked faces meet the rest of the part isn't flat, so they can't be moved as one piece. Translate and Rotate move round faces as a whole hole, boss or pocket that opens onto a flat face.");
+    if (/some of the part and some empty space/.test(said)) throw new MoveFaceError("The picked faces enclose some of the part and some empty space. Pick the faces of just one hole, boss or pocket.");
+    throw new MoveFaceError("The picked round faces don't close up into a hole, boss or pocket. Pick all of its faces — its wall, and its floor, chamfer or countersink if it has them — or use Offset to move each face on its own.");
+  }
+  const { tool, operation, caps } = region;
+  const capFaces = region.capFaces ?? [];
+  const hole = operation === "remove";
+  const what = hole ? "hole" : "boss";
+  const made: Shape3D[] = [tool];
+  const keep = <T extends Shape3D>(x: T): T => {
+    made.push(x);
+    return x;
+  };
+  try {
+    const before = measureVolume(shape);
+    const vTool = Math.abs(measureVolume(tool));
+    const b = shape.boundingBox.bounds;
+    const diag = Math.hypot(b[1][0] - b[0][0], b[1][1] - b[0][1], b[1][2] - b[0][2]);
+    const reach = "move" in motion ? Math.hypot(...motion.move) : 0;
+    const size = 2 * diag + 2 * reach + 10;
+    const tol = 1e-6 * Math.max(1, before + vTool) + 1e-6;
+    // Where each cap goes, and (sliding) how far the piece is carried on through it so it still reaches its face.
+    const place = (p: Vec3): Vec3 =>
+      "move" in motion ? [p[0] + motion.move[0], p[1] + motion.move[1], p[2] + motion.move[2]] : turnPoint(p, motion.turn.through, motion.turn.dir, motion.turn.degrees);
+    // A cap is the piece's open end (a hole's mouth, a boss's foot) when beyond it is space (a hole) or material (a
+    // boss); otherwise it just stands for a face that wasn't picked (a blind hole's floor), part of the piece itself.
+    const thin = 0.05;
+    const slabOn = (face: Face, normal: Vec3) => keep(basicFaceExtrusion(face, new Vector([normal[0] * thin, normal[1] * thin, normal[2] * thin])) as Shape3D);
+    const mouth = caps.map(({ normal }, i) => {
+      const slab = slabOn(capFaces[i], normal);
+      const v = Math.abs(measureVolume(slab));
+      const met = shared(slab, shape);
+      return hole ? met < 0.5 * v : met > 0.5 * v;
+    });
+    if (caps.length && !mouth.some(Boolean)) throw new MoveFaceError(`The picked faces don't open onto the rest of the part, so the ${what} can't be moved as one piece. Pick all of its faces, or use Offset.`);
+    let grown: Shape3D = tool;
+    for (let i = 0; i < caps.length; i++) {
+      if (!mouth[i]) continue;
+      const { point, normal } = caps[i];
+      if ("turn" in motion) {
+        const n2 = turnPoint(normal, [0, 0, 0], motion.turn.dir, motion.turn.degrees);
+        const p2 = place(point);
+        const off = dot([p2[0] - point[0], p2[1] - point[1], p2[2] - point[2]], normal);
+        if (dot(n2, normal) < 1 - 1e-9 || Math.abs(off) > 1e-6 * Math.max(1, diag)) {
+          throw new MoveFaceError(
+            hole
+              ? "Turned that way the hole would no longer meet the face it opens onto squarely. Turn it about an axis square to that face (for a hole in a top face, about Z)."
+              : "Turned that way the boss would no longer stand flat on its face. Turn it about an axis square to that face (for a boss on a top face, about Z).",
+          );
+        }
+        continue;
+      }
+      const e = -dot(motion.move, normal);
+      if (e <= 1e-9) continue;
+      const prism = keep(basicFaceExtrusion(capFaces[i], new Vector([normal[0] * e, normal[1] * e, normal[2] * e])) as Shape3D);
+      const next = keep(grown.fuse(prism));
+      grown = next;
+    }
+    const moved = keep(
+      "move" in motion
+        ? grown.clone().translate(motion.move)
+        : grown.clone().rotate(motion.turn.degrees, motion.turn.through, motion.turn.dir),
+    );
+    // The part with the piece taken back out: a hole filled in, a boss taken off.
+    const base = keep(hole ? added(shape, tool, before, vTool) : shape.cut(tool));
+    const vBase = measureVolume(base);
+    if (Math.abs(vBase - (hole ? before + vTool : before - vTool)) > tol) {
+      throw new MoveFaceError(`The ${what} couldn't be taken out of its old place cleanly. Pick all of its faces, or use Offset instead.`);
+    }
+    // The moved piece up to its faces' planes: all of it must be in the material (a hole) or clear of it (a boss).
+    let inner: Shape3D = moved;
+    for (const [i, { point, normal }] of caps.entries()) {
+      if (!mouth[i]) continue;
+      const cutter = keep(beyond(point, normal, size));
+      inner = keep(inner.cut(cutter));
+    }
+    const vIn = measureVolume(inner);
+    const overlap = shared(inner, base);
+    if (!Number.isFinite(overlap)) throw new MoveFaceError(`The ${what} can't be moved there.`);
+    if (hole && Math.abs(overlap - vIn) > tol) {
+      throw new MoveFaceError("That would move the hole out of the part, or into another face of it. Use a smaller distance or another direction.");
+    }
+    if (!hole && overlap > tol) {
+      throw new MoveFaceError("That would move the boss into the rest of the part. Use a smaller distance or another direction.");
+    }
+    // Its open end (a hole) must still open onto space; its foot (a boss) must still stand on the material.
+    for (let i = 0; i < caps.length; i++) {
+      if (!mouth[i]) continue;
+      const { point, normal } = caps[i];
+      const p2 = place(point);
+      // Slid along the cap's plane only (a piece carried on through its face sits back on that plane).
+      const shift: Vec3 = [p2[0] - point[0], p2[1] - point[1], p2[2] - point[2]];
+      const along = dot(shift, normal);
+      const inPlane: Vec3 = [shift[0] - normal[0] * along, shift[1] - normal[1] * along, shift[2] - normal[2] * along];
+      const foot: Face = "turn" in motion ? capFaces[i].clone().rotate(motion.turn.degrees, motion.turn.through, motion.turn.dir) : capFaces[i].clone().translate(inPlane);
+      capFaces.push(foot);
+      const slab = slabOn(foot, normal);
+      const vSlab = Math.abs(measureVolume(slab));
+      const met = shared(slab, hole ? shape : base);
+      if (hole && met > 1e-3 * vSlab) throw new MoveFaceError("There the hole's open end would run into another part of the shape. Use a smaller distance or another direction.");
+      if (!hole && Math.abs(met - vSlab) > 1e-3 * vSlab) throw new MoveFaceError("There the boss would hang off the edge of the face it stands on. Use a smaller distance or another direction.");
+    }
+    const result = hole ? base.cut(moved) : added(base, moved, vBase, Math.abs(measureVolume(moved)));
+    const after = measureVolume(result);
+    const expect = hole ? vBase - vIn : vBase + vIn;
+    if (Math.abs(after - expect) > tol) {
+      result.delete();
+      throw new MoveFaceError(`That would move the ${what} into another part of the shape. Use a smaller distance or another direction.`);
+    }
+    const solids = solidsOf(result);
+    solids.forEach((x) => x.delete());
+    if (solids.length !== 1) {
+      result.delete();
+      throw new MoveFaceError(`That would split the part in two. Use a smaller distance or another direction.`);
+    }
+    return result;
+  } finally {
+    for (const x of new Set(made)) if (x !== shape) x.delete();
+    capFaces.forEach((f) => f.delete());
+  }
 }

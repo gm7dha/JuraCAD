@@ -12,7 +12,7 @@
  * and slots on flat faces, with their fillets and chamfers if picked too). A
  * rim that isn't flat (a boss on a round face) is refused in plain words.
  */
-import { assembleWire, cast, getOC, makeSolid, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
+import { assembleWire, cast, getOC, makeSolid, measureShapeVolumeProperties, measureVolume, type Edge, type Face, type Shape3D } from "replicad";
 import { edgesOf, solidsOf } from "./topology";
 
 type P = [number, number, number];
@@ -111,13 +111,17 @@ export interface FaceRegion {
   tool: Shape3D;
   /** Copies join the part (a boss) or cut it (a pocket or hole). */
   operation: "add" | "remove";
+  /** The flat caps closing it up (where it meets the rest of the part): a point on each and its normal pointing away from the tool. */
+  caps: { point: P; normal: P }[];
+  /** The cap faces themselves, only when asked for (`keepCaps`); the caller deletes them. */
+  capFaces?: Face[];
 }
 
 /**
  * The piece of solid or space that faces of `part` bound, closed up with flat
  * caps where they stop. Throws a plain-English error when it can't be found.
  */
-export function regionOfFaces(faces: Face[], part: Shape3D): FaceRegion {
+export function regionOfFaces(faces: Face[], part: Shape3D, keepCaps = false): FaceRegion {
   if (!faces.length) throw new Error("Click the faces to repeat — for example the side and top of a boss, or the walls and floor of a pocket or hole.");
   const rim = rimEdges(faces);
   const caps: Face[] = [];
@@ -156,9 +160,21 @@ export function regionOfFaces(faces: Face[], part: Shape3D): FaceRegion {
     }
     const share = inside / volume;
     if (share > 0.02 && share < 0.98) throw new Error("The picked faces enclose some of the part and some empty space, so it can't tell whether to add or cut. Pick the faces of just one boss, pocket or hole.");
+    const props = measureShapeVolumeProperties(solid);
+    const middle = props.centerOfMass;
+    props.delete();
+    const capsOut = caps.map((cap) => {
+      const point = take(cap.center);
+      const n = take(cap.normalAt(point));
+      const away = (point[0] - middle[0]) * n[0] + (point[1] - middle[1]) * n[1] + (point[2] - middle[2]) * n[2];
+      const normal: P = away >= 0 ? n : [-n[0], -n[1], -n[2]];
+      return { point, normal };
+    });
     const tool = solid;
     solid = null;
-    return { tool, operation: share >= 0.5 ? "add" : "remove" };
+    const out: FaceRegion = { tool, operation: share >= 0.5 ? "add" : "remove", caps: capsOut };
+    if (keepCaps) out.capFaces = caps.splice(0);
+    return out;
   } finally {
     rim.forEach((e) => e.delete());
     caps.forEach((c) => c.delete());
