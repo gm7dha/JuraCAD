@@ -8,6 +8,12 @@ designs that use newer tools won't open in an older version until those tools ar
 
 The point in the history for each version is the commit shown (see https://github.com/gm7dha/JuraCAD/commits/main).
 
+## v0.133 — Breakaway layers with colour, a Material box and the X2D's aux nozzle
+- Mountain puzzle: "All in one go, with breakaway layers between" works with colour bands too (it was always greyed out, as the window starts in colour bands); the breakaway filament gets the next free slot. Full colour still can't, and the window says why.
+- Put together, the puzzle now fits the bed at 100% (it used to say it didn't fit).
+- Two-nozzle printers: "Breakaway layers on the second (aux) nozzle" (on for the X2D). The puzzle is kept clear of the strip the aux nozzle can't reach (the X2D's left 20.5 mm) and under its height; the file asks Bambu Studio to use the aux nozzle, and the window says how to set it by hand if Bambu Studio puts everything on the main nozzle.
+- New Material box (Mountain and Island windows): PLA Basic/Matte, PETG HF/Basic/Matte, ABS or ASA. The usual colours move to that line's nearest Bambu colours, the colour picker opens on it, names read like "White (PETG HF)", and the breakaway advice matches (Support for PLA/PETG, or PLA Basic, for PETG). PLA files are unchanged.
+
 ## v0.132 — Move holes and bosses
 - Move face › Translate now moves a whole hole or boss: pick its faces (wall, floor, chamfer…), and it slides across to the new place, the old place filled in. Slid along its own axis, a hole goes deeper or shallower and a boss taller or shorter. Several holes can move together.
 - Move face › Rotate turns a hole or boss about an axis square to its face.
