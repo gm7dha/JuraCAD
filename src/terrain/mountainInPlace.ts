@@ -248,3 +248,18 @@ export function nozzleSwitches(parts: { filament: number; low: number; high: num
   }
   return switches;
 }
+
+/**
+ * Every part of a stacked plain puzzle (rock, snow, breakaway) as the filament it's printed in and its heights from the
+ * bed, for counting changes (`nozzleSwitches`, colour.ts's `filamentSwaps`).
+ */
+export function stackedPartRanges(stacked: Stacked, filaments: Readonly<Record<"rock" | "snow" | "breakaway", number>>): { filament: number; low: number; high: number }[] {
+  const out: { filament: number; low: number; high: number }[] = [];
+  for (const p of stacked.pieces)
+    for (const b of p.bodies) {
+      let [lo, hi] = [Infinity, -Infinity];
+      for (let i = 2; i < b.vertices.length; i += 3) [lo, hi] = [Math.min(lo, b.vertices[i]), Math.max(hi, b.vertices[i])];
+      if (hi > lo) out.push({ filament: filaments[b.part], low: lo, high: hi });
+    }
+  return out;
+}

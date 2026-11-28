@@ -31,11 +31,11 @@ import { featuresAtScale, featuresOnGrid, featureSummary, NO_FEATURES, osmArea, 
 import { PEAKS } from "../terrain/peaks";
 import { blurred, greyFromRgba, photoGrid, photoReadSize, type PhotoPixels } from "../terrain/photoRelief";
 import { allPlatesZip, bandPlate3mf, bestRoom, centredRooms, FILAMENT, IN_PLACE_SETTINGS, plate3mf, platesByLevel, platesFor, towerCorner, type BandPartFile, type BedRect } from "../terrain/puzzle3mf";
-import { breakawayParts, breakawaySwaps, FIRST_LAYER, freeBreakawaySlot, LAYER_HEIGHTS, layerPlates, stackWithBreakaway, togetherPlate, unliftedPlate, type PrintWay } from "../terrain/mountainInPlace";
+import { breakawayParts, breakawaySwaps, FIRST_LAYER, nozzleSwitches, stackedPartRanges, freeBreakawaySlot, LAYER_HEIGHTS, layerPlates, stackWithBreakaway, togetherPlate, unliftedPlate, type PrintWay } from "../terrain/mountainInPlace";
 import { breakawayAdvice, materialName } from "../terrain/puzzleMaterial";
 import { bandsIn, MaterialSelect, useMaterialFollow, usePuzzleMaterial } from "./PuzzleMaterial";
 import { weld, zipStored } from "../geometry/threeMf";
-import { filaments as filamentsOf, GROUND_BROWN, mapOnPuzzle, mapRaster, MOST_FILAMENTS, mountainBands, NO_MAP, WATER_BLUE, type ColourSpec, type HeightScale, type PreviewMesh } from "../terrain/colour";
+import { filamentSwaps, filaments as filamentsOf, GROUND_BROWN, mapOnPuzzle, mapRaster, MOST_FILAMENTS, mountainBands, NO_MAP, WATER_BLUE, type ColourSpec, type HeightScale, type PreviewMesh } from "../terrain/colour";
 import { ColourDownloads, ColourPanel, useBandsFollow, useColoured, useUsualColour } from "./PuzzleColour";
 import { lochLayers } from "../terrain/groundMarks";
 import { downloadFile, safeFileName } from "./download";
@@ -308,6 +308,8 @@ export function MountainPuzzleDialog() {
   const rooms = together ? centredRooms(placeBed, keepOut) : [];
   const room: BedRect = rooms.length ? bestRoom(rooms, aspect[0], aspect[1]) : [0, 0, placeBed[0], placeBed[1]];
   const layoutBed: [number, number, number] = together ? [room[2] - room[0], room[3] - room[1], tallest] : bed;
+  // Put together (or in one piece) the cubes are capped to the room, so the finished puzzle always fits it.
+  const inRoom: { inRoom?: true } = together ? { inRoom: true } : {};
 
   // A photo's heights depend on the puzzle's size (its relief is set in mm), so they're worked out again as that changes.
   const photoFor = (cube: number) => {
@@ -315,12 +317,12 @@ export function MountainPuzzleDialog() {
     const { width: w, height: h } = photo.pixels;
     // Trimmed first, so the relief is the asked-for height on what's left; the grid keeps its place in the picture.
     const cut = cropPixels(blurred(photo.pixels, smooth), trim);
-    const made = photoGrid(cut.pixels, { ...spec, cube, bed: layoutBed, snowline: null }, relief, invert);
+    const made = photoGrid(cut.pixels, { ...spec, ...inRoom, cube, bed: layoutBed, snowline: null }, relief, invert);
     const grid = cut.west || cut.south ? { ...made, e0: cut.west, n0: cut.south } : made;
     return { area: { sw: { e: 0, n: 0 }, width: w - 1, height: h - 1, name: photo.name }, grid, used: { grid, width: cut.pixels.width - 1, height: cut.pixels.height - 1 } };
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const photoLoaded = useMemo(() => photoFor(spec.cube), [photoMode, photo, smooth, relief, invert, spec.cube, spec.scale, layoutBed[0], layoutBed[1], trim]);
+  const photoLoaded = useMemo(() => photoFor(spec.cube), [photoMode, photo, smooth, relief, invert, spec.cube, spec.scale, layoutBed[0], layoutBed[1], trim, together]);
   const loaded = photoMode ? photoLoaded : mapLoaded;
   // The heights the puzzle is made from: the area as loaded, less what's trimmed off each side.
   const mapUsed = useMemo(() => (mapLoaded ? cropGrid(mapLoaded.grid, mapLoaded.area.width, mapLoaded.area.height, trim) : null), [mapLoaded, trim]);
@@ -358,9 +360,9 @@ export function MountainPuzzleDialog() {
   };
 
   const fullSpec: MountainSpec = photoMode
-    ? { ...spec, bed: layoutBed, exaggeration: 1, snowline: null }
-    : { ...spec, bed: layoutBed, snowline: snowOn && !colourOn ? snowline : null, ...lochLayers(colourOn, colour, features) };
-  const layout = useMemo(() => (used ? layoutFor(used.grid, used.width, used.height, { ...spec, bed: layoutBed, snowline: null }) : null), [used, spec, layoutBed[0], layoutBed[1], layoutBed[2]]);
+    ? { ...spec, ...inRoom, bed: layoutBed, exaggeration: 1, snowline: null }
+    : { ...spec, ...inRoom, bed: layoutBed, snowline: snowOn && !colourOn ? snowline : null, ...lochLayers(colourOn, colour, features) };
+  const layout = useMemo(() => (used ? layoutFor(used.grid, used.width, used.height, { ...spec, ...inRoom, bed: layoutBed, snowline: null }) : null), [used, spec, layoutBed[0], layoutBed[1], layoutBed[2], together]);
   const checks = mountainChecks(fullSpec, layout ?? undefined);
 
   // Make the puzzle a moment after the last change (it takes a second or two for big ones).
@@ -522,11 +524,21 @@ export function MountainPuzzleDialog() {
   const slotClash = !!clashWith;
   const filaments = { ...FILAMENT, breakaway: breakSlot };
   // How many filaments the AMS must hold: the breakaway one too, unless the second nozzle has its own feed (the X2D's aux).
-  const amsCount = usedFilaments.length + (way === "together" && !(onSecond && second?.ownFeed) ? 1 : 0);
+  // Counted whether or not it's on the second nozzle (whether that has a spool of its own isn't known).
+  const amsCount = usedFilaments.length + (way === "together" ? 1 : 0);
   const tooMany = way === "together" && Math.max(breakSlot, ...usedFilaments.map((u) => u.n)) > MOST_FILAMENTS;
   // Which nozzle each filament goes to, written into the file when the breakaway layers are on the second nozzle.
   const nozzles = onSecond ? Array.from({ length: Math.max(breakSlot, ...usedFilaments.map((u) => u.n)) }, (_, i) => (i + 1 === breakSlot ? 2 : 1)) : undefined;
   const advice = breakawayAdvice(material);
+  // Plain, with the breakaway layers on the second nozzle: its changes are nozzle changes; rock ↔ snow are still filament changes.
+  const plainAuxChanges = useMemo(() => {
+    if (!stacked || colourOn || !onSecond || !second) return "";
+    const parts = stackedPartRanges(stacked, filaments);
+    const nozzle = nozzleSwitches(parts, stackLayer, breakSlot);
+    const main = filamentSwaps(parts.filter((p) => p.filament !== breakSlot), stackLayer);
+    return ` About ${nozzle} changes to the ${second.name} nozzle and back for them${main ? `, and about ${main} filament changes for the snow` : ""}.`;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stacked, colourOn, onSecond, second?.name, breakSlot, stackLayer, snowOn]);
   const coloursFor: ColourSpec = bandsTogether ? { ...colour, stacked: true } : colour;
   const { coloured, working: colouring, error: colourError } = useColoured(colourOn ? puzzle?.pieces ?? null : null, coloursFor, scale, puzzleMap, mapSize, paintMap);
   const breakaway = useMemo(
@@ -835,7 +847,7 @@ export function MountainPuzzleDialog() {
                     {" "}
                     — the puzzle then stays where both nozzles reach{second.missing.length ? ` (the ${second.name} nozzle can't reach the left ${second.missing[0][2]} mm of the bed)` : ""}
                     {second.height < bed[2] ? `, up to ${second.height} mm tall` : ""}
-                    {second.ownFeed ? ", and it takes none of the AMS's slots" : ""}
+
                   </span>
                 </label>
               )}
@@ -884,14 +896,16 @@ export function MountainPuzzleDialog() {
               {tooMany && <p className="error-text small">That's more than {MOST_FILAMENTS} filaments — use fewer colour bands or the same colour for two things.</p>}
               {!slotClash && !tooMany && amsCount > amsSlotsOf(printer) && (
                 <p className="mountain-warn small">
-                  That's {amsCount} filaments in the AMS{onSecond && second?.ownFeed ? ` (the breakaway one is on the ${second.name} nozzle)` : ", the breakaway one included"}, and yours
+                  That's {amsCount} filaments, the breakaway one included{onSecond && second ? ` (one fewer in the AMS if the ${second.name} nozzle has its own spool)` : ""}, and yours
                   hold {amsSlotsOf(printer)}: use the spool holder for the rest, or fewer colours.
                 </p>
               )}
               {onSecond && second && (
                 <p className="muted small">
-                  The file sets filament {breakSlot} to the {second.name} nozzle (Bambu Studio's filament grouping, set to Manual). If Bambu Studio shows it on the main nozzle,
-                  open the plate's filament grouping and move filament {breakSlot} to the {second.name} nozzle.
+                  Bambu Studio will probably put every filament on the main nozzle when it opens this file (the file asks for filament {breakSlot} on the {second.name}
+                  nozzle, but Bambu Studio only reads that from its own projects). Before slicing: click the grouping icon on the right of the plate (or Slice, then
+                  "Regroup filament" under Filament Grouping), choose Custom, and put filament {breakSlot} on the {second.name} nozzle and every other filament on the main
+                  one. Then load {advice.filament} where the {second.name} nozzle takes it.
                 </p>
               )}
             </>
@@ -978,6 +992,7 @@ export function MountainPuzzleDialog() {
           <ColourPanel
             extraLoad={bandsTogether && !slotClash ? [{ n: breakSlot, label: `Breakaway layers — ${advice.filament}${onSecond && second ? `, on the ${second.name} nozzle` : ""}` }] : undefined}
             material={material}
+            plaBands={plaBands()}
             spec={colour}
             setSpec={setColour}
             usual={usualBands}
@@ -1167,7 +1182,7 @@ export function MountainPuzzleDialog() {
                     ? "One plate, the model in the middle, where Bambu Studio puts it."
                     : way === "layers"
                     ? `${plates.length} plates, one per layer: plate 1 is the bottom layer. Print them in order and stack each on the one before.`
-                    : `One plate, ${Math.round(stacked!.height)} mm tall. Slice with ${stackLayer.toFixed(2)} mm layers (the first layer ${stackFirst.toFixed(2)} mm) and supports off — the breakaway layers are already in the file, on filament ${breakSlot}${onSecond && second ? ` (${advice.filament}, ${second.name} nozzle)` : ` (${advice.filament})`}.${bandsTogether ? "" : onSecond && second ? ` About ${breakawaySwaps(stacked!, stackLayer, puzzle.keys)} nozzle changes for them, and no filament changes.` : ` About ${breakawaySwaps(stacked!, stackLayer, puzzle.keys)} filament changes for them.`}`}{" "}
+                    : `One plate, ${Math.round(stacked!.height)} mm tall. Slice with ${stackLayer.toFixed(2)} mm layers (the first layer ${stackFirst.toFixed(2)} mm) and supports off — the breakaway layers are already in the file, on filament ${breakSlot}${onSecond && second ? ` (${advice.filament}, ${second.name} nozzle)` : ` (${advice.filament})`}.${bandsTogether ? "" : onSecond && second ? plainAuxChanges : ` About ${breakawaySwaps(stacked!, stackLayer, puzzle.keys)} filament changes for them.`}`}{" "}
                   {onePiece
                     ? "It comes in with no brim and elephant-foot compensation on, so the bottom edge stays crisp."
                     : "Each piece has no brim and elephant-foot compensation on, so the first layer doesn't close the gaps; don't press Arrange in Bambu Studio."}

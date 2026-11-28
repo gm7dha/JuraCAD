@@ -11,7 +11,7 @@
  *   interface" (Bambu Lab wiki, https://wiki.bambulab.com/en/filament-acc/filament/pla-basic-and-petg-hf), so plain PLA
  *   Basic also works between PETG layers (warmer room: open the door, as PLA softens in an enclosed printer).
  */
-import { BAMBU_MATERIALS, coloursOfMaterial, materialOfLine, spoolFor, type BambuColour } from "./bambuColours";
+import { BAMBU_COLOURS, coloursOfMaterial, materialOfLine, spoolFor, type BambuColour } from "./bambuColours";
 import { GROUND_BROWN, LOWLAND_GREEN, PATH_RED, ROAD_BLACK, SEA_BLUE, SNOW_IVORY, UPLAND_GREY, WATER_BLUE } from "./colour";
 
 /** "PLA" = the usual PLA Basic/Matte colours; else a Bambu Lab line ("PETG HF"…). */
@@ -19,11 +19,16 @@ export type PuzzleMaterial = string;
 
 export const USUAL_MATERIAL: PuzzleMaterial = "PLA";
 
-/** The materials offered for a puzzle (those with breakaway advice), each with its lines. */
-export const MATERIAL_CHOICES = BAMBU_MATERIALS.filter((m) => ["PLA", "PETG", "ABS", "ASA"].includes(m.material)).map((m) => ({
-  material: m.material,
-  lines: m.lines.filter((l) => coloursOfMaterial(m.material).some((g) => g.line === l)),
-}));
+/**
+ * The lines offered for a puzzle: solid colours only (no translucent, silk, sparkle, wood or fibre-filled lines), of the
+ * materials there's breakaway advice for.
+ */
+export const MATERIAL_CHOICES: { material: string; lines: string[] }[] = [
+  { material: "PLA", lines: ["PLA Basic", "PLA Matte"] },
+  { material: "PETG", lines: ["PETG HF", "PETG Basic", "PETG Matte"] },
+  { material: "ABS", lines: ["ABS"] },
+  { material: "ASA", lines: ["ASA"] },
+];
 
 /** The material family of a choice ("PLA", "PETG"…). */
 export const familyOf = (m: PuzzleMaterial): string => (m === USUAL_MATERIAL ? "PLA" : materialOfLine(m));
@@ -48,14 +53,18 @@ function lab(h: string): [number, number, number] {
 }
 
 /**
- * How different two colours look: the CIE76 ΔE*ab, with the difference in colourfulness and hue counted 1.5 times
- * (a dark green should become a green, not a grey of the same darkness).
+ * How different colour `b` looks from `a` (the one wanted): the CIE76 ΔE*ab with the difference in colourfulness and
+ * hue counted 1.5 times, and a grey for a coloured `a` counted `GREY_FOR_COLOUR` further — so a dark green becomes a
+ * green and a brown base stays a brown, not a grey of the same darkness.
  */
 export function colourDistance(a: string, b: string): number {
   const [l1, a1, b1] = lab(a);
   const [l2, a2, b2] = lab(b);
-  return Math.sqrt((l1 - l2) ** 2 + 2.25 * ((a1 - a2) ** 2 + (b1 - b2) ** 2));
+  const grey = Math.hypot(a1, b1) > 8 && Math.hypot(a2, b2) < 5 ? GREY_FOR_COLOUR : 0;
+  return Math.sqrt((l1 - l2) ** 2 + 2.25 * ((a1 - a2) ** 2 + (b1 - b2) ** 2)) + grey;
 }
+
+export const GREY_FOR_COLOUR = 30;
 
 /** Further apart than this, a line's nearest colour is said not to be a close match. */
 export const CLOSE_MATCH = 30;
@@ -156,19 +165,34 @@ export function changeMaterial<
   return { ...out, spools: Object.keys(spools).length ? spools : undefined };
 }
 
-/** Notes for usual colours a line has nothing close to ("No PETG Translucent colour is close to Dark Brown: Gray is used."). */
+/**
+ * Notes for the usual colours in a line: ones it has nothing close to, and two that land on the same spool (they then
+ * print in one filament, and look the same).
+ */
 export function matchNotes(usual: { name: string; hex: string }[], m: PuzzleMaterial): string[] {
   if (m === USUAL_MATERIAL) return [];
   const out: string[] = [];
+  const bySpool = new Map<string, string[]>();
   for (const u of usual) {
     const r = inMaterial(u.hex, m);
-    if (!r.close && r.spool) {
+    if (!r.spool) continue;
+    if (!r.close) {
       const was = spoolFor(u.hex)?.name ?? u.hex;
       out.push(`${m} has no colour close to the usual ${was} for ${u.name}: ${r.spool.name} is used — pick another if you like.`);
     }
+    const names = bySpool.get(r.spool.code) ?? [];
+    if (!names.includes(u.name)) names.push(u.name);
+    bySpool.set(r.spool.code, names);
   }
+  for (const [code, names] of bySpool)
+    if (names.length > 1) {
+      const c = usual.length ? inMaterialName(code) : code;
+      out.push(`In ${m}, ${names.slice(0, -1).join(", ")} and ${names[names.length - 1]} become ${c}, so they print in one filament and look the same — pick another colour for one if you like.`);
+    }
   return out;
 }
+
+const inMaterialName = (code: string) => BAMBU_COLOURS.find((c) => c.code === code)?.name ?? code;
 
 /** What to load for the breakaway layers, for the puzzle's material. */
 export function breakawayAdvice(m: PuzzleMaterial): { filament: string; words: string } {

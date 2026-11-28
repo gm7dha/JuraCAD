@@ -63,7 +63,10 @@ export function ColourPanel({
   setSlots,
   material = USUAL_MATERIAL,
   extraLoad,
+  plaBands,
 }: {
+  /** The usual bands in the usual PLA colours (for the notes on how they map to the material's colours). */
+  plaBands?: ColourBand[];
   /** More filaments to load beside the colours (the breakaway layers'), shown in the Load list. */
   extraLoad?: { n: number; label: string }[];
   /** The filament the puzzle is printed in: the usual colours are that line's nearest. */
@@ -118,10 +121,11 @@ export function ColourPanel({
   };
   const notes = matchNotes(
     [
-      ...(usualBase ? [{ name: "the base", hex: usualBase }] : []),
-      { name: "water", hex: usualWater },
-      { name: "paths", hex: PATH_RED },
-      { name: "roads", hex: ROAD_BLACK },
+      ...(plaBands ?? []).map((b) => ({ name: b.name, hex: b.colour })),
+      ...(usualBase && spec.base !== null ? [{ name: "the base", hex: usualBase }] : []),
+      ...(has.water && spec.water !== null ? [{ name: "water", hex: usualWater }] : []),
+      ...(has.paths && spec.paths ? [{ name: "paths", hex: PATH_RED }] : []),
+      ...(has.roads && spec.roads ? [{ name: "roads", hex: ROAD_BLACK }] : []),
     ],
     material,
   );

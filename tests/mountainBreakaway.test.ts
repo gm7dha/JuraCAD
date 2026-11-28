@@ -8,12 +8,12 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { gridFrom } from "../src/terrain/elevation";
-import { breakawayParts, freeBreakawaySlot, layerPlates, nozzleSwitches, stackWithBreakaway, togetherPlate, unliftedPlate } from "../src/terrain/mountainInPlace";
+import { breakawayParts, freeBreakawaySlot, layerPlates, nozzleSwitches, stackedPartRanges, stackWithBreakaway, togetherPlate, unliftedPlate } from "../src/terrain/mountainInPlace";
 import { baseFor, makeMountainPuzzle, MOUNTAIN_DEFAULTS, type MountainSpec, type PuzzlePiece } from "../src/terrain/mountainPuzzle";
 import { bandPlateFiles, FILAMENT, plateFiles, platesByLevel } from "../src/terrain/puzzle3mf";
 import { bandPuzzle, platedParts, plateSwaps } from "../src/terrain/colourFiles";
-import { filaments, GROUND_BROWN, type BandPart, mapRaster, meshCheck, mountainBands, NO_MAP, PATH_RED, ROAD_BLACK, USUAL_SPOOLS, usualColour, WATER_BLUE } from "../src/terrain/colour";
-import { breakawayAdvice, changeMaterial, inMaterial, matchNotes, USUAL_MATERIAL } from "../src/terrain/puzzleMaterial";
+import { filamentSwaps, filaments, GROUND_BROWN, type BandPart, mapRaster, meshCheck, mountainBands, NO_MAP, PATH_RED, ROAD_BLACK, USUAL_SPOOLS, usualColour, WATER_BLUE } from "../src/terrain/colour";
+import { breakawayAdvice, changeMaterial, inMaterial, matchNotes, MATERIAL_CHOICES, USUAL_MATERIAL } from "../src/terrain/puzzleMaterial";
 import { PRINTERS } from "../src/model/printBed";
 
 const W = 4000;
@@ -116,6 +116,15 @@ describe("all in one go in colour bands", () => {
 });
 
 describe("nozzle changes", () => {
+  it("counts a plain stacked puzzle's snow as filament changes and its breakaway layers as nozzle changes", () => {
+    const puzzle = makeMountainPuzzle(hill, W, H, SPEC);
+    const st = stackWithBreakaway(puzzle, 0.2);
+    const parts = stackedPartRanges(st, FILAMENT);
+    expect(parts.some((p) => p.filament === FILAMENT.snow)).toBe(true);
+    expect(nozzleSwitches(parts, 0.2, FILAMENT.breakaway)).toBeGreaterThan(0);
+    expect(filamentSwaps(parts.filter((p) => p.filament !== FILAMENT.breakaway), 0.2)).toBeGreaterThan(0);
+  });
+
   it("counts a change each way on layers that use both nozzles", () => {
     const parts = [
       { filament: 1, low: 0, high: 1 },
@@ -132,7 +141,9 @@ describe("nozzle changes", () => {
 describe("the X2D's second nozzle", () => {
   it("reaches x 20.5–256 and 256 mm up (Bambu Studio's X2D profile)", () => {
     const x2d = PRINTERS.find((p) => p.id === "bambu-x2d")!;
-    expect(x2d.secondNozzle).toEqual({ name: "aux", missing: [[0, 0, 20.5, 256]], height: 256, ownFeed: true, usual: true });
+    expect(x2d.secondNozzle).toEqual({ name: "aux", missing: [[0, 0, 20.5, 256]], height: 256, usual: true });
+    // The H2D: both nozzles reach 320 mm up (left 320, right 325).
+    expect(PRINTERS.find((p) => p.id === "bambu-h2d")!.secondNozzle!.height).toBe(320);
     expect(x2d.size[0] - x2d.secondNozzle!.missing[0][2]).toBe(x2d.bothNozzles![0]);
   });
 });
@@ -145,8 +156,9 @@ describe("the puzzle's material", () => {
     const pla = usualColour(bands, WATER_BLUE);
     const petg = changeMaterial(pla, usual, USUAL_MATERIAL, "PETG HF", USUAL_SPOOLS);
     const fs = filaments(petg, true);
-    // Base and Upland share PETG HF's Dark Gray (it has nothing nearer the base's brown), so six filaments.
-    expect(fs.length).toBe(6);
+    expect(fs.length).toBe(7);
+    // The base stays a brown (not Upland's grey).
+    expect(fs.find((f) => f.uses.includes("Base"))!.spool).toBe("Peanut Brown (PETG HF)");
     expect(fs.find((f) => f.uses.includes("Lowland"))!.spool).toBe("Forest Green (PETG HF)");
     for (const f of fs) expect(f.spool).toMatch(/\(PETG HF\)$/);
     expect(fs.find((f) => f.uses.includes("Snow"))!.spool).toBe("White (PETG HF)");
@@ -163,9 +175,22 @@ describe("the puzzle's material", () => {
     expect(petg.bands[0].colour).not.toBe(pla.bands[0].colour);
   });
 
+  it("offers solid colours only", () => {
+    expect(MATERIAL_CHOICES.flatMap((m) => m.lines)).toEqual(["PLA Basic", "PLA Matte", "PETG HF", "PETG Basic", "PETG Matte", "ABS", "ASA"]);
+  });
+
+  it("says when two usual colours land on one spool", () => {
+    const notes = matchNotes(
+      bands.map((b) => ({ name: b.name, hex: b.colour })).concat([{ name: "the base", hex: GROUND_BROWN }]),
+      "ASA",
+    );
+    expect(notes.some((n) => /print in one filament/.test(n))).toBe(true);
+    expect(matchNotes(bands.map((b) => ({ name: b.name, hex: b.colour })), "PETG HF").some((n) => /one filament/.test(n))).toBe(false);
+  });
+
   it("says when a line has nothing close", () => {
     expect(matchNotes([{ name: "the base", hex: GROUND_BROWN }], USUAL_MATERIAL)).toEqual([]);
-    const far = matchNotes([{ name: "x", hex: "#ff00ff" }], "PLA Aero");
+    const far = matchNotes([{ name: "x", hex: "#ff00ff" }], "ABS");
     expect(far.length).toBe(1);
   });
 
@@ -174,5 +199,29 @@ describe("the puzzle's material", () => {
     expect(breakawayAdvice("PETG HF").filament).toBe("Support for PLA/PETG");
     expect(breakawayAdvice("PETG HF").words).toContain("PLA Basic");
     expect(breakawayAdvice("ABS").filament).toBe("Support for ABS");
+  });
+});
+
+describe("put together, the puzzle fits the room it's centred in", () => {
+  // Rooms (centred on a 256 × 256 bed) the keep-outs leave; at 100% rounding to whole cubes used to pass them.
+  const rooms: [number, number, number, number][] = [
+    [20.5, 55, 235.5, 201],
+    [55, 0, 201, 256],
+    [5, 0, 251, 256],
+  ];
+  for (const room of rooms)
+    for (const cube of [20, 25, 30]) {
+      it(`a ${room[2] - room[0]} × ${room[3] - room[1]} room with ${cube} mm cubes`, () => {
+        const spec: MountainSpec = { ...SPEC, cube, scale: 1, inRoom: true, bed: [room[2] - room[0], room[3] - room[1], 256] };
+        const pz = makeMountainPuzzle(hill, W, H, spec);
+        expect(layerPlates(pz.pieces, BED, room).fits).toBe(true);
+        expect(togetherPlate(stackWithBreakaway(pz, 0.2), BED, room).fits).toBe(true);
+      });
+    }
+  it("leaves laid-out puzzles as they were", () => {
+    const a = makeMountainPuzzle(hill, W, H, { ...SPEC, bed: [215, 146, 256] });
+    expect([a.layout.cols, a.layout.rows]).toEqual([6, 5]);
+    const b = makeMountainPuzzle(hill, W, H, { ...SPEC, bed: [215, 146, 256], inRoom: true });
+    expect([b.layout.cols, b.layout.rows]).toEqual([6, 4]);
   });
 });

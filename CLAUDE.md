@@ -2317,13 +2317,18 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   `breakawayParts` on their own filament (ColourDownloads `breakaway`: merged into the BandedPuzzle, label via bandPlateFile's
   `extra.labels`; `plateSwaps` now counts parts from the bed, `platedParts` — usual plates offset exactly 0). Breakaway filament:
   `freeBreakawaySlot` (plain: 3; bands: after the last used), a chosen clash refused naming what uses it, the AMS count warned.
-  Second nozzle (`Printer.secondNozzle`, X2D aux: from Bambu Studio's X2D profile `extruder_printable_area` 20.5–256 / height
-  256, own feed, on by default; H2D right: off by default): its `missing` strips go in keepOut, height ≤ its own, the file's
-  plate gets `filament_map_mode` Manual + `filament_maps` (`nozzles` on plateFiles/bandPlateFiles/plate3mf/allPlatesZip;
-  bbs_3mf.cpp's plate metadata; none = bytes as before; not confirmed in real Bambu Studio, the window says how to move it by
-  hand), the breakaway changes counted as nozzle changes (`nozzleSwitches`). Material (both windows): pure
-  `src/terrain/puzzleMaterial.ts` (`PuzzleMaterial` "PLA" = the usual colours, else a Bambu line; `inMaterial` = the line's
-  nearest by a Lab ΔE with colour weighted 1.5, the usual colours handed out distinct where close enough, `USUAL_ORDER`;
+  Second nozzle (`Printer.secondNozzle`, from Bambu Studio's profiles `extruder_printable_area`/`_height`: X2D aux x 20.5–256,
+  256 up, on by default; H2D right, both reach 320 up, off by default): its `missing` strips go in keepOut, height ≤ what both
+  reach, the file's plate gets `filament_map_mode` Manual + `filament_maps` (`nozzles` on plateFiles/bandPlateFiles/plate3mf/
+  allPlatesZip; none = bytes as before) — Bambu Studio applies plate data only when loading a project's config, so it's
+  probably ignored and the window gives the Filament Grouping › Custom steps; the breakaway filament is still counted in the AMS
+  (no source for its own spool); changes counted as nozzle changes (`nozzleSwitches`; plain stacks via `stackedPartRanges`,
+  rock ↔ snow still filament changes). Put together / in one piece, `MountainSpec.inRoom` caps layoutFor's cols/rows to
+  floor((room − 10)/cube) (rounding passed the room; missing = as before, laid-out plates unchanged). Material (both windows): pure
+  `src/terrain/puzzleMaterial.ts` (`PuzzleMaterial` "PLA" = the usual colours, else a Bambu line; `MATERIAL_CHOICES` solid lines only (PLA Basic/Matte, PETG
+  HF/Basic/Matte, ABS, ASA); `inMaterial` = the line's nearest by a Lab ΔE with colour weighted 1.5 and a grey for a coloured
+  colour +30 (`GREY_FOR_COLOUR`: the base stays brown), handed out distinct where close enough, `USUAL_ORDER`; `matchNotes` also
+  says when usual colours (bands too) share a spool;
   `changeMaterial` moves still-usual colours and their spools both ways; `matchNotes`; `breakawayAdvice` — Support for PLA,
   Support for PLA/PETG (+ PLA Basic for PETG, Bambu wiki), Support for ABS); app `src/app/PuzzleMaterial.tsx` (session
   `usePuzzleMaterial`, `bandsIn`, `useMaterialFollow`, `MaterialSelect`), ColourPanel `material`, SpoolPick `opensOn`. The usual

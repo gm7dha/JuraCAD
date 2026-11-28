@@ -901,6 +901,7 @@ export function IslandPuzzleDialog() {
           <MaterialSelect value={material} onChange={setMaterial} />
           <ColourPanel
             material={material}
+            plaBands={islandBands(lastHigh.current)}
             spec={colour}
             setSpec={setColour}
             usual={() => bandsIn(islandBands(lastHigh.current), material)}
