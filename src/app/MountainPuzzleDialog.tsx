@@ -536,7 +536,7 @@ export function MountainPuzzleDialog() {
     const parts = stackedPartRanges(stacked, filaments);
     const nozzle = nozzleSwitches(parts, stackLayer, breakSlot);
     const main = filamentSwaps(parts.filter((p) => p.filament !== breakSlot), stackLayer);
-    return ` About ${nozzle} changes to the ${second.name} nozzle and back for them${main ? `, and about ${main} filament changes for the snow` : ""}.`;
+    return ` About ${nozzle} changes to the ${second.name} nozzle and back for them${main ? `, and about ${main} filament change${main === 1 ? "" : "s"} for the snow` : ""}.`;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stacked, colourOn, onSecond, second?.name, breakSlot, stackLayer, snowOn]);
   const coloursFor: ColourSpec = bandsTogether ? { ...colour, stacked: true } : colour;
