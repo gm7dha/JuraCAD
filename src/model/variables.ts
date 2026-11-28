@@ -6,7 +6,7 @@
 import { mapAllFeatures } from "./studios";
 import { solveSketch } from "../sketch/solver";
 import { ANGLE_KEY, evaluate, namesIn, RESERVED_NAMES, setCurrentScope, type Scope } from "./expr";
-import type { JuraCADDocument } from "./types";
+import type { Feature, JuraCADDocument } from "./types";
 
 export interface Variable {
   /** Permanent ID (so renames can be followed). */
@@ -77,7 +77,22 @@ export function renameInExpression(src: string, from: string, to: string): strin
 
 /** Every expression in the document, with a way to replace it. */
 function mapExpressions(doc: JuraCADDocument, fn: (src: string) => string): JuraCADDocument {
-  return mapAllFeatures(doc, (f) => {
+  return mapAllFeatures(doc, (f) => mapFeatureExpressions(f, fn));
+}
+
+/**
+ * A measured variable renamed (see measuredVariable.ts): its new name wherever these features use the old one. The
+ * same array when nothing uses it.
+ */
+export function renameInFeatures(features: Feature[], from: string, to: string): Feature[] {
+  if (!from || from === to) return features;
+  const out = features.map((f) => mapFeatureExpressions(f, (src) => renameInExpression(src, from, to)));
+  return out.some((f, i) => f !== features[i]) ? out : features;
+}
+
+/** Every expression in one feature, with a way to replace it (the same object when none changes). */
+function mapFeatureExpressions(f: Feature, fn: (src: string) => string): Feature {
+  {
       const params = Object.fromEntries(Object.entries(f.params).map(([k, v]) => [k, fn(v)]));
       const changedParams = Object.keys(params).some((k) => params[k] !== f.params[k]);
       let sketch = f.sketch;
@@ -93,7 +108,7 @@ function mapExpressions(doc: JuraCADDocument, fn: (src: string) => string): Jura
       if (variableFillet?.points.some((p) => fn(p.radius) !== p.radius)) variableFillet = { ...variableFillet, points: variableFillet.points.map((p) => ({ ...p, radius: fn(p.radius) })) };
       if (variableFillet !== f.variableFillet) return { ...f, params: changedParams ? params : f.params, sketch, variableFillet };
       return changedParams || sketch !== f.sketch ? { ...f, params: changedParams ? params : f.params, sketch } : f;
-  });
+  }
 }
 
 /** How many boxes and dimensions use a variable. */

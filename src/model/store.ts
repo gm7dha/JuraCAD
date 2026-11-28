@@ -40,10 +40,11 @@ import { cornersOf, type VertexPick } from "../geometry/vertexRef";
 import { dot, planeFrame, toSketch, type SketchPlane, type Vec3 } from "../sketch/planes";
 import { emptySketch, type SketchData } from "../sketch/types";
 import { setCurrentScope } from "./expr";
+import { NO_MEASURED, type MeasuredValue } from "./measuredVariable";
 import { addConfiguration, removeConfiguration, renameConfiguration, switchConfiguration } from "./configurations";
 import { framesOf, planeAsSketchPlane, refreshDocumentPlanes } from "../sketch/planeFeature";
 import { lengthUnit, setLengthUnit, startingLength, storeLength, type LengthUnit } from "./units";
-import { applyVariables, resolveVariables, type Variable } from "./variables";
+import { applyVariables, renameInFeatures, resolveVariables, type Variable } from "./variables";
 import { editInsert, findDesign, insertDesign } from "../library/insert";
 import type { DesignValues } from "../library/types";
 import { hasManipulators } from "./manipulators";
@@ -728,6 +729,8 @@ export interface AppState {
   ) => void;
   /** Curve features (Helix, Fit spline…) as the engine built them: lines to draw (RebuildResult.curves, every Part Studio). */
   builtCurves: Record<string, number[][]>;
+  /** Measured variables (by feature id): the value each came to in the last build (RebuildResult.measuredValues). */
+  measuredValues: Record<string, MeasuredValue>;
   /**
    * Where Plane features that follow the model and mate connectors are, as the engine built them (RebuildResult.followed,
    * every Part Studio). Shown and used instead of what the design's numbers give; the design stays as clicked.
@@ -1053,6 +1056,7 @@ export const useStore = create<AppState>((set, get) => {
     sketchLinks: NO_LINKS,
     builtFrames: NO_FRAMES,
     builtCurves: NO_CURVES,
+    measuredValues: NO_MEASURED,
     sketchCandidates: null,
     setSketchCandidates: (sketchCandidates) => set({ sketchCandidates }),
     lastRebuildMs: null,
@@ -1520,7 +1524,13 @@ export const useStore = create<AppState>((set, get) => {
       // A sketch the Hole's face clicks made goes in just before it, in the same undo step.
       const made = holeSketch && holeSketch.draftId === draft.id && draft.hole?.sketchRef === holeSketch.sketch.id ? holeSketch.sketch : null;
       dropHoleSketch();
-      const placeOne = (doc: JuraCADDocument) => (editing.mode === "create" ? (at ? insertFeatureAfter(doc, draft, at) : addFeature(doc, draft)) : replaceFeature(doc, keepVisibility(doc, draft)));
+      // A measured variable renamed: the features using it follow the new name (as a renamed variable's do).
+      const renamed = (doc: JuraCADDocument) => {
+        const from = original?.measured?.name;
+        const to = draft.measured?.name;
+        return from && to && from !== to ? { ...doc, features: renameInFeatures(doc.features, from, to) } : doc;
+      };
+      const placeOne = (doc: JuraCADDocument) => (editing.mode === "create" ? (at ? insertFeatureAfter(doc, draft, at) : addFeature(doc, draft)) : renamed(replaceFeature(doc, keepVisibility(doc, draft))));
       const place = made ? (doc: JuraCADDocument) => (at ? insertFeatureAfter(insertFeatureAfter(doc, made, at), draft, made.id) : addFeature(addFeature(doc, made), draft)) : placeOne;
       if (fitted.variables !== get().history.present.variables) {
         const vars = fitted.variables;

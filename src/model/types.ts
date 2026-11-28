@@ -13,9 +13,10 @@ import type { Placement } from "../assembly/math";
 import type { SketchLineRef } from "./patternRefs";
 import type { FinishId } from "./finishes";
 import type { LibraryInsert } from "../library/types";
+import type { MeasuredDef } from "./measuredVariable";
 
 /** The kinds of feature JuraCAD can build. */
-export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog" | "simplify" | "mateConnector" | "composite" | "modifyFillet" | "frame" | "trimFrame" | "gusset" | "curve" | "boundary" | "faceBlend";
+export type FeatureType = "box" | "cylinder" | "sphere" | "sketch" | "extrude" | "revolve" | "fillet" | "chamfer" | "shell" | "mirror" | "linearPattern" | "circularPattern" | "curvePattern" | "hole" | "transform" | "import" | "sweep" | "loft" | "text" | "plane" | "boolean" | "split" | "thicken" | "rib" | "draft" | "moveFace" | "replaceFace" | "deleteFace" | "thread" | "deletePart" | "fastener" | "coil" | "sheetMetal" | "flange" | "hem" | "tab" | "fullRound" | "derived" | "wrap" | "fill" | "enclose" | "offsetSurface" | "extendSurface" | "ruled" | "cornerBreak" | "bend" | "jog" | "simplify" | "mateConnector" | "composite" | "modifyFillet" | "frame" | "trimFrame" | "gusset" | "curve" | "boundary" | "faceBlend" | "variable";
 
 /**
  * A construction plane: a set distance from a plane or flat face ("offset"),
@@ -539,6 +540,8 @@ export interface Feature {
    * radius; so do the ends of a run of edges with no point there. Missing = the ordinary fillet.
    */
   variableFillet?: VariableFillet;
+  /** A measured variable (feature "variable"; see src/model/measuredVariable.ts): its name, what it measures and what was picked. */
+  measured?: MeasuredDef;
   /** Delete face: leave the hole open instead of healing it (a solid part becomes a surface). */
   leaveOpen?: boolean;
   /** Corner break: round the corners off (missing) or cut them off straight. */

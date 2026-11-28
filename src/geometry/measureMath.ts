@@ -29,7 +29,7 @@ export function circleThrough3D(a: Vec3, b: Vec3, c: Vec3): { centre: Vec3; radi
 }
 
 /** Direction of a straight edge, or the facing direction of a flat face (null otherwise). */
-function directionOf(ref: TopoRef): { dir: Vec3; kind: "line" | "plane" } | null {
+export function directionOf(ref: TopoRef): { dir: Vec3; kind: "line" | "plane" } | null {
   if (ref.kind === "edge" && ref.curve === "LINE") {
     const d = unit(sub(ref.b, ref.a));
     return d ? { dir: d, kind: "line" } : null;

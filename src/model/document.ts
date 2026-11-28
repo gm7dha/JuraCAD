@@ -3,6 +3,7 @@ import { isImportUnit } from "./importScale";
 import { parseVariableFillet } from "./variableFillet";
 import { parseNamedViews } from "./namedViews";
 import { parsePick } from "../geometry/topoRef";
+import { newMeasuredDef, parseMeasuredDef } from "./measuredVariable";
 import { parseVertexPick } from "../geometry/vertexRef";
 import { parseMoveFace } from "./moveFace";
 import { parseLineRef } from "./patternRefs";
@@ -26,7 +27,7 @@ import { newCurveDef, parseCurveDef } from "./curves";
 import { parseSweepControl, withoutSweepPicking } from "./sweepOptions";
 import { parseFrameDef, parseGusset, parseTrimFrame } from "./frame";
 import type { Assembly, BoundaryCurve, Feature, FeatureType, GeomPick, ImportedFile, LoftCurve, LoftDef, LoftEnd, LoftProfile, MateConnectorDef, Operation, JuraCADDocument, PartStudio, PlaneOptions } from "./types";
-import { MAIN_STUDIO } from "./studios";
+import { allFeatures, MAIN_STUDIO } from "./studios";
 import { parseHiddenDatums } from "./visibility";
 import { parseVersions } from "./versions";
 import { parseLibraryInserts } from "../library/parse";
@@ -199,6 +200,7 @@ export function createFeature(doc: JuraCADDocument, type: FeatureType, operation
     feature.blend = { side2: [], picking: "side1" };
     feature.operation = "new";
   }
+  if (type === "variable") feature.measured = newMeasuredDef([...(doc.variables ?? []).map((v) => v.name), ...allFeatures(doc).flatMap((f) => (f.measured ? [f.measured.name] : []))]);
   if (type === "mateConnector") feature.connector = { at: { p: [0, 0, 0] }, plane: { kind: "default", name: "Top" }, base: { origin: [0, 0, 0], x: [1, 0, 0], z: [0, 0, 1] } };
   if (type === "transform") {
     feature.operation = "add";
@@ -940,6 +942,10 @@ export function parseFeatures(list: unknown[], seen: Set<string>): Feature[] | n
         axis: pd.axis === "v" ? "v" : "u",
         ...parsePlaneExtras(pd),
       };
+    }
+    if (feature.type === "variable") {
+      const m = parseMeasuredDef(f.measured);
+      if (m) feature.measured = m;
     }
     if (feature.type === "mateConnector") {
       const c = parseConnectorDef(f.connector);

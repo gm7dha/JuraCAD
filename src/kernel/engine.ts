@@ -15,7 +15,10 @@ import { planeAsSketchPlane, planeFeatureFrame, repointFeature } from "../sketch
 import { isPlaneLink, seePlaneLink, type PlaneSource } from "../sketch/planeRefs";
 import { asTransformFrame, connectorFrame, connectorPlane, isMorePlaneMode, type FullFrame } from "../sketch/planeTypes";
 import { planeThroughLine, sketchLine3D, type SketchLineRef } from "../model/patternRefs";
-import { evaluate, getCurrentScope, setCurrentScope } from "../model/expr";
+import { ANGLE_KEY, evaluate, getCurrentScope, namesIn, setCurrentScope } from "../model/expr";
+import { isPlaneTarget, measuredFeatures, measuredProblem, namesUsedBy, notMeasuredMessage, targetLabel, tooEarlyMessage, type MeasuredValue } from "../model/measuredVariable";
+import { checkName } from "../model/variables";
+import { solveSketch } from "../sketch/solver";
 import { geometrySound } from "../model/checkReport";
 import { MESH_TOLERANCES, type Axis, type Feature, type GeomPick, type ImportedFile, type MateConnectorDef, type MeshQuality, type Operation, type PlaneMoreMode, type PlaneOptions, type TransformFrame } from "../model/types";
 import { deleteFaces, draftFaces, extrudeSketch, segmentsWire } from "./extrude";
@@ -97,7 +100,7 @@ import { matchVertex, type VertexPick } from "../geometry/vertexRef";
 import { radiusPointPick, VariableFilletError } from "../model/variableFillet";
 import { variableFillet, type EdgeRadiusPoint } from "./variableFillet";
 import { resolveScope, scopeMessage } from "../model/mergeScope";
-import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
+import { angleBetween, centreGap, circleThrough3D, describePick, directionOf, type MeasuredItem, type Measurement } from "../geometry/measureMath";
 
 /** Id of the first Part Studio (matches MAIN_STUDIO in model/studios.ts). */
 const MAIN_STUDIO_ID = "main";
@@ -455,6 +458,18 @@ function planeCutEdges(shape: Shape3D | Face, frame: PlaneFrame, bounds: Bounds)
     op.delete();
     sheet.delete();
   }
+}
+
+/** A square on a plane, centred under the middle of `bounds` and well bigger than it (for measuring to the plane). */
+function planeSheet(frame: PlaneFrame, bounds: Bounds): Face {
+  const [lo, hi] = bounds;
+  const mid: Vec3 = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+  const n = frame.n;
+  const h = (mid[0] - frame.origin[0]) * n[0] + (mid[1] - frame.origin[1]) * n[1] + (mid[2] - frame.origin[2]) * n[2];
+  const c: Vec3 = [mid[0] - h * n[0], mid[1] - h * n[1], mid[2] - h * n[2]];
+  const r = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 10;
+  const at = (x: number, y: number): Vec3 => [c[0] + x * frame.u[0] + y * frame.v[0], c[1] + x * frame.u[1] + y * frame.v[1], c[2] + x * frame.u[2] + y * frame.v[2]];
+  return makePolygon([at(-r, -r), at(r, -r), at(r, r), at(-r, r)]);
 }
 
 /**
@@ -2364,6 +2379,8 @@ interface StudioBuild {
   /** Curve features (Helix, Fit spline…) built: their wires, and lines to draw (see RebuildResult.curves). */
   curves?: Map<string, BuiltCurve>;
   curveLines?: Record<string, number[][]>;
+  /** Measured variables: the value each came to (see RebuildResult.measuredValues). */
+  measured?: Record<string, MeasuredValue>;
   /** Built from a StudioInput with `preview` (rolled back while a feature is edited). */
   preview?: boolean;
 }
@@ -2575,6 +2592,7 @@ export class GeometryEngine {
     const framePaths: Record<string, PathSeg[]> = {};
     const followed: Record<string, FollowedFrame> = {};
     const curves: Record<string, number[][]> = {};
+    const measuredValues: Record<string, MeasuredValue> = {};
     const shared = JSON.stringify([variables, partNames]);
     // Part Studios using parts from others (Derived) are built after them, and again whenever they change.
     // (So are Part Studios whose sketches use other studios' parts shown in context — only those: just showing them
@@ -2666,7 +2684,7 @@ export class GeometryEngine {
           for (const p of this.parts) for (const m of p.members ?? []) if (names[m.id]) m.name = names[m.id];
           // Another configuration's copies of the parts (for assemblies).
           if (studio.partSuffix) for (const p of this.parts) Object.assign(p, { id: p.id + studio.partSuffix, configured: true });
-          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, centres: this.centres, framePaths: this.framePaths, links: this.links, snaps: this.snaps ?? new Map(), followed: this.followed, owned: this.owned, curves: this.curves, curveLines: this.curveLines, ...(studio.preview ? { preview: true } : {}) };
+          b = { key, parts: this.parts, tools: this.tools, errors, warnings: this.warnings, notes: this.notes, centres: this.centres, framePaths: this.framePaths, links: this.links, snaps: this.snaps ?? new Map(), followed: this.followed, owned: this.owned, curves: this.curves, curveLines: this.curveLines, ...(Object.keys(this.measured).length ? { measured: this.measured } : {}), ...(studio.preview ? { preview: true } : {}) };
           this.curves = new Map();
           this.snaps = null;
           this.builds.set(studio.id, b);
@@ -2719,6 +2737,7 @@ export class GeometryEngine {
     for (const s of studios) if (!s.partSuffix) Object.assign(sketchLinks, this.builds.get(s.id)?.links ?? {});
     for (const s of studios) if (!s.partSuffix) Object.assign(followed, this.builds.get(s.id)?.followed ?? {});
     for (const s of studios) if (!s.partSuffix) Object.assign(curves, this.builds.get(s.id)?.curveLines ?? {});
+    for (const s of studios) if (!s.partSuffix) Object.assign(measuredValues, this.builds.get(s.id)?.measured ?? {});
     return {
       parts: meshes,
       ...(contextMeshes.length ? { contextParts: contextMeshes } : {}),
@@ -2730,6 +2749,7 @@ export class GeometryEngine {
       ...(Object.keys(framePaths).length ? { framePaths } : {}),
       ...(Object.keys(followed).length ? { followed } : {}),
       ...(Object.keys(curves).length ? { curves } : {}),
+      ...(Object.keys(measuredValues).length ? { measuredValues } : {}),
       durationMs: Math.round(performance.now() - started),
       rebuilt,
       studioOrder: studios.map((s) => s.id),
@@ -3566,6 +3586,13 @@ export class GeometryEngine {
     this.frameMembers = new Map();
     const moved = new Map<string, SketchPlane>();
     const listed = features;
+    // Measured variables (see measuredVariable.ts): each one's value joins the scope where it sits, for the features after it.
+    this.measured = {};
+    const known = new Set(Object.keys(getCurrentScope()));
+    const measuredHere = measuredFeatures(listed);
+    for (const n of known) measuredHere.delete(n);
+    const measuredNames = new Set<string>();
+    const unmeasured = new Map<string, string>();
     // Which feature made each face (see faceMakers.ts): looked at after each feature.
     this.faceMakers = new FaceMakers();
     let lastBuilt: string | null = null;
@@ -3600,6 +3627,27 @@ export class GeometryEngine {
       this.reassignOwners();
       this.lastBuiltName = feature.name;
       if (watchesChange(feature, features)) unchanged = this.watchChange(feature);
+      if (measuredHere.size) {
+        // A measured variable used before it's measured (or when it couldn't be): said plainly.
+        const early = namesUsedBy(feature).find((n) => measuredHere.has(n) && !measuredNames.has(n) && measuredHere.get(n)!.id !== feature.id);
+        if (early) {
+          featureErrors[feature.id] = unmeasured.has(early) ? notMeasuredMessage(early, unmeasured.get(early)!) : tooEarlyMessage(early, measuredHere.get(early)!.name);
+          continue;
+        }
+      }
+      if (feature.type === "variable") {
+        const r = this.applyMeasured(feature, known, measuredNames);
+        const name = feature.measured?.name;
+        if (typeof r === "string") {
+          featureErrors[feature.id] = r;
+          if (name) unmeasured.set(name, feature.name);
+        } else {
+          setCurrentScope({ ...getCurrentScope(), [r.name]: r.value, ...(r.angle ? { [ANGLE_KEY(r.name)]: 1 } : {}) });
+          measuredNames.add(r.name);
+          this.measured[feature.id] = r;
+        }
+        continue;
+      }
       if (feature.type === "mateConnector") {
         const err = this.placeConnector(feature, sketches, features, moved);
         if (err) featureErrors[feature.id] = err;
@@ -3635,7 +3683,19 @@ export class GeometryEngine {
         // Sketches make no solid themselves; extrudes later in the list use them.
         if (!feature.sketch?.plane) featureErrors[feature.id] = "Pick a plane or flat face to sketch on.";
         else {
-          const followed = this.followSketch(feature, sketches);
+          // Dimensions using measured variables: solved again with the values measured in this build.
+          let solved = feature;
+          if (measuredNames.size && feature.sketch.data.constraints.some((c) => c.value !== undefined && namesIn(c.value).some((n) => measuredNames.has(n)))) {
+            const r = solveSketch(feature.sketch.data);
+            if (!r.ok) {
+              featureErrors[feature.id] = "This sketch can't be solved with the measured variables' values as they are now. Check its dimensions.";
+              continue;
+            }
+            solved = { ...feature, sketch: { ...feature.sketch, data: r.sketch } };
+          }
+          const followed = this.followSketch(solved, sketches);
+          if (solved !== feature && !this.links[feature.id]?.sketch)
+            this.links[feature.id] = { ...(this.links[feature.id] ?? { edges: [], links: {} }), sketch: { plane: followed.sketch?.plane ?? feature.sketch.plane, data: followed.sketch!.data } };
           // On a plane or mate connector that follows the model: the app shows (and edits) it where it's built.
           if (feature !== listed[index] && feature.sketch.plane !== listed[index].sketch?.plane && !this.links[feature.id]?.plane) {
             this.links[feature.id] = { ...(this.links[feature.id] ?? { edges: [], links: {} }), plane: followed.sketch?.plane ?? feature.sketch.plane };
@@ -8107,8 +8167,87 @@ export class GeometryEngine {
     return result;
   }
 
+  /** Measured variables made this build (by feature id). */
+  private measured: Record<string, MeasuredValue> = {};
+
+  /**
+   * A measured variable (Onshape's Variable › Measured), at its place in the list: the picks found again on the parts
+   * as built so far (strictly, as sketches find faces), then measured. A plain reason when it can't be.
+   */
+  private applyMeasured(feature: Feature, known: ReadonlySet<string>, earlier: ReadonlySet<string>): MeasuredValue | string {
+    const def = feature.measured;
+    if (!def) return "Choose what to measure.";
+    const nameError = checkName(def.name, []);
+    if (nameError) return `Name: ${nameError}.`;
+    if (known.has(def.name)) return `The Variables table already has a variable called "${def.name}". Give this one another name.`;
+    if (earlier.has(def.name)) return `Another measured variable is already called "${def.name}". Give this one another name.`;
+    const problem = measuredProblem(def);
+    if (problem) return problem;
+    type Found = { shape?: Edge | Face | Vertex; ref?: TopoRef; item?: MeasuredItem; plane?: PlaneFrame; bounds?: Bounds };
+    const found: Found[] = [];
+    const planeName = (id: string) => this.planeFrames.get(id)?.name ?? "That plane";
+    try {
+      for (const t of def.targets) {
+        if (isPlaneTarget(t)) {
+          const frame = (["Top", "Front", "Right"] as string[]).includes(t.plane) ? planeFrame({ kind: "default", name: t.plane as "Top" }) : this.planeFrames.get(t.plane)?.frame;
+          if (!frame) return `The plane it measures to can't be found (deleted, switched off or further down the list). Edit ${feature.name} and pick another.`;
+          found.push({ plane: frame });
+          continue;
+        }
+        const part = this.parts.find((p) => p.id === t.partId);
+        if (!part) return `The part it measures on is gone. Edit ${feature.name} and pick again.`;
+        const hit = this.measuredPick(part, t, true);
+        if (!hit) return `The ${targetLabel(t, planeName).toLowerCase()} it measures can't be found on ${part.name} any more. Edit ${feature.name} and pick it again.`;
+        found.push({ ...hit, bounds: boundsOf(part.shape) });
+      }
+      const done = (value: number, angle?: boolean): MeasuredValue => ({ name: def.name, value: Math.round(value * 1e9) / 1e9, ...(angle ? { angle: true as const } : {}) });
+      if (def.kind === "length") return done(found.reduce((sum, f) => sum + (f.item?.length ?? 0), 0));
+      if (def.kind === "diameter" || def.kind === "radius") {
+        const r = found[0].item?.radius;
+        if (r === undefined) return "That isn't round: pick a round edge or a round face.";
+        return done(def.kind === "diameter" ? 2 * r : r);
+      }
+      if (def.kind === "angle") {
+        const dirs = found.map((f) => (f.plane ? { dir: f.plane.n, kind: "plane" as const } : f.ref ? directionOf(f.ref) : null));
+        if (!dirs[0] || !dirs[1]) return "Angles are between flat faces, straight edges and planes.";
+        const c = Math.min(1, Math.abs(dirs[0].dir[0] * dirs[1].dir[0] + dirs[0].dir[1] * dirs[1].dir[1] + dirs[0].dir[2] * dirs[1].dir[2]));
+        let deg = (Math.acos(c) * 180) / Math.PI;
+        if (dirs[0].kind !== dirs[1].kind) deg = 90 - deg;
+        return done(deg, true);
+      }
+      // A distance: the shortest one between them, or its part along X, Y or Z.
+      const [a, b] = found;
+      let near: { distance: number; a: Vec3; b: Vec3 } | null;
+      if (a.plane && b.plane) {
+        const dot = (u: Vec3, v: Vec3) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+        const gap: Vec3 = [b.plane.origin[0] - a.plane.origin[0], b.plane.origin[1] - a.plane.origin[1], b.plane.origin[2] - a.plane.origin[2]];
+        const parallel = Math.abs(Math.abs(dot(a.plane.n, b.plane.n)) - 1) < 1e-9;
+        const h = parallel ? dot(gap, a.plane.n) : 0;
+        near = { distance: Math.abs(h), a: a.plane.origin, b: [a.plane.origin[0] + h * a.plane.n[0], a.plane.origin[1] + h * a.plane.n[1], a.plane.origin[2] + h * a.plane.n[2]] };
+      } else if (a.plane || b.plane) {
+        const plane = (a.plane ?? b.plane)!;
+        const other = (a.plane ? b : a) as Found;
+        const sheet = planeSheet(plane, other.bounds!);
+        try {
+          const n = closestPoints(sheet, other.shape!);
+          near = n && (a.plane ? n : { distance: n.distance, a: n.b, b: n.a });
+        } finally {
+          sheet.delete();
+        }
+      } else near = closestPoints(a.shape!, b.shape!);
+      if (!near) return "The distance between them couldn't be measured. Pick other faces, edges or corners.";
+      if (!def.along) return done(near.distance);
+      const k = def.along === "x" ? 0 : def.along === "y" ? 1 : 2;
+      return done(Math.abs(near.b[k] - near.a[k]));
+    } catch (e) {
+      return describeError(e, "This couldn't be measured. Pick other faces, edges or corners.");
+    } finally {
+      found.forEach((f) => f.shape?.delete());
+    }
+  }
+
   /** One picked edge, face or corner found on a part's shape, with what can be measured of it alone (null if it isn't there). */
-  private measuredPick(part: { id: string; name: string; shape: Shape3D }, pick: TopoPick | VertexPick): { item: MeasuredItem; shape: Edge | Face | Vertex; ref?: TopoRef } | null {
+  private measuredPick(part: { id: string; name: string; shape: Shape3D }, pick: TopoPick | VertexPick, strict = false): { item: MeasuredItem; shape: Edge | Face | Vertex; ref?: TopoRef } | null {
     if (pick.ref.kind === "vertex") {
       // A corner: a point.
       const corner = findCorner([part], { ...(pick as VertexPick), partId: part.id });
@@ -8121,7 +8260,8 @@ export class GeometryEngine {
     const item = describePick(pickT.ref);
     if (pickT.ref.kind === "edge") {
       const edges = edgesOf(part.shape);
-      const [i] = matchRefs([pickT.ref], edges.map((e) => edgeRefOf(e, bounds)), size);
+      const edgeRefs = edges.map((e) => edgeRefOf(e, bounds));
+      const [i] = strict ? [strictMatch(pickT.ref, edgeRefs, size, 0.3)] : matchRefs([pickT.ref], edgeRefs, size);
       if (i === null) {
         edges.forEach((e) => e.delete());
         return null;
@@ -8136,7 +8276,8 @@ export class GeometryEngine {
       return { item, shape: edge, ref: pickT.ref };
     }
     const faces = facesOf(part.shape);
-    const [i] = matchRefs([pickT.ref], faces.map((f) => faceRefOf(f, bounds)), size);
+    const faceRefs = faces.map((f) => faceRefOf(f, bounds));
+    const [i] = strict ? [strictMatch(pickT.ref, faceRefs, size)] : matchRefs([pickT.ref], faceRefs, size);
     if (i === null) {
       faces.forEach((f) => f.delete());
       return null;

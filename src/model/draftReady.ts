@@ -4,6 +4,7 @@
  * Pure.
  */
 import type { Feature } from "./types";
+import { measuredProblem } from "./measuredVariable";
 
 const faces = (f: Feature) => (f.picks ?? []).filter((p) => p.ref.kind === "face");
 const edges = (f: Feature) => (f.picks ?? []).filter((p) => p.ref.kind === "edge");
@@ -15,6 +16,8 @@ export function missingPick(f: Feature): string | null {
     case "fillet":
     case "chamfer":
       return none(f) ? `Click the edges (or faces) to ${f.type === "fillet" ? "round" : "bevel"} first.` : null;
+    case "variable":
+      return measuredProblem(f.measured);
     case "shell":
       // Hollow keeps every face (a face picked only says which part); Open needs the faces to leave open.
       return !f.hollow && !faces(f).length ? "Pick the faces to leave open first (or choose Hollow for a closed hollow)." : null;

@@ -4,10 +4,11 @@ import { useStore } from "../model/store";
 import { keepInBrowser, keepProblem, OTHER_TAB, STORAGE_KEY, VERSIONS_KEY, type Kept } from "../model/browserKeep";
 
 import { activeStudioId, keepIdOf, type VersionCompare } from "../model/store";
-import { setCurrentScope } from "../model/expr";
+import { setCurrentScope, setMeasuredScope } from "../model/expr";
+import { NO_MEASURED } from "../model/measuredVariable";
 import { studiosOf } from "../model/studios";
 import { editRollback } from "../model/finalPreview";
-import type { StudioInput } from "./protocol";
+import type { RebuildResult, StudioInput } from "./protocol";
 import type { JuraCADDocument } from "../model/types";
 import { configurationsInUse } from "../assembly/configured";
 import { KernelClient } from "./client";
@@ -106,6 +107,8 @@ export function connectKernel(): () => void {
         const paths = { ...had, ...result.framePaths };
         if (JSON.stringify(paths) !== JSON.stringify(had)) useStore.setState({ framePaths: paths });
       }
+      // Measured variables: their values now (the dialogs and open sketches can use their names).
+      keepMeasuredValues(result.measuredValues);
       refreshCandidates();
     });
   };
@@ -220,4 +223,18 @@ export function connectKernel(): () => void {
     kernel.terminate();
     client = null;
   };
+}
+
+/** A build's measured variables into the store (the same object while nothing changed) and the app's expression scope. */
+function keepMeasuredValues(values: RebuildResult["measuredValues"]): void {
+  const had = useStore.getState().measuredValues;
+  const now = values && Object.keys(values).length ? values : NO_MEASURED;
+  if (JSON.stringify(now) === JSON.stringify(had)) return;
+  useStore.setState({ measuredValues: now });
+  const scope: Record<string, number> = {};
+  for (const v of Object.values(now)) {
+    scope[v.name] = v.value;
+    if (v.angle) scope[`°${v.name}`] = 1;
+  }
+  setMeasuredScope(scope);
 }

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type CSSProperties } from "react";
+import { measuredText } from "../model/measuredVariable";
 import { addHeld } from "../viewport/touchKeys";
 
 import { DEFAULT_PART_COLOUR, PART_COLOURS } from "../model/colours";
@@ -47,6 +48,7 @@ const TYPE_ICONS: Record<FeatureType, (p: { size?: number }) => ReactNode> = {
   text: Icons.Text,
   plane: Icons.Plane,
   mateConnector: Icons.MateConnector,
+  variable: Icons.Variables,
   curve: Icons.Curve,
   boolean: Icons.Boolean,
   deletePart: Icons.Trash,
@@ -339,6 +341,8 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
   const warning = useStore((s) => s.featureWarnings[feature.id]);
   // Plain information (what Simplify did), shown when hovering.
   const note = useStore((s) => s.featureNotes[feature.id]);
+  // A measured variable: its name and value now, beside it.
+  const measured = useStore((s) => s.measuredValues[feature.id]);
   const selected = useStore((s) => pickedFeatures(s).includes(feature.id));
   // Several features picked, this among them: its menu acts on them all.
   const group = useStore((s) => {
@@ -515,6 +519,7 @@ function FeatureRow({ feature, onMenu, linked, draggable }: { feature: Feature; 
         <span className="feature-name">
           {feature.name}
           {op && <span className="feature-op">{op}</span>}
+          {measured && !feature.suppressed && <span className="feature-op">{`${measured.name} = ${measuredText(measured)}`}</span>}
         </span>
       )}
       {error && !feature.suppressed && (
