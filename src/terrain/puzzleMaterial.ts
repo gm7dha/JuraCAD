@@ -81,7 +81,44 @@ function lineColours(m: PuzzleMaterial): BambuColour[] {
   return coloursOfMaterial(familyOf(m)).find((g) => g.line === m)?.colours ?? [];
 }
 
+/** Hue (degrees) and colourfulness of a colour, in L*a*b*. */
+function hueOf(h: string): { hue: number; chroma: number } {
+  const [, a, b] = lab(h);
+  return { hue: (Math.atan2(b, a) * 180) / Math.PI, chroma: Math.hypot(a, b) };
+}
+
+/** Wanted colours more colourful than this look for their own hue first. */
+export const COLOURED = 8;
+/** A candidate of the same hue: within this many degrees… */
+export const SAME_HUE = 20;
+
+/**
+ * Whether `b` is the same kind of colour as a coloured `a` (a green for a green): its hue within `SAME_HUE` degrees and
+ * at least half as colourful. A muted green then becomes a lighter green rather than a tan of nearer lightness.
+ */
+export function sameHue(a: string, b: string): boolean {
+  const x = hueOf(a);
+  const y = hueOf(b);
+  if (y.chroma < x.chroma / 2) return false;
+  const apart = Math.abs(((y.hue - x.hue + 540) % 360) - 180);
+  return apart <= SAME_HUE;
+}
+
+/**
+ * The line's nearest colour to `hex`. A coloured `hex` takes the nearest of the same hue instead when there is one no more
+ * than `HUE_ROOM` further off (a muted green → Avocado Green, not Caramel); else the nearest of any.
+ */
 function nearest(hex: string, colours: BambuColour[], skip: Set<string> = new Set()): { c: BambuColour; d: number } | undefined {
+  const best = nearestOf(hex, colours, skip);
+  if (!best || hueOf(hex).chroma <= COLOURED) return best;
+  const alike = nearestOf(hex, colours.filter((c) => sameHue(hex, c.hex)), skip);
+  return alike && alike.d <= best.d + HUE_ROOM ? alike : best;
+}
+
+/** How much further off a colour of the same hue may be and still be taken. */
+export const HUE_ROOM = 15;
+
+function nearestOf(hex: string, colours: BambuColour[], skip: Set<string>): { c: BambuColour; d: number } | undefined {
   let best: { c: BambuColour; d: number } | undefined;
   for (const c of colours) {
     if (skip.has(c.code)) continue;
@@ -177,8 +214,12 @@ export function matchNotes(usual: { name: string; hex: string }[], m: PuzzleMate
     const r = inMaterial(u.hex, m);
     if (!r.spool) continue;
     if (!r.close) {
-      const was = spoolFor(u.hex)?.name ?? u.hex;
-      out.push(`${m} has no colour close to the usual ${was} for ${u.name}: ${r.spool.name} is used — pick another if you like.`);
+      const usualSpool = spoolFor(u.hex);
+      const was = usualSpool?.name ?? u.hex;
+      // The line's colour of the same name (PETG Matte's Cyan for PLA Basic's Cyan) is another shade: say so plainly.
+      if (usualSpool && r.spool.name === usualSpool.name)
+        out.push(`${m}'s ${r.spool.name} is used for ${u.name}, a different shade from the usual ${was} (${usualSpool.line}) — pick another if you like.`);
+      else out.push(`${m} has no colour close to the usual ${was} for ${u.name}: ${r.spool.name} is used — pick another if you like.`);
     }
     const names = bySpool.get(r.spool.code) ?? [];
     if (!names.includes(u.name)) names.push(u.name);

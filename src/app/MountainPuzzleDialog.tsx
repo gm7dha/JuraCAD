@@ -902,7 +902,7 @@ export function MountainPuzzleDialog() {
               )}
               {onSecond && second && (
                 <p className="muted small">
-                  Bambu Studio will probably put every filament on the main nozzle when it opens this file (the file asks for filament {breakSlot} on the {second.name}
+                  Bambu Studio will probably put every filament on the main nozzle when it opens this file (the file asks for filament {breakSlot} on the {second.name}{" "}
                   nozzle, but Bambu Studio only reads that from its own projects). Before slicing: click the grouping icon on the right of the plate (or Slice, then
                   "Regroup filament" under Filament Grouping), choose Custom, and put filament {breakSlot} on the {second.name} nozzle and every other filament on the main
                   one. Then load {advice.filament} where the {second.name} nozzle takes it.

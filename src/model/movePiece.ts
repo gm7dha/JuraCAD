@@ -132,10 +132,17 @@ function sizeOf(mesh: PieceMesh): number {
  * the round faces away from any picked flat face (a blind hole's floor, a boss's top); with none, the end its axis
  * points to (the top, for a hole in a top face). The picked faces are found among the part's faces as the engine
  * finds them (near and unambiguous, so they follow earlier changes); `guess` says where the move being made puts a
- * point, for parts shown with it already moved — `moved` then says it was found there. Null when there's no round
- * face, its mesh isn't known, or it can't be told which face it is.
+ * point, for parts shown with it already moved — `moved` then says it was found there. With `knownMoved` (the shown
+ * parts are known to have been built with that move) the place the guess gives is taken whenever a face is found there,
+ * even when the face as picked is nearer (an earlier change moved the hole back by more than half the move). Null when
+ * there's no round face, its mesh isn't known, or it can't be told which face it is.
  */
-export function pieceOfPicks(picks: readonly TopoPick[] | undefined, parts: readonly PieceMesh[], guess?: (p: Vec3) => Vec3): { axis: Vec3; mouth: Vec3; moved: boolean } | null {
+export function pieceOfPicks(
+  picks: readonly TopoPick[] | undefined,
+  parts: readonly PieceMesh[],
+  guess?: (p: Vec3) => Vec3,
+  knownMoved = false,
+): { axis: Vec3; mouth: Vec3; moved: boolean } | null {
   const faces = (picks ?? []).filter((p): p is TopoPick & { ref: FaceRef } => p.ref.kind === "face");
   const round = faces.find((p) => p.ref.surface !== "PLANE");
   if (!round) return null;
@@ -173,7 +180,7 @@ export function pieceOfPicks(picks: readonly TopoPick[] | undefined, parts: read
   let hit = find(round.ref, 0);
   if (guess) {
     const other = find(round.ref, 1);
-    if (other.d < hit.d - 1e-6) {
+    if (knownMoved ? other.i >= 0 : other.d < hit.d - 1e-6) {
       hit = other;
       way = 1;
     }

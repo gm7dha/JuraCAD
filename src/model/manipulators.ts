@@ -74,6 +74,11 @@ export interface ManipContext {
   sketch: { plane: SketchPlane | null; data: SketchData } | null;
   /** The Part Studio's parts as built now (faces, to see which way an edge's corner faces). */
   parts: readonly MeshFaces[];
+  /**
+   * The open feature as `parts` were built with it (they lag a drag by a rebuild): null = built without it (it failed,
+   * or isn't in what's shown); missing = not known (taken to be the draft as it is). Only Move face's hole/boss arrow uses it.
+   */
+  shown?: Feature | null;
 }
 
 /** A part as the view has it: its faces, and (when shown) its mesh — one corner of a face tells which way it faces there. */
@@ -366,16 +371,32 @@ function extrudeRevolveHandles(draft: Feature, sketch: { plane: SketchPlane; dat
  * the dialog's own preview (or, editing, by the feature itself): then it's found where the move puts it, and its opening
  * taken back across its axis (along it, a hole's or boss's opening stays on its face).
  */
-function movedPiece(picks: readonly TopoPick[], parts: readonly MeshFaces[], mode: "translate" | "rotate", ax: { dir: Vec3; through: Vec3 }, value: number): { axis: Vec3; mouth: Vec3 } | null {
+function movedPiece(picks: readonly TopoPick[], parts: readonly MeshFaces[], mode: "translate" | "rotate", ax: { dir: Vec3; through: Vec3 }, value: number, known = false): { axis: Vec3; mouth: Vec3 } | null {
   const v = Number.isFinite(value) ? value : 0;
   const fwd = (p: Vec3): Vec3 => (mode === "translate" ? add(p, scale(ax.dir, v)) : turnPoint(p, ax.through, ax.dir, v));
-  const piece = pieceOfPicks(picks, parts, Math.abs(v) > 1e-9 ? fwd : undefined);
+  const piece = pieceOfPicks(picks, parts, Math.abs(v) > 1e-9 ? fwd : undefined, known);
   if (!piece) return null;
   if (!piece.moved) return { axis: piece.axis, mouth: piece.mouth };
   if (mode === "rotate") return { axis: turnPoint(piece.axis, [0, 0, 0], ax.dir, -v), mouth: turnPoint(piece.mouth, ax.through, ax.dir, -v) };
   const shift = scale(ax.dir, v);
   const across = sub(shift, scale(piece.axis, dot(shift, piece.axis)));
   return { axis: piece.axis, mouth: sub(piece.mouth, across) };
+}
+
+/**
+ * The distance/angle the shown parts were built with for Move face `draft` (0 when built without it), or undefined when
+ * that's not known — no `shown`, or it differs from the draft in more than its value (other picks, mode or direction).
+ */
+export function shownMoveValue(draft: Feature, shown: Feature | null | undefined, ax: { dir: Vec3; through: Vec3 }): number | undefined {
+  if (shown === undefined) return undefined;
+  if (shown === null) return 0;
+  const mode = draft.moveFace?.mode;
+  if (shown.id !== draft.id || shown.type !== draft.type || !shown.moveFace || shown.moveFace.mode !== mode) return undefined;
+  if (shown.picks !== draft.picks && JSON.stringify(shown.picks ?? []) !== JSON.stringify(draft.picks ?? [])) return undefined;
+  if (JSON.stringify(moveFaceAxisNow(shown.moveFace)) !== JSON.stringify(ax)) return undefined;
+  const key = mode === "translate" ? "distance" : "angle";
+  const v = resolveParams(shown).values[key];
+  return Number.isFinite(v) ? v : undefined;
 }
 
 function otherHandles(draft: Feature, ctx: ManipContext, base: (key: string, label: string) => Base): Manipulator[] {
@@ -425,7 +446,9 @@ function otherHandles(draft: Feature, ctx: ManipContext, base: (key: string, lab
     if (!ax) return out;
     const mode = draft.moveFace.mode;
     const value = base(mode === "translate" ? "distance" : "angle", "").values[mode === "translate" ? "distance" : "angle"] ?? 0;
-    const piece = movedPiece(draft.picks ?? [], ctx.parts, mode, ax, value);
+    // Where the shown parts have the piece: moved by the value they were built with, when that's known (mid-drag it lags).
+    const built = shownMoveValue(draft, ctx.shown, ax);
+    const piece = movedPiece(draft.picks ?? [], ctx.parts, mode, ax, built ?? value, built !== undefined);
     if (!piece) return out;
     if (draft.moveFace.mode === "translate") {
       out.push(make(base("distance", "Distance"), { id: "distance", kind: "arrow", origin: piece.mouth, dir: ax.dir, scale: 1, angle: false, flips: false, signed: true, max: Infinity, tip: "Drag to move the hole or boss along the direction (back past it moves it the other way)" }));
