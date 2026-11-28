@@ -2343,8 +2343,30 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   `capLoop` = the smaller of the two less `CAP_CLEAR`) — then `togetherPlate` (heights kept). plateFiles/plate3mf/allPlatesZip take
   `filaments` (`Filaments`; FILAMENT.breakaway 3 unless chosen; the object's extruder is its first part's). Put together the layout
   is fitted to a centred room of the slicer's bed (keepOut: no-print corner, one-nozzle strips, and the prime tower's corner when
-  several filaments unless "I'll turn the prime tower off") and gets IN_PLACE_SETTINGS; scale ≤ 100%. Colour modes can't use
-  "together" (they print layers).
+  several filaments unless "I'll turn the prime tower off") and gets IN_PLACE_SETTINGS; scale ≤ 100%. Colour bands can use
+  "together" (full colour can't — the disabled radio says why in words): the pieces are coloured with `ColourSpec.stacked`
+  (bandParts: a piece off the bed takes `layer` as its first print layer, so band edges land on the stacked print's layers;
+  the colour job's key includes it; missing = as before), the lifts use the colour panel's layer/first layer, and the plate is
+  `unliftedPlate` (the puzzle's own pieces moved up by their lift, `Stacked.originals`, so the band parts keyed by piece fit) +
+  `breakawayParts` on their own filament (ColourDownloads `breakaway`: merged into the BandedPuzzle, label via bandPlateFile's
+  `extra.labels`; `plateSwaps` now counts parts from the bed, `platedParts` — usual plates offset exactly 0). Breakaway filament:
+  `freeBreakawaySlot` (plain: 3; bands: after the last used), a chosen clash refused naming what uses it, the AMS count warned.
+  Second nozzle (`Printer.secondNozzle`, from Bambu Studio's profiles `extruder_printable_area`/`_height`: X2D aux x 20.5–256,
+  256 up, on by default; H2D right, both reach 320 up, off by default): its `missing` strips go in keepOut, height ≤ what both
+  reach, the file's plate gets `filament_map_mode` Manual + `filament_maps` (`nozzles` on plateFiles/bandPlateFiles/plate3mf/
+  allPlatesZip; none = bytes as before) — Bambu Studio applies plate data only when loading a project's config, so it's
+  probably ignored and the window gives the Filament Grouping › Custom steps; the breakaway filament is still counted in the AMS
+  (no source for its own spool); changes counted as nozzle changes (`nozzleSwitches`; plain stacks via `stackedPartRanges`,
+  rock ↔ snow still filament changes). Put together / in one piece, `MountainSpec.inRoom` caps layoutFor's cols/rows to
+  floor((room − 10)/cube) (rounding passed the room; missing = as before, laid-out plates unchanged). Material (both windows): pure
+  `src/terrain/puzzleMaterial.ts` (`PuzzleMaterial` "PLA" = the usual colours, else a Bambu line; `MATERIAL_CHOICES` solid lines only (PLA Basic/Matte, PETG
+  HF/Basic/Matte, ABS, ASA); `inMaterial` = the line's nearest by a Lab ΔE with colour weighted 1.5 and a grey for a coloured
+  colour +30 (`GREY_FOR_COLOUR`: the base stays brown), handed out distinct where close enough, `USUAL_ORDER`; `matchNotes` also
+  says when usual colours (bands too) share a spool;
+  `changeMaterial` moves still-usual colours and their spools both ways; `matchNotes`; `breakawayAdvice` — Support for PLA,
+  Support for PLA/PETG (+ PLA Basic for PETG, Bambu wiki), Support for ABS); app `src/app/PuzzleMaterial.tsx` (session
+  `usePuzzleMaterial`, `bandsIn`, `useMaterialFollow`, `MaterialSelect`), ColourPanel `material`, SpoolPick `opensOn`. The usual
+  PLA changes nothing (tests/mountainBreakaway pins main's plate hashes).
 - Mountain puzzle (a card in the Design library's Map puzzles tab — `src/library/tools.ts` `LIBRARY_TOOLS`:
   cards that open their own window instead of inserting features, found by the search via `searchTools`/`searchWords`;
   LibraryDialog's `ToolCards` — then `src/app/MountainPuzzleDialog.tsx`; `mountainState.kind` "photo" = the Photo relief

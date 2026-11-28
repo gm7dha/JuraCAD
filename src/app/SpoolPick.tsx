@@ -10,9 +10,24 @@ import { BAMBU_MATERIALS, coloursOfMaterial, materialOfLine, spoolFor } from "..
 import { boxOf, PlacedPopup } from "./PlacedPopup";
 
 /** The material tabs and the colours of the one chosen; `onPick(hex, code)` (code missing = your own colour). */
-export function SpoolChoices({ value, chosen, onPick, label, custom = true }: { value: string; chosen?: string; onPick: (hex: string, code?: string) => void; label: string; custom?: boolean }) {
+export function SpoolChoices({
+  value,
+  chosen,
+  onPick,
+  label,
+  custom = true,
+  opensOn,
+}: {
+  value: string;
+  chosen?: string;
+  onPick: (hex: string, code?: string) => void;
+  label: string;
+  custom?: boolean;
+  /** The material tab to open on (the puzzle's material), else the colour's own. */
+  opensOn?: string;
+}) {
   const spool = spoolFor(value, chosen);
-  const [material, setMaterial] = useState(() => (spool ? materialOfLine(spool.line) : "PLA"));
+  const [material, setMaterial] = useState(() => opensOn ?? (spool ? materialOfLine(spool.line) : "PLA"));
   const hex = value.toLowerCase();
   return (
     <div className="spool-choices">
@@ -65,7 +80,7 @@ export function SpoolChoices({ value, chosen, onPick, label, custom = true }: { 
   );
 }
 
-export function SpoolPick({ value, chosen, onPick, label }: { value: string; chosen?: string; onPick: (hex: string, code?: string) => void; label: string }) {
+export function SpoolPick({ value, chosen, onPick, label, opensOn }: { value: string; chosen?: string; onPick: (hex: string, code?: string) => void; label: string; opensOn?: string }) {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   const spool = spoolFor(value, chosen);
@@ -90,6 +105,7 @@ export function SpoolPick({ value, chosen, onPick, label }: { value: string; cho
               value={value}
               chosen={chosen}
               label={label}
+              opensOn={opensOn}
               onPick={(h, code) => {
                 onPick(h, code);
                 if (code) setOpen(false);

@@ -58,7 +58,7 @@ export class ColourCache {
         const n = (c: string | null | undefined, on: boolean) => (c && on ? fs.find((f) => f.colour === c.toLowerCase())?.n ?? 0 : 0);
         // Filaments painted on: water, paths, roads.
         const water = [n(job.spec.water, map.water), n(job.spec.paths, map.paths), n(job.spec.roads, map.roads)];
-        const key = JSON.stringify([bandLevels(job.spec, job.scale, fs), job.spec.layer, job.spec.firstLayer ?? null, water]);
+        const key = JSON.stringify([bandLevels(job.spec, job.scale, fs), job.spec.layer, job.spec.firstLayer ?? null, water, job.spec.stacked ?? false]);
         if (this.bands?.key !== key) {
           const banded = bandPuzzle(pieces, { spec: job.spec, scale: job.scale, map });
           this.cuts++;

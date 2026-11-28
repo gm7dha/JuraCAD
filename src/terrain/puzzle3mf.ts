@@ -222,7 +222,13 @@ export const FILAMENT = { rock: 1, snow: 2, breakaway: 3 } as const;
 export type Filaments = Readonly<Record<keyof typeof FILAMENT, number>>;
 
 /** The 3MF files' text parts for one plate: the model and Bambu's settings. */
-export function plateFiles(plate: Plate, title: string, settings?: Readonly<Record<string, string>>, filaments: Filaments = FILAMENT): { model: string; config: string } {
+export function plateFiles(
+  plate: Plate,
+  title: string,
+  settings?: Readonly<Record<string, string>>,
+  filaments: Filaments = FILAMENT,
+  nozzles?: readonly number[],
+): { model: string; config: string } {
   const lines: string[] = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<model unit="millimeter" xml:lang="en-GB" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">',
@@ -266,7 +272,7 @@ export function plateFiles(plate: Plate, title: string, settings?: Readonly<Reco
     instances.push("    <model_instance>", `      <metadata key="object_id" value="${objectId}"/>`, '      <metadata key="instance_id" value="0"/>', "    </model_instance>");
   }
   lines.push(" </resources>", " <build>", ...items, " </build>", "</model>", "");
-  config.push("  <plate>", '    <metadata key="plater_id" value="1"/>', `    <metadata key="plater_name" value="${xmlEscape(title)}"/>`, '    <metadata key="locked" value="false"/>', ...instances, "  </plate>", "</config>", "");
+  config.push("  <plate>", '    <metadata key="plater_id" value="1"/>', `    <metadata key="plater_name" value="${xmlEscape(title)}"/>`, '    <metadata key="locked" value="false"/>', ...nozzleMap(nozzles), ...instances, "  </plate>", "</config>", "");
   return { model: lines.join("\n"), config: config.join("\n") };
 }
 
@@ -283,9 +289,19 @@ const RELS = `<?xml version="1.0" encoding="UTF-8"?>
 </Relationships>
 `;
 
+/**
+ * Which nozzle each filament goes to on a two-nozzle printer (X2D, H2D): `nozzles[i]` for filament i + 1, 1 = the main
+ * (left) nozzle, 2 = the second (aux / right) one. Written as Bambu Studio writes a plate's manual filament grouping in
+ * model_settings.config (bbs_3mf.cpp: plate metadata `filament_map_mode` "Manual" and `filament_maps`); none = nothing.
+ */
+function nozzleMap(nozzles?: readonly number[]): string[] {
+  if (!nozzles?.length) return [];
+  return ['    <metadata key="filament_map_mode" value="Manual"/>', `    <metadata key="filament_maps" value="${nozzles.join(" ")}"/>`];
+}
+
 /** One plate as a .3mf file. */
-export function plate3mf(plate: Plate, title: string, settings?: Readonly<Record<string, string>>, filaments?: Filaments): Uint8Array {
-  const { model, config } = plateFiles(plate, title, settings, filaments);
+export function plate3mf(plate: Plate, title: string, settings?: Readonly<Record<string, string>>, filaments?: Filaments, nozzles?: readonly number[]): Uint8Array {
+  const { model, config } = plateFiles(plate, title, settings, filaments, nozzles);
   return zipStored([
     { name: "[Content_Types].xml", data: CONTENT_TYPES },
     { name: "_rels/.rels", data: RELS },
@@ -295,8 +311,8 @@ export function plate3mf(plate: Plate, title: string, settings?: Readonly<Record
 }
 
 /** Every plate's .3mf in one .zip. */
-export function allPlatesZip(plates: Plate[], name: string, settings?: Readonly<Record<string, string>>, filaments?: Filaments): Uint8Array {
-  return zipStored(plates.map((p, i) => ({ name: `${name} - plate ${i + 1} of ${plates.length}.3mf`, data: plate3mf(p, `${name} - plate ${i + 1}`, settings, filaments) })));
+export function allPlatesZip(plates: Plate[], name: string, settings?: Readonly<Record<string, string>>, filaments?: Filaments, nozzles?: readonly number[]): Uint8Array {
+  return zipStored(plates.map((p, i) => ({ name: `${name} - plate ${i + 1} of ${plates.length}.3mf`, data: plate3mf(p, `${name} - plate ${i + 1}`, settings, filaments, nozzles) })));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -327,6 +343,7 @@ export function bandPlateFiles(
   partsOf: (p: PuzzlePiece) => BandPartFile[],
   paintCode: (n: number) => string,
   settings?: Readonly<Record<string, string>>,
+  nozzles?: readonly number[],
 ): { model: string; config: string } {
   const lines: string[] = [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -377,7 +394,7 @@ export function bandPlateFiles(
     instances.push("    <model_instance>", `      <metadata key="object_id" value="${objectId}"/>`, '      <metadata key="instance_id" value="0"/>', "    </model_instance>");
   }
   lines.push(" </resources>", " <build>", ...items, " </build>", "</model>", "");
-  config.push("  <plate>", '    <metadata key="plater_id" value="1"/>', `    <metadata key="plater_name" value="${xmlEscape(title)}"/>`, '    <metadata key="locked" value="false"/>', ...instances, "  </plate>", "</config>", "");
+  config.push("  <plate>", '    <metadata key="plater_id" value="1"/>', `    <metadata key="plater_name" value="${xmlEscape(title)}"/>`, '    <metadata key="locked" value="false"/>', ...nozzleMap(nozzles), ...instances, "  </plate>", "</config>", "");
   return { model: lines.join("\n"), config: config.join("\n") };
 }
 
@@ -388,8 +405,9 @@ export async function bandPlate3mf(
   partsOf: (p: PuzzlePiece) => BandPartFile[],
   paintCode: (n: number) => string,
   settings?: Readonly<Record<string, string>>,
+  nozzles?: readonly number[],
 ): Promise<Uint8Array> {
-  const { model, config } = bandPlateFiles(plate, title, partsOf, paintCode, settings);
+  const { model, config } = bandPlateFiles(plate, title, partsOf, paintCode, settings, nozzles);
   return zipDeflated([
     { name: "[Content_Types].xml", data: CONTENT_TYPES },
     { name: "_rels/.rels", data: RELS },

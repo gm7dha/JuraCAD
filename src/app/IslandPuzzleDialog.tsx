@@ -19,6 +19,7 @@ import { allPlatesZip, IN_PLACE_SETTINGS, plate3mf, platesByLevel, platesFor, pl
 import { GROUND_BROWN, islandBands, mapOnPuzzle, mapRaster, NO_MAP, SEA_BLUE, type HeightScale } from "../terrain/colour";
 import { undersideLoops } from "../terrain/topOutline";
 import { ColourDownloads, ColourPanel, useBandsFollow, useColoured, useUsualColour } from "./PuzzleColour";
+import { bandsIn, MaterialSelect, useMaterialFollow, usePuzzleMaterial } from "./PuzzleMaterial";
 import { lochLayers } from "../terrain/groundMarks";
 import { downloadFile, safeFileName } from "./download";
 import type { IslandJob, IslandReply } from "./islandPuzzle.worker";
@@ -213,9 +214,12 @@ export function IslandPuzzleDialog() {
   // The last island's highest ground, so the bands don't jump while a new puzzle is being made.
   const lastHigh = useRef(500);
   if (puzzle) lastHigh.current = puzzle.high;
-  const usualBands = islandBands(lastHigh.current);
+  // The filament it's printed in: the usual colours are that line's nearest (the usual PLA: as they've always been).
+  const [material, setMaterial] = usePuzzleMaterial();
+  const usualBands = bandsIn(islandBands(lastHigh.current), material);
   const [colour, setColour, autoBands] = useUsualColour(usualBands, SEA_BLUE);
   useBandsFollow(colour, setColour, autoBands, usualBands);
+  useMaterialFollow(colour, setColour, material, { bands: islandBands(lastHigh.current), base: GROUND_BROWN, water: SEA_BLUE });
   // Put together in colour: the prime tower will be turned off in Bambu Studio, so no room is kept for it.
   const [towerOff, setTowerOff] = useState(false);
   const colourOn = colour.mode !== "plain";
@@ -894,10 +898,13 @@ export function IslandPuzzleDialog() {
           )}
 
           <h3 className="library-heading">5. Colour</h3>
+          <MaterialSelect value={material} onChange={setMaterial} />
           <ColourPanel
+            material={material}
+            plaBands={islandBands(lastHigh.current)}
             spec={colour}
             setSpec={setColour}
-            usual={() => islandBands(lastHigh.current)}
+            usual={() => bandsIn(islandBands(lastHigh.current), material)}
             slots={amsSlotsOf(printer)}
             setSlots={(n) => setPrinter(savePrinter({ amsSlots: n }))}
             usualBase={GROUND_BROWN}

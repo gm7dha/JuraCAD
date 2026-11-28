@@ -56,6 +56,11 @@ export interface ColourSpec {
   spools?: Record<string, string>;
   /** The first layer's height (mm), when it isn't `layer` (Bambu Studio's "Initial layer height"). */
   firstLayer?: number;
+  /**
+   * Printed stacked, all in one go (the Mountain puzzle with breakaway layers): every piece off the bed starts on a print
+   * layer boundary, so its own first print layer is `layer` thick, not `firstLayer`. Missing = each piece on the bed.
+   */
+  stacked?: boolean;
 }
 
 /** How ground heights map to the puzzle: z = z0 + (h − h0) × mmPerM. */
@@ -745,7 +750,7 @@ function normalOf(V: ArrayLike<number>, a: number, b: number, c: number): [numbe
 export function bandParts(bodies: Body[], z0: number, ctx: BandContext, top = true): BandPart[] {
   const fs = filaments(ctx.spec, ctx.map);
   const { below, levels } = bandLevels(ctx.spec, ctx.scale, fs);
-  const { below: first, cuts } = snappedCuts(levels, below, z0, ctx.spec.layer, ctx.spec.firstLayer ?? ctx.spec.layer);
+  const { below: first, cuts } = snappedCuts(levels, below, z0, ctx.spec.layer, ctx.spec.stacked && z0 > 1e-6 ? ctx.spec.layer : ctx.spec.firstLayer ?? ctx.spec.layer);
   const waterN = ctx.spec.water && ctx.map.water ? filamentOf(fs, ctx.spec.water) : 0;
   const pathN = ctx.spec.paths && ctx.map.paths ? filamentOf(fs, ctx.spec.paths) : 0;
   const roadN = ctx.spec.roads && ctx.map.roads ? filamentOf(fs, ctx.spec.roads) : 0;

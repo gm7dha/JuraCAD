@@ -54,6 +54,11 @@ export interface MountainSpec {
    * tabs (missing: the puzzle). The layout is then in whole millimetres (`ONE_PIECE_UNIT`), not whole cubes.
    */
   onePiece?: boolean;
+  /**
+   * Printed put together (or in one piece): `bed` is the room it's centred in, and the whole cubes are capped so the
+   * finished puzzle stays within it less 5 mm round the edge (rounding to the nearest cube could pass it). Missing = as before.
+   */
+  inRoom?: boolean;
 }
 
 /** One piece: the layout's unit (mm) in place of the cube, the thinnest plain side (mm), and the most samples a side. */
@@ -228,8 +233,12 @@ export function layoutFor(grid: HeightGrid, areaWidth: number, areaHeight: numbe
   const fitBed = Math.min((spec.bed[0] - 10) / areaWidth, (spec.bed[1] - 10) / areaHeight);
   const target = fitBed * spec.scale;
   const cube = unitOf(spec);
-  const cols = Math.max(1, Math.round((areaWidth * target) / cube));
-  const rows = Math.max(1, Math.round((areaHeight * target) / cube));
+  let cols = Math.max(1, Math.round((areaWidth * target) / cube));
+  let rows = Math.max(1, Math.round((areaHeight * target) / cube));
+  if (spec.inRoom) {
+    cols = Math.max(1, Math.min(cols, Math.floor((spec.bed[0] - 10) / cube + 1e-9)));
+    rows = Math.max(1, Math.min(rows, Math.floor((spec.bed[1] - 10) / cube + 1e-9)));
+  }
   const k = Math.min((cols * cube) / areaWidth, (rows * cube) / areaHeight);
   const width = (cols * cube) / k;
   const height = (rows * cube) / k;
