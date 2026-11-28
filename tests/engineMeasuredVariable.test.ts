@@ -127,4 +127,60 @@ describe("measured variables", () => {
     // The app is told the sketch as solved now (to show it).
     expect(r.sketchLinks?.[sk.id]?.sketch).toBeTruthy();
   });
+
+  it("an angle follows the model: a face turned by a variable, against the Right plane", () => {
+    const box = feature("box", { width: 40, depth: 30, height: 20 });
+    const turn: Feature = { ...feature("transform", { rz: "a" }, "add"), transform: { partId: box.id, axis: "z", about: "centre", copy: false } };
+    engine = new GeometryEngine();
+    const shown = engine.rebuild([box, turn], { a: 10 }).parts[0];
+    const deg = Math.PI / 180;
+    // The side that faced +X, now turned 10° about Z.
+    const side = shown.faceRefs.filter((f) => f.surface === "PLANE").reduce((p, q) => (q.normal[0] > p.normal[0] ? q : p));
+    expect(Math.abs(side.normal[0] - Math.cos(10 * deg))).toBeLessThan(1e-5);
+    const tilt = measuredOf({ name: "tilt", kind: "angle", targets: [{ partId: box.id, ref: side }, { plane: "Right" }] });
+    for (const a of [10, 12, 20]) {
+      const r = engine.rebuild([box, turn, tilt], { a });
+      expect(r.featureErrors).toEqual({});
+      expect(r.measuredValues?.[tilt.id].value).toBeCloseTo(a, 9);
+    }
+  });
+
+  it("a hexagonal prism: neighbouring sides 60° apart exactly, its top edges 120° at their corner", () => {
+    const sk = sketchFeature({ kind: "default", name: "Top" }, buildSketch([{ type: "polygon", center: [0, 0], sides: 6, diameter: 20 }], {}).data);
+    const prism = extrudeFeature(sk.id, 10);
+    engine = new GeometryEngine();
+    const part = engine.rebuild([sk, prism]).parts[0];
+    const sides = part.faceRefs.filter((f) => f.surface === "PLANE" && Math.abs(f.normal[2]) < 1e-9);
+    const next = sides.find((f) => Math.abs(f.normal[0] * sides[0].normal[0] + f.normal[1] * sides[0].normal[1] - 0.5) < 1e-6)!;
+    const faces = measuredOf({ name: "faces", kind: "angle", targets: [{ partId: prism.id, ref: sides[0] }, { partId: prism.id, ref: next }] });
+    const top = part.edgeRefs.filter((e) => e.curve === "LINE" && Math.abs(e.a[2] - 10) < 1e-9 && Math.abs(e.b[2] - 10) < 1e-9);
+    const meets = (e: EdgeRef, f: EdgeRef) => [e.a, e.b].some((p) => [f.a, f.b].some((q) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-6));
+    const second = top.find((e) => e !== top[0] && meets(e, top[0]))!;
+    const corner = measuredOf({ name: "corner", kind: "angle", targets: [{ partId: prism.id, ref: top[0] }, { partId: prism.id, ref: second }] });
+    const r = engine.rebuild([sk, prism, faces, corner]);
+    expect(r.featureErrors).toEqual({});
+    expect(r.measuredValues?.[faces.id].value).toBeCloseTo(60, 9);
+    expect(r.measuredValues?.[corner.id].value).toBeCloseTo(120, 9);
+  });
+
+  it("a measured variable switched off, or one from another Part Studio, is said plainly where it's used", () => {
+    const box = feature("box", { width: 40, depth: 30, height: 20 });
+    const v = { ...measuredOf({ name: "off", kind: "distance", targets: [{ plane: "Top" }, { plane: "Top" }] }), suppressed: true };
+    const user = feature("box", { width: "off + 1", depth: 5, height: 5, x: 100 });
+    const elsewhereUser = sketchFeature({ kind: "default", name: "Top" }, buildSketch([{ type: "rectangle", corner: [0, 0], width: 5, height: 5 }], {}).data);
+    elsewhereUser.sketch!.data.constraints = elsewhereUser.sketch!.data.constraints.map((c, i) => (i === elsewhereUser.sketch!.data.constraints.findIndex((x) => x.value !== undefined) ? { ...c, value: "wid" } : c));
+    const wid = measuredOf({ name: "wid", kind: "distance", targets: [{ plane: "Top" }, { plane: "Top" }] });
+    engine = new GeometryEngine();
+    const r = engine.rebuildStudios([
+      { id: "a", features: [box, v, user] },
+      { id: "b", features: [box2(), wid] },
+      { id: "c", features: [elsewhereUser] },
+    ]);
+    expect(r.featureErrors[user.id]).toMatch(/switched off/);
+    expect(r.featureErrors[elsewhereUser.id]).toMatch(/another Part Studio/);
+  });
 });
+
+function box2(): Feature {
+  return feature("box", { width: 10, depth: 10, height: 10 });
+}

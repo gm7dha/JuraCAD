@@ -16,7 +16,7 @@ import { isPlaneLink, seePlaneLink, type PlaneSource } from "../sketch/planeRefs
 import { asTransformFrame, connectorFrame, connectorPlane, isMorePlaneMode, type FullFrame } from "../sketch/planeTypes";
 import { planeThroughLine, sketchLine3D, type SketchLineRef } from "../model/patternRefs";
 import { ANGLE_KEY, evaluate, getCurrentScope, namesIn, setCurrentScope } from "../model/expr";
-import { isPlaneTarget, measuredFeatures, measuredProblem, namesUsedBy, notMeasuredMessage, targetLabel, tooEarlyMessage, type MeasuredValue } from "../model/measuredVariable";
+import { isPlaneTarget, measuredAngle, measuredFeatures, type MeasuredDirection, measuredProblem, namesUsedBy, notMeasuredMessage, otherStudioMessage, switchedOffMessage, targetLabel, tooEarlyMessage, type MeasuredValue } from "../model/measuredVariable";
 import { checkName } from "../model/variables";
 import { solveSketch } from "../sketch/solver";
 import { geometrySound } from "../model/checkReport";
@@ -100,7 +100,7 @@ import { matchVertex, type VertexPick } from "../geometry/vertexRef";
 import { radiusPointPick, VariableFilletError } from "../model/variableFillet";
 import { variableFillet, type EdgeRadiusPoint } from "./variableFillet";
 import { resolveScope, scopeMessage } from "../model/mergeScope";
-import { angleBetween, centreGap, circleThrough3D, describePick, directionOf, type MeasuredItem, type Measurement } from "../geometry/measureMath";
+import { angleBetween, centreGap, circleThrough3D, describePick, type MeasuredItem, type Measurement } from "../geometry/measureMath";
 
 /** Id of the first Part Studio (matches MAIN_STUDIO in model/studios.ts). */
 const MAIN_STUDIO_ID = "main";
@@ -457,6 +457,35 @@ function planeCutEdges(shape: Shape3D | Face, frame: PlaneFrame, bounds: Bounds)
     cutShape?.delete();
     op.delete();
     sheet.delete();
+  }
+}
+
+/**
+ * Which way a face or edge found in a build points, exactly: a flat face's normal, a round face's axis, a straight
+ * edge's direction (from `ends`); null for anything else.
+ */
+function foundDirection(shape: Edge | Face | Vertex, ends: Vec3[] | null): MeasuredDirection | null {
+  if (ends) {
+    if ((shape as Edge).geomType !== "LINE") return null;
+    return { dir: [ends[1][0] - ends[0][0], ends[1][1] - ends[0][1], ends[1][2] - ends[0][2]], kind: "line" };
+  }
+  const face = shape as Face;
+  const type = face.geomType;
+  if (type !== "PLANE" && type !== "CYLINDRE") return null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const surf = new oc.BRepAdaptor_Surface(face.wrapped, true);
+  try {
+    const geom = type === "PLANE" ? surf.Plane() : surf.Cylinder();
+    const axis = geom.Axis();
+    const d = axis.Direction();
+    const dir: [number, number, number] = [d.X(), d.Y(), d.Z()];
+    d.delete();
+    axis.delete();
+    geom.delete();
+    return { dir, kind: type === "PLANE" ? "plane" : "line" };
+  } finally {
+    surf.delete();
   }
 }
 
@@ -2569,6 +2598,7 @@ export class GeometryEngine {
     const started = performance.now();
     // Every size below is worked out with the document's variables.
     setCurrentScope(variables);
+    this.measuredInStudios = new Set(studios.flatMap((st) => [...measuredFeatures(st.features).keys()]));
     const wanted = new Set(studios.map((s) => s.id));
     this.studiosWanted = wanted;
     for (const [id, b] of this.builds) {
@@ -3593,6 +3623,9 @@ export class GeometryEngine {
     for (const n of known) measuredHere.delete(n);
     const measuredNames = new Set<string>();
     const unmeasured = new Map<string, string>();
+    // Measured variables switched off, and names measured only in other Part Studios: their users say so plainly.
+    const switchedOff = new Map(listed.filter((f) => f.type === "variable" && f.suppressed && f.measured?.name && !known.has(f.measured.name) && !measuredHere.has(f.measured.name)).map((f) => [f.measured!.name, f.name] as const));
+    const elsewhere = [...this.measuredInStudios].filter((n) => !known.has(n) && !measuredHere.has(n) && !switchedOff.has(n));
     // Which feature made each face (see faceMakers.ts): looked at after each feature.
     this.faceMakers = new FaceMakers();
     let lastBuilt: string | null = null;
@@ -3627,11 +3660,23 @@ export class GeometryEngine {
       this.reassignOwners();
       this.lastBuiltName = feature.name;
       if (watchesChange(feature, features)) unchanged = this.watchChange(feature);
-      if (measuredHere.size) {
-        // A measured variable used before it's measured (or when it couldn't be): said plainly.
-        const early = namesUsedBy(feature).find((n) => measuredHere.has(n) && !measuredNames.has(n) && measuredHere.get(n)!.id !== feature.id);
+      if (measuredHere.size || switchedOff.size || elsewhere.length) {
+        // A measured variable used before it's measured (or when it couldn't be, or is switched off, or is another
+        // Part Studio's): said plainly.
+        const used = namesUsedBy(feature);
+        const early = used.find((n) => measuredHere.has(n) && !measuredNames.has(n) && measuredHere.get(n)!.id !== feature.id);
+        const off = used.find((n) => switchedOff.has(n));
+        const other = used.find((n) => elsewhere.includes(n));
         if (early) {
           featureErrors[feature.id] = unmeasured.has(early) ? notMeasuredMessage(early, unmeasured.get(early)!) : tooEarlyMessage(early, measuredHere.get(early)!.name);
+          continue;
+        }
+        if (off) {
+          featureErrors[feature.id] = switchedOffMessage(off, switchedOff.get(off)!);
+          continue;
+        }
+        if (other) {
+          featureErrors[feature.id] = otherStudioMessage(other);
           continue;
         }
       }
@@ -8169,6 +8214,8 @@ export class GeometryEngine {
 
   /** Measured variables made this build (by feature id). */
   private measured: Record<string, MeasuredValue> = {};
+  /** Every measured variable's name in the Part Studios being rebuilt (so another studio's can be named as such). */
+  private measuredInStudios = new Set<string>();
 
   /**
    * A measured variable (Onshape's Variable › Measured), at its place in the list: the picks found again on the parts
@@ -8208,12 +8255,27 @@ export class GeometryEngine {
         return done(def.kind === "diameter" ? 2 * r : r);
       }
       if (def.kind === "angle") {
-        const dirs = found.map((f) => (f.plane ? { dir: f.plane.n, kind: "plane" as const } : f.ref ? directionOf(f.ref) : null));
+        // Directions from the faces and edges as found in this build (not as clicked), so it follows the model.
+        const ends: (Vec3[] | null)[] = found.map((f) => (f.shape && f.ref?.kind === "edge" ? [take((f.shape as Edge).pointAt(0)), take((f.shape as Edge).pointAt(1))] : null));
+        const dirs = found.map((f, i): MeasuredDirection | null => (f.plane ? { dir: f.plane.n, kind: "plane" } : f.shape ? foundDirection(f.shape, ends[i]) : null));
         if (!dirs[0] || !dirs[1]) return "Angles are between flat faces, straight edges and planes.";
-        const c = Math.min(1, Math.abs(dirs[0].dir[0] * dirs[1].dir[0] + dirs[0].dir[1] * dirs[1].dir[1] + dirs[0].dir[2] * dirs[1].dir[2]));
-        let deg = (Math.acos(c) * 180) / Math.PI;
-        if (dirs[0].kind !== dirs[1].kind) deg = 90 - deg;
-        return done(deg, true);
+        // Two straight edges meeting at a corner: each taken leaving it, so the angle there is 0–180°.
+        let atCorner = false;
+        const [ea, eb] = ends;
+        if (ea && eb && dirs[0].kind === "line" && dirs[1].kind === "line") {
+          const close = (p: Vec3, q: Vec3) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < 1e-6;
+          const shared = [ea[0], ea[1]].find((p) => close(p, eb[0]) || close(p, eb[1]));
+          if (shared) {
+            const away = (e: Vec3[]): [number, number, number] => {
+              const [p, q] = close(e[0], shared) ? [e[0], e[1]] : [e[1], e[0]];
+              return [q[0] - p[0], q[1] - p[1], q[2] - p[2]];
+            };
+            dirs[0] = { dir: away(ea), kind: "line" };
+            dirs[1] = { dir: away(eb), kind: "line" };
+            atCorner = true;
+          }
+        }
+        return done(measuredAngle(dirs[0], dirs[1], atCorner), true);
       }
       // A distance: the shortest one between them, or its part along X, Y or Z.
       const [a, b] = found;

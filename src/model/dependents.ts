@@ -284,7 +284,8 @@ function usesLatestPart(f: Feature): boolean {
  * The features that use the picked ones (in `features`, one Part Studio's list),
  * transitively: a feature that goes takes the features using it with it.
  */
-export function findDependents(features: Feature[], ids: Iterable<string>): Dependents {
+/** `tableNames`: the Variables table's names — a feature using one of those isn't using a measured variable of that name. */
+export function findDependents(features: Feature[], ids: Iterable<string>, tableNames: ReadonlySet<string> = new Set()): Dependents {
   const wanted = new Set(ids);
   const gone = new Set<string>();
   const picked: string[] = [];
@@ -295,7 +296,7 @@ export function findDependents(features: Feature[], ids: Iterable<string>): Depe
   // Measured variables that go: features using their names can't be built without them.
   const goneNames = new Set<string>();
   const nameGoes = (f: Feature) => {
-    if (f.type === "variable" && f.measured?.name) goneNames.add(f.measured.name);
+    if (f.type === "variable" && f.measured?.name && !tableNames.has(f.measured.name)) goneNames.add(f.measured.name);
   };
   const makers = new Set<string>();
   let latest: string | null = null;
@@ -454,7 +455,7 @@ export interface DeletePlan extends Dependents {
 /** The plan for deleting features of the Part Studio `studioId` (with their dependents, or `justThese`). */
 export function deletePlan(doc: JuraCADDocument, studioId: string, ids: string[], justThese = false): DeletePlan {
   const features = studiosOf(doc).find((s) => s.id === studioId)?.features ?? [];
-  const deps = findDependents(features, ids);
+  const deps = findDependents(features, ids, new Set((doc.variables ?? []).map((v) => v.name)));
   return { ...deps, outside: outsideUsers(doc, studioId, justThese ? deps.picked : deps.going) };
 }
 

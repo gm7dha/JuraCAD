@@ -1508,7 +1508,7 @@ export const useStore = create<AppState>((set, get) => {
       if (Object.keys(errors).length > 0) return false;
       // Nothing picked yet where something must be (a fillet with no edges): not accepted, as Onshape's greyed ✓.
       const original = editing.mode === "edit" ? activeFeatures(get()).find((f) => f.id === editing.draft.id) : null;
-      const missing = acceptBlocker(editing.draft, original);
+      const missing = acceptBlocker(editing.draft, original, { table: (get().history.present.variables ?? []).map((v) => v.name), features: activeFeatures(get()) });
       if (missing) {
         get().showToast(missing, "info");
         return false;
@@ -1648,7 +1648,7 @@ export const useStore = create<AppState>((set, get) => {
     },
     deleteFeatures: (ids, justThese = false) => {
       const features = activeFeatures(get());
-      const plan = findDependents(features, ids);
+      const plan = findDependents(features, ids, new Set((get().history.present.variables ?? []).map((v) => v.name)));
       const going = new Set(justThese ? plan.picked : plan.going);
       set({ deleteAsk: null });
       if (!going.size) return 0;

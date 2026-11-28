@@ -3,9 +3,9 @@ import { resolveVariables } from "../model/variables";
 import { useStore } from "../model/store";
 import { keepInBrowser, keepProblem, OTHER_TAB, STORAGE_KEY, VERSIONS_KEY, type Kept } from "../model/browserKeep";
 
-import { activeStudioId, keepIdOf, type VersionCompare } from "../model/store";
+import { activeFeatures, activeStudioId, keepIdOf, type VersionCompare } from "../model/store";
 import { setCurrentScope, setMeasuredScope } from "../model/expr";
-import { NO_MEASURED } from "../model/measuredVariable";
+import { measuredScopeFor, NO_MEASURED } from "../model/measuredVariable";
 import { studiosOf } from "../model/studios";
 import { editRollback } from "../model/finalPreview";
 import type { RebuildResult, StudioInput } from "./protocol";
@@ -225,16 +225,26 @@ export function connectKernel(): () => void {
   };
 }
 
-/** A build's measured variables into the store (the same object while nothing changed) and the app's expression scope. */
+/** A build's measured variables into the store (the same object while nothing changed). */
 function keepMeasuredValues(values: RebuildResult["measuredValues"]): void {
   const had = useStore.getState().measuredValues;
   const now = values && Object.keys(values).length ? values : NO_MEASURED;
-  if (JSON.stringify(now) === JSON.stringify(had)) return;
-  useStore.setState({ measuredValues: now });
-  const scope: Record<string, number> = {};
-  for (const v of Object.values(now)) {
-    scope[v.name] = v.value;
-    if (v.angle) scope[`°${v.name}`] = 1;
-  }
+  if (JSON.stringify(now) !== JSON.stringify(had)) useStore.setState({ measuredValues: now });
+}
+
+/**
+ * The app's expression scope gets the measured variables of the Part Studio on show only — and, while a feature is
+ * open, only those above it (a new one goes at the end): so a box or dimension never takes a name it can't use.
+ */
+let lastMeasuredScope = "{}";
+function refreshMeasuredScope(): void {
+  const s = useStore.getState();
+  const scope = s.measuredValues === NO_MEASURED ? {} : measuredScopeFor(activeFeatures(s), s.measuredValues, s.editing?.draft.id ?? null);
+  const text = JSON.stringify(scope);
+  if (text === lastMeasuredScope) return;
+  lastMeasuredScope = text;
   setMeasuredScope(scope);
 }
+useStore.subscribe((now, before) => {
+  if (now.measuredValues !== before.measuredValues || now.activeTab !== before.activeTab || now.history.present !== before.history.present || now.editing?.draft.id !== before.editing?.draft.id) refreshMeasuredScope();
+});

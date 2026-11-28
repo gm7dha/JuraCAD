@@ -85,7 +85,8 @@ function mapExpressions(doc: JuraCADDocument, fn: (src: string) => string): Jura
  * same array when nothing uses it.
  */
 export function renameInFeatures(features: Feature[], from: string, to: string): Feature[] {
-  if (!from || from === to) return features;
+  // Never to a name that isn't one (it would break every use).
+  if (!from || from === to || checkName(to, []) || checkName(from, [])) return features;
   const out = features.map((f) => mapFeatureExpressions(f, (src) => renameInExpression(src, from, to)));
   return out.some((f, i) => f !== features[i]) ? out : features;
 }

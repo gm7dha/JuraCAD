@@ -1463,15 +1463,20 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   `withKind`, `measuredProblem` — draftReady's Accept —, `namesUsedBy` (params, sketch dimensions, variable-fillet radii),
   `usedTooEarly`, `measuredUses`, `parseMeasuredDef`). Engine `applyMeasured` at its place in `featureSteps`: picks found
   STRICTLY (`measuredPick(…, strict)`: strictMatch; corners by findCorner; planes from `planeFrames` / default frames, a big
-  square `measureSheet` for closestPoints), the value put into the scope for the features after it (angle → `ANGLE_KEY`); a
-  feature using a measured name before it (or after a failed one) fails with `tooEarlyMessage`/`notMeasuredMessage`; names in
+  square `measureSheet` for closestPoints; angles from the faces/edges AS FOUND — `foundDirection`: a plane's normal, a cylinder's
+  axis, a line's ends — never the click's ref; `measuredAngle`: two edges sharing an end are taken leaving it, 0–180°, else 0–90°), the value put into the scope for the features after it (angle → `ANGLE_KEY`); a
+  feature using a measured name before it (or after a failed one) fails with `tooEarlyMessage`/`notMeasuredMessage`, one switched off with `switchedOffMessage`, one only another Part Studio
+  measures (`measuredInStudios`, all studios being rebuilt) with `otherStudioMessage` — sketches too; names in
   the Variables table win (the measured one fails "already has"); sketches after it whose dimensions use its name are solved
   again with `solveSketch` and given to the app as `SketchLinkInfo.sketch`. `RebuildResult.measuredValues` (feature id →
   `MeasuredValue`) → `store.measuredValues` (connect.ts `keepMeasuredValues`) → expr.ts `setMeasuredScope` (a layer under the
-  document's own values, app only — never in the worker or the extension's engine), so dialogs and open sketches can use the
-  names; shown on the feature row, in the dialog and the Variables window (read only). Renaming one renames its uses
-  (store commitDraft / edit_feature via `renameInFeatures`). Delete with dependents: its parts/Plane are needed; features using
-  its name go with it. UI `src/app/MeasuredVariableOptions.tsx`; toolbar "Measured variable" in the Variables ▾; view clicks in
+  document's own values, app only — never in the worker or the extension's engine; connect.ts `refreshMeasuredScope`: only the
+  studio on show's, above the feature open — `measuredScopeFor`), so dialogs and open sketches can use the names;
+  `getCurrentScope` returns the base scope only (save/restore never bakes measured values in), `getScopeInUse` both; shown on the feature row, in the dialog and the Variables window (read only). Renaming one renames its uses
+  (store commitDraft / edit_feature via `renameInFeatures`, never to an unusable name); Accept waits for a usable name the table
+  and the studio's other measured variables don't have (`acceptBlocker(…, names)` → `measuredNameProblem`); a pasted one whose
+  name is taken becomes `<name>_2` with its pasted users following. Delete with dependents: its parts/Plane are needed; features using
+  its name go with it (not when the Variables table has that name: `findDependents(…, tableNames)`). UI `src/app/MeasuredVariableOptions.tsx`; toolbar "Measured variable" in the Variables ▾; view clicks in
   Viewport handlePick right after geomPick (`cornerWanted` on). Claude: add_feature "measured_variable" (`src/mcp/measuredSpec.ts`;
   add_feature's context scope includes the last build's measured values). Not done: a plain "#name = expression" Variable
   feature, offering measured names while typing (varComplete), inch display of the row's value.

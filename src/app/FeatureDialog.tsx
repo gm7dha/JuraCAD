@@ -2669,7 +2669,7 @@ export function FeatureDialog() {
   const needsRef = draft.type === "mirror" ? !!draft.mirror?.unset : (draft.type === "circularPattern" || draft.type === "linearPattern") && !!draft.pattern?.unset;
   const refHint = draft.type === "mirror" ? "Choose the mirror plane first" : draft.type === "circularPattern" ? "Choose the axis first" : "Choose the direction first";
   // Nothing picked yet where something must be (a fillet with no edges): the ✓ waits, saying what to click.
-  const missing = needsRef ? null : acceptBlocker(draft, mode === "edit" ? original : null);
+  const missing = needsRef ? null : acceptBlocker(draft, mode === "edit" ? original : null, draft.type === "variable" ? { table: (useStore.getState().history.present.variables ?? []).map((v) => v.name), features: activeFeatures(useStore.getState()) } : undefined);
   const groups: { title: string; params: ParamDef[] }[] = [
     { title: draft.type === "plane" ? "Placement" : draft.type === "extrude" ? "Depth" : draft.type === "revolve" ? "How far round" : draft.type === "shell" ? "Walls" : isPatternFeature(draft.type) ? "Copies" : draft.type === "transform" ? "Turn" : "Size", params: def.params.filter((p) => p.group === "size") },
     { title: draft.type === "transform" ? "Move" : draft.type === "circularPattern" ? "Axis goes through" : "Position", params: def.params.filter((p) => p.group === "position") },

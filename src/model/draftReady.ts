@@ -4,7 +4,7 @@
  * Pure.
  */
 import type { Feature } from "./types";
-import { measuredProblem } from "./measuredVariable";
+import { measuredNameProblem, measuredProblem, otherMeasuredNames } from "./measuredVariable";
 
 const faces = (f: Feature) => (f.picks ?? []).filter((p) => p.ref.kind === "face");
 const edges = (f: Feature) => (f.picks ?? []).filter((p) => p.ref.kind === "edge");
@@ -84,7 +84,12 @@ export function missingPick(f: Feature): string | null {
  * opened (its picks lost to an upstream change, an older Shell saved Open with no face) — then Accept stays free, so
  * the user is never trapped in the dialog (the engine says what's wrong on the row as before).
  */
-export function acceptBlocker(draft: Feature, original?: Feature | null): string | null {
+export function acceptBlocker(draft: Feature, original?: Feature | null, names?: { table: readonly string[]; features: readonly Feature[] }): string | null {
+  // A measured variable's name must be usable and its own (always: a rename would rewrite every use to it).
+  if (draft.type === "variable" && names) {
+    const bad = measuredNameProblem(draft.measured, names.table, otherMeasuredNames(names.features, draft.id));
+    if (bad) return bad;
+  }
   const missing = missingPick(draft);
   if (!missing || !original || original.id !== draft.id) return missing;
   return missingPick(original) ? null : missing;

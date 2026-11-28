@@ -7,6 +7,7 @@
 import { parsePick, type TopoPick } from "../geometry/topoRef";
 import { parseVertexPick, type VertexPick } from "../geometry/vertexRef";
 import { namesIn } from "./expr";
+import { checkName } from "./variables";
 import type { Feature } from "./types";
 
 export type MeasureKind = "distance" | "length" | "diameter" | "radius" | "angle";
@@ -43,7 +44,11 @@ export const MEASURE_KINDS: readonly { kind: MeasureKind; label: string; hint: s
   { kind: "length", label: "Length", hint: "Click an edge (or several: their lengths are added up)." },
   { kind: "diameter", label: "Diameter", hint: "Click a round edge or a round face." },
   { kind: "radius", label: "Radius", hint: "Click a round edge or a round face." },
-  { kind: "angle", label: "Angle", hint: "Click two flat faces or straight edges (or a plane)." },
+  {
+    kind: "angle",
+    label: "Angle",
+    hint: "Click two flat faces or straight edges (or a plane). Between faces or planes it's the angle between them, 0–90°; between two edges meeting at a corner, the angle at that corner, 0–180°.",
+  },
 ];
 
 export const DEFAULT_PLANES = ["Top", "Front", "Right"] as const;
@@ -179,6 +184,10 @@ export function usedTooEarly(features: readonly Feature[], known: ReadonlySet<st
 export const tooEarlyMessage = (name: string, by: string) =>
   `"${name}" is measured by ${by}, further down the list, so it can't be used here. Move this feature below ${by} (a measured variable can only be used by the features after it).`;
 
+export const switchedOffMessage = (name: string, by: string) => `"${name}" is measured by ${by}, which is switched off, so this can't be built. Switch ${by} back on.`;
+
+export const otherStudioMessage = (name: string) => `"${name}" is measured in another Part Studio, so it can't be used here (a measured variable belongs to its own Part Studio).`;
+
 export const notMeasuredMessage = (name: string, by: string) => `"${name}" couldn't be measured (${by} has a problem), so this can't be built. Fix ${by} first.`;
 
 /** Parts and features (Plane features) a measured variable needs. */
@@ -208,4 +217,59 @@ export function parseMeasuredDef(raw: unknown): MeasuredDef | null {
     })
     .filter((t): t is MeasureTarget => !!t);
   return { name: r.name, kind, ...(kind === "distance" && along ? { along } : {}), targets };
+}
+
+/**
+ * Why this measured variable's name can't be accepted, or null: not a usable name, a name the Variables table has
+ * (`tableNames`), or one another measured variable in the Part Studio has (`otherMeasured`).
+ */
+export function measuredNameProblem(def: MeasuredDef | undefined, tableNames: readonly string[], otherMeasured: readonly string[]): string | null {
+  if (!def) return null;
+  const problem = checkName(def.name, []);
+  if (problem) return `Variable name: ${problem}.`;
+  if (tableNames.includes(def.name)) return `The Variables table already has a variable called "${def.name}". Give this one another name.`;
+  if (otherMeasured.includes(def.name)) return `Another measured variable is already called "${def.name}". Give this one another name.`;
+  return null;
+}
+
+/** The other measured variables' names in a feature list (all but `id`). */
+export function otherMeasuredNames(features: readonly Feature[], id: string): string[] {
+  return features.filter((f) => f.id !== id && f.type === "variable" && f.measured).map((f) => f.measured!.name);
+}
+
+/**
+ * The measured variables a feature list's features can use by name, as last built (by name; angles marked as
+ * expr.ts does): only those switched on and, with `before`, above that feature (all of them when it isn't in the list
+ * yet — a new one goes at the end).
+ */
+export function measuredScopeFor(features: readonly Feature[], values: Readonly<Record<string, MeasuredValue>>, before?: string | null): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const f of features) {
+    if (before && f.id === before) break;
+    const v = f.type === "variable" && !f.suppressed ? values[f.id] : undefined;
+    if (!v || v.name in out) continue;
+    out[v.name] = v.value;
+    if (v.angle) out[`°${v.name}`] = 1;
+  }
+  return out;
+}
+
+/** A direction measured: a straight edge's (`line`, leaving `corner` when two edges meet there) or a flat face's / plane's normal. */
+export interface MeasuredDirection {
+  dir: [number, number, number];
+  kind: "line" | "plane";
+}
+
+/**
+ * The angle (degrees) between two directions as Onshape measures it: two edges leaving the same corner, the angle at
+ * that corner (0–180, `atCorner`); a line and a plane, the line's slope to it (0–90); otherwise the angle between the
+ * lines or planes (0–90).
+ */
+export function measuredAngle(a: MeasuredDirection, b: MeasuredDirection, atCorner = false): number {
+  const len = (v: [number, number, number]) => Math.hypot(v[0], v[1], v[2]);
+  const d = (a.dir[0] * b.dir[0] + a.dir[1] * b.dir[1] + a.dir[2] * b.dir[2]) / (len(a.dir) * len(b.dir));
+  const c = Math.max(-1, Math.min(1, atCorner && a.kind === "line" && b.kind === "line" ? d : Math.abs(d)));
+  let deg = (Math.acos(c) * 180) / Math.PI;
+  if (a.kind !== b.kind) deg = 90 - deg;
+  return deg;
 }

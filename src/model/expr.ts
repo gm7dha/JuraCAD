@@ -59,7 +59,15 @@ export function setMeasuredScope(values: Scope): void {
   measuredScope = values;
   setCurrentScope(baseScope);
 }
+/**
+ * The scope as last set by setCurrentScope — WITHOUT the measured layer, so saving it and setting it back (as the
+ * library's insert and the extension's pauses do) never bakes old measured values in. `evaluate` uses both.
+ */
 export function getCurrentScope(): Scope {
+  return baseScope;
+}
+/** What `evaluate` reads by default: the document's values over the measured layer. */
+export function getScopeInUse(): Scope {
   return currentScope;
 }
 
