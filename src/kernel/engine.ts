@@ -461,7 +461,7 @@ function planeCutEdges(shape: Shape3D | Face, frame: PlaneFrame, bounds: Bounds)
 }
 
 /** A square on a plane, centred under the middle of `bounds` and well bigger than it (for measuring to the plane). */
-function planeSheet(frame: PlaneFrame, bounds: Bounds): Face {
+function measureSheet(frame: PlaneFrame, bounds: Bounds): Face {
   const [lo, hi] = bounds;
   const mid: Vec3 = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
   const n = frame.n;
@@ -8227,7 +8227,7 @@ export class GeometryEngine {
       } else if (a.plane || b.plane) {
         const plane = (a.plane ?? b.plane)!;
         const other = (a.plane ? b : a) as Found;
-        const sheet = planeSheet(plane, other.bounds!);
+        const sheet = measureSheet(plane, other.bounds!);
         try {
           const n = closestPoints(sheet, other.shape!);
           near = n && (a.plane ? n : { distance: n.distance, a: n.b, b: n.a });

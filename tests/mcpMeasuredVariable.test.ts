@@ -39,7 +39,6 @@ async function fails(s: Session, name: string, args: unknown = {}) {
   expect(r.isError).toBe(true);
   return textOf(r);
 }
-const volume = (s: Session) => s.withEngine((e) => e.check("normal").parts[0].exactVolume!);
 
 describe("measured_variable, from Claude", () => {
   it("tells Claude about it", () => {

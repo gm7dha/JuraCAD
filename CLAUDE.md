@@ -1463,7 +1463,7 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   `withKind`, `measuredProblem` — draftReady's Accept —, `namesUsedBy` (params, sketch dimensions, variable-fillet radii),
   `usedTooEarly`, `measuredUses`, `parseMeasuredDef`). Engine `applyMeasured` at its place in `featureSteps`: picks found
   STRICTLY (`measuredPick(…, strict)`: strictMatch; corners by findCorner; planes from `planeFrames` / default frames, a big
-  square `planeSheet` for closestPoints), the value put into the scope for the features after it (angle → `ANGLE_KEY`); a
+  square `measureSheet` for closestPoints), the value put into the scope for the features after it (angle → `ANGLE_KEY`); a
   feature using a measured name before it (or after a failed one) fails with `tooEarlyMessage`/`notMeasuredMessage`; names in
   the Variables table win (the measured one fails "already has"); sketches after it whose dimensions use its name are solved
   again with `solveSketch` and given to the app as `SketchLinkInfo.sketch`. `RebuildResult.measuredValues` (feature id →
