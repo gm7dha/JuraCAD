@@ -4278,10 +4278,10 @@ kbd {
   }
 }
 
-/* A touch screen up to 1300 px wide (an iPad: 1180 sideways): toolbar buttons show just their icons (the name is in the
+/* A touch screen up to 1400 px wide (an iPad: 1180 sideways; an iPad Pro 12.9": 1366): toolbar buttons show just their icons (the name is in the
    tooltip and the list), and the Part Studio's rarer groups share a ▾ (STUDIO_TOUCH_TOOLBAR), so its tools fit 1180 px
    without scrolling; held upright the ‹ › arrows scroll the rest. */
-@media (pointer: coarse) and (max-width: 1300px) {
+@media (pointer: coarse) and (max-width: 1400px) {
   .toolbar {
     gap: 2px;
     padding: 0 4px;

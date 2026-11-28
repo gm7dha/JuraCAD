@@ -1307,7 +1307,10 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   picks: the arrow at the mouth along the direction; a Rotate arc only about an axis along the piece's (`movedPiece`: no cache;
   `pieceOfPicks(…, guess)` finds the picks among the shown part's faces as strictMatch would — nearest by distance across the
   face's own axis + ¼ along it, within 0.1 × size, unambiguous — both where picked and where the current value moves them
-  (preview/editing); found moved, the opening is taken back across the axis only, as it stays on its face). Translate/Rotate with any round face picked = the whole piece
+  (preview/editing); found moved, the opening is taken back across the axis only, as it stays on its face; the value used is the one the shown
+  parts were built with when known — `ManipContext.shown` from `src/model/shownDraft.ts`, noted by connect.ts per rebuild (null = built
+  without it), `shownMoveValue` — and then the moved place wins whenever found (`knownMoved`), so a drag's arrow doesn't jump and a hole an
+  earlier change moved back past half the move is still found). Translate/Rotate with any round face picked = the whole piece
   (`movePieceOfFaces`): facePattern's `regionOfFaces(…, keepCaps)` (+ `caps`: point, normal away from the tool) gives the hole's space or
   boss's solid (picked faces split into touching groups, `touchingGroups`: several holes move together); caps whose far side is space (hole) / material (boss) are its mouth/foot (`mouth`; others, e.g. an unpicked floor, are
   part of it). Filled (hole) / taken off (boss), then made again moved — slid, a mouth cap is carried on by −move·n (deeper hole, lifted
@@ -2361,7 +2364,8 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   floor((room − 10)/cube) (rounding passed the room; missing = as before, laid-out plates unchanged). Material (both windows): pure
   `src/terrain/puzzleMaterial.ts` (`PuzzleMaterial` "PLA" = the usual colours, else a Bambu line; `MATERIAL_CHOICES` solid lines only (PLA Basic/Matte, PETG
   HF/Basic/Matte, ABS, ASA); `inMaterial` = the line's nearest by a Lab ΔE with colour weighted 1.5 and a grey for a coloured
-  colour +30 (`GREY_FOR_COLOUR`: the base stays brown), handed out distinct where close enough, `USUAL_ORDER`; `matchNotes` also
+  colour +30 (`GREY_FOR_COLOUR`: the base stays brown); a coloured colour (chroma > `COLOURED`) takes the nearest of the same hue
+  (`sameHue`: ≤ `SAME_HUE` 20°, ≥ half as colourful) when it's ≤ `HUE_ROOM` 15 further off (PETG Matte Lowland Avocado Green, ABS Olive), handed out distinct where close enough, `USUAL_ORDER`; `matchNotes` also
   says when usual colours (bands too) share a spool;
   `changeMaterial` moves still-usual colours and their spools both ways; `matchNotes`; `breakawayAdvice` — Support for PLA,
   Support for PLA/PETG (+ PLA Basic for PETG, Bambu wiki), Support for ABS); app `src/app/PuzzleMaterial.tsx` (session
@@ -2686,7 +2690,7 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   (`SKETCH_TOOLBAR_TOOLS` each in one place: `SKETCH_SINGLE_TOOLS`, families — Point under Spline, Round + Chamfer their own
   "round" family —, 5 main relations; Construction icon-only; Extrude/Revolve one ▾, Copy/Paste/Delete one compact ▾; long
   tool names get a `short` button label so the width doesn't change with the tool shown). Smoke: click tools with `tool(name)` (opens the ▾ when needed).
-  Touch screens ≤ 1300 px (`useNarrowTouch`, src/app/narrowTouch.ts, `(pointer: coarse) and (max-width: 1300px)`): toolbar
+  Touch screens ≤ 1400 px (an iPad Pro 12.9" sideways is 1366; `useNarrowTouch`, src/app/narrowTouch.ts, `(pointer: coarse) and (max-width: 1400px)`): toolbar
   buttons show icons only (`.tool-button:has(> svg) > span` hidden; 42 px, ▾ 20 px) and the Part Studio uses
   `STUDIO_TOUCH_TOOLBAR` (`joinedSlots`: surfaces + frames + sheet metal, insert + tables share a ▾), so it fits an iPad
   sideways (1180 px, ~88 px spare; the smoke test fails if not and warns under 20); upright (820) and the sketch toolbar

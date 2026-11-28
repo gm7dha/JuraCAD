@@ -6,6 +6,7 @@
  */
 import { manipEditText, manipulatorsFor, manipPatch, typedManipValue, type Manipulator } from "../model/manipulators";
 import { activeFeatures, useStore } from "../model/store";
+import { shownDraftFor } from "../model/shownDraft";
 import type { Feature } from "../model/types";
 import { lengthUnit } from "../model/units";
 import { followedSketch } from "../sketch/areaClicks";
@@ -27,7 +28,7 @@ export function manipulatorsNow(): Manipulator[] {
   const sketchKey = sketch ? sketch.data : null;
   const unit = lengthUnit();
   if (cache && cache.draft === draft && cache.sketch === sketchKey && cache.parts === s.parts && cache.unit === unit) return cache.out;
-  let out = manipulatorsFor(draft, { sketch, parts: s.parts });
+  let out = manipulatorsFor(draft, { sketch, parts: s.parts, shown: shownDraftFor(draft) });
   if (!out.length) out = NONE;
   // The same array when the handles are the same (so the view isn't redrawn for every rebuild).
   if (cache && JSON.stringify(cache.out) === JSON.stringify(out)) out = cache.out;

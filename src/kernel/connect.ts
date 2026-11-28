@@ -9,6 +9,7 @@ import { setCurrentScope, setMeasuredScope } from "../model/expr";
 import { measuredScopeFor, NO_MEASURED } from "../model/measuredVariable";
 import { studiosOf } from "../model/studios";
 import { editRollback } from "../model/finalPreview";
+import { noteShownDraft } from "../model/shownDraft";
 import type { RebuildResult, StudioInput } from "./protocol";
 import type { JuraCADDocument } from "../model/types";
 import { configurationsInUse } from "../assembly/configured";
@@ -87,13 +88,19 @@ export function connectKernel(): () => void {
   const rebuild = () => {
     useStore.getState().setRebuildBusy(true);
     const doc = useStore.getState().history.present;
-    kernel.requestRebuild(currentStudios(), resolveVariables(doc.variables).values, doc.partNames ?? {}, (result) => {
+    const studios = currentStudios();
+    // The open feature as sent, and whether it's in what's built for the studio on show (see shownDraft.ts).
+    const sent = useStore.getState().editing?.draft ?? null;
+    const here = activeStudioId(useStore.getState());
+    const sentIn = !!sent && !!studios.find((st) => st.id === here)?.features.some((f) => f.id === sent.id && !f.suppressed);
+    kernel.requestRebuild(studios, resolveVariables(doc.variables).values, doc.partNames ?? {}, (result) => {
       const s = useStore.getState();
       if (result instanceof Error) {
         s.setRebuildBusy(false);
         s.showToast(result.message, "error");
         return;
       }
+      noteShownDraft(sent, sentIn && !(sent && result.featureErrors?.[sent.id]));
       s.setRebuildResult(result.parts, result.featureErrors, result.durationMs, result.rebuilt, result.studioOrder, result.sketchLinks, result.featureWarnings, result.featureNotes, result.followed, result.curves);
       // Edit in context: the other assembly parts shown in each Part Studio (kept apart from the studio's own parts).
       keepContextParts(result.contextParts, result.contextRebuilt, result.studioOrder);

@@ -4526,6 +4526,14 @@ try {
         const [needL, haveL, spareL] = await room();
         if (needL > haveL) throw new Error(`on a touch screen 1180 px wide the Part Studio toolbar needs ${needL} px but has ${haveL}`);
         await shot("toolbaripad1180", { pg: tab, clip: { x: 0, y: 0, width: 1180, height: 140 }, width: 1180 });
+        // An iPad Pro 12.9" held sideways (1366 × 1024): still the touch toolbar (icons only), and it fits.
+        await tab.setViewportSize({ width: 1366, height: 1024 });
+        await tab.waitForFunction(() => (document.querySelector('.toolbar[aria-label="Tools"]')?.clientWidth ?? 0) > 1300);
+        const [needXL, haveXL, spareXL] = await room();
+        if (needXL > haveXL) throw new Error(`on a touch screen 1366 px wide the Part Studio toolbar needs ${needXL} px but has ${haveXL}`);
+        const iconsOnly = await tab.evaluate(() => window.matchMedia("(pointer: coarse) and (max-width: 1400px)").matches);
+        if (!iconsOnly) throw new Error("a touch screen 1366 px wide should get the touch toolbar");
+        touchReport += `fits 1366 px (iPad Pro) with ${spareXL} px to spare; `;
         await tab.setViewportSize({ width: 820, height: 1180 });
         await tab.waitForTimeout(200);
         const [needP, haveP] = await room();
