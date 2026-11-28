@@ -1,14 +1,15 @@
 /**
  * Starting values a new feature works out for itself (Onshape's), kept up to date while the user hasn't changed them:
  * - an Extrude's direction: a Remove or Intersect from a sketch on a part's face points into the part;
- * - a Linear pattern's spacing: the size of what's repeated along the direction, plus a little, so copies don't overlap.
+ * - a Linear pattern's spacing: the size of what's repeated along the direction, plus a little, so copies don't overlap;
+ * - a Move face Translate's direction: straight out of the first picked face (not along Z, which slides a side face along itself).
  *
  * Pure: the store keeps the last value it set (`AutoValues`) and only changes a value while it still equals that.
  */
 import type { PartMesh } from "../kernel/protocol";
 import { planeFrame, type SketchPlane, type Vec3 } from "../sketch/planes";
 import { sketchLine3D, AXIS_DIRS } from "./patternRefs";
-import type { Feature } from "./types";
+import type { Axis, Feature, MoveFaceDef } from "./types";
 
 /**
  * Which side of a sketch plane the part is on, when that's known: true = behind it (against its normal — a sketch
@@ -138,6 +139,29 @@ export interface AutoValues {
   flip?: boolean;
   spacing?: string;
   spacing2?: string;
+  /** A Move face Translate's direction as last set (`moveDirKey`); missing = as it started (X/Y/Z unchosen = Z). */
+  moveDir?: string;
+}
+
+/** A Move face's direction / axis as a comparable key. */
+export const moveDirKey = (def: MoveFaceDef | undefined): string => JSON.stringify([def?.axis ?? null, def?.along ?? null]);
+
+/**
+ * The direction a new Translate should start with, from its first picked face (as Onshape): a flat face moves
+ * straight out of itself — along X, Y or Z when it faces that way, else square to the face (the face as direction);
+ * a round face (a hole, a boss) sideways, along the axis its picked side faces most. Null = no face picked yet.
+ */
+export function translateDirection(draft: Pick<Feature, "type" | "moveFace" | "picks">): Pick<MoveFaceDef, "axis" | "along"> | null {
+  if (draft.type !== "moveFace" || draft.moveFace?.mode !== "translate") return null;
+  const pick = (draft.picks ?? []).find((p) => p.ref.kind === "face");
+  if (!pick || pick.ref.kind !== "face") return null;
+  const n = pick.ref.normal;
+  const l = Math.hypot(n[0], n[1], n[2]);
+  if (!(l > 1e-9)) return null;
+  const k = [0, 1, 2].reduce((a, b) => (Math.abs(n[b]) > Math.abs(n[a]) ? b : a), 0);
+  const axis = (["x", "y", "z"] as Axis[])[k];
+  if (pick.ref.surface !== "PLANE" || Math.abs(n[k]) / l > 1 - 1e-9) return { axis };
+  return { along: { partId: pick.partId, ref: pick.ref } };
 }
 
 export interface AutoContext {
@@ -173,6 +197,15 @@ export function withAutoValues(draft: Feature, auto: AutoValues, ctx: AutoContex
       if (s === null) continue;
       if (s !== out.params[key]) out = { ...out, params: { ...out.params, [key]: s } };
       next = { ...next, [key]: s };
+    }
+  }
+  if (draft.type === "moveFace" && draft.moveFace?.mode === "translate" && moveDirKey(draft.moveFace) === (next.moveDir ?? moveDirKey(undefined))) {
+    const dir = translateDirection(out);
+    if (dir) {
+      const { axis: _a, along: _p, ...rest } = out.moveFace!;
+      const moveFace: MoveFaceDef = { ...rest, ...dir };
+      if (moveDirKey(moveFace) !== moveDirKey(out.moveFace)) out = { ...out, moveFace };
+      next = { ...next, moveDir: moveDirKey(moveFace) };
     }
   }
   return { draft: out, auto: next };

@@ -1287,7 +1287,9 @@ rule in a `<style>` element (`styleRules`; the XML reader keeps a style element'
   neighbours re-trim. Dialog `src/app/MoveFaceOptions.tsx` (segmented choice; Direction/Axis slot → view clicks in Viewport's
   handlePick, edges allowed then); manipulators: Translate arrow along the direction, Rotate arc round a straight/X/Y/Z axis (none
   round a round face's axis). Claude: add_feature "move_face" (`move`, `distance`/`angle`, `direction`/`axis` "x"|"y"|"z"|{edge}|{face},
-  `flip`). Dependents: `along`'s part (not for Offset). Translate/Rotate with any round face picked = the whole piece
+  `flip`). Dependents: `along`'s part (not for Offset). A new Translate starts straight out of its first picked face (newFeatureDefaults
+  `translateDirection`: X/Y/Z it faces, else the face as direction; a round face its normal's main axis; `AutoValues.moveDir`, until
+  chosen by hand; toggleDraftPick runs `withAuto`). Translate/Rotate with any round face picked = the whole piece
   (`movePieceOfFaces`): facePattern's `regionOfFaces(…, keepCaps)` (+ `caps`: point, normal away from the tool) gives the hole's space or
   boss's solid; caps whose far side is space (hole) / material (boss) are its mouth/foot (`mouth`; others, e.g. an unpicked floor, are
   part of it). Filled (hole) / taken off (boss), then made again moved — slid, a mouth cap is carried on by −move·n (deeper hole, lifted

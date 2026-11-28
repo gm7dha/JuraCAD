@@ -1458,7 +1458,7 @@ export const useStore = create<AppState>((set, get) => {
         const { at: _at, ...plain } = pick;
         const i = picks.findIndex((p) => p.partId === pick.partId && sameRef(p.ref, pick.ref));
         const next = i >= 0 ? picks.filter((_, j) => j !== i) : [...picks, s.editing.draft.variableFillet && pick.ref.kind === "edge" ? plain : pick];
-        return { editing: { ...s.editing, draft: tidyRadiusPoints({ ...s.editing.draft, picks: next }) }, ...steps };
+        return { editing: { ...s.editing, draft: withAuto(tidyRadiusPoints({ ...s.editing.draft, picks: next }), s.editing.mode) }, ...steps };
       }),
 
     toggleDraftPart: (partId) => {
